@@ -1,0 +1,8 @@
+.build
+.out
+.wget
+.cache
+.zig-cache
+build
+sdkconfig
+managed_components

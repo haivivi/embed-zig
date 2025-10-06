@@ -1,0 +1,456 @@
+diff --git a/zig/build.zig b/zig/build.zig
+index 8967906d7..81a109441 100644
+--- a/zig/build.zig
++++ b/zig/build.zig
+@@ -1,6 +1,5 @@
+ const std = @import("std");
+ const builtin = std.builtin;
+-const tests = @import("test/tests.zig");
+ const BufMap = std.BufMap;
+ const mem = std.mem;
+ const ArrayList = std.ArrayList;
+@@ -8,7 +7,10 @@ const io = std.io;
+ const fs = std.fs;
+ const InstallDirectoryOptions = std.Build.InstallDirectoryOptions;
+ const assert = std.debug.assert;
++
+ const DevEnv = @import("src/dev.zig").Env;
++const tests = @import("test/tests.zig");
++
+ const ValueInterpretMode = enum { direct, by_name };
+ 
+ const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 14, .patch = 1 };
+@@ -703,7 +705,7 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerStepOptions) *std.Build.St
+ 
+     const exe = b.addExecutable(.{
+         .name = "zig",
+-        .max_rss = 7_800_000_000,
++        .max_rss = 10_800_000_000,
+         .root_module = compiler_mod,
+     });
+     exe.stack_size = stack_size;
+diff --git a/zig/lib/std/Target/xtensa.zig b/zig/lib/std/Target/xtensa.zig
+index 3948f5762..279a93d4d 100644
+--- a/zig/lib/std/Target/xtensa.zig
++++ b/zig/lib/std/Target/xtensa.zig
+@@ -5,7 +5,39 @@ const CpuFeature = std.Target.Cpu.Feature;
+ const CpuModel = std.Target.Cpu.Model;
+ 
+ pub const Feature = enum {
++    atomctl,
++    bool,
++    clamps,
++    coprocessor,
++    debug,
+     density,
++    dfpaccel,
++    div32,
++    esp32s2,
++    esp32s3,
++    exception,
++    extendedl32r,
++    fp,
++    hifi3,
++    highpriinterrupts,
++    interrupt,
++    loop,
++    mac16,
++    memctl,
++    minmax,
++    miscsr,
++    mul16,
++    mul32,
++    mul32high,
++    nsa,
++    prid,
++    regprotect,
++    rvector,
++    s32c1i,
++    sext,
++    threadptr,
++    timerint,
++    windowed,
+ };
+ 
+ pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
+@@ -17,11 +49,171 @@ pub const all_features = blk: {
+     const len = @typeInfo(Feature).@"enum".fields.len;
+     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
+     var result: [len]CpuFeature = undefined;
++    result[@intFromEnum(Feature.atomctl)] = .{
++        .llvm_name = "atomctl",
++        .description = "Enable Xtensa ATOMCTL option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.bool)] = .{
++        .llvm_name = "bool",
++        .description = "Enable Xtensa Boolean extension",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.clamps)] = .{
++        .llvm_name = "clamps",
++        .description = "Enable Xtensa CLAMPS option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.coprocessor)] = .{
++        .llvm_name = "coprocessor",
++        .description = "Enable Xtensa Coprocessor option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.debug)] = .{
++        .llvm_name = "debug",
++        .description = "Enable Xtensa Debug option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
+     result[@intFromEnum(Feature.density)] = .{
+         .llvm_name = "density",
+         .description = "Enable Density instructions",
+         .dependencies = featureSet(&[_]Feature{}),
+     };
++    result[@intFromEnum(Feature.dfpaccel)] = .{
++        .llvm_name = "dfpaccel",
++        .description = "Enable Xtensa Double Precision FP acceleration",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.div32)] = .{
++        .llvm_name = "div32",
++        .description = "Enable Xtensa Div32 option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.esp32s2)] = .{
++        .llvm_name = "esp32s2",
++        .description = "Support Xtensa esp32-s2 ISA extension",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.esp32s3)] = .{
++        .llvm_name = "esp32s3",
++        .description = "Support Xtensa esp32-s3 ISA extension",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.exception)] = .{
++        .llvm_name = "exception",
++        .description = "Enable Xtensa Exception option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.extendedl32r)] = .{
++        .llvm_name = "extendedl32r",
++        .description = "Enable Xtensa Extended L32R option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.fp)] = .{
++        .llvm_name = "fp",
++        .description = "Enable Xtensa Single FP instructions",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.hifi3)] = .{
++        .llvm_name = "hifi3",
++        .description = "Enable Xtensa HIFI3 instructions",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.highpriinterrupts)] = .{
++        .llvm_name = "highpriinterrupts",
++        .description = "Enable Xtensa HighPriInterrupts option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.interrupt)] = .{
++        .llvm_name = "interrupt",
++        .description = "Enable Xtensa Interrupt option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.loop)] = .{
++        .llvm_name = "loop",
++        .description = "Enable Xtensa Loop extension",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.mac16)] = .{
++        .llvm_name = "mac16",
++        .description = "Enable Xtensa MAC16 instructions",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.memctl)] = .{
++        .llvm_name = "memctl",
++        .description = "Enable Xtensa MEMCTL option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.minmax)] = .{
++        .llvm_name = "minmax",
++        .description = "Enable Xtensa MINMAX option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.miscsr)] = .{
++        .llvm_name = "miscsr",
++        .description = "Enable Xtensa Miscellaneous SR option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.mul16)] = .{
++        .llvm_name = "mul16",
++        .description = "Enable Xtensa Mul16 option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.mul32)] = .{
++        .llvm_name = "mul32",
++        .description = "Enable Xtensa Mul32 option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.mul32high)] = .{
++        .llvm_name = "mul32high",
++        .description = "Enable Xtensa Mul32High option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.nsa)] = .{
++        .llvm_name = "nsa",
++        .description = "Enable Xtensa NSA option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.prid)] = .{
++        .llvm_name = "prid",
++        .description = "Enable Xtensa Processor ID option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.regprotect)] = .{
++        .llvm_name = "regprotect",
++        .description = "Enable Xtensa Region Protection option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.rvector)] = .{
++        .llvm_name = "rvector",
++        .description = "Enable Xtensa Relocatable Vector option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.s32c1i)] = .{
++        .llvm_name = "s32c1i",
++        .description = "Enable Xtensa S32C1I option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.sext)] = .{
++        .llvm_name = "sext",
++        .description = "Enable Xtensa Sign Extend option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.threadptr)] = .{
++        .llvm_name = "threadptr",
++        .description = "Enable Xtensa THREADPTR option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.timerint)] = .{
++        .llvm_name = "timerint",
++        .description = "Enable Xtensa Timer Interrupt option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
++    result[@intFromEnum(Feature.windowed)] = .{
++        .llvm_name = "windowed",
++        .description = "Enable Xtensa Windowed Register option",
++        .dependencies = featureSet(&[_]Feature{}),
++    };
+     const ti = @typeInfo(Feature);
+     for (&result, 0..) |*elem, i| {
+         elem.index = i;
+@@ -31,6 +223,155 @@ pub const all_features = blk: {
+ };
+ 
+ pub const cpu = struct {
++    pub const cnl: CpuModel = .{
++        .name = "cnl",
++        .llvm_name = "cnl",
++        .features = featureSet(&[_]Feature{
++            .atomctl,
++            .bool,
++            .coprocessor,
++            .debug,
++            .density,
++            .div32,
++            .exception,
++            .fp,
++            .hifi3,
++            .highpriinterrupts,
++            .interrupt,
++            .loop,
++            .memctl,
++            .miscsr,
++            .mul32,
++            .mul32high,
++            .nsa,
++            .prid,
++            .regprotect,
++            .rvector,
++            .s32c1i,
++            .sext,
++            .threadptr,
++            .timerint,
++            .windowed,
++        }),
++    };
++    pub const esp32: CpuModel = .{
++        .name = "esp32",
++        .llvm_name = "esp32",
++        .features = featureSet(&[_]Feature{
++            .atomctl,
++            .bool,
++            .clamps,
++            .coprocessor,
++            .debug,
++            .density,
++            .dfpaccel,
++            .div32,
++            .exception,
++            .fp,
++            .highpriinterrupts,
++            .interrupt,
++            .loop,
++            .mac16,
++            .memctl,
++            .minmax,
++            .miscsr,
++            .mul16,
++            .mul32,
++            .mul32high,
++            .nsa,
++            .prid,
++            .regprotect,
++            .rvector,
++            .s32c1i,
++            .sext,
++            .threadptr,
++            .timerint,
++            .windowed,
++        }),
++    };
++    pub const esp32s2: CpuModel = .{
++        .name = "esp32s2",
++        .llvm_name = "esp32s2",
++        .features = featureSet(&[_]Feature{
++            .clamps,
++            .coprocessor,
++            .debug,
++            .density,
++            .div32,
++            .esp32s2,
++            .exception,
++            .highpriinterrupts,
++            .interrupt,
++            .memctl,
++            .minmax,
++            .miscsr,
++            .mul16,
++            .mul32,
++            .mul32high,
++            .nsa,
++            .prid,
++            .regprotect,
++            .rvector,
++            .sext,
++            .threadptr,
++            .timerint,
++            .windowed,
++        }),
++    };
++    pub const esp32s3: CpuModel = .{
++        .name = "esp32s3",
++        .llvm_name = "esp32s3",
++        .features = featureSet(&[_]Feature{
++            .atomctl,
++            .bool,
++            .clamps,
++            .coprocessor,
++            .debug,
++            .density,
++            .div32,
++            .esp32s3,
++            .exception,
++            .fp,
++            .highpriinterrupts,
++            .interrupt,
++            .loop,
++            .mac16,
++            .memctl,
++            .minmax,
++            .miscsr,
++            .mul16,
++            .mul32,
++            .mul32high,
++            .nsa,
++            .prid,
++            .regprotect,
++            .rvector,
++            .s32c1i,
++            .sext,
++            .threadptr,
++            .timerint,
++            .windowed,
++        }),
++    };
++    pub const esp8266: CpuModel = .{
++        .name = "esp8266",
++        .llvm_name = "esp8266",
++        .features = featureSet(&[_]Feature{
++            .debug,
++            .density,
++            .exception,
++            .extendedl32r,
++            .highpriinterrupts,
++            .interrupt,
++            .mul16,
++            .mul32,
++            .nsa,
++            .prid,
++            .regprotect,
++            .rvector,
++            .timerint,
++        }),
++    };
+     pub const generic: CpuModel = .{
+         .name = "generic",
+         .llvm_name = "generic",
+diff --git a/zig/src/codegen/llvm.zig b/zig/src/codegen/llvm.zig
+index 91c955b4b..b3a0945f9 100644
+--- a/zig/src/codegen/llvm.zig
++++ b/zig/src/codegen/llvm.zig
+@@ -13060,7 +13060,7 @@ pub fn initializeLLVMTarget(arch: std.Target.Cpu.Arch) void {
+                 llvm.LLVMInitializeXtensaTarget();
+                 llvm.LLVMInitializeXtensaTargetInfo();
+                 llvm.LLVMInitializeXtensaTargetMC();
+-                // There is no LLVMInitializeXtensaAsmPrinter function.
++                llvm.LLVMInitializeXtensaAsmPrinter();
+                 llvm.LLVMInitializeXtensaAsmParser();
+             }
+         },
+diff --git a/zig/src/codegen/llvm/bindings.zig b/zig/src/codegen/llvm/bindings.zig
+index a146e2a88..d8f61c9de 100644
+--- a/zig/src/codegen/llvm/bindings.zig
++++ b/zig/src/codegen/llvm/bindings.zig
+@@ -269,6 +269,7 @@ pub extern fn LLVMInitializeSystemZAsmPrinter() void;
+ pub extern fn LLVMInitializeWebAssemblyAsmPrinter() void;
+ pub extern fn LLVMInitializeX86AsmPrinter() void;
+ pub extern fn LLVMInitializeXCoreAsmPrinter() void;
++pub extern fn LLVMInitializeXtensaAsmPrinter() void;
+ pub extern fn LLVMInitializeM68kAsmPrinter() void;
+ pub extern fn LLVMInitializeVEAsmPrinter() void;
+ pub extern fn LLVMInitializeARCAsmPrinter() void;
+diff --git a/build b/build
+index d02168a63..6677779ad 100755
+--- a/build
++++ b/build
+@@ -57,6 +57,7 @@ cmake "$ROOTDIR/llvm" \
+   -DCLANG_TOOL_C_INDEX_TEST_BUILD=OFF \
+   -DCLANG_TOOL_ARCMT_TEST_BUILD=OFF \
+   -DCLANG_TOOL_C_ARCMT_TEST_BUILD=OFF \
++  -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa \
+   -DCLANG_TOOL_LIBCLANG_BUILD=OFF
+ cmake --build . --target install
+ 
+@@ -192,6 +193,7 @@ cmake "$ROOTDIR/llvm" \
+   -DCLANG_TOOL_ARCMT_TEST_BUILD=OFF \
+   -DCLANG_TOOL_C_ARCMT_TEST_BUILD=OFF \
+   -DCLANG_TOOL_LIBCLANG_BUILD=OFF \
++  -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa \
+   -DLLD_BUILD_TOOLS=OFF
+ cmake --build . --target install
+ 
+@@ -201,6 +203,7 @@ $ZIG build \
+   --prefix "$ROOTDIR/out/zig-$TARGET-$MCPU" \
+   --search-prefix "$ROOTDIR/out/$TARGET-$MCPU" \
+   -Dflat \
++  -Dllvm-has-xtensa \
+   -Dstatic-llvm \
+   -Doptimize=ReleaseFast \
+   -Dstrip \
