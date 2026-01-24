@@ -4,26 +4,60 @@
 
 This project is based on `ziglang/zig-bootstrap`, replacing `llvm/llvm-project` with `espressif/llvm-project` to enable Xtensa support for ESP32 development.
 
+## Pre-built Downloads
+
+You can download pre-built Zig compilers with Xtensa support from [GitHub Releases](https://github.com/haivivi/zig-bootstrap/releases).
+
+| Platform | Download |
+|----------|----------|
+| macOS ARM64 | `zig-aarch64-macos-none-baseline.tar.xz` |
+| macOS x86_64 | `zig-x86_64-macos-none-baseline.tar.xz` |
+| Linux x86_64 | `zig-x86_64-linux-gnu-baseline.tar.xz` |
+| Linux ARM64 | `zig-aarch64-linux-gnu-baseline.tar.xz` |
+
+```bash
+# Download and extract (example for macOS ARM64)
+curl -LO https://github.com/haivivi/zig-bootstrap/releases/download/espressif-0.15.2/zig-aarch64-macos-none-baseline.tar.xz
+tar -xJf zig-aarch64-macos-none-baseline.tar.xz
+
+# Verify Xtensa support
+./zig-aarch64-macos-none-baseline/zig targets | grep xtensa
+```
+
 ## Key Improvements
 
 1. **Version Control**: Uses `wget` to fetch source code, ensuring dependency versions are locked and reproducible
 2. **Transparent Patches**: Uses `patch` files to modify code, making all changes explicit and reviewable
+3. **Cross-compilation**: Supports building Linux binaries from macOS
 
 ## Platform Support
 
-Currently tested on **macOS** only. Linux builds should work in theory but haven't been tested yet.
+| Host Platform | Status |
+|---------------|--------|
+| macOS ARM64 | ✅ Tested |
+| macOS x86_64 | ✅ Tested |
+| Linux x86_64 | ✅ Supported (cross-compiled from macOS) |
+| Linux ARM64 | ✅ Supported (cross-compiled from macOS) |
 
 ## Quick Start
 
 ### Build the Compiler
 
 ```bash
-CMAKE_BUILD_PARALLEL_LEVEL=16 ./bootstrap.sh espressif-0.15.x aarch64-macos-none baseline
+./bootstrap.sh espressif-0.15.x <target> baseline
 ```
+
+**Available targets:**
+- `aarch64-macos-none` - macOS ARM64
+- `x86_64-macos-none` - macOS x86_64
+- `x86_64-linux-gnu` - Linux x86_64
+- `aarch64-linux-gnu` - Linux ARM64
 
 **Available versions:**
 - `espressif-0.14.x` - Zig 0.14.x with Xtensa support
 - `espressif-0.15.x` - Zig 0.15.x with Xtensa support (recommended)
+
+The script automatically detects CPU cores and uses up to 8 cores for parallel compilation.
 
 ### Run Examples
 
@@ -40,7 +74,7 @@ pushd PATH_TO_IDF
 popd
 
 # 4. Navigate to example directory
-cd examples/led_strip_flash
+cd examples/led_strip_flash/zig
 
 # 5. Set target chip
 idf.py set-target esp32s3
@@ -67,23 +101,28 @@ espressif-zig-bootstrap/
 │   ├── llvm-project          # URL to Espressif LLVM
 │   └── zig-bootstrap         # URL to Zig bootstrap
 └── examples/
-    └── led_strip_flash/      # LED strip example with Zig
+    ├── led_strip_flash/      # LED strip example
+    ├── gpio_button/          # GPIO button example
+    ├── http_speed_test/      # HTTP speed test
+    ├── memory_attr_test/     # Memory attribute test
+    ├── wifi_dns_lookup/      # WiFi DNS lookup
+    └── ...                   # More examples
 ```
 
 ## What Gets Built
 
 After running the bootstrap script, you'll have:
 
-- A Zig compiler with Xtensa support at: `espressif-0.15.x/.out/zig-<target>-<mcpu>/bin/zig`
-- LLVM with Espressif's Xtensa backend enabled
-- All necessary libraries and tools for ESP32 development
+- A Zig compiler with Xtensa support at: `espressif-0.15.x/.out/zig-<target>-baseline/zig`
+- LLVM 20.1.1 with Espressif's Xtensa backend enabled
+- Support for ESP32, ESP32-S2, ESP32-S3 targets
 
 ## Environment Setup
 
-To use the built compiler with ESP-IDF:
+The examples use automatic Zig installation detection. If you need to manually specify the path:
 
 ```bash
-export ZIG_INSTALL=/path/to/espressif-zig-bootstrap/espressif-0.15.x/.out/zig-aarch64-macos-none-baseline/bin
+export ZIG_INSTALL=/path/to/espressif-zig-bootstrap/espressif-0.15.x/.out/zig-aarch64-macos-none-baseline
 ```
 
 ## License
