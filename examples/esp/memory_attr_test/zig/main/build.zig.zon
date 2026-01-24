@@ -1,0 +1,15 @@
+.{
+    .name = .memory_attr_test,
+    .version = "0.1.0",
+    .fingerprint = 0xc41b8a57174112db,
+    .dependencies = .{
+        .esp_zig = .{
+            .path = "../../../../../lib/esp",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

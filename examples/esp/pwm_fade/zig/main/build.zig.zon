@@ -1,0 +1,15 @@
+.{
+    .name = .pwm_fade,
+    .version = "0.1.0",
+    .fingerprint = 0x8585d67e6e1118f3,
+    .dependencies = .{
+        .esp_zig = .{
+            .path = "../../../../../lib/esp",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
