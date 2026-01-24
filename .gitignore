@@ -1,8 +1,12 @@
 .build
+.build-*
 .out
 .wget
+.downloads
 .cache
 .zig-cache
 build
+tmp
 sdkconfig
+sdkconfig.old
 managed_components
