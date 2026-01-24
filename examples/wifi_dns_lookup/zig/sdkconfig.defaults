@@ -1,0 +1,9 @@
+# Target ESP32-S3
+CONFIG_IDF_TARGET="esp32s3"
+
+# WiFi configuration
+CONFIG_WIFI_SSID="HAIVIVI-MFG"
+CONFIG_WIFI_PASSWORD="!haivivi"
+
+# Increase stack size for WiFi tasks
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
