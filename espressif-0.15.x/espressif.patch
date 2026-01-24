@@ -463,3 +463,21 @@ index 3d15ab1be..f00aa8a3f 100755
    -Dstatic-llvm \
    -Doptimize=ReleaseFast \
    -Dstrip \
+
+diff --git a/clang/tools/CMakeLists.txt b/clang/tools/CMakeLists.txt
+index 4733680cb..2e4a49e0a 100644
+--- a/clang/tools/CMakeLists.txt
++++ b/clang/tools/CMakeLists.txt
+@@ -20,12 +20,6 @@ endif()
+ add_clang_subdirectory(c-index-test)
+ 
+ add_clang_subdirectory(clang-refactor)
+-# For MinGW we only enable shared library if LLVM_LINK_LLVM_DYLIB=ON.
+-# Without that option resulting library is too close to 2^16 DLL exports limit.
+-if(UNIX OR (MSVC AND LLVM_BUILD_LLVM_DYLIB_VIS) OR (MINGW AND LLVM_LINK_LLVM_DYLIB))
+-  add_clang_subdirectory(clang-shlib)
+-endif()
+-
+ if(CLANG_ENABLE_ARCMT)
+   add_clang_subdirectory(arcmt-test)
+   add_clang_subdirectory(c-arcmt-test)

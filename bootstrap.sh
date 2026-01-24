@@ -155,6 +155,26 @@ echo "patch applied successfully"
 
 echo ""
 echo "=== Step 4: Building Zig ==="
+
+# Detect CPU cores and set parallel build level (max 8 cores)
+if command -v nproc >/dev/null 2>&1; then
+    CPU_CORES=$(nproc)
+elif command -v sysctl >/dev/null 2>&1; then
+    CPU_CORES=$(sysctl -n hw.ncpu)
+else
+    CPU_CORES=4
+fi
+if [ "$CPU_CORES" -gt 8 ]; then
+    CPU_CORES=8
+fi
+export CMAKE_BUILD_PARALLEL_LEVEL="$CPU_CORES"
+echo "Using $CPU_CORES parallel jobs for compilation"
+
+# Clear pkg-config paths to avoid linking against host system libraries (e.g., Homebrew)
+# PKG_CONFIG_LIBDIR replaces the default search path (PKG_CONFIG_PATH only adds to it)
+# Must export to affect child processes (zig build calls)
+export PKG_CONFIG_PATH=""
+export PKG_CONFIG_LIBDIR=""
 ./build $TARGET $MCPU
 
 popd
