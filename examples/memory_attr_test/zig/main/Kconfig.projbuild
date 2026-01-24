@@ -1,0 +1,15 @@
+menu "Memory Attribute Test Configuration"
+
+    config TEST_PSRAM_ARRAY_SIZE
+        int "PSRAM test array size (bytes)"
+        default 4096
+        help
+            Size of the test array to be placed in PSRAM.
+
+    config TEST_IRAM_ITERATIONS
+        int "IRAM function test iterations"
+        default 1000
+        help
+            Number of iterations for IRAM function performance test.
+
+endmenu

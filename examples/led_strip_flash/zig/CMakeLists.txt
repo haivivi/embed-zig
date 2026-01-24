@@ -3,6 +3,6 @@
 cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-set(ZIG_INSTALL ${CMAKE_CURRENT_SOURCE_DIR}/../../espressif-0.15.x/.out/zig-aarch64-macos-none-baseline)
+set(ZIG_INSTALL ${CMAKE_CURRENT_SOURCE_DIR}/../../../espressif-0.15.x/.out/zig-aarch64-macos-none-baseline)
 # set(ZIG_INSTALL /Users/idy/Work/zig-bootstrap/0.15.x/out/zig-aarch64-macos-none-baseline)
 project(led_strip_flash_zig)

@@ -1,5 +1,5 @@
 set(REQUIRES
-    led_strip
+    esp_psram
 )
 
 idf_component_register(
@@ -14,7 +14,6 @@ if(CONFIG_IDF_TARGET_ARCH_RISCV)
         set(TARGET_CPU_MODEL "generic_rv32+m+a+c+zicsr+zifencei")
     elseif(CONFIG_IDF_TARGET_ESP32P4)
         string(REGEX REPLACE "-none" "-eabihf" ZIG_TARGET ${ZIG_TARGET})
-        # (zca, zcb, zcmt, zcmp) are not supported on ESP32-P4-Function-EV-Board (crash application)
         set(TARGET_CPU_MODEL "esp32p4-zca-zcb-zcmt-zcmp")
     else()
         set(TARGET_CPU_MODEL "generic_rv32+m+c+zicsr+zifencei")
@@ -60,13 +59,3 @@ add_custom_target(zig_build
 add_prebuilt_library(zig ${CMAKE_BINARY_DIR}/lib/libmain_zig.a)
 add_dependencies(zig zig_build)
 target_link_libraries(${COMPONENT_LIB} PRIVATE ${CMAKE_BINARY_DIR}/lib/libmain_zig.a)
-
-
-set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY 
-    INTERFACE_LINK_OPTIONS 
-    "-Wl,-u,led_strip_refresh"
-    "-Wl,-u,led_strip_new_rmt_device"
-    "-Wl,-u,esp_netif_init"
-    "-Wl,-u,esp_wifi_init"
-)
-

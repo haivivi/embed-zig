@@ -1,0 +1,7 @@
+# The following five lines of boilerplate have to be in your project's
+# CMakeLists in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.16)
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+set(ZIG_INSTALL ${CMAKE_CURRENT_SOURCE_DIR}/../../../espressif-0.15.x/.out/zig-aarch64-macos-none-baseline)
+project(memory_attr_test_zig)
