@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const idf = @import("idf");
 
 const c = @cImport({
@@ -114,15 +115,15 @@ export fn app_main() void {
         return;
     };
 
-    // Connect to WiFi
-    const ssid = c.CONFIG_WIFI_SSID;
-    const password = c.CONFIG_WIFI_PASSWORD;
+    // Connect to WiFi (sentinel-terminated strings for C interop)
+    const ssid: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_SSID));
+    const password: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_PASSWORD));
 
     std.log.info("Connecting to SSID: {s}", .{ssid});
 
     wifi.connect(.{
-        .ssid = std.mem.sliceTo(ssid, 0),
-        .password = std.mem.sliceTo(password, 0),
+        .ssid = ssid,
+        .password = password,
         .timeout_ms = 30000,
     }) catch |err| {
         std.log.err("WiFi connect failed: {}", .{err});

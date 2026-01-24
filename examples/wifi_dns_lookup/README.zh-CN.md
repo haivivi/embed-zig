@@ -111,17 +111,29 @@ var ppp_resolver = idf.DnsResolver{
 const ip3 = try ppp_resolver.resolve("example.com");
 ```
 
-## 二进制大小
+## 二进制大小与内存
 
-| 版本 | 大小 |
-|------|------|
-| Zig | 766,048 bytes |
+### 二进制大小
+
+| 版本 | .bin 大小 |
+|------|-----------|
+| **Zig** | 766,032 字节 (748 KB) |
+
+### 内存占用（静态）
+
+| 内存区域 | Zig |
+|----------|-----|
+| **IRAM** | 16,383 字节 |
+| **DRAM** | 106,231 字节 |
+| **Flash Code** | 553,150 字节 |
+
+> 注：本示例仅有 Zig 版本，用于展示纯 Zig DNS 实现。
 
 ## 架构说明
 
 由于 ESP-IDF 的 WiFi 配置结构体包含复杂的位域和联合体，`@cImport` 无法正确翻译，因此 WiFi 初始化使用 C 辅助函数：
 
-- `lib/src/wifi.zig` - Zig 接口层
+- `esp/src/wifi.zig` - Zig 接口层
 - `main/src/main.c` - C 辅助函数实现
 
 DNS 解析器是纯 Zig 实现，使用 lwIP socket。

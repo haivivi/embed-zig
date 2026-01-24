@@ -1,19 +1,34 @@
-//! HTTP Speed Test - Zig Version
+//! HTTP Speed Test - Zig Version (esp_http_client)
 //!
 //! Tests HTTP download speed using esp_http_client
+//! Runs on PSRAM task stack via SAL
 
 const std = @import("std");
+
 const idf = @import("idf");
 
 const c = @cImport({
     @cInclude("sdkconfig.h");
 });
 
-const BUILD_TAG = "http_speed_zig_v1";
+const BUILD_TAG = "http_speed_zig_esp_v2";
 
 pub const std_options: std.Options = .{
     .logFn = idf.log.stdLogFn,
 };
+
+/// Progress callback with WiFi RSSI
+fn progressCallback(info: idf.http.ProgressInfo) void {
+    // Get WiFi RSSI via idf.wifi module
+    const rssi = idf.wifi.getRssi();
+    std.log.info("Progress: {} bytes ({} KB/s) | RSSI: {} | IRAM: {}, PSRAM: {} free", .{
+        info.bytes,
+        info.speed_kbps,
+        rssi,
+        info.iram_free,
+        info.psram_free,
+    });
+}
 
 fn printMemoryStats() void {
     std.log.info("=== Heap Memory Statistics ===", .{});
@@ -38,6 +53,9 @@ fn printMemoryStats() void {
 fn runSpeedTest(url: [:0]const u8, test_name: []const u8) void {
     std.log.info("--- {s} ---", .{test_name});
     std.log.info("URL: {s}", .{url});
+
+    // Set progress callback with WiFi RSSI
+    idf.http.setProgressCallback(progressCallback);
 
     var client = idf.HttpClient.init(.{
         .url = url,
@@ -68,32 +86,42 @@ fn runSpeedTest(url: [:0]const u8, test_name: []const u8) void {
     std.log.info("Memory used during download: {} bytes", .{mem_used});
 }
 
-fn httpSpeedTestTask() void {
-    const server_ip = c.CONFIG_TEST_SERVER_IP;
-    const server_port = c.CONFIG_TEST_SERVER_PORT;
+/// HTTP speed test task function (runs on PSRAM stack)
+fn httpSpeedTestTaskFn(_: ?*anyopaque) callconv(.c) i32 {
+    const server_ip: []const u8 = std.mem.sliceTo(c.CONFIG_TEST_SERVER_IP, 0);
+    const server_port: u16 = c.CONFIG_TEST_SERVER_PORT;
 
     std.log.info("", .{});
-    std.log.info("=== HTTP Speed Test ===", .{});
+    std.log.info("=== HTTP Speed Test (Zig esp_http_client) ===", .{});
     std.log.info("Server: {s}:{}", .{ server_ip, server_port });
+    std.log.info("Note: Running on PSRAM stack task (64KB)", .{});
 
-    // Test different sizes
-    const sizes = [_][]const u8{ "1k", "10k", "100k", "1m" };
-    const test_names = [_][]const u8{ "Download 1k", "Download 10k", "Download 100k", "Download 1m" };
+    // Test 10MB and 50MB for stable speed measurement
+    const tests = [_]struct { path: []const u8, name: []const u8 }{
+        .{ .path = "/test/10m", .name = "Download 10MB" },
+        .{ .path = "/test/52428800", .name = "Download 50MB" },
+    };
 
-    inline for (sizes, test_names) |size, name| {
-        const url = std.fmt.comptimePrint("http://{s}:{d}/test/{s}", .{ server_ip, server_port, size });
-        runSpeedTest(url, name);
+    for (tests) |t| {
+        var url_buf: [128]u8 = undefined;
+        const url = std.fmt.bufPrintZ(&url_buf, "http://{s}:{d}{s}", .{ server_ip, server_port, t.path }) catch {
+            std.log.err("URL too long", .{});
+            continue;
+        };
+        runSpeedTest(url, t.name);
         idf.delayMs(1000);
     }
 
     std.log.info("", .{});
     std.log.info("=== Speed Test Complete ===", .{});
     printMemoryStats();
+
+    return 0;
 }
 
 export fn app_main() void {
     std.log.info("==========================================", .{});
-    std.log.info("  HTTP Speed Test - Zig Version", .{});
+    std.log.info("  HTTP Speed Test - Zig esp_http_client", .{});
     std.log.info("  Build Tag: {s}", .{BUILD_TAG});
     std.log.info("==========================================", .{});
 
@@ -108,9 +136,9 @@ export fn app_main() void {
         return;
     };
 
-    // Connect to WiFi
-    const ssid: []const u8 = std.mem.sliceTo(c.CONFIG_WIFI_SSID, 0);
-    const password: []const u8 = std.mem.sliceTo(c.CONFIG_WIFI_PASSWORD, 0);
+    // Connect to WiFi (use sentinel-terminated strings for C interop)
+    const ssid: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_SSID));
+    const password: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_PASSWORD));
 
     std.log.info("Connecting to SSID: {s}", .{ssid});
 
@@ -129,8 +157,15 @@ export fn app_main() void {
 
     printMemoryStats();
 
-    // Run speed test
-    httpSpeedTestTask();
+    // Run speed test on PSRAM stack task using SAL
+    std.log.info("Starting HTTP test on PSRAM stack task (64KB stack)...", .{});
+    const result = idf.sal.thread.go(idf.heap.psram, "http_test", httpSpeedTestTaskFn, null, .{
+        .stack_size = 65536, // 64KB
+    }) catch |err| {
+        std.log.err("Failed to run HTTP test task: {}", .{err});
+        return;
+    };
+    std.log.info("HTTP test task completed with result: {}", .{result});
 
     // Keep running
     while (true) {

@@ -1,14 +1,20 @@
 # HTTP Speed Test
 
-This example tests HTTP download speeds using `esp_http_client`, comparing C and Zig implementations.
+This example tests HTTP download speeds, comparing three implementations:
+- **C** with `esp_http_client`
+- **Zig** with `esp_http_client` wrapper
+- **Zig Std** with pure Zig LWIP sockets (no TLS/embedTLS)
+
+All versions run HTTP tests on **PSRAM stack tasks** (64KB) for fair comparison.
 
 ## Features
 
-- Download speed testing with configurable sizes (1KB, 10KB, 100KB, 1MB)
+- Download speed testing with configurable sizes (1KB, 100KB, 1MB, 10MB, 50MB)
 - Memory usage monitoring during downloads
 - WiFi connection handling
 - Local test server included
 - Optimized WiFi/LWIP settings for maximum throughput
+- **SAL (System Abstraction Layer)** for PSRAM task stack allocation
 
 ## Test Server Setup
 
@@ -33,7 +39,7 @@ idf.py menuconfig  # Set TEST_SERVER_IP to your computer's IP
 idf.py build flash monitor
 ```
 
-### Zig Version
+### Zig esp_http_client Version
 
 ```bash
 cd zig
@@ -43,117 +49,91 @@ idf.py menuconfig  # Set TEST_SERVER_IP to your computer's IP
 idf.py build flash monitor
 ```
 
+### Zig Std Version (Pure Zig HTTP)
+
+```bash
+cd zig_std
+source ~/esp/esp-adf/esp-idf/export.sh
+idf.py set-target esp32s3
+idf.py menuconfig  # Set TEST_SERVER_IP to your computer's IP
+idf.py build flash monitor
+```
+
 ## Comparison Results
 
-**Test Environment:** ESP32-S3 with 8MB PSRAM, WiFi 2.4GHz, Local HTTP Server
+**Test Environment:** ESP32-S3-DevKitC-1 with 8MB PSRAM @ 80MHz, WiFi 2.4GHz (RSSI: -45 to -60 dBm), Go HTTP Server, CPU @ 240MHz
 
 ### Binary Size
 
-| Version | Binary Size | Difference |
-|---------|-------------|------------|
-| C       | 877,440 bytes (857 KB) | baseline |
-| Zig     | 892,992 bytes (872 KB) | +15,552 (+1.8%) |
+| Version | .bin Size | Diff |
+|---------|-----------|------|
+| **C** | 802 KB | baseline |
+| **Zig esp_http** | 897 KB | +11.8% |
+| **Zig std** | 726 KB | **-9.5%** |
 
-### Memory Usage
+> **Zig std has the smallest binary** because it doesn't include `esp_http_client` and `esp-tls` libraries.
 
-| Metric | C Version | Zig Version |
-|--------|-----------|-------------|
-| Initial (after boot) | DRAM Used: 59,920 | DRAM Used: 59,920 |
-| After WiFi Connected | DRAM Used: 120,744 | DRAM Used: 120,676 |
-| Final (after tests) | DRAM Used: 121,268 | DRAM Used: 121,016 |
-| PSRAM Used | 2,588 | 2,588 |
-| Memory per 1MB download | 580 bytes | **388 bytes** |
+### Download Speed (KB/s)
 
-### Download Speed (optimized WiFi/LWIP settings)
+| File Size | C | Zig esp_http | Zig std | Winner |
+|-----------|---|--------------|---------|--------|
+| **10 MB** | 871 | 790 | **1,058** | Zig std (+21%) |
+| **50 MB** | 626 | 818 | **941** | Zig std (+50%) |
 
-| File Size | C Version | Zig Version |
-|-----------|-----------|-------------|
-| 1 KB | 3.51 KB/s* | 22 KB/s* |
-| 10 KB | 114.32 KB/s | 312 KB/s |
-| 100 KB | 212.90 KB/s | 65 KB/s |
-| 1 MB | **594.02 KB/s** | **736 KB/s** |
+> **Zig std achieves ~1 MB/s** for 10MB downloads, **21% faster** than C version.
+> For sustained 50MB transfers, Zig std is **50% faster** than C (941 vs 626 KB/s).
 
-\* First request has connection setup overhead
+### Runtime Memory Usage
 
-**Key Results:**
-- Both versions now use the same `esp_http_client_perform()` API
-- **Zig achieves equal or faster speeds than C** (736 KB/s vs 594 KB/s for 1MB)
-- Binary size difference is only 1.8% (~15KB)
-- Memory usage is virtually identical
+| Metric | C | Zig esp_http | Zig std | Winner |
+|--------|---|--------------|---------|--------|
+| **Internal DRAM Used** | 139,684 | 139,560 | **139,468** | Zig std |
+| **External PSRAM Used** | 133,896 | 133,896 | **133,440** | Zig std |
+| **Task Stack Used** | **2,960** | 4,096 | 36,640 | C |
 
-### Runtime Logs
+> All versions use identical PSRAM for task stack allocation (64KB each).
+> Zig std uses more stack due to 32KB receive buffer allocated on stack.
 
-#### C Version
-```
-==========================================
-  HTTP Speed Test - C Version
-  Build Tag: http_speed_c_v1
-==========================================
-=== Heap Memory Statistics ===
-Internal DRAM: Total=381911 Free=321991 Used=59920
-External PSRAM: Total=8388608 Free=8386148 Used=2460
-...
-Connected! IP: 192.168.4.7
-=== HTTP Speed Test ===
-Server: 192.168.1.7:8080
---- Download 1k ---
-Status: 200, Content-Length: 1024
-Downloaded: 1024 bytes in 0.28 sec
-Speed: 3.51 KB/s (0.003 MB/s)
---- Download 10k ---
-Status: 200, Content-Length: 10240
-Downloaded: 10240 bytes in 0.09 sec
-Speed: 114.32 KB/s (0.112 MB/s)
---- Download 100k ---
-Status: 200, Content-Length: 102400
-Downloaded: 102400 bytes in 0.47 sec
-Speed: 212.90 KB/s (0.208 MB/s)
---- Download 1m ---
-Status: 200, Content-Length: 1048576
-Downloaded: 1048576 bytes in 1.72 sec
-Speed: 594.02 KB/s (0.580 MB/s)
-=== Speed Test Complete ===
-Internal DRAM: Total=381911 Free=260643 Used=121268
-External PSRAM: Total=8388608 Free=8386020 Used=2588
+### Key Results
+
+1. **Binary Size**: Zig std is **9.5% smaller** than C (no TLS overhead)
+2. **Speed**: Zig std achieves **21-50% faster** downloads than C
+3. **Memory (Heap)**: Zig std uses **slightly less** IRAM and PSRAM
+4. **Memory (Stack)**: C uses least stack; Zig std uses most (32KB buffer on stack)
+
+## Architecture
+
+All three versions now use the SAL (System Abstraction Layer) for PSRAM task creation:
+
+**C Version:**
+```c
+// Create PSRAM task with custom stack
+StackType_t *stack = heap_caps_malloc(65536, MALLOC_CAP_SPIRAM);
+xTaskCreateRestrictedPinnedToCore(&task_params, &handle, 1);
 ```
 
-#### Zig Version
+**Zig Versions (using SAL):**
+```zig
+const result = try idf.sal.thread.go(idf.heap.psram, "http_test", httpTestFn, null, .{
+    .stack_size = 65536,  // 64KB stack on PSRAM
+});
 ```
-==========================================
-  HTTP Speed Test - Zig Version
-  Build Tag: http_speed_zig_v1
-==========================================
-=== Heap Memory Statistics ===
-Internal DRAM: Total=381903 Free=321983 Used=59920
-External PSRAM: Total=8388608 Free=8386148 Used=2460
-...
-Connected! IP: 192.168.4.7
-=== HTTP Speed Test ===
-Server: 192.168.1.7:8080
---- Download 1k ---
-Status: 200, Content-Length: 1024
-Downloaded: 1024 bytes in 45 ms
-Speed: 22 KB/s
---- Download 10k ---
-Status: 200, Content-Length: 10240
-Downloaded: 10240 bytes in 32 ms
-Speed: 312 KB/s
---- Download 100k ---
-Status: 200, Content-Length: 102400
-Downloaded: 102400 bytes in 1519 ms
-Speed: 65 KB/s
---- Download 1m ---
-Status: 200, Content-Length: 1048576
-Downloaded: 1048576 bytes in 1391 ms
-Speed: 736 KB/s
-=== Speed Test Complete ===
-Internal DRAM: Total=381903 Free=260891 Used=121012
-External PSRAM: Total=8388608 Free=8386020 Used=2588
-```
+
+## Server Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/test/1k` | 1 KB download |
+| `/test/10k` | 10 KB download |
+| `/test/100k` | 100 KB download |
+| `/test/1m` | 1 MB download |
+| `/test/10m` | 10 MB download |
+| `/test/<bytes>` | Custom size download |
+| `/info` | Server info |
 
 ## WiFi/LWIP Optimization Settings
 
-Both versions use optimized sdkconfig settings for maximum throughput:
+All versions use optimized sdkconfig settings for maximum throughput:
 
 ```
 # WiFi Optimizations
@@ -170,52 +150,27 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 CONFIG_LWIP_TCP_MSS=1440
 CONFIG_LWIP_TCP_NODELAY=y
-```
 
-## Server Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `/test/1k` | 1 KB download |
-| `/test/10k` | 10 KB download |
-| `/test/100k` | 100 KB download |
-| `/test/1m` | 1 MB download |
-| `/test/10m` | 10 MB download |
-| `/test/<bytes>` | Custom size download |
-| `/info` | Server info |
-
-## Code Comparison
-
-### HTTP Client Usage
-
-**C:**
-```c
-esp_http_client_config_t config = {
-    .url = url,
-    .event_handler = http_event_handler,
-    .user_data = &ctx,
-    .buffer_size = 4096,
-    .timeout_ms = 30000,
-};
-esp_http_client_handle_t client = esp_http_client_init(&config);
-esp_http_client_perform(client);
-esp_http_client_cleanup(client);
-```
-
-**Zig:**
-```zig
-var client = try idf.HttpClient.init(.{
-    .url = url,
-    .timeout_ms = 30000,
-    .buffer_size = 4096,
-});
-defer client.deinit();
-const result = try client.download();
+# PSRAM
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
 ```
 
 ## Conclusion
 
-- **Performance**: Zig matches or exceeds C performance when using the same underlying APIs
-- **Binary Size**: Only 1.8% larger (~15KB) due to `std.log` formatting
-- **Memory Usage**: Virtually identical heap usage
-- **Code Quality**: Zig provides cleaner error handling and automatic resource cleanup
+| Criteria | Winner | Notes |
+|----------|--------|-------|
+| **Binary Size** | **Zig std** | 9.5% smaller, no TLS overhead |
+| **Download Speed** | **Zig std** | 21-50% faster than C |
+| **Heap Memory** | **Zig std** | Slightly less IRAM/PSRAM |
+| **Stack Usage** | **C** | 2,960 bytes vs Zig std's 36,640 bytes |
+| **Code Complexity** | **Zig** | Cleaner error handling, automatic cleanup |
+| **TLS Support** | **C/Zig esp_http** | Zig std doesn't include TLS |
+
+**Recommendation:**
+- Use **Zig std** for HTTP-only applications (smaller, faster, less heap)
+- Use **Zig esp_http** when HTTPS is required
+- Consider stack size when using Zig std (needs ~40KB for 32KB buffer)
+
+**Note:** Test results may vary based on WiFi signal strength (tested at RSSI -45 to -60 dBm).

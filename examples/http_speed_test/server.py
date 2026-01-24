@@ -129,10 +129,11 @@ def main():
     print("=" * 60)
     print()
     
-    # Allow address reuse
-    socketserver.TCPServer.allow_reuse_address = True
+    # Allow address reuse and use threading for concurrent connections
+    class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
     
-    with socketserver.TCPServer(("", PORT), SpeedTestHandler) as httpd:
+    with ThreadedTCPServer(("", PORT), SpeedTestHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

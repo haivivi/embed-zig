@@ -111,17 +111,29 @@ var ppp_resolver = idf.DnsResolver{
 const ip3 = try ppp_resolver.resolve("example.com");
 ```
 
-## Binary Size
+## Binary Size & Memory
 
-| Version | Size |
-|---------|------|
-| Zig | 766,048 bytes |
+### Binary Size
+
+| Version | .bin Size |
+|---------|-----------|
+| **Zig** | 766,032 bytes (748 KB) |
+
+### Memory Usage (Static)
+
+| Memory Region | Zig |
+|---------------|-----|
+| **IRAM** | 16,383 bytes |
+| **DRAM** | 106,231 bytes |
+| **Flash Code** | 553,150 bytes |
+
+> Note: No C version for comparison - this example is Zig-only to showcase pure Zig DNS implementation.
 
 ## Architecture Notes
 
 Due to ESP-IDF's WiFi configuration structures containing complex bit-fields and unions that `@cImport` cannot translate, WiFi initialization uses C helper functions:
 
-- `lib/src/wifi.zig` - Zig interface
+- `esp/src/wifi.zig` - Zig interface
 - `main/src/main.c` - C helper implementation
 
 DNS resolver is pure Zig implementation using lwIP sockets.

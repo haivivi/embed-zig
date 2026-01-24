@@ -32,24 +32,25 @@ Test Environment:
 - ESP-IDF v5.4.0
 - Zig 0.15.x (Espressif fork)
 - Target: esp32s3
-- Optimization: ReleaseSafe (Zig), Debug (C)
+- Optimization: Size (`CONFIG_COMPILER_OPTIMIZATION_SIZE=y`)
+- PSRAM: Enabled (8MB Octal)
 
 ### Binary Size
 
-| Version | .bin Size | Build Tag | Diff |
-|---------|-----------|-----------|------|
-| Zig | 225,808 bytes (220.5 KB) | `led_strip_zig_v3` | +11,040 bytes (+5.1%) |
-| C | 214,768 bytes (209.7 KB) | `led_strip_c_v1` | baseline |
+| Version | .bin Size | Diff |
+|---------|-----------|------|
+| **C** | 223,088 bytes (217.9 KB) | baseline |
+| **Zig** | 230,768 bytes (225.4 KB) | **+3.4%** |
 
-### Runtime Memory Usage (Heap)
+### Memory Usage (Static)
 
-| Memory Region | Zig | C |
-|---------------|-----|---|
-| **Internal DRAM Total** | 408,544 bytes | 408,536 bytes |
-| **Free** | 391,300 bytes | 391,292 bytes |
-| **Used** | 17,244 bytes | 17,244 bytes |
+| Memory Region | C | Zig | Diff |
+|---------------|---|-----|------|
+| **IRAM** | 16,383 bytes | 16,383 bytes | 0% |
+| **DRAM** | 59,027 bytes | 59,019 bytes | -0.01% |
+| **Flash Code** | 103,324 bytes | 110,948 bytes | +7.4% |
 
-> ✅ Zig with `std.log` only adds ~11KB (+5%) to binary size. Runtime memory is identical to C!
+> Note: DRAM usage is nearly identical. The Flash Code increase (~7.6KB) is due to Zig's `std.fmt` integer formatting code used by `std.log`.
 
 ## Runtime Logs
 
@@ -82,19 +83,13 @@ I (2324) led_strip: Toggling the LED OFF!
 I (3324) led_strip: Toggling the LED ON!
 ```
 
-> Note: PSRAM is not enabled, memory statistics only show internal DRAM.
-
 ## Key Finding
 
-The ~430KB bloat was **NOT** caused by `std.log`, but by incorrect CMakeLists.txt configuration:
+The **~3.4%** binary size overhead from `std.log` comes from:
+1. `std.fmt` integer formatting code (~7.6KB)
+2. Zig's comptime format string validation
 
-```cmake
-# ❌ These lines force-link entire WiFi stack (~430KB)!
-"-Wl,-u,esp_netif_init"
-"-Wl,-u,esp_wifi_init"
-```
-
-After removing unnecessary linker symbols, `std.log` only adds ~11KB (+5%).
+**Important**: Previous 14.1% overhead was due to incorrect sdkconfig (using `CONFIG_COMPILER_OPTIMIZATION_DEBUG=y` instead of `CONFIG_COMPILER_OPTIMIZATION_SIZE=y`).
 
 ## Build
 

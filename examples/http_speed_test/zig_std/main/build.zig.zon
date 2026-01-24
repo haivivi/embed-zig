@@ -1,0 +1,12 @@
+.{
+    .name = .http_speed_test_zig_std,
+    .version = "0.1.0",
+    .dependencies = .{
+        .esp_zig = .{ .path = "../../../../esp" },
+    },
+    .paths = .{
+        "build.zig",
+        "src",
+    },
+    .fingerprint = 0x56bed7ce0acd2a96,
+}

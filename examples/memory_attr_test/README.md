@@ -28,29 +28,27 @@ Test Environment: ESP-IDF v5.4, Zig 0.15.x (Espressif fork)
 
 ### Binary Size
 
-| Version | Binary Size | Build Tag |
-|---------|-------------|-----------|
-| Zig | 216,384 bytes (211.3 KB) | `mem_attr_zig_v1` |
-| C | 216,864 bytes (211.8 KB) | `mem_attr_c_v1` |
-| **Diff** | **-480 bytes** | |
+| Version | .bin Size | Diff |
+|---------|-----------|------|
+| **C** | 216,864 bytes (211.8 KB) | baseline |
+| **Zig** | 216,384 bytes (211.3 KB) | **-0.2%** ✅ |
+
+### Memory Usage (Static)
+
+| Memory Region | C | Zig | Diff |
+|---------------|---|-----|------|
+| **IRAM** | 16,383 bytes | 16,383 bytes | 0% |
+| **DRAM** | 57,839 bytes | 57,843 bytes | +0.01% |
+| **Flash Code** | 100,326 bytes | 100,010 bytes | **-0.3%** ✅ |
 
 ### Runtime Memory Usage (Heap)
 
-| Memory Region | Metric | Zig | C | Diff |
-|---------------|--------|-----|---|------|
-| **Internal DRAM** | Total | 436,919 | 436,919 | 0 |
-| | Free | 386,247 | 386,247 | 0 |
-| | Used | 50,672 | 50,672 | 0 |
-| | Min free ever | 386,247 | 386,247 | 0 |
-| | Largest block | 286,720 | 286,720 | 0 |
-| **External PSRAM** | Total | 8,384,508 | 8,384,508 | 0 |
-| | Free | 8,382,048 | 8,382,048 | 0 |
-| | Used | 2,460 | 2,460 | 0 |
-| | Min free ever | 8,382,048 | 8,382,048 | 0 |
-| | Largest block | 8,257,536 | 8,257,536 | 0 |
-| **DMA capable** | Free | 378,743 | 378,743 | 0 |
+| Memory Region | Zig | C | Diff |
+|---------------|-----|---|------|
+| **Internal DRAM Used** | 50,672 bytes | 50,672 bytes | 0 |
+| **External PSRAM Used** | 2,460 bytes | 2,460 bytes | 0 |
 
-> Note: Zig and C versions have identical runtime memory usage
+> ✅ Zig binary is slightly **smaller** than C. Runtime memory is identical.
 
 ## Runtime Logs
 

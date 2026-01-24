@@ -17,12 +17,24 @@
 
 ## 示例列表
 
+### 无需外部硬件
+
 | 示例 | 描述 | 状态 |
 |---------|-------------|--------|
-| [led_strip_flash](./led_strip_flash/) | WS2812 LED 灯带控制 | ✅ 可用 |
+| [led_strip_flash](./led_strip_flash/) | WS2812 LED 灯带控制（板载 LED） | ✅ 可用 |
 | [memory_attr_test](./memory_attr_test/) | IRAM/DRAM/PSRAM 内存位置测试 | ✅ 可用 |
+| [nvs_storage](./nvs_storage/) | NVS 键值存储 | ✅ 可用 |
+| [gpio_button](./gpio_button/) | GPIO 输入（Boot 按钮）+ LED 切换 | ✅ 可用 |
+| [timer_callback](./timer_callback/) | 硬件定时器（GPTimer）+ ISR 回调 | ✅ 可用 |
+| [pwm_fade](./pwm_fade/) | LEDC PWM 硬件渐变（呼吸灯） | ✅ 可用 |
+| [temperature_sensor](./temperature_sensor/) | 内部芯片温度传感器 | ✅ 可用 |
+
+### 需要 WiFi
+
+| 示例 | 描述 | 状态 |
+|---------|-------------|--------|
 | [wifi_dns_lookup](./wifi_dns_lookup/) | WiFi 连接 + DNS 查询（UDP/TCP） | ✅ 可用 |
-| [http_speed_test](./http_speed_test/) | HTTP 下载测速（C 与 Zig 对比） | 🚧 新增 |
+| [http_speed_test](./http_speed_test/) | HTTP 下载测速（C 与 Zig 对比） | ✅ 可用 |
 
 ## 项目结构
 

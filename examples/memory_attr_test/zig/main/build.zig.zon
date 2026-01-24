@@ -4,7 +4,7 @@
     .fingerprint = 0xc41b8a57174112db,
     .dependencies = .{
         .esp_zig = .{
-            .path = "../../../../lib",
+            .path = "../../../../esp",
         },
     },
     .paths = .{

@@ -32,24 +32,25 @@ led_strip_flash/
 - ESP-IDF v5.4.0
 - Zig 0.15.x (Espressif fork)
 - Target: esp32s3
-- 编译优化: ReleaseSafe (Zig), Debug (C)
+- 编译优化: Size (`CONFIG_COMPILER_OPTIMIZATION_SIZE=y`)
+- PSRAM: 已启用 (8MB Octal)
 
-### Binary Size
+### 二进制大小
 
-| 版本 | .bin 大小 | Build Tag | 差异 |
-|------|-----------|-----------|------|
-| Zig | 225,808 bytes (220.5 KB) | `led_strip_zig_v3` | +11,040 bytes (+5.1%) |
-| C | 214,768 bytes (209.7 KB) | `led_strip_c_v1` | baseline |
+| 版本 | .bin 大小 | 差异 |
+|------|-----------|------|
+| **C** | 223,088 bytes (217.9 KB) | 基准 |
+| **Zig** | 230,768 bytes (225.4 KB) | **+3.4%** |
 
-### 运行时内存占用 (Heap)
+### 内存占用（静态）
 
-| 内存区域 | Zig | C |
-|----------|-----|---|
-| **Internal DRAM Total** | 408,544 bytes | 408,536 bytes |
-| **Free** | 391,300 bytes | 391,292 bytes |
-| **Used** | 17,244 bytes | 17,244 bytes |
+| 内存区域 | C | Zig | 差异 |
+|----------|---|-----|------|
+| **IRAM** | 16,383 bytes | 16,383 bytes | 0% |
+| **DRAM** | 59,027 bytes | 59,019 bytes | -0.01% |
+| **Flash Code** | 103,324 bytes | 110,948 bytes | +7.4% |
 
-> ✅ 使用 `std.log` 的 Zig 只增加 ~11KB (+5%) 二进制大小。运行时内存与 C 版本相同！
+> 注：DRAM 使用量几乎相同。Flash Code 增加（~7.6KB）是由于 Zig 的 `std.fmt` 整数格式化代码（`std.log` 使用）。
 
 ## 运行日志
 
@@ -82,19 +83,13 @@ I (2324) led_strip: Toggling the LED OFF!
 I (3324) led_strip: Toggling the LED ON!
 ```
 
-> 注：此示例未启用 PSRAM，内存统计仅显示内部 DRAM。
-
 ## 关键发现
 
-~430KB 的体积膨胀**不是**由 `std.log` 引起的，而是 CMakeLists.txt 配置错误：
+`std.log` 导致的 **~3.4%** 二进制大小增加来自：
+1. `std.fmt` 整数格式化代码（~7.6KB）
+2. Zig 的 comptime 格式字符串验证
 
-```cmake
-# ❌ 这两行强制链接了整个 WiFi 协议栈 (~430KB)！
-"-Wl,-u,esp_netif_init"
-"-Wl,-u,esp_wifi_init"
-```
-
-移除不需要的链接符号后，`std.log` 只增加 ~11KB (+5%)。
+**重要提示**：之前 14.1% 的增加是由于 sdkconfig 配置错误（使用了 `CONFIG_COMPILER_OPTIMIZATION_DEBUG=y` 而不是 `CONFIG_COMPILER_OPTIMIZATION_SIZE=y`）。
 
 ## 构建
 

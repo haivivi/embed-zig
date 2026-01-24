@@ -1,0 +1,15 @@
+.{
+    .name = .nvs_storage,
+    .version = "0.1.0",
+    .fingerprint = 0x1e4c233d9013eef2,
+    .dependencies = .{
+        .esp_zig = .{
+            .path = "../../../../esp",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

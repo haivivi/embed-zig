@@ -17,12 +17,24 @@ All examples are developed and tested on:
 
 ## Examples List
 
+### No External Hardware Required
+
 | Example | Description | Status |
 |---------|-------------|--------|
-| [led_strip_flash](./led_strip_flash/) | WS2812 LED strip control | ✅ Working |
+| [led_strip_flash](./led_strip_flash/) | WS2812 LED strip control (onboard LED) | ✅ Working |
 | [memory_attr_test](./memory_attr_test/) | IRAM/DRAM/PSRAM memory placement | ✅ Working |
+| [nvs_storage](./nvs_storage/) | NVS key-value storage | ✅ Working |
+| [gpio_button](./gpio_button/) | GPIO input (Boot button) + LED toggle | ✅ Working |
+| [timer_callback](./timer_callback/) | Hardware timer (GPTimer) with ISR callback | ✅ Working |
+| [pwm_fade](./pwm_fade/) | LEDC PWM with hardware fade (breathing LED) | ✅ Working |
+| [temperature_sensor](./temperature_sensor/) | Internal chip temperature sensor | ✅ Working |
+
+### WiFi Required
+
+| Example | Description | Status |
+|---------|-------------|--------|
 | [wifi_dns_lookup](./wifi_dns_lookup/) | WiFi connection + DNS lookup (UDP/TCP) | ✅ Working |
-| [http_speed_test](./http_speed_test/) | HTTP download speed test (C vs Zig) | 🚧 New |
+| [http_speed_test](./http_speed_test/) | HTTP download speed test (C vs Zig) | ✅ Working |
 
 ## Project Structure
 

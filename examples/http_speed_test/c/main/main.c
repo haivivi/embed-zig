@@ -2,14 +2,17 @@
  * HTTP Speed Test - C Version
  * 
  * Tests HTTP download speed using esp_http_client
+ * Runs on PSRAM task stack for fair comparison with Zig versions
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "freertos/idf_additions.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -22,7 +25,7 @@
 #include "sdkconfig.h"
 
 static const char *TAG = "http_speed";
-static const char *BUILD_TAG = "http_speed_c_v1";
+static const char *BUILD_TAG = "http_speed_c_v2";
 
 // WiFi event group
 static EventGroupHandle_t s_wifi_event_group;
@@ -113,6 +116,10 @@ static esp_err_t wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // Disable WiFi power save for maximum throughput
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    ESP_LOGI(TAG, "WiFi power save disabled for max speed");
 
     ESP_LOGI(TAG, "Connecting to SSID: %s", CONFIG_WIFI_SSID);
 
@@ -138,6 +145,7 @@ static esp_err_t wifi_init_sta(void)
 
 typedef struct {
     size_t total_bytes;
+    size_t last_print_bytes;
     int64_t start_time;
 } http_download_ctx_t;
 
@@ -148,6 +156,23 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     switch(evt->event_id) {
         case HTTP_EVENT_ON_DATA:
             ctx->total_bytes += evt->data_len;
+            // Print progress every 1MB with memory stats
+            if (ctx->total_bytes - ctx->last_print_bytes >= 1024 * 1024) {
+                int64_t now = esp_timer_get_time();
+                double elapsed = (now - ctx->start_time) / 1000000.0;
+                double speed = (ctx->total_bytes / 1024.0) / elapsed;
+                size_t iram_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+                size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+                // Get WiFi RSSI
+                wifi_ap_record_t ap_info;
+                int8_t rssi = 0;
+                if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                    rssi = ap_info.rssi;
+                }
+                ESP_LOGI("http", "Progress: %u bytes (%.0f KB/s) | RSSI: %d | IRAM: %u, PSRAM: %u free", 
+                         ctx->total_bytes, speed, rssi, iram_free, psram_free);
+                ctx->last_print_bytes = ctx->total_bytes;
+            }
             break;
         default:
             break;
@@ -162,6 +187,7 @@ static void run_speed_test(const char *url, const char *test_name)
     
     http_download_ctx_t ctx = {
         .total_bytes = 0,
+        .last_print_bytes = 0,
         .start_time = esp_timer_get_time(),
     };
     
@@ -169,9 +195,9 @@ static void run_speed_test(const char *url, const char *test_name)
         .url = url,
         .event_handler = http_event_handler,
         .user_data = &ctx,
-        .buffer_size = 4096,
-        .buffer_size_tx = 1024,
-        .timeout_ms = 30000,
+        .buffer_size = 16384,       // 16KB receive buffer
+        .buffer_size_tx = 4096,     // 4KB send buffer
+        .timeout_ms = 120000,       // 2 minutes timeout for large files
     };
     
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -216,17 +242,19 @@ static void http_speed_test_task(void *pvParameters)
     int server_port = CONFIG_TEST_SERVER_PORT;
     
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "=== HTTP Speed Test ===");
+    ESP_LOGI(TAG, "=== HTTP Speed Test (C esp_http_client) ===");
     ESP_LOGI(TAG, "Server: %s:%d", server_ip, server_port);
+    ESP_LOGI(TAG, "Note: Running on PSRAM stack task (64KB)");
     
-    // Test different sizes
-    const char *sizes[] = {"1k", "10k", "100k", "1m"};
+    // Test 10MB and 50MB for stable speed measurement
+    const char *sizes[] = {"10m", "52428800"};
+    const char *names[] = {"10MB", "50MB"};
     const int num_tests = sizeof(sizes) / sizeof(sizes[0]);
     
     for (int i = 0; i < num_tests; i++) {
         snprintf(url, sizeof(url), "http://%s:%d/test/%s", server_ip, server_port, sizes[i]);
         char test_name[32];
-        snprintf(test_name, sizeof(test_name), "Download %s", sizes[i]);
+        snprintf(test_name, sizeof(test_name), "Download %s", names[i]);
         
         run_speed_test(url, test_name);
         vTaskDelay(pdMS_TO_TICKS(1000));  // Wait between tests
@@ -236,11 +264,51 @@ static void http_speed_test_task(void *pvParameters)
     ESP_LOGI(TAG, "=== Speed Test Complete ===");
     print_memory_stats();
     
-    // Keep running
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-        ESP_LOGI(TAG, "Still running...");
+    // Log stack usage (high water mark = minimum free stack ever, in words)
+    UBaseType_t high_water_mark = uxTaskGetStackHighWaterMark(NULL);
+    uint32_t min_free_bytes = high_water_mark * sizeof(StackType_t);
+    uint32_t stack_size = 65536;  // Must match create_psram_task call
+    uint32_t max_used_bytes = stack_size - min_free_bytes;
+    ESP_LOGI(TAG, "task 'http_test' exit, stack used: %lu/%lu bytes (free: %lu)", 
+             (unsigned long)max_used_bytes, (unsigned long)stack_size, (unsigned long)min_free_bytes);
+    
+    // Signal completion and delete task
+    vTaskDelete(NULL);
+}
+
+// Create task with PSRAM stack
+static esp_err_t create_psram_task(const char *name, TaskFunction_t func, 
+                                    uint32_t stack_size, UBaseType_t priority)
+{
+    // Allocate stack from PSRAM
+    StackType_t *stack = heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (stack == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate PSRAM stack");
+        return ESP_ERR_NO_MEM;
     }
+    
+    // Create task with custom stack
+    TaskParameters_t task_params = {
+        .pvTaskCode = func,
+        .pcName = name,
+        .usStackDepth = stack_size / sizeof(StackType_t),
+        .pvParameters = NULL,
+        .uxPriority = priority,
+        .puxStackBuffer = stack,
+        .xRegions = {{0}}
+    };
+    
+    TaskHandle_t handle = NULL;
+    BaseType_t result = xTaskCreateRestrictedPinnedToCore(&task_params, &handle, 1);
+    
+    if (result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create PSRAM task");
+        heap_caps_free(stack);
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "Created task '%s' with %" PRIu32 " bytes PSRAM stack", name, stack_size);
+    return ESP_OK;
 }
 
 // ============================================================================
@@ -250,7 +318,7 @@ static void http_speed_test_task(void *pvParameters)
 void app_main(void)
 {
     ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "  HTTP Speed Test - C Version");
+    ESP_LOGI(TAG, "  HTTP Speed Test - C esp_http_client");
     ESP_LOGI(TAG, "  Build Tag: %s", BUILD_TAG);
     ESP_LOGI(TAG, "==========================================");
     
@@ -274,6 +342,17 @@ void app_main(void)
     
     print_memory_stats();
     
-    // Run speed test
-    http_speed_test_task(NULL);
+    // Run speed test on PSRAM stack task (64KB)
+    ESP_LOGI(TAG, "Starting HTTP test on PSRAM stack task (64KB stack)...");
+    ret = create_psram_task("http_test", http_speed_test_task, 65536, 16);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create HTTP test task");
+        return;
+    }
+    
+    // Keep main task running
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "Still running...");
+    }
 }
