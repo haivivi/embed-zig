@@ -1,0 +1,10 @@
+.{
+    .name = .esp_zig,
+    .version = "0.1.0",
+    .fingerprint = 0x9d67f5fbd8e599f4,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
