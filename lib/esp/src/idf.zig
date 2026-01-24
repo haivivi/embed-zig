@@ -1,18 +1,7 @@
 //! ESP-IDF Zig bindings
 //!
-//! Usage:
-//!   const idf = @import("esp_zig").idf;
-//!   const sal = idf.sal;
-//!   const heap = idf.heap;
-//!
-//!   // SAL thread with PSRAM stack
-//!   const result = try sal.thread.go(heap.psram, "worker", myFn, null, .{
-//!       .stack_size = 65536,
-//!   });
-//!
-//!   // SAL mutex
-//!   var mutex = sal.Mutex.init();
-//!   defer mutex.deinit();
+//! Provides idiomatic Zig wrappers for ESP-IDF C APIs.
+//! See individual modules for detailed documentation.
 
 // Core
 pub const adc = @import("adc.zig");

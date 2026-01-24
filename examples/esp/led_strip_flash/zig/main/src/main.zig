@@ -1,5 +1,5 @@
 const std = @import("std");
-const idf = @import("idf");
+const idf = @import("esp");
 
 const c = @cImport({
     @cInclude("sdkconfig.h");

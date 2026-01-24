@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0xa90cf8d5bb43900d,
     .dependencies = .{
-        .esp_zig = .{
+        .esp = .{
             .path = "../../../../../lib/esp",
         },
     },

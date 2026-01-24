@@ -10,7 +10,7 @@
 //! - WS2812 RGB LED on GPIO48
 
 const std = @import("std");
-const idf = @import("idf");
+const idf = @import("esp");
 
 pub const std_options = std.Options{
     .log_level = .info,

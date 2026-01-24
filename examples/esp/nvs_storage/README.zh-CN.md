@@ -47,7 +47,7 @@ Reboot the device to see boot_count increment!
 ## NVS API 使用
 
 ```zig
-const idf = @import("idf");
+const idf = @import("esp");
 
 // 初始化 NVS
 try idf.nvs.init();

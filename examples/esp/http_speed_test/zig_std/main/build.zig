@@ -1,12 +1,12 @@
 const std = @import("std");
-const esp = @import("esp_zig");
+const esp = @import("esp");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Get esp_zig dependency (still needed for WiFi init and logging)
-    const esp_dep = b.dependency("esp_zig", .{
+    // Get esp dependency (still needed for WiFi init and logging)
+    const esp_dep = b.dependency("esp", .{
         .target = target,
         .optimize = optimize,
     });
@@ -18,8 +18,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    // Add idf module from esp_zig (for WiFi and logging only)
-    root_module.addImport("idf", esp_dep.module("idf"));
+    // Add esp module (for WiFi and logging only)
+    root_module.addImport("esp", esp_dep.module("esp"));
 
     const lib = b.addLibrary(.{
         .name = "main_zig",

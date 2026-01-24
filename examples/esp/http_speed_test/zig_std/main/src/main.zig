@@ -10,7 +10,7 @@
 
 const std = @import("std");
 
-const idf = @import("idf");
+const idf = @import("esp");
 
 // sdkconfig for WiFi credentials only
 const c = @cImport({

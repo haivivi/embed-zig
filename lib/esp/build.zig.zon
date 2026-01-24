@@ -1,7 +1,7 @@
 .{
-    .name = .esp_zig,
+    .name = .esp,
     .version = "0.1.0",
-    .fingerprint = 0x9d67f5fbd8e599f4,
+    .fingerprint = 0xe54a8bd0bac6a302,
     .paths = .{
         "build.zig",
         "build.zig.zon",

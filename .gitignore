@@ -10,3 +10,8 @@ tmp
 sdkconfig
 sdkconfig.old
 managed_components
+
+# Build artifacts
+*.a
+*.o
+lib/docs/

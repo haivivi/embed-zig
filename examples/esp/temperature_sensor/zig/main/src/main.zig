@@ -9,7 +9,7 @@
 //! The reading is affected by chip operation and may be 10-20°C higher than ambient.
 
 const std = @import("std");
-const idf = @import("idf");
+const idf = @import("esp");
 
 pub const std_options = std.Options{
     .log_level = .info,

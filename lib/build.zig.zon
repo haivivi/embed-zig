@@ -1,0 +1,13 @@
+.{
+    .name = .@"embed-zig",
+    .version = "0.1.0",
+    .fingerprint = 0xa2b1c3d4e5f6a7b8,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "docs.zig",
+        "esp/",
+        "sal/",
+    },
+}

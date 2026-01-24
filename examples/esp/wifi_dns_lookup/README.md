@@ -78,7 +78,7 @@ example.com => 93.184.xxx.xxx
 ## API Usage
 
 ```zig
-const idf = @import("idf");
+const idf = @import("esp");
 
 // Initialize and connect WiFi
 var wifi = try idf.Wifi.init();

@@ -4,15 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Create the idf module
-    const idf_module = b.addModule("idf", .{
+    // Create the esp module
+    const esp_module = b.addModule("esp", .{
         .root_source_file = b.path("src/idf.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     // Add ESP deps to the module itself
-    addEspDeps(b, idf_module) catch {};
+    addEspDeps(b, esp_module) catch {};
 }
 
 /// Add all ESP-IDF include paths and dependencies to a module

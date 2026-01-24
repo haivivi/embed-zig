@@ -3,7 +3,7 @@
 //! Tests PSRAM, IRAM, and DRAM memory placement using Zig's linksection.
 
 const std = @import("std");
-const idf = @import("idf");
+const idf = @import("esp");
 
 // sdkconfig only
 const c = @cImport({
