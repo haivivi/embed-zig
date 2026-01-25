@@ -1,12 +1,55 @@
-# Espressif Zig Bootstrap
+# embed-zig
 
 中文文档 | [English](./README.md)
 
-本项目基于 `ziglang/zig-bootstrap`，使用 `espressif/llvm-project` 替换 `llvm/llvm-project`，以支持 ESP32 的 Xtensa 架构开发。
+用于嵌入式开发的 Zig 库，通过 Espressif 的 LLVM 分支支持 ESP32。
 
-## 预编译下载
+📚 **[在线文档](https://haivivi.github.io/embed-zig/)**
 
-您可以从 [GitHub Releases](https://github.com/haivivi/zig-bootstrap/releases) 下载预编译的 Zig 编译器。
+## 特性
+
+- **ESP-IDF 绑定** - ESP-IDF API 的惯用 Zig 封装
+- **系统抽象层** - 跨平台的线程、同步和时间原语
+- **预编译 Zig 编译器** - 支持 Xtensa 架构的 Zig
+
+## 快速开始
+
+### 使用库
+
+添加到你的 `build.zig.zon`：
+
+```zig
+.dependencies = .{
+    .esp = .{
+        .url = "https://github.com/haivivi/embed-zig/archive/refs/heads/main.tar.gz",
+        .hash = "...",
+    },
+},
+```
+
+在代码中使用：
+
+```zig
+const esp = @import("esp");
+
+pub fn main() !void {
+    // GPIO
+    try esp.gpio.configOutput(48);
+    try esp.gpio.setLevel(48, 1);
+
+    // WiFi
+    var wifi = try esp.Wifi.init();
+    try wifi.connect(.{ .ssid = "MyNetwork", .password = "secret" });
+
+    // Timer
+    var timer = try esp.Timer.init(.{ .callback = myCallback });
+    try timer.start(1000000); // 1 秒
+}
+```
+
+## 预编译 Zig 编译器
+
+从 [GitHub Releases](https://github.com/haivivi/embed-zig/releases) 下载支持 Xtensa 的 Zig。
 
 | 平台 | 下载文件 |
 |------|----------|
@@ -17,112 +60,111 @@
 
 ```bash
 # 下载并解压（以 macOS ARM64 为例）
-curl -LO https://github.com/haivivi/zig-bootstrap/releases/download/espressif-0.15.2/zig-aarch64-macos-none-baseline.tar.xz
+curl -LO https://github.com/haivivi/embed-zig/releases/download/espressif-0.15.2/zig-aarch64-macos-none-baseline.tar.xz
 tar -xJf zig-aarch64-macos-none-baseline.tar.xz
 
 # 验证 Xtensa 支持
 ./zig-aarch64-macos-none-baseline/zig targets | grep xtensa
 ```
 
-## 主要改进
+## 库模块
 
-1. **版本控制**：使用 `wget` 拉取源代码，确保依赖版本锁定且可重现
-2. **透明补丁**：使用 `patch` 文件修改代码，使所有改动明确且可审查
-3. **交叉编译**：支持从 macOS 交叉编译 Linux 二进制文件
+### ESP (`esp`)
 
-## 平台支持
+ESP-IDF 绑定：
 
-| 平台 | 状态 |
+| 模块 | 描述 |
 |------|------|
-| macOS ARM64 | ✅ 已测试 |
-| macOS x86_64 | ✅ 已测试 |
-| Linux x86_64 | ✅ 支持（从 macOS 交叉编译）|
-| Linux ARM64 | ✅ 支持（从 macOS 交叉编译）|
+| `gpio` | 数字 I/O 控制 |
+| `wifi` | WiFi 站点模式 |
+| `http` | HTTP 客户端 |
+| `nvs` | 非易失性存储 |
+| `timer` | 硬件定时器 |
+| `led_strip` | 可寻址 LED 控制 |
+| `adc` | 模数转换 |
+| `ledc` | PWM 生成 |
+| `sal` | 系统抽象层（FreeRTOS） |
 
-## 快速开始
+### SAL (`sal`)
 
-### 构建编译器
+跨平台抽象：
+
+| 模块 | 描述 |
+|------|------|
+| `thread` | 任务/线程管理 |
+| `sync` | 互斥锁、信号量、事件 |
+| `time` | 休眠和延时函数 |
+
+## 示例
+
+查看 [`examples/`](./examples/) 目录：
+
+| 示例 | 描述 |
+|------|------|
+| `gpio_button` | 带中断的按钮输入 |
+| `led_strip_flash` | WS2812 LED 灯带控制 |
+| `http_speed_test` | HTTP 下载速度测试 |
+| `wifi_dns_lookup` | WiFi DNS 解析 |
+| `timer_callback` | 硬件定时器回调 |
+| `nvs_storage` | 非易失性存储 |
+| `pwm_fade` | PWM LED 渐变 |
+| `temperature_sensor` | 内部温度传感器 |
+
+### 运行示例
 
 ```bash
-./bootstrap.sh espressif-0.15.x <target> baseline
+# 1. 设置 ESP-IDF 环境
+cd ~/esp/esp-idf && source export.sh
+
+# 2. 进入示例目录
+cd examples/esp/led_strip_flash/zig
+
+# 3. 设置目标芯片
+idf.py set-target esp32s3
+
+# 4. 构建和烧录
+idf.py build
+idf.py flash monitor
 ```
 
-**可用目标：**
+## 构建编译器
+
+从源码构建支持 Xtensa 的 Zig：
+
+```bash
+cd bootstrap
+./bootstrap.sh esp/0.15.2 <target> baseline
+```
+
+**目标平台：**
 - `aarch64-macos-none` - macOS ARM64
 - `x86_64-macos-none` - macOS x86_64
 - `x86_64-linux-gnu` - Linux x86_64
 - `aarch64-linux-gnu` - Linux ARM64
 
-**可用版本：**
-- `espressif-0.14.x` - 支持 Xtensa 的 Zig 0.14.x
-- `espressif-0.15.x` - 支持 Xtensa 的 Zig 0.15.x（推荐）
-
-脚本会自动检测 CPU 核心数，最多使用 8 核进行并行编译。
-
-### 运行示例
-
-要构建和运行示例（例如 `led_strip_flash`）：
-
-```bash
-# 1. 进入 ESP-IDF 安装目录
-pushd PATH_TO_IDF
-
-# 2. 设置 ESP-IDF 环境
-. export.sh
-
-# 3. 返回项目目录
-popd
-
-# 4. 进入示例目录
-cd examples/led_strip_flash/zig
-
-# 5. 设置目标芯片
-idf.py set-target esp32s3
-
-# 6. （可选）配置项目
-idf.py menuconfig
-
-# 7. 构建和烧录
-idf.py build
-idf.py flash monitor
-```
-
 ## 项目结构
 
 ```
-espressif-zig-bootstrap/
-├── bootstrap.sh              # 引导脚本
-├── espressif-0.14.x/         # Zig 0.14.x 支持
-│   ├── espressif.patch       # Xtensa 支持补丁
-│   ├── llvm-project          # Espressif LLVM 的 URL
-│   └── zig-bootstrap         # Zig bootstrap 的 URL
-├── espressif-0.15.x/         # Zig 0.15.x 支持（推荐）
-│   ├── espressif.patch       # Xtensa 支持补丁
-│   ├── llvm-project          # Espressif LLVM 的 URL
-│   └── zig-bootstrap         # Zig bootstrap 的 URL
-└── examples/
-    ├── led_strip_flash/      # LED 灯带示例
-    ├── gpio_button/          # GPIO 按钮示例
-    ├── http_speed_test/      # HTTP 速度测试
-    ├── memory_attr_test/     # 内存属性测试
-    ├── wifi_dns_lookup/      # WiFi DNS 查询
-    └── ...                   # 更多示例
-```
-
-## 构建产物
-
-运行引导脚本后，您将得到：
-
-- 支持 Xtensa 的 Zig 编译器，位于：`espressif-0.15.x/.out/zig-<target>-baseline/zig`
-- 启用了 Espressif Xtensa 后端的 LLVM 20.1.1
-- 支持 ESP32、ESP32-S2、ESP32-S3 目标
-
-## 环境设置
-
-示例项目使用自动 Zig 安装路径检测。如果需要手动指定路径：
-
-```bash
-export ZIG_INSTALL=/path/to/espressif-zig-bootstrap/espressif-0.15.x/.out/zig-aarch64-macos-none-baseline
+embed-zig/
+├── lib/
+│   ├── esp/              # ESP-IDF 绑定
+│   │   └── src/
+│   │       ├── gpio.zig
+│   │       ├── wifi/
+│   │       ├── http.zig
+│   │       └── ...
+│   └── sal/              # 系统抽象层
+│       └── src/
+│           ├── thread.zig
+│           ├── sync.zig
+│           └── time.zig
+├── examples/
+│   └── esp/              # ESP32 示例
+├── bootstrap/
+│   └── esp/              # 编译器构建脚本
+│       ├── 0.14.0/
+│       └── 0.15.2/
+└── README.md
 ```
 
 ## 许可证
@@ -130,7 +172,6 @@ export ZIG_INSTALL=/path/to/espressif-zig-bootstrap/espressif-0.15.x/.out/zig-aa
 本项目包含以下项目的补丁和构建脚本：
 - Zig 编程语言
 - LLVM 项目（Espressif 分支）
-- Zig Bootstrap
 
 请参考各上游项目的许可证。
 
@@ -140,5 +181,3 @@ export ZIG_INSTALL=/path/to/espressif-zig-bootstrap/espressif-0.15.x/.out/zig-aa
 - [espressif/llvm-project](https://github.com/espressif/llvm-project)
 - [ESP-IDF](https://github.com/espressif/esp-idf)
 - [kassane/zig-espressif-bootstrap](https://github.com/kassane/zig-espressif-bootstrap)
-- [gpanders/esp32-zig-starter](https://github.com/gpanders/esp32-zig-starter)
-- [kassane/zig-esp-idf-sample](https://github.com/kassane/zig-esp-idf-sample)
