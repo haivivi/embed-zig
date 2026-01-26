@@ -11,7 +11,9 @@
 
  
 
-[Documentation](https://haivivi.github.io/embed-zig/) · [API Reference](https://haivivi.github.io/embed-zig/api/) · [Examples](./examples/)
+🌐 **https://embed.giztoy.com**
+
+[Documentation](https://embed.giztoy.com/docs/) · [API Reference](https://embed.giztoy.com/api/) · [Examples](./examples/)
 
 ---
 
