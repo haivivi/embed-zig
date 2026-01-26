@@ -1,179 +1,101 @@
 # embed-zig
 
-中文文档 | [English](./README.md)
+中文 | [English](./README.md)
 
-用于嵌入式开发的 Zig 库，通过 Espressif 的 LLVM 分支支持 ESP32。
+ 
 
-📚 **[在线文档](https://haivivi.github.io/embed-zig/)**
+**用于嵌入式开发的 Zig 库。**
 
-## 特性
+*从裸机到应用层，从 ESP32 到桌面模拟，*
+*一种语言，一套抽象，到处运行。*
 
-- **ESP-IDF 绑定** - ESP-IDF API 的惯用 Zig 封装
-- **系统抽象层** - 跨平台的线程、同步和时间原语
-- **预编译 Zig 编译器** - 支持 Xtensa 架构的 Zig
+ 
+
+[文档](https://haivivi.github.io/embed-zig/) · [API 参考](https://haivivi.github.io/embed-zig/api/) · [示例](./examples/)
+
+---
+
+## 概述
+
+embed-zig 为嵌入式系统提供统一的开发体验。应用逻辑只写一次——今天跑在 ESP32 硬件上，明天在桌面模拟器里运行。
+
+### 核心特性
+
+- **HAL** — 板子无关的硬件抽象（按钮、LED、传感器）
+- **SAL** — 跨平台系统原语（线程、同步、时间）
+- **ESP** — ESP-IDF 的地道 Zig 绑定
+- **Raysim** — 基于 Raylib 的桌面模拟
+- **预编译 Zig** — 支持 ESP32 Xtensa 架构的编译器
+
+---
 
 ## 快速开始
 
-### 使用库
-
-添加到你的 `build.zig.zon`：
-
-```zig
-.dependencies = .{
-    .esp = .{
-        .url = "https://github.com/haivivi/embed-zig/archive/refs/heads/main.tar.gz",
-        .hash = "...",
-    },
-},
-```
-
-在代码中使用：
-
-```zig
-const esp = @import("esp");
-
-pub fn main() !void {
-    // GPIO
-    try esp.gpio.configOutput(48);
-    try esp.gpio.setLevel(48, 1);
-
-    // WiFi
-    var wifi = try esp.Wifi.init();
-    try wifi.connect(.{ .ssid = "MyNetwork", .password = "secret" });
-
-    // Timer
-    var timer = try esp.Timer.init(.{ .callback = myCallback });
-    try timer.start(1000000); // 1 秒
-}
-```
-
-## 预编译 Zig 编译器
-
-从 [GitHub Releases](https://github.com/haivivi/embed-zig/releases) 下载支持 Xtensa 的 Zig。
-
-| 平台 | 下载文件 |
-|------|----------|
-| macOS ARM64 | `zig-aarch64-macos-none-baseline.tar.xz` |
-| macOS x86_64 | `zig-x86_64-macos-none-baseline.tar.xz` |
-| Linux x86_64 | `zig-x86_64-linux-gnu-baseline.tar.xz` |
-| Linux ARM64 | `zig-aarch64-linux-gnu-baseline.tar.xz` |
-
 ```bash
-# 下载并解压（以 macOS ARM64 为例）
-curl -LO https://github.com/haivivi/embed-zig/releases/download/espressif-0.15.2/zig-aarch64-macos-none-baseline.tar.xz
-tar -xJf zig-aarch64-macos-none-baseline.tar.xz
+# 下载支持 Xtensa 的 Zig
+curl -LO https://github.com/haivivi/embed-zig/releases/download/zig-0.14.0-xtensa/zig-aarch64-macos-none-baseline.tar.xz
+tar -xJf zig-aarch64-macos-none-baseline.tar.xz && export PATH=$PWD/zig-aarch64-macos-none-baseline:$PATH
 
-# 验证 Xtensa 支持
-./zig-aarch64-macos-none-baseline/zig targets | grep xtensa
-```
-
-## 库模块
-
-### ESP (`esp`)
-
-ESP-IDF 绑定：
-
-| 模块 | 描述 |
-|------|------|
-| `gpio` | 数字 I/O 控制 |
-| `wifi` | WiFi 站点模式 |
-| `http` | HTTP 客户端 |
-| `nvs` | 非易失性存储 |
-| `timer` | 硬件定时器 |
-| `led_strip` | 可寻址 LED 控制 |
-| `adc` | 模数转换 |
-| `ledc` | PWM 生成 |
-| `sal` | 系统抽象层（FreeRTOS） |
-
-### SAL (`sal`)
-
-跨平台抽象：
-
-| 模块 | 描述 |
-|------|------|
-| `thread` | 任务/线程管理 |
-| `sync` | 互斥锁、信号量、事件 |
-| `time` | 休眠和延时函数 |
-
-## 示例
-
-查看 [`examples/`](./examples/) 目录：
-
-| 示例 | 描述 |
-|------|------|
-| `gpio_button` | 带中断的按钮输入 |
-| `led_strip_flash` | WS2812 LED 灯带控制 |
-| `http_speed_test` | HTTP 下载速度测试 |
-| `wifi_dns_lookup` | WiFi DNS 解析 |
-| `timer_callback` | 硬件定时器回调 |
-| `nvs_storage` | 非易失性存储 |
-| `pwm_fade` | PWM LED 渐变 |
-| `temperature_sensor` | 内部温度传感器 |
-
-### 运行示例
-
-```bash
-# 1. 设置 ESP-IDF 环境
+# 设置 ESP-IDF 并编译示例
 cd ~/esp/esp-idf && source export.sh
-
-# 2. 进入示例目录
-cd examples/esp/led_strip_flash/zig
-
-# 3. 设置目标芯片
-idf.py set-target esp32s3
-
-# 4. 构建和烧录
-idf.py build
-idf.py flash monitor
+cd examples/esp/led_strip_flash/zig && idf.py build && idf.py flash monitor
 ```
 
-## 构建编译器
-
-从源码构建支持 Xtensa 的 Zig：
+或者在模拟器中运行（无需硬件）：
 
 ```bash
-cd bootstrap
-./bootstrap.sh esp/0.15.2 <target> baseline
+cd examples/raysim/gpio_button && zig build run
 ```
 
-**目标平台：**
-- `aarch64-macos-none` - macOS ARM64
-- `x86_64-macos-none` - macOS x86_64
-- `x86_64-linux-gnu` - Linux x86_64
-- `aarch64-linux-gnu` - Linux ARM64
+---
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [简介](./docs/intro.zh-CN.md) | 项目愿景、理念、设计目标 |
+| [快速开始](./docs/bootstrap.zh-CN.md) | 环境设置、编译、常见问题 |
+| [示例](./docs/examples.zh-CN.md) | 示例清单与运行命令 |
+| [架构](./docs/design.zh-CN.md) | SAL / HAL / ESP / Raysim 设计 |
+
+---
+
+## 支持的平台
+
+| 平台 | 状态 | 说明 |
+|------|:----:|------|
+| ESP32-S3-DevKit | ✅ | GPIO 按钮，单色 LED |
+| ESP32-S3-Korvo-2 | ✅ | ADC 按钮，RGB 灯带 |
+| Raylib 模拟器 | ✅ | 桌面 GUI 模拟 |
+| ESP32-C3/C6 (RISC-V) | 🚧 | 标准 Zig 可用 |
+
+---
 
 ## 项目结构
 
 ```
 embed-zig/
 ├── lib/
-│   ├── esp/              # ESP-IDF 绑定
-│   │   └── src/
-│   │       ├── gpio.zig
-│   │       ├── wifi/
-│   │       ├── http.zig
-│   │       └── ...
-│   └── sal/              # 系统抽象层
-│       └── src/
-│           ├── thread.zig
-│           ├── sync.zig
-│           └── time.zig
+│   ├── hal/          # 硬件抽象层
+│   ├── sal/          # 系统抽象层（接口）
+│   ├── esp/          # ESP-IDF 绑定 + SAL 实现
+│   └── raysim/       # Raylib 模拟 + SAL 实现
 ├── examples/
-│   └── esp/              # ESP32 示例
-├── bootstrap/
-│   └── esp/              # 编译器构建脚本
-│       ├── 0.14.0/
-│       └── 0.15.2/
-└── README.md
+│   ├── apps/         # 平台无关的应用逻辑
+│   ├── esp/          # ESP32 入口点
+│   └── raysim/       # 桌面模拟入口点
+└── bootstrap/        # Zig 编译器构建脚本
 ```
+
+---
 
 ## 许可证
 
-本项目包含以下项目的补丁和构建脚本：
-- Zig 编程语言
-- LLVM 项目（Espressif 分支）
+Apache License 2.0。见 [LICENSE](./LICENSE)。
 
-请参考各上游项目的许可证。
+本项目包含 Zig 和 LLVM（Espressif 分支）的补丁。相关许可证请参考上游项目。
+
+---
 
 ## 致谢
 
@@ -181,3 +103,11 @@ embed-zig/
 - [espressif/llvm-project](https://github.com/espressif/llvm-project)
 - [ESP-IDF](https://github.com/espressif/esp-idf)
 - [kassane/zig-espressif-bootstrap](https://github.com/kassane/zig-espressif-bootstrap)
+
+---
+
+ 
+
+*"宇宙建立在层层抽象之上。好的软件也是。"*
+
+ 
