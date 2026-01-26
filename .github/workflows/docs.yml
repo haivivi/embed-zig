@@ -5,6 +5,8 @@ on:
     branches: [main, master]
     paths:
       - 'lib/**'
+      - 'docs/**'
+      - 'pages/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -29,10 +31,13 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Build Documentation
-        run: |
-          cd lib
-          zig build-lib -femit-docs=docs docs.zig
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: 'latest'
+
+      - name: Build Site
+        run: ./pages/build.sh
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -40,7 +45,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: lib/docs
+          path: pages
 
   deploy:
     environment:

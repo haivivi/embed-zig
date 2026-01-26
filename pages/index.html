@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>embed-zig | Zig for Embedded Development</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f5f3f0;
+            --fg: #2a2a2a;
+            --accent: #1a1a1a;
+            --muted: #6b6b6b;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --border: rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        #pcb-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: auto;
+            cursor: crosshair;
+        }
+
+        #mask-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        #flag-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        .content {
+            position: relative;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .content a, .content button, .content .btn, .content .feature-card, 
+        .content select, .content input, .content .lang-switch, .content .mcu-counter {
+            pointer-events: auto;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        .hero {
+            text-align: center;
+            padding: 100px 0 80px;
+        }
+
+        .hero h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 500;
+            margin-bottom: 24px;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+        }
+
+        .hero h1 span {
+            font-weight: 600;
+        }
+
+        .hero .tagline {
+            font-size: 1.2rem;
+            color: var(--muted);
+            margin-bottom: 48px;
+            font-weight: 300;
+        }
+
+        .hero .buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            font-family: 'Orbitron', sans-serif;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            letter-spacing: 0.02em;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #000;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--fg);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: #fff;
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .features {
+            padding: 40px 0 80px;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+
+        .feature-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            padding: 32px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .feature-card h3 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem;
+            margin-bottom: 8px;
+            color: var(--accent);
+            font-weight: 500;
+            letter-spacing: 0.03em;
+        }
+
+        .feature-card p {
+            color: var(--muted);
+            font-size: 0.85rem;
+            line-height: 1.7;
+        }
+
+        .architecture {
+            padding: 40px 0 80px;
+            text-align: center;
+        }
+
+        .architecture h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 40px;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+        }
+
+        .arch-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            display: inline-block;
+        }
+
+        #arch-canvas {
+            display: block;
+        }
+
+        footer {
+            text-align: center;
+            padding: 60px 0;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        footer .quote {
+            font-style: italic;
+            margin-bottom: 16px;
+        }
+
+        footer a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: var(--accent);
+        }
+
+        .lang-switch {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            font-size: 0.85rem;
+        }
+
+        .lang-switch a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        .lang-switch a:hover {
+            color: var(--accent);
+        }
+
+        .mcu-counter {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #4ade80;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-family: 'Orbitron', monospace;
+            font-size: 0.9rem;
+            z-index: 100;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .mcu-counter:hover {
+            background: rgba(0, 0, 0, 0.9);
+            transform: scale(1.05);
+        }
+
+        .mcu-counter .label {
+            color: #888;
+            font-size: 0.7rem;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .mcu-counter.complete {
+            background: rgba(74, 222, 128, 0.9);
+            color: #000;
+        }
+
+        .mcu-counter.complete .label {
+            color: #333;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="pcb-canvas"></canvas>
+    <canvas id="mask-canvas"></canvas>
+    <canvas id="flag-canvas"></canvas>
+    
+    <div class="mcu-counter" id="mcu-counter" title="Find all chips! Click chips to capture (green). Click here for hints (red).">
+        <span class="label">CHIPS</span>
+        <span id="mcu-found" style="color:#4ade80">0</span>/<span id="mcu-hinted" style="color:#f87171">0</span>/<span id="mcu-total">0</span>
+    </div>
+    
+    <div class="content">
+        <div class="lang-switch">
+            <a href="index.zh-CN.html">中文</a>
+        </div>
+        
+        <div class="container">
+            <section class="hero">
+                <h1>embed<span>-zig</span></h1>
+                <p class="tagline">Zig libraries for embedded development.<br>Write once, run on ESP32 and desktop simulation.</p>
+                <div class="buttons">
+                    <a href="docs/" class="btn btn-primary">Documentation</a>
+                    <a href="api/" class="btn btn-secondary">API Reference</a>
+                    <a href="https://github.com/haivivi/zig-bootstrap" target="_blank" class="btn btn-secondary">☆ Star on GitHub</a>
+                </div>
+            </section>
+
+            <section class="features">
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h3>Hardware Abstraction</h3>
+                        <p>Board-agnostic APIs for buttons, LEDs, sensors, and more. Same code runs on different hardware.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>System Abstraction</h3>
+                        <p>Cross-platform primitives for threads, synchronization, timers, and logging.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>Desktop Simulation</h3>
+                        <p>Test your embedded code on desktop with Raylib-based visual simulation before flashing.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="architecture">
+                <h2>LAYERED ARCHITECTURE</h2>
+                <div class="arch-card">
+                    <canvas id="arch-canvas" width="620" height="280"></canvas>
+                </div>
+            </section>
+
+            <footer>
+                <p class="quote">"From a higher dimension, I reconstruct the embedded world."</p>
+                <p><a href="https://github.com/haivivi">haivivi</a> · Apache-2.0 License</p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        // ============ PCB Background Generation ============
+        const canvas = document.getElementById('pcb-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // PCB Colors
+        const PCB_BG = '#1a1a1a';
+        const TRACE_COLOR = '#2d4a2d';
+        const COPPER = '#3d6b3d';
+        const VIA_RING = '#4a7a4a';
+        const CHIP_BODY = '#1a1a1a';
+        const SILK = '#c0c0c0';
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            generatePCB();
+        }
+        
+        // Collision detection
+        const occupiedRegions = [];
+        
+        // Chip game state (all chips, not just MCU)
+        const chipPositions = [];
+        let chipsFound = 0;
+        let chipsHinted = 0;
+        let gameOver = false;
+        
+        // Restart game with flash effect
+        function restartGame() {
+            gameOver = false;
+            
+            // Flash effect: fade to black then back
+            let flashAlpha = 0;
+            let flashPhase = 'darken';  // darken -> regenerate -> lighten
+            
+            function flashAnimation() {
+                if (flashPhase === 'darken') {
+                    flashAlpha += 0.08;
+                    mctx.fillStyle = `rgba(0, 0, 0, ${flashAlpha})`;
+                    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+                    
+                    if (flashAlpha >= 1) {
+                        flashPhase = 'regenerate';
+                        // Clear flag canvas
+                        fctx.clearRect(0, 0, flagCanvas.width, flagCanvas.height);
+                        // Regenerate PCB
+                        resizeCanvas();
+                        // Reset mask to white
+                        mctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+                        mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+                        flashPhase = 'lighten';
+                    }
+                } else if (flashPhase === 'lighten') {
+                    flashAlpha -= 0.05;
+                    if (flashAlpha > 0) {
+                        mctx.fillStyle = `rgba(0, 0, 0, ${flashAlpha})`;
+                        mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+                    }
+                    
+                    if (flashAlpha <= 0) {
+                        return;  // Animation done
+                    }
+                }
+                requestAnimationFrame(flashAnimation);
+            }
+            
+            flashAnimation();
+        }
+        
+        function isRegionFree(x, y, w, h, padding = 10) {
+            const newRegion = { x: x - padding, y: y - padding, w: w + padding * 2, h: h + padding * 2 };
+            for (const region of occupiedRegions) {
+                if (!(newRegion.x + newRegion.w < region.x || 
+                      newRegion.x > region.x + region.w ||
+                      newRegion.y + newRegion.h < region.y || 
+                      newRegion.y > region.y + region.h)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        function occupyRegion(x, y, w, h) {
+            occupiedRegions.push({ x, y, w, h });
+        }
+        
+        function drawQFPChip(x, y, size, label) {
+            const pinCount = 12;
+            const pinWidth = size * 0.06;
+            const pinLength = size * 0.15;
+            const pinSpacing = (size - pinWidth * 2) / (pinCount + 1);
+            
+            // Chip body
+            ctx.fillStyle = CHIP_BODY;
+            ctx.fillRect(x, y, size, size);
+            
+            // Pins on all sides
+            ctx.fillStyle = COPPER;
+            for (let i = 0; i < pinCount; i++) {
+                const offset = pinSpacing * (i + 1);
+                // Top
+                ctx.fillRect(x + offset, y - pinLength, pinWidth, pinLength);
+                // Bottom
+                ctx.fillRect(x + offset, y + size, pinWidth, pinLength);
+                // Left
+                ctx.fillRect(x - pinLength, y + offset, pinLength, pinWidth);
+                // Right
+                ctx.fillRect(x + size, y + offset, pinLength, pinWidth);
+            }
+            
+            // Pin 1 marker
+            ctx.beginPath();
+            ctx.arc(x + size * 0.15, y + size * 0.15, size * 0.05, 0, Math.PI * 2);
+            ctx.fillStyle = SILK;
+            ctx.fill();
+            
+            // Label - bigger font
+            if (label) {
+                ctx.fillStyle = SILK;
+                ctx.font = `bold ${size * 0.18}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, x + size / 2, y + size / 2);
+            }
+        }
+        
+        function drawSOICChip(x, y, w, h, label) {
+            const pinCount = 4;
+            const pinWidth = w * 0.1;
+            const pinLength = h * 0.2;
+            const pinSpacing = w / (pinCount + 1);
+            
+            ctx.fillStyle = CHIP_BODY;
+            ctx.fillRect(x, y, w, h);
+            
+            ctx.fillStyle = COPPER;
+            for (let i = 0; i < pinCount; i++) {
+                const offset = pinSpacing * (i + 1) - pinWidth / 2;
+                ctx.fillRect(x + offset, y - pinLength, pinWidth, pinLength);
+                ctx.fillRect(x + offset, y + h, pinWidth, pinLength);
+            }
+            
+            if (label) {
+                ctx.fillStyle = SILK;
+                ctx.font = `bold ${Math.min(w, h) * 0.35}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, x + w / 2, y + h / 2);
+            }
+        }
+        
+        function drawSMD(x, y, w, h) {
+            ctx.fillStyle = COPPER;
+            ctx.fillRect(x, y, w * 0.3, h);
+            ctx.fillRect(x + w * 0.7, y, w * 0.3, h);
+            ctx.fillStyle = CHIP_BODY;
+            ctx.fillRect(x + w * 0.25, y + h * 0.1, w * 0.5, h * 0.8);
+        }
+        
+        function drawVia(x, y, outerR, innerR) {
+            ctx.beginPath();
+            ctx.arc(x, y, outerR, 0, Math.PI * 2);
+            ctx.fillStyle = VIA_RING;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, innerR, 0, Math.PI * 2);
+            ctx.fillStyle = PCB_BG;
+            ctx.fill();
+        }
+        
+        function drawTrace(x1, y1, x2, y2, width) {
+            ctx.strokeStyle = TRACE_COLOR;
+            ctx.lineWidth = width;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            if (Math.random() > 0.5) {
+                ctx.lineTo(x2, y1);
+                ctx.lineTo(x2, y2);
+            } else {
+                ctx.lineTo(x1, y2);
+                ctx.lineTo(x2, y2);
+            }
+            ctx.stroke();
+        }
+        
+        function generatePCB() {
+            const w = canvas.width;
+            const h = canvas.height;
+            occupiedRegions.length = 0;
+            chipPositions.length = 0;
+            chipsFound = 0;
+            
+            // Background
+            ctx.fillStyle = PCB_BG;
+            ctx.fillRect(0, 0, w, h);
+            
+            // Calculate component counts based on screen size
+            const area = w * h;
+            const density = area / 100000;  // base density factor
+            
+            // Fixed 32 chips total: 8 MCU + 24 SOIC
+            const mcuCount = 8;
+            const soicCount = 24;
+            const smdCount = Math.max(150, Math.floor(density * 20));
+            const viaCount = Math.max(200, Math.floor(density * 25));
+            const traceCount = Math.max(100, Math.floor(density * 15));
+            
+            // Main MCU chips
+            const mcuSize = 70;
+            const mcuLabels = ['ESP32-S3', 'STM32F4', 'RP2040', 'ATMEGA', 'NRF52', 'CH32V', 'GD32', 'PIC32', 'SAMD21', 'LPC1768'];
+            for (let i = 0; i < mcuCount; i++) {
+                for (let attempt = 0; attempt < 50; attempt++) {
+                    const x = Math.random() * (w - mcuSize - 40) + 20;
+                    const y = Math.random() * (h - mcuSize - 40) + 20;
+                    if (isRegionFree(x, y, mcuSize, mcuSize, 15)) {
+                        const label = mcuLabels[i % mcuLabels.length];
+                        drawQFPChip(x, y, mcuSize, label);
+                        occupyRegion(x, y, mcuSize, mcuSize);
+                        // Record chip position for the game
+                        chipPositions.push({ x, y, w: mcuSize, h: mcuSize, found: false, type: 'mcu' });
+                        break;
+                    }
+                }
+            }
+            
+            // SOIC chips
+            const soicLabels = ['74HC595', 'MAX232', 'LM358', 'NE555', 'CD4017', 'TL072', 'LM393', 'ULN2003', 'MAX485', 'SN754410'];
+            for (let i = 0; i < soicCount; i++) {
+                const cw = 35 + Math.random() * 20;
+                const ch = 18 + Math.random() * 10;
+                for (let attempt = 0; attempt < 40; attempt++) {
+                    const x = Math.random() * (w - cw - 20) + 10;
+                    const y = Math.random() * (h - ch - 20) + 10;
+                    if (isRegionFree(x, y, cw, ch, 8)) {
+                        const label = soicLabels[i % soicLabels.length];
+                        drawSOICChip(x, y, cw, ch, label);
+                        occupyRegion(x, y, cw, ch);
+                        // Record SOIC chip position for the game
+                        chipPositions.push({ x, y, w: cw, h: ch, found: false, type: 'soic' });
+                        break;
+                    }
+                }
+            }
+            
+            // Update counter after all chips placed
+            document.getElementById('mcu-total').textContent = chipPositions.length;
+            document.getElementById('mcu-found').textContent = '0';
+            document.getElementById('mcu-hinted').textContent = '0';
+            document.getElementById('mcu-counter').classList.remove('complete');
+            chipsHinted = 0;
+            
+            // SMD components
+            for (let i = 0; i < smdCount; i++) {
+                const sw = 10 + Math.random() * 8;
+                const sh = 5 + Math.random() * 4;
+                const x = Math.random() * (w - sw);
+                const y = Math.random() * (h - sh);
+                if (isRegionFree(x, y, sw, sh, 2)) {
+                    drawSMD(x, y, sw, sh);
+                }
+            }
+            
+            // Vias
+            for (let i = 0; i < viaCount; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                if (isRegionFree(x - 4, y - 4, 8, 8, 1)) {
+                    drawVia(x, y, 4, 1.5);
+                }
+            }
+            
+            // Traces
+            for (let i = 0; i < traceCount; i++) {
+                const x1 = Math.random() * w;
+                const y1 = Math.random() * h;
+                const x2 = x1 + (Math.random() - 0.5) * 400;
+                const y2 = y1 + (Math.random() - 0.5) * 400;
+                drawTrace(x1, y1, x2, y2, 1.5 + Math.random() * 2);
+            }
+        }
+        
+        // Draw flag on found chip (on flag canvas, above mask)
+        // color: 'green' for found, 'red' for hinted
+        function drawFlag(x, y, size, color = 'green') {
+            const scale = Math.min(1, size / 40);
+            const flagX = x + size - 12 * scale;
+            const flagY = y + 3;
+            
+            // Pole
+            fctx.strokeStyle = '#fff';
+            fctx.lineWidth = 2 * scale;
+            fctx.beginPath();
+            fctx.moveTo(flagX, flagY);
+            fctx.lineTo(flagX, flagY + 20 * scale);
+            fctx.stroke();
+            
+            // Flag
+            fctx.fillStyle = color === 'red' ? '#f87171' : '#4ade80';
+            fctx.beginPath();
+            fctx.moveTo(flagX, flagY);
+            fctx.lineTo(flagX + 10 * scale, flagY + 5 * scale);
+            fctx.lineTo(flagX, flagY + 10 * scale);
+            fctx.closePath();
+            fctx.fill();
+        }
+        
+        // Redraw all flags
+        function redrawFlags() {
+            for (const chip of chipPositions) {
+                if (chip.found) {
+                    drawFlag(chip.x, chip.y, Math.min(chip.w, chip.h), 'green');
+                } else if (chip.hinted) {
+                    drawFlag(chip.x, chip.y, Math.min(chip.w, chip.h), 'red');
+                }
+            }
+        }
+        
+        // Check chip click
+        function checkChipClick(clickX, clickY) {
+            for (const chip of chipPositions) {
+                if (!chip.found &&
+                    clickX >= chip.x && clickX <= chip.x + chip.w &&
+                    clickY >= chip.y && clickY <= chip.y + chip.h) {
+                    chip.found = true;
+                    chipsFound++;
+                    console.log('Found chip! chipsFound now:', chipsFound);
+                    // Only draw green flag if not already hinted (red flag already there)
+                    if (!chip.hinted) {
+                        drawFlag(chip.x, chip.y, Math.min(chip.w, chip.h), 'green');
+                    }
+                    document.getElementById('mcu-found').textContent = chipsFound;
+                    
+                    // Check if all found
+                    const totalFound = chipPositions.filter(c => c.found).length;
+                    if (totalFound === chipPositions.length) {
+                        document.getElementById('mcu-counter').classList.add('complete');
+                        gameOver = true;
+                        if (chipsFound >= chipsHinted) {
+                            playVictoryMusic();
+                        } else {
+                            playFailSound();
+                        }
+                    } else {
+                        playFoundSound();  // Play found sound
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Click handler for chip game
+        canvas.style.pointerEvents = 'auto';
+        canvas.addEventListener('click', (e) => {
+            if (gameOver) return;  // Use counter card to restart
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            checkChipClick(x, y);
+        });
+        
+        // Click counter for hint - ripple effect revealing chip
+        let hintRipples = [];  // Active ripple animations
+        let lastHintTime = 0;
+        const HINT_COOLDOWN = 300;  // ms between hints
+        
+        document.getElementById('mcu-counter').addEventListener('click', () => {
+            // If game over, restart on click
+            if (gameOver) {
+                restartGame();
+                return;
+            }
+            
+            const now = performance.now();
+            if (now - lastHintTime < HINT_COOLDOWN) return;
+            
+            // Find a random unfound and unhinted chip
+            const unfound = chipPositions.filter(c => !c.found && !c.hinted);
+            if (unfound.length === 0) return;
+            
+            lastHintTime = now;
+            
+            const hint = unfound[Math.floor(Math.random() * unfound.length)];
+            const cx = hint.x + hint.w / 2;
+            const cy = hint.y + hint.h / 2;
+            const maxRadius = Math.max(hint.w, hint.h) * 1.5;
+            
+            // Mark as hinted (found by hint, not captured)
+            hint.hinted = true;
+            hint.found = true;  // Mark as found so it can't be clicked again
+            chipsHinted++;
+            document.getElementById('mcu-hinted').textContent = chipsHinted;
+            drawFlag(hint.x, hint.y, Math.min(hint.w, hint.h), 'red');
+            
+            // Check if game over (all chips found)
+            const totalFound = chipPositions.filter(c => c.found).length;
+            if (totalFound === chipPositions.length) {
+                document.getElementById('mcu-counter').classList.add('complete');
+                gameOver = true;
+                if (chipsFound >= chipsHinted) {
+                    playVictoryMusic();
+                } else {
+                    playFailSound();
+                }
+            }
+            
+            // Create ripple animation
+            hintRipples.push({
+                x: cx,
+                y: cy,
+                startTime: performance.now(),
+                duration: 2000,  // total duration
+                maxRadius: maxRadius,
+            });
+            
+            playHoverSound();
+        });
+        
+        // Animate hint ripples in mask
+        function updateHintRipples() {
+            const now = performance.now();
+            
+            for (let i = hintRipples.length - 1; i >= 0; i--) {
+                const r = hintRipples[i];
+                const elapsed = now - r.startTime;
+                const progress = Math.min(1, elapsed / r.duration);
+                
+                // Radius keeps expanding (ease out)
+                const radiusEased = 1 - Math.pow(1 - progress, 2);
+                const radius = r.maxRadius * radiusEased;
+                
+                // Alpha fades out (starts strong, ends transparent)
+                // Keep high alpha early, fade more towards end
+                const alpha = Math.pow(1 - progress, 1.5);
+                
+                // Remove when done
+                if (progress >= 1) {
+                    hintRipples.splice(i, 1);
+                    continue;
+                }
+                
+                // Draw the "hole" in mask
+                if (alpha > 0.01 && radius > 0) {
+                    mctx.save();
+                    mctx.globalCompositeOperation = 'destination-out';
+                    mctx.beginPath();
+                    mctx.arc(r.x, r.y, radius, 0, Math.PI * 2);
+                    // Soft edge gradient with fade alpha
+                    const grad = mctx.createRadialGradient(r.x, r.y, radius * 0.2, r.x, r.y, radius);
+                    grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+                    grad.addColorStop(0.5, `rgba(255,255,255,${alpha * 0.6})`);
+                    grad.addColorStop(1, 'rgba(255,255,255,0)');
+                    mctx.fillStyle = grad;
+                    mctx.fill();
+                    mctx.restore();
+                }
+            }
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // ============ Trail Effect (Fog/Mist Layer) ============
+        const maskCanvas = document.getElementById('mask-canvas');
+        const mctx = maskCanvas.getContext('2d');
+        
+        // Flag canvas (above mask, for visible flags)
+        const flagCanvas = document.getElementById('flag-canvas');
+        const fctx = flagCanvas.getContext('2d');
+        
+        // Offscreen canvas for trail (avoids overlap issues)
+        const trailCanvas = document.createElement('canvas');
+        const tctx = trailCanvas.getContext('2d');
+        
+        // Trail settings
+        const TRAIL_LIFETIME = 1500;    // ms - total lifetime of trail
+        const TRAIL_WIDTH_HEAD = 32;
+        const TRAIL_WIDTH_TAIL = 2;
+        const SMOOTHING = 0.12;
+        const bgColor = '#f5f3f0';
+        
+        let mouseX = 0, mouseY = 0;
+        let followerX = 0, followerY = 0;
+        let trailPoints = [];  // { x, y, time }
+        
+        function resizeMask() {
+            maskCanvas.width = window.innerWidth;
+            maskCanvas.height = window.innerHeight;
+            flagCanvas.width = window.innerWidth;
+            flagCanvas.height = window.innerHeight;
+            trailCanvas.width = window.innerWidth;
+            trailCanvas.height = window.innerHeight;
+            followerX = maskCanvas.width / 2;
+            followerY = maskCanvas.height / 2;
+            trailPoints = [];
+        }
+        
+        document.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        function animateTrail() {
+            const w = maskCanvas.width;
+            const h = maskCanvas.height;
+            const now = Date.now();
+            
+            // Smooth follow
+            followerX += (mouseX - followerX) * SMOOTHING;
+            followerY += (mouseY - followerY) * SMOOTHING;
+            
+            // Add point with timestamp
+            const lastPt = trailPoints[0];
+            if (!lastPt || Math.hypot(followerX - lastPt.x, followerY - lastPt.y) > 4) {
+                trailPoints.unshift({ x: followerX, y: followerY, time: now });
+            }
+            
+            // Remove expired points
+            trailPoints = trailPoints.filter(p => now - p.time < TRAIL_LIFETIME);
+            
+            // Draw fog on mask canvas
+            mctx.fillStyle = bgColor;
+            mctx.fillRect(0, 0, w, h);
+            
+            // Draw trail on offscreen canvas first (source-over, no overlap issues)
+            if (trailPoints.length > 2) {
+                tctx.clearRect(0, 0, w, h);
+                tctx.lineCap = 'round';
+                tctx.lineJoin = 'round';
+                
+                // Add blur effect
+                tctx.shadowColor = 'white';
+                tctx.shadowBlur = 15;
+                tctx.strokeStyle = 'white';
+                
+                for (let i = trailPoints.length - 1; i >= 1; i--) {
+                    const p1 = trailPoints[i];
+                    const p2 = trailPoints[i - 1];
+                    
+                    // Time-based fade
+                    const age1 = (now - p1.time) / TRAIL_LIFETIME;
+                    const age2 = (now - p2.time) / TRAIL_LIFETIME;
+                    const avgAge = (age1 + age2) / 2;
+                    const life = 1 - avgAge;
+                    if (life <= 0) continue;
+                    
+                    // Width: wide at head, thin at tail
+                    const posRatio = 1 - (i / trailPoints.length);
+                    const baseWidth = TRAIL_WIDTH_TAIL + (TRAIL_WIDTH_HEAD - TRAIL_WIDTH_TAIL) * Math.pow(posRatio, 0.5);
+                    const lineW = baseWidth * life;
+                    
+                    if (lineW < 0.5) continue;
+                    
+                    tctx.lineWidth = lineW;
+                    tctx.beginPath();
+                    tctx.moveTo(p1.x, p1.y);
+                    tctx.lineTo(p2.x, p2.y);
+                    tctx.stroke();
+                }
+                
+                tctx.shadowBlur = 0;
+                
+                // Apply trail to mask canvas as cutout (with higher opacity)
+                mctx.globalCompositeOperation = 'destination-out';
+                mctx.globalAlpha = 0.95;
+                mctx.drawImage(trailCanvas, 0, 0);
+                mctx.globalAlpha = 1.0;
+                mctx.globalCompositeOperation = 'source-over';
+            }
+            
+            // Update hint ripples
+            updateHintRipples();
+            
+            requestAnimationFrame(animateTrail);
+        }
+        
+        window.addEventListener('resize', resizeMask);
+        resizeMask();
+        animateTrail();
+        
+        // ============ Architecture Diagram ============
+        const archCanvas = document.getElementById('arch-canvas');
+        const actx = archCanvas.getContext('2d');
+        
+        function drawArchDiagram() {
+            const w = archCanvas.width;
+            const h = archCanvas.height;
+            const borderColor = '#2a2a2a';
+            const textColor = '#2a2a2a';
+            const mutedText = '#6b6b6b';
+            
+            actx.clearRect(0, 0, w, h);
+            
+            const margin = 10;
+            const gap = 8;
+            const rowH = 42;
+            const boxW = w - margin * 2;
+            const thirdW = (boxW - gap * 2) / 3;
+            
+            // Calculate total height to center vertically (5 rows)
+            const totalH = rowH * 5 + gap * 4;
+            let y = (h - totalH) / 2;
+            
+            function drawLayer(x, yPos, w, h, label, sublabel, dashed = false) {
+                actx.strokeStyle = borderColor;
+                actx.lineWidth = dashed ? 1 : 1.5;
+                if (dashed) {
+                    actx.setLineDash([4, 4]);
+                } else {
+                    actx.setLineDash([]);
+                }
+                
+                // Rounded rect
+                const r = 4;
+                actx.beginPath();
+                actx.moveTo(x + r, yPos);
+                actx.lineTo(x + w - r, yPos);
+                actx.quadraticCurveTo(x + w, yPos, x + w, yPos + r);
+                actx.lineTo(x + w, yPos + h - r);
+                actx.quadraticCurveTo(x + w, yPos + h, x + w - r, yPos + h);
+                actx.lineTo(x + r, yPos + h);
+                actx.quadraticCurveTo(x, yPos + h, x, yPos + h - r);
+                actx.lineTo(x, yPos + r);
+                actx.quadraticCurveTo(x, yPos, x + r, yPos);
+                actx.closePath();
+                actx.stroke();
+                
+                actx.setLineDash([]);
+                
+                // Label
+                actx.fillStyle = textColor;
+                actx.font = 'bold 13px monospace';
+                actx.textAlign = 'center';
+                actx.textBaseline = 'middle';
+                actx.fillText(label, x + w/2, yPos + h/2 - (sublabel ? 7 : 0));
+                
+                // Sub label
+                if (sublabel) {
+                    actx.fillStyle = mutedText;
+                    actx.font = '11px monospace';
+                    actx.fillText(sublabel, x + w/2, yPos + h/2 + 9);
+                }
+            }
+            
+            // Layer 1: Apps
+            const appW = (boxW - gap * 4) / 5;
+            drawLayer(margin, y, appW, rowH, 'Handheld', null);
+            drawLayer(margin + (appW + gap), y, appW, rowH, 'Speaker', null);
+            drawLayer(margin + (appW + gap) * 2, y, appW, rowH, 'SmartHome', null);
+            drawLayer(margin + (appW + gap) * 3, y, appW, rowH, 'Wearable', null);
+            drawLayer(margin + (appW + gap) * 4, y, appW, rowH, '...', null, true);
+            y += rowH + gap;
+            
+            // Layer 2: HAL + Embed SDK (side by side)
+            const halfW = (boxW - gap) / 2;
+            drawLayer(margin, y, halfW, rowH, 'HAL', 'lib/hal');
+            drawLayer(margin + halfW + gap, y, halfW, rowH, 'Embed SDK', 'HTTP, MQTT, Audio...');
+            y += rowH + gap;
+            
+            // Layer 3: SAL
+            drawLayer(margin, y, boxW, rowH, 'SAL', 'lib/sal');
+            y += rowH + gap;
+            
+            // Layer 4: Platform
+            const platW = (boxW - gap * 5) / 6;
+            drawLayer(margin, y, platW, rowH, 'ESP', 'lib/esp');
+            drawLayer(margin + (platW + gap), y, platW, rowH, 'macOS', 'lib/macos');
+            drawLayer(margin + (platW + gap) * 2, y, platW, rowH, 'Linux', 'lib/linux');
+            drawLayer(margin + (platW + gap) * 3, y, platW, rowH, 'RPi', 'lib/rpi');
+            drawLayer(margin + (platW + gap) * 4, y, platW, rowH, 'STM32', 'lib/stm32');
+            drawLayer(margin + (platW + gap) * 5, y, platW, rowH, '...', null, true);
+            y += rowH + gap;
+            
+            // Layer 5: Platform SDK
+            drawLayer(margin, y, platW, rowH, 'ESP-IDF', null);
+            drawLayer(margin + (platW + gap), y, platW, rowH, 'POSIX', null);
+            drawLayer(margin + (platW + gap) * 2, y, platW, rowH, 'POSIX', null);
+            drawLayer(margin + (platW + gap) * 3, y, platW, rowH, 'Linux', null);
+            drawLayer(margin + (platW + gap) * 4, y, platW, rowH, 'STM32-HAL', null);
+            drawLayer(margin + (platW + gap) * 5, y, platW, rowH, '...', null, true);
+            
+        }
+        
+        drawArchDiagram();
+        
+        // ============ Sound Effects (Web Audio API) ============
+        let audioCtx = null;
+        
+        function getAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioCtx;
+        }
+        
+        // Victory music - play when all MCUs found
+        function playVictoryMusic() {
+            const ctx = getAudioContext();
+            const now = ctx.currentTime;
+            
+            // Victory melody notes (frequencies in Hz)
+            const melody = [
+                { freq: 523, time: 0, dur: 0.15 },      // C5
+                { freq: 659, time: 0.15, dur: 0.15 },   // E5
+                { freq: 784, time: 0.3, dur: 0.15 },    // G5
+                { freq: 1047, time: 0.45, dur: 0.3 },   // C6
+                { freq: 784, time: 0.8, dur: 0.15 },    // G5
+                { freq: 1047, time: 1.0, dur: 0.5 },    // C6 (long)
+            ];
+            
+            // Play each note
+            melody.forEach(note => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(note.freq, now + note.time);
+                
+                gain.gain.setValueAtTime(0, now + note.time);
+                gain.gain.linearRampToValueAtTime(0.2, now + note.time + 0.02);
+                gain.gain.linearRampToValueAtTime(0.15, now + note.time + note.dur * 0.5);
+                gain.gain.linearRampToValueAtTime(0, now + note.time + note.dur);
+                
+                osc.start(now + note.time);
+                osc.stop(now + note.time + note.dur + 0.1);
+            });
+            
+            // Add a harmonic layer
+            melody.forEach(note => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(note.freq * 2, now + note.time);
+                
+                gain.gain.setValueAtTime(0, now + note.time);
+                gain.gain.linearRampToValueAtTime(0.05, now + note.time + 0.02);
+                gain.gain.linearRampToValueAtTime(0, now + note.time + note.dur);
+                
+                osc.start(now + note.time);
+                osc.stop(now + note.time + note.dur + 0.1);
+            });
+        }
+        
+        // MCU found sound - short happy beep
+        function playFoundSound() {
+            const ctx = getAudioContext();
+            const now = ctx.currentTime;
+            
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.linearRampToValueAtTime(1320, now + 0.1);
+            
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.15);
+            
+            osc.start(now);
+            osc.stop(now + 0.15);
+        }
+        
+        // Fail sound - sad descending tones (all hints used)
+        function playFailSound() {
+            const ctx = getAudioContext();
+            const now = ctx.currentTime;
+            
+            // Sad descending melody
+            const notes = [
+                { freq: 440, time: 0, dur: 0.3 },      // A4
+                { freq: 392, time: 0.3, dur: 0.3 },    // G4
+                { freq: 349, time: 0.6, dur: 0.3 },    // F4
+                { freq: 294, time: 0.9, dur: 0.5 },    // D4 (long)
+            ];
+            
+            notes.forEach(note => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(note.freq, now + note.time);
+                
+                gain.gain.setValueAtTime(0, now + note.time);
+                gain.gain.linearRampToValueAtTime(0.2, now + note.time + 0.05);
+                gain.gain.linearRampToValueAtTime(0, now + note.time + note.dur);
+                
+                osc.start(now + note.time);
+                osc.stop(now + note.time + note.dur + 0.1);
+            });
+        }
+        
+        // Hover sound - soft high-frequency tick
+        function playHoverSound() {
+            const ctx = getAudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(2400, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1800, ctx.currentTime + 0.05);
+            
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+            
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.05);
+        }
+        
+        // Click sound - deeper, more satisfying
+        function playClickSound() {
+            const ctx = getAudioContext();
+            
+            // Main tone
+            const osc1 = ctx.createOscillator();
+            const gain1 = ctx.createGain();
+            osc1.connect(gain1);
+            gain1.connect(ctx.destination);
+            
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(800, ctx.currentTime);
+            osc1.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.1);
+            
+            gain1.gain.setValueAtTime(0.15, ctx.currentTime);
+            gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+            
+            osc1.start(ctx.currentTime);
+            osc1.stop(ctx.currentTime + 0.1);
+            
+            // High harmonic
+            const osc2 = ctx.createOscillator();
+            const gain2 = ctx.createGain();
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(1600, ctx.currentTime);
+            osc2.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.06);
+            
+            gain2.gain.setValueAtTime(0.06, ctx.currentTime);
+            gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+            
+            osc2.start(ctx.currentTime);
+            osc2.stop(ctx.currentTime + 0.06);
+        }
+        
+        // Add hover sound to buttons and cards
+        document.querySelectorAll('.btn, .feature-card').forEach(el => {
+            el.addEventListener('mouseenter', playHoverSound);
+        });
+        
+        // Add click sound to entire document (non-link clicks)
+        document.addEventListener('click', (e) => {
+            // If it's not a link, just play sound
+            if (!e.target.closest('a')) {
+                playClickSound();
+            }
+        });
+        
+        // Handle link clicks - play sound then navigate
+        document.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                const href = link.getAttribute('href');
+                if (!href || href === '#') {
+                    playClickSound();
+                    return;
+                }
+                
+                e.preventDefault();
+                playClickSound();
+                
+                // Navigate after a short delay to let sound play
+                setTimeout(() => {
+                    if (link.target === '_blank') {
+                        window.open(href, '_blank');
+                    } else {
+                        window.location.href = href;
+                    }
+                }, 80);
+            });
+        });
+    </script>
+</body>
+</html>

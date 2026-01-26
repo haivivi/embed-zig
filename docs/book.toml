@@ -1,0 +1,11 @@
+[book]
+title = "embed-zig Documentation"
+authors = ["haivivi"]
+language = "en"
+src = "."
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/haivivi/embed-zig"
+edit-url-template = "https://github.com/haivivi/embed-zig/edit/main/docs/{path}"

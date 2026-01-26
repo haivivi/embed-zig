@@ -16,3 +16,7 @@ managed_components
 *.a
 *.o
 lib/docs/
+
+# GitHub Pages build output (only generated subdirs)
+pages/docs/
+pages/api/
