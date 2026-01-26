@@ -6,6 +6,9 @@
         .esp = .{
             .path = "../../../../../lib/esp",
         },
+        .app = .{
+            .path = "../../../../apps/timer_callback",
+        },
     },
     .paths = .{
         "build.zig",

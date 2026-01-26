@@ -1,10 +1,13 @@
 .{
     .name = .pwm_fade,
     .version = "0.1.0",
-    .fingerprint = 0x8585d67e6e1118f3,
+    .fingerprint = 0x8585d67e2ae790b4,
     .dependencies = .{
         .esp = .{
             .path = "../../../../../lib/esp",
+        },
+        .app = .{
+            .path = "../../../../apps/pwm_fade",
         },
     },
     .paths = .{

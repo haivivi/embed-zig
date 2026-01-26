@@ -1,22 +1,24 @@
 const std = @import("std");
 
 const idf = @import("esp");
+const sal = idf.sal;
+const log = sal.log;
 
 const c = @cImport({
     @cInclude("sdkconfig.h");
 });
 
-const BUILD_TAG = "wifi_dns_lookup_zig_v1";
+const BUILD_TAG = "wifi_dns_lookup_zig_v2";
 
 pub const std_options: std.Options = .{
     .logFn = idf.log.stdLogFn,
 };
 
 fn printMemoryStats() void {
-    std.log.info("=== Heap Memory Statistics ===", .{});
+    log.info("=== Heap Memory Statistics ===", .{});
 
     const internal = idf.heap.getInternalStats();
-    std.log.info("Internal DRAM: Total={} Free={} Used={}", .{
+    log.info("Internal DRAM: Total={} Free={} Used={}", .{
         internal.total,
         internal.free,
         internal.used,
@@ -24,7 +26,7 @@ fn printMemoryStats() void {
 
     const psram = idf.heap.getPsramStats();
     if (psram.total > 0) {
-        std.log.info("External PSRAM: Total={} Free={} Used={}", .{
+        log.info("External PSRAM: Total={} Free={} Used={}", .{
             psram.total,
             psram.free,
             psram.used,
@@ -33,8 +35,8 @@ fn printMemoryStats() void {
 }
 
 fn dnsLookupTest() void {
-    std.log.info("", .{});
-    std.log.info("=== DNS Lookup Test ===", .{});
+    log.info("", .{});
+    log.info("=== DNS Lookup Test ===", .{});
 
     const test_domains = [_][]const u8{
         "www.google.com",
@@ -44,7 +46,7 @@ fn dnsLookupTest() void {
     };
 
     // Test with UDP - AliDNS
-    std.log.info("--- UDP DNS (223.5.5.5 AliDNS) ---", .{});
+    log.info("--- UDP DNS (223.5.5.5 AliDNS) ---", .{});
     var udp_resolver = idf.DnsResolver{
         .server = .{ 223, 5, 5, 5 },
         .protocol = .udp,
@@ -56,14 +58,14 @@ fn dnsLookupTest() void {
         var ip_buf: [16]u8 = undefined;
         if (result) |ip| {
             const ip_str = idf.net.formatIpv4(ip, &ip_buf);
-            std.log.info("{s} => {s}", .{ domain, ip_str });
+            log.info("{s} => {s}", .{ domain, ip_str });
         } else |err| {
-            std.log.err("{s} => failed: {}", .{ domain, err });
+            log.err("{s} => failed: {}", .{ domain, err });
         }
     }
 
     // Test with TCP - AliDNS
-    std.log.info("--- TCP DNS (223.5.5.5 AliDNS) ---", .{});
+    log.info("--- TCP DNS (223.5.5.5 AliDNS) ---", .{});
     var tcp_resolver = idf.DnsResolver{
         .server = .{ 223, 5, 5, 5 },
         .protocol = .tcp,
@@ -75,14 +77,33 @@ fn dnsLookupTest() void {
         var ip_buf: [16]u8 = undefined;
         if (result) |ip| {
             const ip_str = idf.net.formatIpv4(ip, &ip_buf);
-            std.log.info("{s} => {s}", .{ domain, ip_str });
+            log.info("{s} => {s}", .{ domain, ip_str });
         } else |err| {
-            std.log.err("{s} => failed: {}", .{ domain, err });
+            log.err("{s} => failed: {}", .{ domain, err });
+        }
+    }
+
+    // Test with HTTPS - AliDNS DoH
+    log.info("--- HTTPS DNS (223.5.5.5 AliDNS DoH) ---", .{});
+    var doh_resolver = idf.DnsResolver{
+        .protocol = .https,
+        .doh_host = "223.5.5.5",
+        .timeout_ms = 10000,
+    };
+
+    for (test_domains) |domain| {
+        const result = doh_resolver.resolve(domain);
+        var ip_buf2: [16]u8 = undefined;
+        if (result) |ip| {
+            const ip_str = idf.net.formatIpv4(ip, &ip_buf2);
+            log.info("{s} => {s}", .{ domain, ip_str });
+        } else |err| {
+            log.err("{s} => failed: {}", .{ domain, err });
         }
     }
 
     // Test with backup AliDNS
-    std.log.info("--- UDP DNS (223.6.6.6 AliDNS Backup) ---", .{});
+    log.info("--- UDP DNS (223.6.6.6 AliDNS Backup) ---", .{});
     var ali_resolver = idf.DnsResolver{
         .server = .{ 223, 6, 6, 6 },
         .protocol = .udp,
@@ -92,26 +113,26 @@ fn dnsLookupTest() void {
     var ip_buf: [16]u8 = undefined;
     if (ali_result) |ip| {
         const ip_str = idf.net.formatIpv4(ip, &ip_buf);
-        std.log.info("example.com => {s}", .{ip_str});
+        log.info("example.com => {s}", .{ip_str});
     } else |err| {
-        std.log.err("example.com => failed: {}", .{err});
+        log.err("example.com => failed: {}", .{err});
     }
 }
 
 export fn app_main() void {
-    std.log.info("==========================================", .{});
-    std.log.info("  WiFi DNS Lookup - Zig Version", .{});
-    std.log.info("  Build Tag: {s}", .{BUILD_TAG});
-    std.log.info("==========================================", .{});
+    log.info("==========================================", .{});
+    log.info("  WiFi DNS Lookup - Zig Version", .{});
+    log.info("  Build Tag: {s}", .{BUILD_TAG});
+    log.info("==========================================", .{});
 
     printMemoryStats();
 
     // Initialize WiFi
-    std.log.info("", .{});
-    std.log.info("Initializing WiFi...", .{});
+    log.info("", .{});
+    log.info("Initializing WiFi...", .{});
 
     var wifi = idf.Wifi.init() catch |err| {
-        std.log.err("WiFi init failed: {}", .{err});
+        log.err("WiFi init failed: {}", .{err});
         return;
     };
 
@@ -119,14 +140,14 @@ export fn app_main() void {
     const ssid: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_SSID));
     const password: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_PASSWORD));
 
-    std.log.info("Connecting to SSID: {s}", .{ssid});
+    log.info("Connecting to SSID: {s}", .{ssid});
 
     wifi.connect(.{
         .ssid = ssid,
         .password = password,
         .timeout_ms = 30000,
     }) catch |err| {
-        std.log.err("WiFi connect failed: {}", .{err});
+        log.err("WiFi connect failed: {}", .{err});
         return;
     };
 
@@ -134,7 +155,7 @@ export fn app_main() void {
     const ip = wifi.getIpAddress();
     var ip_buf: [16]u8 = undefined;
     const ip_str = idf.net.formatIpv4(ip, &ip_buf);
-    std.log.info("Connected! IP: {s}", .{ip_str});
+    log.info("Connected! IP: {s}", .{ip_str});
 
     printMemoryStats();
 
@@ -142,11 +163,11 @@ export fn app_main() void {
     dnsLookupTest();
 
     // Keep running
-    std.log.info("", .{});
-    std.log.info("=== Test Complete ===", .{});
+    log.info("", .{});
+    log.info("=== Test Complete ===", .{});
 
     while (true) {
-        idf.delayMs(10000);
-        std.log.info("Still running...", .{});
+        sal.sleepMs(10000);
+        log.info("Still running...", .{});
     }
 }

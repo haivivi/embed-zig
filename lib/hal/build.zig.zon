@@ -1,0 +1,10 @@
+.{
+    .name = .hal,
+    .version = "0.1.0",
+    .fingerprint = 0x8167341fae6205c8,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

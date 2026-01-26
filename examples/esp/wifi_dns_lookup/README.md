@@ -2,15 +2,17 @@
 
 [中文版](./README.zh-CN.md)
 
-WiFi connection and DNS lookup example demonstrating custom DNS resolver with interface binding support.
+WiFi connection and DNS lookup example demonstrating custom DNS resolver with multiple protocols support.
 
 ## Features
 
 - WiFi STA mode connection
 - Custom DNS resolver (pure Zig implementation)
-- UDP and TCP DNS protocols
+- **UDP DNS** - Fast, standard DNS queries
+- **TCP DNS** - For large responses or firewalled networks
+- **HTTPS DNS (DoH)** - DNS over HTTPS with TLS certificate verification
 - Interface binding support (for multi-NIC scenarios like PPP + WLAN)
-- Configurable DNS server
+- Configurable DNS server (AliDNS, Google, Cloudflare, etc.)
 
 ## Hardware Requirements
 
@@ -52,25 +54,38 @@ idf.py -p /dev/cu.usbmodem* flash monitor
   Build Tag: wifi_dns_lookup_zig_v1
 ==========================================
 === Heap Memory Statistics ===
-Internal DRAM: Total=... Free=... Used=...
+Internal DRAM: Total=387815 Free=327895 Used=59920
+External PSRAM: Total=8388608 Free=8386148 Used=2460
 
 Initializing WiFi...
-Connecting to SSID: MyNetwork
-Connected! IP: 192.168.1.100
+Connecting to SSID: HAIVIVI-MFG
+Connected! IP: 192.168.4.7
 
 === DNS Lookup Test ===
---- UDP DNS (8.8.8.8) ---
-www.google.com => 142.250.xxx.xxx
-www.baidu.com => 110.242.xxx.xxx
-cloudflare.com => 104.16.xxx.xxx
-github.com => 140.82.xxx.xxx
+--- UDP DNS (223.5.5.5 AliDNS) ---
+www.google.com => 199.59.148.20
+www.baidu.com => 110.242.70.57
+cloudflare.com => 104.16.133.229
+github.com => 20.205.243.166
 
---- TCP DNS (8.8.8.8) ---
-www.google.com => 142.250.xxx.xxx
-...
+--- TCP DNS (223.5.5.5 AliDNS) ---
+www.google.com => 199.59.148.20
+www.baidu.com => 110.242.69.21
+cloudflare.com => 104.16.133.229
+github.com => 20.205.243.166
 
---- UDP DNS (1.1.1.1 Cloudflare) ---
-example.com => 93.184.xxx.xxx
+--- HTTPS DNS (223.5.5.5 AliDNS DoH) ---
+I (6562) esp-x509-crt-bundle: Certificate validated
+www.google.com => 199.59.148.20
+I (9932) esp-x509-crt-bundle: Certificate validated
+www.baidu.com => 110.242.69.21
+I (12082) esp-x509-crt-bundle: Certificate validated
+cloudflare.com => 104.16.132.229
+I (13782) esp-x509-crt-bundle: Certificate validated
+github.com => 20.205.243.166
+
+--- UDP DNS (223.6.6.6 AliDNS Backup) ---
+example.com => 104.18.26.120
 
 === Test Complete ===
 ```
@@ -88,52 +103,79 @@ try wifi.connect(.{
     .timeout_ms = 30000,
 });
 
-// DNS lookup with UDP
-var resolver = idf.DnsResolver{
-    .server = .{ 8, 8, 8, 8 },  // Google DNS
+// DNS lookup with UDP (fastest)
+var udp_resolver = idf.DnsResolver{
+    .server = .{ 223, 5, 5, 5 },  // AliDNS
     .protocol = .udp,
     .timeout_ms = 5000,
 };
-const ip = try resolver.resolve("example.com");
+const ip = try udp_resolver.resolve("example.com");
 
 // DNS lookup with TCP
 var tcp_resolver = idf.DnsResolver{
-    .server = .{ 1, 1, 1, 1 },  // Cloudflare DNS
+    .server = .{ 223, 5, 5, 5 },  // AliDNS
     .protocol = .tcp,
 };
 const ip2 = try tcp_resolver.resolve("example.com");
 
-// DNS with interface binding (for PPP scenarios)
-var ppp_resolver = idf.DnsResolver{
-    .server = .{ 10, 0, 0, 1 },  // PPP gateway DNS
-    .interface = "ppp0",         // Bind to PPP interface
+// DNS over HTTPS (DoH) - encrypted and secure
+var doh_resolver = idf.DnsResolver{
+    .protocol = .https,
+    .doh_host = "223.5.5.5",  // AliDNS DoH
+    .timeout_ms = 10000,
 };
-const ip3 = try ppp_resolver.resolve("example.com");
+const ip3 = try doh_resolver.resolve("example.com");
 ```
 
 ## Binary Size & Memory
 
 ### Binary Size
 
-| Version | .bin Size |
-|---------|-----------|
-| **Zig** | 766,032 bytes (748 KB) |
+| Version | .bin Size | Notes |
+|---------|-----------|-------|
+| **Zig (with DoH)** | 901,296 bytes (880 KB) | Includes CA certificate bundle for HTTPS |
+| **Zig (UDP/TCP only)** | 828,544 bytes (809 KB) | Without CA bundle |
 
-### Memory Usage (Static)
+### Memory Usage (Runtime)
 
-| Memory Region | Zig |
-|---------------|-----|
-| **IRAM** | 16,383 bytes |
-| **DRAM** | 106,231 bytes |
-| **Flash Code** | 553,150 bytes |
+| Memory Type | Before WiFi | After WiFi | Notes |
+|-------------|-------------|------------|-------|
+| **Internal DRAM** | 327,895 free | 276,951 free | ~51 KB used by WiFi |
+| **External PSRAM** | 8,386,148 free | 8,386,020 free | Minimal PSRAM usage |
 
-> Note: No C version for comparison - this example is Zig-only to showcase pure Zig DNS implementation.
+> Note: This is a Zig-only example showcasing pure Zig DNS implementation with SAL socket abstraction.
 
 ## Architecture Notes
 
-Due to ESP-IDF's WiFi configuration structures containing complex bit-fields and unions that `@cImport` cannot translate, WiFi initialization uses C helper functions:
+### DNS Resolution Stack
 
-- `esp/src/wifi.zig` - Zig interface
-- `main/src/main.c` - C helper implementation
+```
+┌─────────────────────────────────────────┐
+│           Application Code              │
+│    (main.zig - DnsResolver API)         │
+├─────────────────────────────────────────┤
+│         lib/esp/src/net/dns.zig         │
+│    (ESP DNS wrapper with DoH support)   │
+├─────────────────────────────────────────┤
+│      lib/dns/src/dns.zig (UDP/TCP)      │    lib/esp/src/http.zig (DoH)
+│    (Cross-platform DNS protocol)        │    (esp_http_client wrapper)
+├─────────────────────────────────────────┤
+│       lib/esp/src/sal/socket.zig        │
+│      (SAL Socket - LWIP sockets)        │
+├─────────────────────────────────────────┤
+│            ESP-IDF / LWIP               │
+└─────────────────────────────────────────┘
+```
 
-DNS resolver is pure Zig implementation using lwIP sockets.
+### Protocol Implementation
+
+- **UDP/TCP DNS**: Pure Zig implementation using `lib/dns` with SAL socket abstraction
+- **HTTPS DNS (DoH)**: Uses `esp_http_client` with ESP-IDF CA certificate bundle
+- **WiFi**: Uses C helper functions due to complex bit-fields in WiFi config structures
+
+### sdkconfig Requirements for DoH
+
+```
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+```

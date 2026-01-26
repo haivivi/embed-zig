@@ -47,6 +47,28 @@ pub const Socket = struct {
 
     const Self = @This();
 
+    /// Parse IPv4 address string (e.g., "192.168.1.1") to bytes
+    /// This is a type-level function to satisfy lib/http interface requirements
+    pub fn parseIpv4(ip_str: []const u8) ?Ipv4Address {
+        var buf: [16]u8 = undefined;
+        if (ip_str.len >= buf.len) return null;
+        @memcpy(buf[0..ip_str.len], ip_str);
+        buf[ip_str.len] = 0;
+
+        var addr: c.in_addr = undefined;
+        if (c.inet_pton(c.AF_INET, &buf, &addr) != 1) {
+            return null;
+        }
+
+        const s_addr = addr.s_addr;
+        return .{
+            @truncate(s_addr & 0xFF),
+            @truncate((s_addr >> 8) & 0xFF),
+            @truncate((s_addr >> 16) & 0xFF),
+            @truncate((s_addr >> 24) & 0xFF),
+        };
+    }
+
     /// Create a UDP socket
     pub fn udp() SocketError!Self {
         const fd = c.socket(c.AF_INET, c.SOCK_DGRAM, c.IPPROTO_UDP);

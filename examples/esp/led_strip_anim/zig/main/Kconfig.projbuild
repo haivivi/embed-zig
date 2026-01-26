@@ -1,0 +1,11 @@
+menu "LED Strip Animation Example"
+
+    config BOARD_NAME
+        string "Board name"
+        default "korvo2_v3"
+        help
+            Select the target board:
+            - korvo2_v3: ESP32-S3-Korvo-2 V3 (12 LEDs on GPIO19)
+            - esp32s3_devkit: ESP32-S3 DevKitC (1 LED on GPIO48)
+
+endmenu

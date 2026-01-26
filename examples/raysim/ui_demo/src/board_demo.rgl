@@ -1,0 +1,53 @@
+#
+# raysim demo layout - HAL Hardware Simulator
+#
+# Custom control types (100+):
+#   100 = LED (single)
+#   101 = LED Strip
+#   102 = Log Panel
+#
+# Format: c <id> <type> <name> <x> <y> <w> <h> <anchor> <text>
+#
+
+# Reference window
+r 0 0 700 500
+
+# === Board Panel ===
+c 000 3 panel_board 20 20 320 220 0 Board
+
+# LED Strip (8 LEDs) - type 101
+c 001 101 led_strip 40 60 280 40 0 LED_Strip
+
+# Single LED indicator
+c 002 100 led_status 40 120 30 30 0 Status
+
+# Boot Button
+c 003 5 btn_boot 100 110 100 40 0 BOOT
+
+# Reset Button  
+c 004 5 btn_reset 220 110 80 40 0 RESET
+
+# Temperature display
+c 005 4 lbl_temp_title 40 170 0 0 0 Temperature:
+c 006 4 lbl_temp_value 140 170 0 0 0 25C
+
+# Uptime display
+c 007 4 lbl_uptime 40 195 0 0 0 Uptime:_0ms
+
+# === Controls Panel ===
+c 010 3 panel_controls 360 20 320 220 0 Controls
+
+# ADC Slider (simulates analog input)
+c 011 4 lbl_adc 380 60 0 0 0 ADC_Input:
+c 012 15 slider_adc 380 80 280 20 0 0
+
+# PWM Duty Cycle
+c 013 4 lbl_pwm 380 120 0 0 0 PWM_Duty:
+c 014 16 progress_pwm 380 140 280 20 0 0
+
+# Brightness control
+c 015 4 lbl_brightness 380 180 0 0 0 Brightness:
+c 016 15 slider_brightness 380 200 280 20 0 0
+
+# === Log Panel ===
+c 020 102 log_panel 20 260 660 220 0 Log

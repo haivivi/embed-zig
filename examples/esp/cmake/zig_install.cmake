@@ -78,7 +78,7 @@ message(STATUS "[zig_install] Found: ${ZIG_INSTALL}")
 # Step 2: Zig build function - call after idf_component_register()
 # =============================================================================
 function(esp_zig_build)
-    cmake_parse_arguments(ARG "" "" "FORCE_LINK" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "FORCE_LINK;ZIG_OPTIONS" ${ARGN})
     
     # Detect target architecture
     if(CONFIG_IDF_TARGET_ARCH_RISCV)
@@ -127,6 +127,7 @@ function(esp_zig_build)
             --prominent-compile-errors
             --cache-dir ${CMAKE_BINARY_DIR}/../.zig-cache
             --prefix ${CMAKE_BINARY_DIR}
+            ${ARG_ZIG_OPTIONS}
         BYPRODUCTS ${CMAKE_BINARY_DIR}/lib/libmain_zig.a
         VERBATIM
     )

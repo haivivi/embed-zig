@@ -88,7 +88,7 @@ pub const AdcOneshot = struct {
 
     pub fn init(unit: AdcUnit) !AdcOneshot {
         var init_config = std.mem.zeroes(c.adc_oneshot_unit_init_cfg_t);
-        init_config.unit_id = @intFromEnum(unit);
+        init_config.unit_id = @intCast(@intFromEnum(unit));
 
         var handle: c.adc_oneshot_unit_handle_t = null;
         const err = c.adc_oneshot_new_unit(&init_config, &handle);
@@ -105,17 +105,17 @@ pub const AdcOneshot = struct {
     /// Configure ADC channel
     pub fn configChannel(self: AdcOneshot, channel: AdcChannel, config: ChannelConfig) !void {
         var chan_config = std.mem.zeroes(c.adc_oneshot_chan_cfg_t);
-        chan_config.atten = @intFromEnum(config.atten);
-        chan_config.bitwidth = @intFromEnum(config.bitwidth);
+        chan_config.atten = @intCast(@intFromEnum(config.atten));
+        chan_config.bitwidth = @intCast(@intFromEnum(config.bitwidth));
 
-        const err = c.adc_oneshot_config_channel(self.handle, @intFromEnum(channel), &chan_config);
+        const err = c.adc_oneshot_config_channel(self.handle, @intCast(@intFromEnum(channel)), &chan_config);
         try sys.espErrToZig(err);
     }
 
     /// Read raw ADC value
     pub fn read(self: AdcOneshot, channel: AdcChannel) !i32 {
         var raw: c_int = 0;
-        const err = c.adc_oneshot_read(self.handle, @intFromEnum(channel), &raw);
+        const err = c.adc_oneshot_read(self.handle, @intCast(@intFromEnum(channel)), &raw);
         try sys.espErrToZig(err);
         return raw;
     }

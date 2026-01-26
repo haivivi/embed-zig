@@ -2,107 +2,79 @@
 
 [中文版](README.zh-CN.md)
 
-ESP32-S3 LED strip blinking example, comparing Zig and C implementations.
+ESP32-S3 LED strip blinking example using HAL v5 architecture.
 
 ## Features
 
+- **HAL v5 Architecture** - Board-agnostic application code
+- **Multi-board Support** - ESP32-S3-DevKit and Korvo-2 V3
 - Control WS2812/SK6812 RGB LED strip
 - Use ESP-IDF RMT driver
 - Periodic blinking effect
-- Output heap memory statistics
 
-## Directory Structure
-
-```
-led_strip_flash/
-├── zig/           # Zig implementation
-│   ├── main/
-│   │   ├── build.zig
-│   │   └── src/main.zig
-│   └── CMakeLists.txt
-├── c/             # C implementation
-│   └── main/
-│       └── main.c
-└── README.md
-```
-
-## Build Comparison (ESP32-S3)
-
-Test Environment:
-- ESP-IDF v5.4.0
-- Zig 0.15.x (Espressif fork)
-- Target: esp32s3
-- Optimization: Size (`CONFIG_COMPILER_OPTIMIZATION_SIZE=y`)
-- PSRAM: Enabled (8MB Octal)
-
-### Binary Size
-
-| Version | .bin Size | Diff |
-|---------|-----------|------|
-| **C** | 223,088 bytes (217.9 KB) | baseline |
-| **Zig** | 230,768 bytes (225.4 KB) | **+3.4%** |
-
-### Memory Usage (Static)
-
-| Memory Region | C | Zig | Diff |
-|---------------|---|-----|------|
-| **IRAM** | 16,383 bytes | 16,383 bytes | 0% |
-| **DRAM** | 59,027 bytes | 59,019 bytes | -0.01% |
-| **Flash Code** | 103,324 bytes | 110,948 bytes | +7.4% |
-
-> Note: DRAM usage is nearly identical. The Flash Code increase (~7.6KB) is due to Zig's `std.fmt` integer formatting code used by `std.log`.
-
-## Runtime Logs
-
-### Zig Version Output
+## Architecture
 
 ```
-I (347):   LED Strip Flash - Zig Version
-I (347):   Build Tag: led_strip_zig_v1
-I (357): === Heap Memory Statistics ===
-I (367): Internal DRAM:
-I (377): External PSRAM: not available
-I (377): Toggling the LED OFF!
-I (1377): Toggling the LED ON!
-I (2377): Toggling the LED OFF!
-I (3377): Toggling the LED ON!
+examples/
+├── apps/led_strip_flash/     # Platform-independent code
+│   ├── app.zig               # Main application logic
+│   ├── platform.zig          # HAL spec and board selection
+│   └── boards/
+│       ├── esp32s3_devkit.zig  # DevKit BSP
+│       └── korvo2_v3.zig       # Korvo-2 BSP
+└── esp/led_strip_flash/
+    └── zig/main/
+        ├── src/main.zig      # Minimal ESP entry point
+        └── build.zig         # Build with -Dboard option
 ```
 
-### C Version Output
+## Key Code
 
+**app.zig** (Platform-independent):
+```zig
+const hal = @import("hal");
+const platform = @import("platform.zig");
+const Board = platform.Board;
+const sal = platform.sal;
+
+pub fn run() void {
+    var board = Board.init() catch return;
+    defer board.deinit();
+
+    while (true) {
+        board.rgb_leds.setColor(hal.Color.white);
+        board.rgb_leds.refresh();
+        sal.sleepMs(1000);
+
+        board.rgb_leds.clear();
+        board.rgb_leds.refresh();
+        sal.sleepMs(1000);
+    }
+}
 ```
-I (274) led_strip:   LED Strip Flash - C Version
-I (284) led_strip:   Build Tag: led_strip_c_v1
-I (294) led_strip: === Heap Memory Statistics ===
-I (294) led_strip: Internal DRAM:
-I (314) led_strip: External PSRAM: not available
-I (324) led_strip: DMA capable free: 383788 bytes
-I (324) led_strip: Toggling the LED OFF!
-I (1324) led_strip: Toggling the LED ON!
-I (2324) led_strip: Toggling the LED OFF!
-I (3324) led_strip: Toggling the LED ON!
+
+**main.zig** (ESP entry point):
+```zig
+const app = @import("app");
+
+export fn app_main() void {
+    app.run();
+}
 ```
-
-## Key Finding
-
-The **~3.4%** binary size overhead from `std.log` comes from:
-1. `std.fmt` integer formatting code (~7.6KB)
-2. Zig's comptime format string validation
-
-**Important**: Previous 14.1% overhead was due to incorrect sdkconfig (using `CONFIG_COMPILER_OPTIMIZATION_DEBUG=y` instead of `CONFIG_COMPILER_OPTIMIZATION_SIZE=y`).
 
 ## Build
 
 ```bash
-# Zig version
-cd zig
+# Setup ESP-IDF
+cd ~/esp/esp-idf && source export.sh
+
+# Build for default board (ESP32-S3-DevKit)
+cd examples/esp/led_strip_flash/zig
 idf.py set-target esp32s3
 idf.py build
 
-# C version
-cd c
-idf.py set-target esp32s3
-idf.py build
+# Build for Korvo-2 V3
+idf.py build -- -DZIG_BOARD=korvo2_v3
 ```
 
 ## Flash
@@ -110,6 +82,13 @@ idf.py build
 ```bash
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
+
+## Supported Boards
+
+| Board | LED Type | GPIO | LED Count |
+|-------|----------|------|-----------|
+| ESP32-S3-DevKit | WS2812 | 48 | 1 |
+| Korvo-2 V3 | WS2812 | 45 | 12 |
 
 ## Configuration
 

@@ -11,6 +11,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Get http dependency
+    const http_dep = b.dependency("http", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Get dns dependency
+    const dns_dep = b.dependency("dns", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -20,6 +32,10 @@ pub fn build(b: *std.Build) void {
 
     // Add esp module (for WiFi and logging only)
     root_module.addImport("esp", esp_dep.module("esp"));
+    // Add http module
+    root_module.addImport("http", http_dep.module("http"));
+    // Add dns module
+    root_module.addImport("dns", dns_dep.module("dns"));
 
     const lib = b.addLibrary(.{
         .name = "main_zig",

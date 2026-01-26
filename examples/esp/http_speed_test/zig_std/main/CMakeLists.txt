@@ -11,6 +11,7 @@ idf_component_register(
     SRCS "src/stub.c" ${WIFI_C_SOURCES}
     INCLUDE_DIRS "."
     REQUIRES esp_wifi esp_event esp_netif nvs_flash esp_timer lwip
+    PRIV_REQUIRES mbedtls
 )
 
 # Build Zig (no extra force-link needed - pure Zig HTTP)

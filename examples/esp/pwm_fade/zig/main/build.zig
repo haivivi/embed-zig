@@ -1,14 +1,24 @@
 const std = @import("std");
 
 const esp = @import("esp");
+const app_build = @import("app");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Board selection (passed from CMake via ZIG_OPTIONS)
+    const board = b.option(app_build.BoardType, "board", "Target board") orelse .esp32s3_devkit;
+
     const esp_dep = b.dependency("esp", .{
         .target = target,
         .optimize = optimize,
+    });
+
+    const app_dep = b.dependency("app", .{
+        .target = target,
+        .optimize = optimize,
+        .board = board,
     });
 
     const root_module = b.createModule(.{
@@ -19,6 +29,7 @@ pub fn build(b: *std.Build) void {
     });
 
     root_module.addImport("esp", esp_dep.module("esp"));
+    root_module.addImport("app", app_dep.module("app"));
 
     const lib = b.addLibrary(.{
         .name = "main_zig",

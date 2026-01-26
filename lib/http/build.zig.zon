@@ -1,0 +1,15 @@
+.{
+    .name = .http,
+    .version = "0.1.0",
+    .fingerprint = 0x97780db2659c81ec,
+    .dependencies = .{
+        .sal = .{
+            .path = "../sal",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

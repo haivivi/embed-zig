@@ -1,0 +1,20 @@
+.{
+    .name = .pwm_fade_app,
+    .version = "0.1.0",
+    .fingerprint = 0x5dc7ecb9713d0e44,
+    .dependencies = .{
+        .esp = .{
+            .path = "../../../lib/esp",
+        },
+        .hal = .{
+            .path = "../../../lib/hal",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+}

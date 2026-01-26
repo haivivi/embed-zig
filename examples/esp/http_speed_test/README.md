@@ -112,11 +112,14 @@ StackType_t *stack = heap_caps_malloc(65536, MALLOC_CAP_SPIRAM);
 xTaskCreateRestrictedPinnedToCore(&task_params, &handle, 1);
 ```
 
-**Zig Versions (using SAL):**
+**Zig Versions (using SAL async):**
 ```zig
-const result = try idf.sal.thread.go(idf.heap.psram, "http_test", httpTestFn, null, .{
+var wg = idf.sal.async_.WaitGroup.init(idf.heap.psram);
+defer wg.deinit();
+try wg.go(idf.heap.psram, "http_test", httpTestFn, null, .{
     .stack_size = 65536,  // 64KB stack on PSRAM
 });
+wg.wait();
 ```
 
 ## Server Endpoints

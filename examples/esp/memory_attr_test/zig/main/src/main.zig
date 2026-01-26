@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const idf = @import("esp");
+const sal = idf.sal;
+const log = sal.log;
 
 // sdkconfig only
 const c = @cImport({
@@ -14,7 +16,7 @@ pub const std_options: std.Options = .{
     .logFn = idf.log.stdLogFn,
 };
 
-const BUILD_TAG = "mem_attr_zig_v2";
+const BUILD_TAG = "mem_attr_zig_v3";
 
 // ESP32-S3 Memory Map Constants
 // PSRAM is typically mapped at 0x3C000000 - 0x3DFFFFFF (external)
@@ -98,35 +100,35 @@ fn getMemoryRegionName(addr: usize) []const u8 {
 // ============================================================================
 
 fn testPsramVariables() void {
-    std.log.info("=== Testing PSRAM Variables ===", .{});
+    log.info("=== Testing PSRAM Variables ===", .{});
 
     // Test psram_buffer
     const buffer_addr = @intFromPtr(&psram_buffer);
     const buffer_region = getMemoryRegionName(buffer_addr);
-    std.log.info("psram_buffer address: 0x{X:0>8}, region: {s}", .{ buffer_addr, buffer_region });
+    log.info("psram_buffer address: 0x{X:0>8}, region: {s}", .{ buffer_addr, buffer_region });
 
     if (isInPsram(buffer_addr)) {
-        std.log.info("  [PASS] psram_buffer is correctly in PSRAM", .{});
+        log.info("  [PASS] psram_buffer is correctly in PSRAM", .{});
     } else {
-        std.log.err("  [FAIL] psram_buffer is NOT in PSRAM!", .{});
+        log.err("  [FAIL] psram_buffer is NOT in PSRAM!", .{});
     }
 
     // Test psram_counter
     const counter_addr = @intFromPtr(&psram_counter);
     const counter_region = getMemoryRegionName(counter_addr);
-    std.log.info("psram_counter address: 0x{X:0>8}, region: {s}", .{ counter_addr, counter_region });
+    log.info("psram_counter address: 0x{X:0>8}, region: {s}", .{ counter_addr, counter_region });
 
     if (isInPsram(counter_addr)) {
-        std.log.info("  [PASS] psram_counter is correctly in PSRAM", .{});
+        log.info("  [PASS] psram_counter is correctly in PSRAM", .{});
     } else {
-        std.log.err("  [FAIL] psram_counter is NOT in PSRAM!", .{});
+        log.err("  [FAIL] psram_counter is NOT in PSRAM!", .{});
     }
 
     // Test read/write
     psram_counter = 12345;
     psram_buffer[0] = 0xAA;
     psram_buffer[4095] = 0x55;
-    std.log.info("PSRAM read/write test: counter={}, buf[0]=0x{X:0>2}, buf[4095]=0x{X:0>2}", .{
+    log.info("PSRAM read/write test: counter={}, buf[0]=0x{X:0>2}, buf[4095]=0x{X:0>2}", .{
         psram_counter,
         psram_buffer[0],
         psram_buffer[4095],
@@ -134,90 +136,90 @@ fn testPsramVariables() void {
 }
 
 fn testDramVariables() void {
-    std.log.info("=== Testing DRAM Variables ===", .{});
+    log.info("=== Testing DRAM Variables ===", .{});
 
     // Test dram_variable
     const dram_addr = @intFromPtr(&dram_variable);
     const dram_region = getMemoryRegionName(dram_addr);
-    std.log.info("dram_variable address: 0x{X:0>8}, region: {s}", .{ dram_addr, dram_region });
+    log.info("dram_variable address: 0x{X:0>8}, region: {s}", .{ dram_addr, dram_region });
 
     if (isInDram(dram_addr)) {
-        std.log.info("  [PASS] dram_variable is correctly in DRAM", .{});
+        log.info("  [PASS] dram_variable is correctly in DRAM", .{});
     } else {
-        std.log.err("  [FAIL] dram_variable is NOT in DRAM!", .{});
+        log.err("  [FAIL] dram_variable is NOT in DRAM!", .{});
     }
 
     // Test dma_buffer
     const dma_addr = @intFromPtr(&dma_buffer);
     const dma_region = getMemoryRegionName(dma_addr);
-    std.log.info("dma_buffer address: 0x{X:0>8}, region: {s}", .{ dma_addr, dma_region });
+    log.info("dma_buffer address: 0x{X:0>8}, region: {s}", .{ dma_addr, dma_region });
 
     const is_aligned = (dma_addr % 4) == 0;
-    std.log.info("  dma_buffer alignment: {s} (required: 4-byte)", .{
+    log.info("  dma_buffer alignment: {s} (required: 4-byte)", .{
         if (is_aligned) "OK" else "FAIL",
     });
 
     if (isInDram(dma_addr) and is_aligned) {
-        std.log.info("  [PASS] dma_buffer is correctly in DRAM and aligned", .{});
+        log.info("  [PASS] dma_buffer is correctly in DRAM and aligned", .{});
     } else {
-        std.log.err("  [FAIL] dma_buffer check failed!", .{});
+        log.err("  [FAIL] dma_buffer check failed!", .{});
     }
 }
 
 fn testIramFunctions() void {
-    std.log.info("=== Testing IRAM Functions ===", .{});
+    log.info("=== Testing IRAM Functions ===", .{});
 
     // Test iramFunction location
     const func_addr = @intFromPtr(&iramFunction);
     const func_region = getMemoryRegionName(func_addr);
-    std.log.info("iramFunction address: 0x{X:0>8}, region: {s}", .{ func_addr, func_region });
+    log.info("iramFunction address: 0x{X:0>8}, region: {s}", .{ func_addr, func_region });
 
     if (isInIram(func_addr)) {
-        std.log.info("  [PASS] iramFunction is correctly in IRAM", .{});
+        log.info("  [PASS] iramFunction is correctly in IRAM", .{});
     } else {
-        std.log.err("  [FAIL] iramFunction is NOT in IRAM!", .{});
+        log.err("  [FAIL] iramFunction is NOT in IRAM!", .{});
     }
 
     // Test iramCompute location
     const compute_addr = @intFromPtr(&iramCompute);
     const compute_region = getMemoryRegionName(compute_addr);
-    std.log.info("iramCompute address: 0x{X:0>8}, region: {s}", .{ compute_addr, compute_region });
+    log.info("iramCompute address: 0x{X:0>8}, region: {s}", .{ compute_addr, compute_region });
 
     if (isInIram(compute_addr)) {
-        std.log.info("  [PASS] iramCompute is correctly in IRAM", .{});
+        log.info("  [PASS] iramCompute is correctly in IRAM", .{});
     } else {
-        std.log.err("  [FAIL] iramCompute is NOT in IRAM!", .{});
+        log.err("  [FAIL] iramCompute is NOT in IRAM!", .{});
     }
 
     // Test execution
     dram_variable = 0;
     iramFunction();
-    std.log.info("IRAM function test: dram_variable after call = {}", .{dram_variable});
+    log.info("IRAM function test: dram_variable after call = {}", .{dram_variable});
 
     const result = iramCompute(10, 20);
-    std.log.info("IRAM compute test: iramCompute(10, 20) = {} (expected: 201)", .{result});
+    log.info("IRAM compute test: iramCompute(10, 20) = {} (expected: 201)", .{result});
 }
 
 fn printMemoryStats() void {
-    std.log.info("=== Heap Memory Statistics ===", .{});
+    log.info("=== Heap Memory Statistics ===", .{});
 
     // Internal DRAM
     const internal = idf.heap.getInternalStats();
-    std.log.info("Internal DRAM:", .{});
-    std.log.info("  Total: {} bytes", .{internal.total});
-    std.log.info("  Free:  {} bytes", .{internal.free});
-    std.log.info("  Used:  {} bytes", .{internal.used});
+    log.info("Internal DRAM:", .{});
+    log.info("  Total: {} bytes", .{internal.total});
+    log.info("  Free:  {} bytes", .{internal.free});
+    log.info("  Used:  {} bytes", .{internal.used});
 
     // External PSRAM
     const psram = idf.heap.getPsramStats();
-    std.log.info("External PSRAM:", .{});
-    std.log.info("  Total: {} bytes", .{psram.total});
-    std.log.info("  Free:  {} bytes", .{psram.free});
-    std.log.info("  Used:  {} bytes", .{psram.used});
+    log.info("External PSRAM:", .{});
+    log.info("  Total: {} bytes", .{psram.total});
+    log.info("  Free:  {} bytes", .{psram.free});
+    log.info("  Used:  {} bytes", .{psram.used});
 
     // DMA capable memory
     const dma_free = idf.heap.heap_caps_get_free_size(idf.heap.MALLOC_CAP_DMA);
-    std.log.info("DMA capable free: {} bytes", .{dma_free});
+    log.info("DMA capable free: {} bytes", .{dma_free});
 }
 
 // ============================================================================
@@ -225,10 +227,10 @@ fn printMemoryStats() void {
 // ============================================================================
 
 export fn app_main() void {
-    std.log.info("==========================================", .{});
-    std.log.info("  Memory Attribute Test - Zig Version", .{});
-    std.log.info("  Build Tag: {s}", .{BUILD_TAG});
-    std.log.info("==========================================", .{});
+    log.info("==========================================", .{});
+    log.info("  Memory Attribute Test - Zig Version", .{});
+    log.info("  Build Tag: {s}", .{BUILD_TAG});
+    log.info("==========================================", .{});
 
     printMemoryStats();
 
@@ -236,11 +238,11 @@ export fn app_main() void {
     testDramVariables();
     testIramFunctions();
 
-    std.log.info("=====================================", .{});
-    std.log.info("All tests completed!", .{});
+    log.info("=====================================", .{});
+    log.info("All tests completed!", .{});
 
     // Keep running
     while (true) {
-        idf.delayMs(1000);
+        sal.sleepMs(1000);
     }
 }

@@ -5,6 +5,7 @@
 .downloads
 .cache
 .zig-cache
+zig-out
 build
 tmp
 sdkconfig

@@ -10,3 +10,6 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# Stack size for main task (prevent overflow with HAL)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

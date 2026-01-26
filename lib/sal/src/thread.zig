@@ -1,10 +1,11 @@
-//! Thread/Task Abstraction
+//! Thread/Task Abstraction (Low-level)
 //!
-//! Provides cross-platform task/thread management.
+//! Provides low-level cross-platform task/thread management.
+//! For most use cases, prefer `sal.async_` which provides higher-level
+//! `go()` and `WaitGroup` primitives.
 //!
 //! Platform implementations should provide:
 //!   - Task creation with custom stack allocation
-//!   - Go-style synchronous task execution
 //!
 //! Example:
 //!   const psram = esp.heap.psram;  // or std.heap.page_allocator
@@ -12,19 +13,11 @@
 //!   // Spawn async task
 //!   var handle = try sal.thread.spawn(psram, "worker", workerFn, null, .{});
 //!   defer handle.deinit();
-//!
-//!   // Go-style: run and wait
-//!   const result = try sal.thread.go(psram, "task", taskFn, &arg, .{
-//!       .stack_size = 65536,
-//!   });
 
 const std = @import("std");
 
-/// Task function signature (no return value)
-pub const TaskFn = *const fn (?*anyopaque) callconv(.c) void;
-
-/// Go-style task function signature (returns result code)
-pub const GoFn = *const fn (?*anyopaque) callconv(.c) i32;
+/// Task function signature
+pub const TaskFn = *const fn (ctx: ?*anyopaque) callconv(.c) void;
 
 /// Task creation options
 pub const Options = struct {
@@ -83,40 +76,6 @@ pub fn spawn(
     _ = options;
     // Platform implementation required
     @compileError("sal.thread.spawn requires platform implementation");
-}
-
-/// Run a function on a new task and wait for completion (Go-style)
-///
-/// This is useful for running code that needs a large stack without
-/// affecting the main task's stack.
-///
-/// Args:
-///   - allocator: Used to allocate stack memory
-///   - name: Task name for debugging
-///   - func: Function to execute (returns i32)
-///   - arg: Argument passed to func
-///   - options: Task configuration
-///
-/// Returns: The return value from func
-///
-/// Example:
-///   const result = try sal.thread.go(psram, "download", downloadFn, &ctx, .{
-///       .stack_size = 65536,  // 64KB stack
-///   });
-pub fn go(
-    allocator: std.mem.Allocator,
-    name: [:0]const u8,
-    func: GoFn,
-    arg: ?*anyopaque,
-    options: Options,
-) !i32 {
-    _ = allocator;
-    _ = name;
-    _ = func;
-    _ = arg;
-    _ = options;
-    // Platform implementation required
-    @compileError("sal.thread.go requires platform implementation");
 }
 
 /// Get current task/thread handle

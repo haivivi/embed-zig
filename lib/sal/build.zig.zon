@@ -1,7 +1,7 @@
 .{
     .name = .sal,
     .version = "0.1.0",
-    .fingerprint = 0x0,
+    .fingerprint = 0x9114788e94a5cdb4,
     .paths = .{
         "build.zig",
         "build.zig.zon",

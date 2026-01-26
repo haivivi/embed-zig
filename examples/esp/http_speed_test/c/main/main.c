@@ -22,10 +22,14 @@
 #include "esp_http_client.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_crt_bundle.h"
 #include "sdkconfig.h"
 
+// HTTPS test URL - Tsinghua Mirror Python 3.12 (27MB)
+#define HTTPS_TEST_URL "https://mirrors.tuna.tsinghua.edu.cn/python/3.12.0/Python-3.12.0.tgz"
+
 static const char *TAG = "http_speed";
-static const char *BUILD_TAG = "http_speed_c_v2";
+static const char *BUILD_TAG = "https_speed_c_v1";
 
 // WiFi event group
 static EventGroupHandle_t s_wifi_event_group;
@@ -180,7 +184,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-static void run_speed_test(const char *url, const char *test_name)
+static void run_speed_test(const char *url, const char *test_name, bool is_https)
 {
     ESP_LOGI(TAG, "--- %s ---", test_name);
     ESP_LOGI(TAG, "URL: %s", url);
@@ -198,6 +202,7 @@ static void run_speed_test(const char *url, const char *test_name)
         .buffer_size = 16384,       // 16KB receive buffer
         .buffer_size_tx = 4096,     // 4KB send buffer
         .timeout_ms = 120000,       // 2 minutes timeout for large files
+        .crt_bundle_attach = is_https ? esp_crt_bundle_attach : NULL,
     };
     
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -237,31 +242,16 @@ static void run_speed_test(const char *url, const char *test_name)
 
 static void http_speed_test_task(void *pvParameters)
 {
-    char url[128];
-    const char *server_ip = CONFIG_TEST_SERVER_IP;
-    int server_port = CONFIG_TEST_SERVER_PORT;
-    
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "=== HTTP Speed Test (C esp_http_client) ===");
-    ESP_LOGI(TAG, "Server: %s:%d", server_ip, server_port);
+    ESP_LOGI(TAG, "=== HTTPS Speed Test (C esp_http_client) ===");
     ESP_LOGI(TAG, "Note: Running on PSRAM stack task (64KB)");
+    ESP_LOGI(TAG, "Note: Using ESP-IDF CA certificate bundle");
     
-    // Test 10MB and 50MB for stable speed measurement
-    const char *sizes[] = {"10m", "52428800"};
-    const char *names[] = {"10MB", "50MB"};
-    const int num_tests = sizeof(sizes) / sizeof(sizes[0]);
-    
-    for (int i = 0; i < num_tests; i++) {
-        snprintf(url, sizeof(url), "http://%s:%d/test/%s", server_ip, server_port, sizes[i]);
-        char test_name[32];
-        snprintf(test_name, sizeof(test_name), "Download %s", names[i]);
-        
-        run_speed_test(url, test_name);
-        vTaskDelay(pdMS_TO_TICKS(1000));  // Wait between tests
-    }
+    // Test HTTPS download - Tsinghua Mirror Python 3.12 (27MB)
+    run_speed_test(HTTPS_TEST_URL, "HTTPS Download 27MB (Tsinghua Mirror)", true);
     
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "=== Speed Test Complete ===");
+    ESP_LOGI(TAG, "=== HTTPS Speed Test Complete ===");
     print_memory_stats();
     
     // Log stack usage (high water mark = minimum free stack ever, in words)

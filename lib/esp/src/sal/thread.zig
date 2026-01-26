@@ -1,6 +1,8 @@
-//! SAL Thread Implementation - FreeRTOS
+//! SAL Thread Implementation - FreeRTOS (Low-level)
 //!
 //! Implements sal.thread interface using FreeRTOS tasks with PSRAM stack support.
+//! For most use cases, prefer `sal.async_` which provides higher-level
+//! `go()` and `WaitGroup` primitives.
 
 const std = @import("std");
 
@@ -16,11 +18,8 @@ const c = @cImport({
 // Types (matching sal.thread interface)
 // ============================================================================
 
-/// Task function type (no return value)
-pub const TaskFn = *const fn (?*anyopaque) callconv(.c) void;
-
-/// Go-style task function type (returns result code)
-pub const GoFn = *const fn (?*anyopaque) callconv(.c) i32;
+/// Task function type
+pub const TaskFn = *const fn (ctx: ?*anyopaque) callconv(.c) void;
 
 /// Task creation options
 pub const Options = struct {
@@ -84,84 +83,6 @@ pub fn spawn(
         .stack = stack,
         .allocator = allocator,
     };
-}
-
-/// Context for go-style task execution
-const GoContext = struct {
-    func: GoFn,
-    arg: ?*anyopaque,
-    result: i32,
-    done_sem: c.SemaphoreHandle_t,
-    stack_size: u32,
-    name: [:0]const u8,
-};
-
-/// Wrapper function for go-style execution
-fn goWrapper(ctx_ptr: ?*anyopaque) callconv(.c) void {
-    const ctx: *GoContext = @ptrCast(@alignCast(ctx_ptr));
-
-    // Execute the user function
-    ctx.result = ctx.func(ctx.arg);
-
-    // Log stack usage
-    const high_water_mark = c.uxTaskGetStackHighWaterMark(null);
-    const min_free_bytes = high_water_mark * @sizeOf(c.StackType_t);
-    const max_used_bytes = ctx.stack_size - min_free_bytes;
-
-    std.log.info("task '{s}' exit, stack used: {}/{} bytes (free: {})", .{
-        ctx.name,
-        max_used_bytes,
-        ctx.stack_size,
-        min_free_bytes,
-    });
-
-    // Signal completion
-    _ = c.xSemaphoreGive(ctx.done_sem);
-
-    // Delete self
-    c.vTaskDelete(null);
-}
-
-/// Run a function on a new task and wait for completion (Go-style)
-///
-/// This is useful for running code that needs a large stack (e.g., HTTP
-/// downloads with 32KB buffers) without affecting the main task stack.
-///
-/// Example:
-///   const result = try sal.thread.go(psram, "http_test", httpTestFn, null, .{
-///       .stack_size = 65536,  // 64KB stack in PSRAM
-///   });
-pub fn go(
-    allocator: std.mem.Allocator,
-    name: [:0]const u8,
-    func: GoFn,
-    arg: ?*anyopaque,
-    options: Options,
-) !i32 {
-    // Create semaphore for completion notification
-    const done_sem = c.xSemaphoreCreateBinary();
-    if (done_sem == null) {
-        return error.SemaphoreCreateFailed;
-    }
-    defer c.vSemaphoreDelete(done_sem);
-
-    var ctx = GoContext{
-        .func = func,
-        .arg = arg,
-        .result = -1,
-        .done_sem = done_sem,
-        .stack_size = options.stack_size,
-        .name = name,
-    };
-
-    // Create task
-    var handle = try spawn(allocator, name, goWrapper, &ctx, options);
-    defer handle.deinit();
-
-    // Wait for completion (blocks until task signals done)
-    _ = c.xSemaphoreTake(done_sem, c.portMAX_DELAY);
-
-    return ctx.result;
 }
 
 /// Yield execution to other tasks

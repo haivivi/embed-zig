@@ -1,4 +1,4 @@
-# Timer Callback - Zig Version
+# Timer Callback - Zig HAL v5
 
 # Include timer module CMake
 include(${CMAKE_CURRENT_LIST_DIR}/../../../../../lib/esp/src/timer/timer.cmake)

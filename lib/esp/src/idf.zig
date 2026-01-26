@@ -22,6 +22,9 @@ pub const Nvs = nvs.Nvs;
 pub const rtos = @import("rtos.zig");
 pub const delayMs = rtos.delayMs;
 pub const sal = @import("sal.zig");
+pub const time = @import("sal/time.zig");
+pub const nowMs = time.nowMs;
+pub const nowUs = time.nowUs;
 pub const sys = @import("sys.zig");
 pub const EspError = sys.EspError;
 pub const task = @import("task.zig");
@@ -29,6 +32,12 @@ pub const timer = @import("timer/timer.zig");
 pub const Timer = timer.Timer;
 pub const wifi = @import("wifi/wifi.zig");
 pub const Wifi = wifi.Wifi;
+
+// Board definitions
+pub const boards = struct {
+    pub const korvo2_v3 = @import("boards/korvo2_v3.zig");
+    pub const esp32s3_devkit = @import("boards/esp32s3_devkit.zig");
+};
 
 // SAL - System Abstraction Layer
 // GPIO & Peripherals

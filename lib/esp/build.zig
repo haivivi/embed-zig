@@ -4,11 +4,20 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Get dns dependency
+    const dns_dep = b.dependency("dns", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create the esp module
     const esp_module = b.addModule("esp", .{
         .root_source_file = b.path("src/idf.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "dns", .module = dns_dep.module("dns") },
+        },
     });
 
     // Add ESP deps to the module itself

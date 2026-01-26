@@ -1,0 +1,15 @@
+menu "WiFi DNS Lookup Configuration"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "HAIVIVI-MFG"
+        help
+            WiFi SSID to connect to.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "!haivivi"
+        help
+            WiFi password.
+
+endmenu

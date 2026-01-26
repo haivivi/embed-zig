@@ -1,0 +1,193 @@
+//! HAL - Hardware Abstraction Layer
+//!
+//! A unified interface for hardware access across different boards.
+//! Provides type-safe, compile-time configured abstractions.
+//!
+//! ## Architecture
+//!
+//! ```
+//! ┌─────────────────────────────────────────┐
+//! │ Application                             │
+//! │   board.led.setColor(Color.red)         │
+//! │   board.buttons.poll() -> event         │
+//! ├─────────────────────────────────────────┤
+//! │ hal.Board(spec) - Auto-generated        │
+//! │   - Event queue management              │
+//! │   - Driver lifecycle                    │
+//! │   - Unified polling                     │
+//! ├─────────────────────────────────────────┤
+//! │ HAL Components                          │
+//! │   LedStrip(spec)                        │
+//! │   Button(spec)                          │
+//! │   ButtonGroup(spec, ButtonId)           │
+//! ├─────────────────────────────────────────┤
+//! │ Drivers (board implementation)          │
+//! │   WS2812Driver, AdcReader, etc.         │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! ## Usage
+//!
+//! ```zig
+//! // board.zig
+//! const hal = @import("hal");
+//! const hw = @import("korvo2_v3.zig");
+//!
+//! pub const ButtonId = enum { vol_up, vol_down, play };
+//!
+//! pub const spec = struct {
+//!     pub const buttons = hal.ButtonGroup(hw.button_spec, ButtonId);
+//!     pub const rgb_leds = hal.RgbLedStrip(hw.led_spec);
+//!     pub const getTimeFn = hw.getTimeFn;
+//! };
+//!
+//! pub const Board = hal.Board(spec);
+//!
+//! // main.zig
+//! var board = try Board.init();
+//! board.poll();
+//! while (board.nextEvent()) |event| { ... }
+//! board.led.setColor(hal.Color.red);
+//! ```
+
+// ============================================================================
+// Core Types
+// ============================================================================
+
+/// Board - auto-manages drivers and events from spec
+pub const Board = @import("board.zig").Board;
+/// Simple event queue
+pub const SimpleQueue = @import("board.zig").SimpleQueue;
+
+// ============================================================================
+// HAL Components
+// ============================================================================
+
+/// RGB LED Strip HAL wrapper (addressable LEDs)
+pub const RgbLedStrip = @import("led_strip.zig").RgbLedStrip;
+/// Single Button HAL wrapper
+pub const Button = @import("button.zig").Button;
+/// Button Group HAL wrapper (ADC mode)
+pub const ButtonGroup = @import("button_group.zig").ButtonGroup;
+/// WiFi HAL wrapper
+pub const Wifi = @import("wifi.zig").Wifi;
+/// RTC Reader HAL wrapper
+pub const RtcReader = @import("rtc.zig").RtcReader;
+/// RTC Writer HAL wrapper
+pub const RtcWriter = @import("rtc.zig").RtcWriter;
+/// Single LED HAL wrapper
+pub const Led = @import("led.zig").Led;
+/// Temperature Sensor HAL wrapper
+pub const TempSensor = @import("temp_sensor.zig").TempSensor;
+/// Key-Value Store HAL wrapper
+pub const Kvs = @import("kvs.zig").Kvs;
+
+// ============================================================================
+// Common Types
+// ============================================================================
+
+/// RGB Color
+pub const Color = @import("led_strip.zig").Color;
+/// Component metadata
+pub const Meta = @import("spec.zig").Meta;
+/// Button action types
+pub const ButtonAction = @import("button.zig").ButtonAction;
+
+// ============================================================================
+// Event Types
+// ============================================================================
+
+/// System events
+pub const SystemEvent = @import("event.zig").SystemEvent;
+/// Timer events
+pub const TimerEvent = @import("event.zig").TimerEvent;
+
+// ============================================================================
+// RTC Types
+// ============================================================================
+
+/// Unix timestamp with utilities
+pub const Timestamp = @import("rtc.zig").Timestamp;
+/// Datetime components
+pub const Datetime = @import("rtc.zig").Datetime;
+
+// ============================================================================
+// Button Types
+// ============================================================================
+
+/// Button configuration
+pub const ButtonConfig = @import("button.zig").ButtonConfig;
+/// Button group configuration
+pub const ButtonGroupConfig = @import("button_group.zig").ButtonGroupConfig;
+/// ADC range for button group
+pub const ButtonGroupRange = @import("button_group.zig").Range;
+
+// ============================================================================
+// LED Animation Types
+// ============================================================================
+
+/// Animation container
+pub const Animation = @import("led_strip.zig").Animation;
+/// Keyframe for animations
+pub const Keyframe = @import("led_strip.zig").Keyframe;
+/// Easing curves
+pub const Easing = @import("led_strip.zig").Easing;
+/// Effect generators
+pub const Effects = @import("led_strip.zig").Effects;
+
+// ============================================================================
+// WiFi Types
+// ============================================================================
+
+const wifi_mod = @import("wifi.zig");
+pub const IpAddress = wifi_mod.IpAddress;
+pub const Mac = wifi_mod.Mac;
+pub const WifiState = wifi_mod.State;
+pub const WifiEvent = wifi_mod.WifiEvent;
+pub const WifiDisconnectReason = wifi_mod.DisconnectReason;
+pub const WifiFailReason = wifi_mod.FailReason;
+pub const WifiConnectConfig = wifi_mod.ConnectConfig;
+pub const WifiStatus = wifi_mod.Status;
+
+// ============================================================================
+// Specification
+// ============================================================================
+
+/// Hardware specification module
+pub const spec = @import("spec.zig");
+
+// ============================================================================
+// Module Access (for advanced usage)
+// ============================================================================
+
+pub const button_group = @import("button_group.zig");
+pub const led_strip = @import("led_strip.zig");
+pub const button = @import("button.zig");
+pub const event = @import("event.zig");
+pub const wifi = @import("wifi.zig");
+pub const led = @import("led.zig");
+pub const temp_sensor = @import("temp_sensor.zig");
+pub const kvs = @import("kvs.zig");
+
+// ============================================================================
+// Module Access (for advanced usage)
+// ============================================================================
+
+pub const rtc = @import("rtc.zig");
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test {
+    const std = @import("std");
+    std.testing.refAllDecls(@This());
+    _ = @import("board.zig");
+    _ = @import("spec.zig");
+    _ = @import("button_group.zig");
+    _ = @import("wifi.zig");
+    _ = @import("rtc.zig");
+    _ = @import("led.zig");
+    _ = @import("temp_sensor.zig");
+    _ = @import("kvs.zig");
+}

@@ -6,6 +6,9 @@
         .esp = .{
             .path = "../../../../../lib/esp",
         },
+        .app = .{
+            .path = "../../../../apps/led_strip_flash",
+        },
     },
     .paths = .{
         "build.zig",

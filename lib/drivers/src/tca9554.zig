@@ -1,0 +1,270 @@
+//! TCA9554 / TCA9554A I2C GPIO Expander Driver
+//!
+//! Platform-independent driver for Texas Instruments TCA9554/TCA9554A
+//! 8-bit I2C I/O expander with interrupt output.
+//!
+//! Features:
+//! - 8 GPIO pins (directly addressable or as bitmask)
+//! - Configurable as input or output
+//! - Polarity inversion for inputs
+//! - Optional interrupt on input change
+//!
+//! Usage:
+//!   const Tca9554 = drivers.Tca9554(MyI2cBus);
+//!   var gpio = Tca9554.init(i2c_bus, 0x20);
+//!   try gpio.setDirection(.pin6, .output);
+//!   try gpio.write(.pin6, .high);
+
+const std = @import("std");
+
+/// TCA9554 register addresses
+pub const Register = enum(u8) {
+    /// Input port register (read-only)
+    input = 0x00,
+    /// Output port register
+    output = 0x01,
+    /// Polarity inversion register
+    polarity = 0x02,
+    /// Configuration register (0=output, 1=input)
+    config = 0x03,
+};
+
+/// GPIO pin identifiers
+pub const Pin = enum(u3) {
+    pin0 = 0,
+    pin1 = 1,
+    pin2 = 2,
+    pin3 = 3,
+    pin4 = 4,
+    pin5 = 5,
+    pin6 = 6,
+    pin7 = 7,
+
+    pub fn mask(self: Pin) u8 {
+        return @as(u8, 1) << @intFromEnum(self);
+    }
+};
+
+/// Pin direction
+pub const Direction = enum(u1) {
+    output = 0,
+    input = 1,
+};
+
+/// Pin level
+pub const Level = enum(u1) {
+    low = 0,
+    high = 1,
+};
+
+/// I2C interface requirements
+/// The I2C type must provide these functions:
+/// - writeRead(addr, write_buf, read_buf) !void
+/// - write(addr, buf) !void
+pub fn I2cInterface(comptime I2c: type) type {
+    return struct {
+        // Verify required functions exist
+        comptime {
+            if (!@hasDecl(I2c, "writeRead") and !@hasField(I2c, "writeRead")) {
+                @compileError("I2C type must have writeRead function");
+            }
+        }
+    };
+}
+
+/// TCA9554 GPIO Expander Driver
+/// Generic over I2C bus type for platform independence
+pub fn Tca9554(comptime I2c: type) type {
+    return struct {
+        const Self = @This();
+
+        /// I2C bus instance
+        i2c: I2c,
+        /// Device I2C address (typically 0x20-0x27 for TCA9554, 0x38-0x3F for TCA9554A)
+        address: u7,
+
+        // Cached register values (to avoid read-modify-write)
+        output_cache: u8 = 0xFF,
+        config_cache: u8 = 0xFF, // All inputs by default
+
+        /// Initialize driver with I2C bus and device address
+        pub fn init(i2c: I2c, address: u7) Self {
+            return .{
+                .i2c = i2c,
+                .address = address,
+            };
+        }
+
+        /// Read a register value
+        pub fn readRegister(self: *Self, reg: Register) !u8 {
+            var buf: [1]u8 = undefined;
+            try self.i2c.writeRead(self.address, &.{@intFromEnum(reg)}, &buf);
+            return buf[0];
+        }
+
+        /// Write a register value
+        pub fn writeRegister(self: *Self, reg: Register, value: u8) !void {
+            try self.i2c.write(self.address, &.{ @intFromEnum(reg), value });
+        }
+
+        // ====================================================================
+        // High-level API
+        // ====================================================================
+
+        /// Set pin direction (input or output)
+        pub fn setDirection(self: *Self, pin: Pin, dir: Direction) !void {
+            const mask = pin.mask();
+            if (dir == .output) {
+                self.config_cache &= ~mask;
+            } else {
+                self.config_cache |= mask;
+            }
+            try self.writeRegister(.config, self.config_cache);
+        }
+
+        /// Set multiple pins direction at once using bitmask
+        pub fn setDirectionMask(self: *Self, output_mask: u8) !void {
+            self.config_cache = ~output_mask; // 0 = output in TCA9554
+            try self.writeRegister(.config, self.config_cache);
+        }
+
+        /// Write output level to a pin
+        pub fn write(self: *Self, pin: Pin, level: Level) !void {
+            const mask = pin.mask();
+            if (level == .high) {
+                self.output_cache |= mask;
+            } else {
+                self.output_cache &= ~mask;
+            }
+            try self.writeRegister(.output, self.output_cache);
+        }
+
+        /// Write output levels using bitmask
+        pub fn writeMask(self: *Self, mask: u8, levels: u8) !void {
+            self.output_cache = (self.output_cache & ~mask) | (levels & mask);
+            try self.writeRegister(.output, self.output_cache);
+        }
+
+        /// Write all outputs at once
+        pub fn writeAll(self: *Self, value: u8) !void {
+            self.output_cache = value;
+            try self.writeRegister(.output, value);
+        }
+
+        /// Read input level from a pin
+        pub fn read(self: *Self, pin: Pin) !Level {
+            const value = try self.readRegister(.input);
+            return if ((value & pin.mask()) != 0) .high else .low;
+        }
+
+        /// Read all inputs
+        pub fn readAll(self: *Self) !u8 {
+            return try self.readRegister(.input);
+        }
+
+        /// Toggle an output pin
+        pub fn toggle(self: *Self, pin: Pin) !void {
+            self.output_cache ^= pin.mask();
+            try self.writeRegister(.output, self.output_cache);
+        }
+
+        /// Set polarity inversion for input pin
+        pub fn setPolarity(self: *Self, pin: Pin, inverted: bool) !void {
+            var polarity = try self.readRegister(.polarity);
+            const mask = pin.mask();
+            if (inverted) {
+                polarity |= mask;
+            } else {
+                polarity &= ~mask;
+            }
+            try self.writeRegister(.polarity, polarity);
+        }
+
+        // ====================================================================
+        // Convenience functions
+        // ====================================================================
+
+        /// Configure pin as output and set initial level
+        pub fn configureOutput(self: *Self, pin: Pin, initial: Level) !void {
+            try self.write(pin, initial);
+            try self.setDirection(pin, .output);
+        }
+
+        /// Configure pin as input
+        pub fn configureInput(self: *Self, pin: Pin) !void {
+            try self.setDirection(pin, .input);
+        }
+
+        /// Reset all registers to default values
+        pub fn reset(self: *Self) !void {
+            self.output_cache = 0xFF;
+            self.config_cache = 0xFF;
+            try self.writeRegister(.output, 0xFF);
+            try self.writeRegister(.polarity, 0x00);
+            try self.writeRegister(.config, 0xFF);
+        }
+    };
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+const MockI2c = struct {
+    registers: [4]u8 = .{ 0xFF, 0xFF, 0x00, 0xFF },
+    last_write_addr: ?u8 = null,
+    last_write_data: ?u8 = null,
+
+    pub fn writeRead(self: *MockI2c, _: u7, write_buf: []const u8, read_buf: []u8) !void {
+        if (write_buf.len > 0 and read_buf.len > 0) {
+            const reg = write_buf[0];
+            if (reg < 4) {
+                read_buf[0] = self.registers[reg];
+            }
+        }
+    }
+
+    pub fn write(self: *MockI2c, _: u7, buf: []const u8) !void {
+        if (buf.len >= 2) {
+            const reg = buf[0];
+            if (reg < 4) {
+                self.registers[reg] = buf[1];
+                self.last_write_addr = reg;
+                self.last_write_data = buf[1];
+            }
+        }
+    }
+};
+
+test "Tca9554 basic operations" {
+    var mock = MockI2c{};
+    var gpio = Tca9554(*MockI2c).init(&mock, 0x20);
+
+    // Test set direction
+    try gpio.setDirection(.pin6, .output);
+    try std.testing.expectEqual(@as(u8, 0xBF), mock.registers[@intFromEnum(Register.config)]);
+
+    // Test write
+    try gpio.write(.pin6, .high);
+    try std.testing.expectEqual(@as(u8, 0xFF), mock.registers[@intFromEnum(Register.output)]);
+
+    try gpio.write(.pin6, .low);
+    try std.testing.expectEqual(@as(u8, 0xBF), mock.registers[@intFromEnum(Register.output)]);
+}
+
+test "Tca9554 configure output" {
+    var mock = MockI2c{};
+    var gpio = Tca9554(*MockI2c).init(&mock, 0x20);
+
+    try gpio.configureOutput(.pin7, .low);
+    // Output should be low
+    try std.testing.expectEqual(@as(u8, 0x7F), mock.registers[@intFromEnum(Register.output)]);
+    // Pin should be configured as output
+    try std.testing.expectEqual(@as(u8, 0x7F), mock.registers[@intFromEnum(Register.config)]);
+}
+
+test "Pin mask" {
+    try std.testing.expectEqual(@as(u8, 0x01), Pin.pin0.mask());
+    try std.testing.expectEqual(@as(u8, 0x40), Pin.pin6.mask());
+    try std.testing.expectEqual(@as(u8, 0x80), Pin.pin7.mask());
+}

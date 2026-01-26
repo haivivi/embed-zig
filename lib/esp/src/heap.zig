@@ -19,6 +19,8 @@ const std = @import("std");
 
 const c = @cImport({
     @cInclude("esp_heap_caps.h");
+    @cInclude("freertos/FreeRTOS.h");
+    @cInclude("freertos/task.h");
 });
 
 // Memory capability flags
@@ -208,4 +210,122 @@ pub fn getInternalStats() MemStats {
 /// Get external PSRAM stats (returns zeros if not available)
 pub fn getPsramStats() MemStats {
     return getMemStats(MALLOC_CAP_SPIRAM);
+}
+
+/// Get DMA-capable memory stats
+pub fn getDmaStats() MemStats {
+    return getMemStats(MALLOC_CAP_DMA);
+}
+
+/// Get default heap stats
+pub fn getDefaultStats() MemStats {
+    return getMemStats(MALLOC_CAP_DEFAULT);
+}
+
+// ============================================================================
+// Stack Stats
+// ============================================================================
+
+pub const StackStats = struct {
+    total: usize, // Total stack size
+    high_water: usize, // Minimum free ever (high water mark)
+    used: usize, // Current estimated usage = total - high_water
+    free_now: usize, // Current free (same as high_water for safety)
+};
+
+/// Get current task's stack statistics
+pub fn getCurrentTaskStackStats() StackStats {
+    const handle = c.xTaskGetCurrentTaskHandle();
+    const high_water = c.uxTaskGetStackHighWaterMark(handle);
+
+    // Note: FreeRTOS doesn't provide a direct way to get total stack size
+    // for current task. We use CONFIG_ESP_MAIN_TASK_STACK_SIZE as estimate
+    // for main task, or a default of 4096.
+    const total: usize = 8192; // CONFIG_ESP_MAIN_TASK_STACK_SIZE default
+
+    return .{
+        .total = total,
+        .high_water = high_water,
+        .used = total -| high_water,
+        .free_now = high_water,
+    };
+}
+
+/// Get stack stats for a specific task handle
+pub fn getTaskStackStats(handle: ?*anyopaque, total_size: usize) StackStats {
+    const high_water = c.uxTaskGetStackHighWaterMark(handle);
+    return .{
+        .total = total_size,
+        .high_water = high_water,
+        .used = total_size -| high_water,
+        .free_now = high_water,
+    };
+}
+
+// ============================================================================
+// System Memory Report
+// ============================================================================
+
+pub const SystemMemoryReport = struct {
+    internal: MemStats,
+    psram: MemStats,
+    dma: MemStats,
+    stack: StackStats,
+
+    /// Format as string for logging (returns static buffer)
+    pub fn format(self: SystemMemoryReport, buf: []u8) []const u8 {
+        const len = std.fmt.bufPrint(buf,
+            \\Internal: {d}KB free / {d}KB total (min: {d}KB, largest: {d}KB)
+            \\PSRAM:    {d}KB free / {d}KB total
+            \\DMA:      {d}KB free / {d}KB total
+            \\Stack:    ~{d} bytes used / {d} bytes (high water: {d})
+        , .{
+            self.internal.free / 1024,
+            self.internal.total / 1024,
+            self.internal.min_free / 1024,
+            self.internal.largest_block / 1024,
+            self.psram.free / 1024,
+            self.psram.total / 1024,
+            self.dma.free / 1024,
+            self.dma.total / 1024,
+            self.stack.used,
+            self.stack.total,
+            self.stack.high_water,
+        }) catch return "Format error";
+        return buf[0..len];
+    }
+};
+
+/// Get comprehensive system memory report
+pub fn getSystemReport() SystemMemoryReport {
+    return .{
+        .internal = getInternalStats(),
+        .psram = getPsramStats(),
+        .dma = getDmaStats(),
+        .stack = getCurrentTaskStackStats(),
+    };
+}
+
+/// Print memory report to log
+pub fn printReport() void {
+    const report = getSystemReport();
+    const log = @import("std").log;
+    log.info("=== Memory Report ===", .{});
+    log.info("Internal: {d}KB free / {d}KB ({d}KB min, {d}KB block)", .{
+        report.internal.free / 1024,
+        report.internal.total / 1024,
+        report.internal.min_free / 1024,
+        report.internal.largest_block / 1024,
+    });
+    if (report.psram.total > 0) {
+        log.info("PSRAM:    {d}KB free / {d}KB", .{
+            report.psram.free / 1024,
+            report.psram.total / 1024,
+        });
+    }
+    log.info("Stack:    ~{d} used / {d} (high water: {d})", .{
+        report.stack.used,
+        report.stack.total,
+        report.stack.high_water,
+    });
 }

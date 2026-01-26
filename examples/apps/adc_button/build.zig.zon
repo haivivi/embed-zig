@@ -1,0 +1,20 @@
+.{
+    .name = .adc_button_app,
+    .version = "0.1.0",
+    .fingerprint = 0x9f53cb452486582a,
+    .dependencies = .{
+        .esp = .{
+            .path = "../../../lib/esp",
+        },
+        .hal = .{
+            .path = "../../../lib/hal",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+}

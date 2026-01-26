@@ -1,0 +1,63 @@
+//! LED Strip Flash - Platform Independent App
+//!
+//! Simple LED strip flash demo.
+
+const hal = @import("hal");
+const platform = @import("platform.zig");
+
+const Board = platform.Board;
+const Hardware = platform.Hardware;
+const sal = platform.sal;
+const log = sal.log;
+
+const BUILD_TAG = "led_strip_flash_hal_v5";
+
+fn printBoardInfo() void {
+    log.info("==========================================", .{});
+    log.info("LED Strip Flash - HAL v5", .{});
+    log.info("Build Tag: {s}", .{BUILD_TAG});
+    log.info("==========================================", .{});
+    log.info("Board:     {s}", .{Hardware.name});
+    log.info("LED Type:  {s}", .{Hardware.led_type});
+    log.info("LED Count: {d}", .{Hardware.led_count});
+    log.info("Build:     -DZIG_BOARD={s}", .{@tagName(platform.selected_board)});
+    log.info("==========================================", .{});
+}
+
+pub fn run() void {
+    printBoardInfo();
+
+    // Initialize board (in-place to preserve driver pointers)
+    var board: Board = undefined;
+    board.init() catch |err| {
+        log.err("Failed to initialize board: {}", .{err});
+        return;
+    };
+    defer board.deinit();
+
+    log.info("Board initialized", .{});
+
+    // Flash the LED
+    var state: bool = false;
+    const brightness: u8 = 32;
+
+    log.info("Starting flash loop (1 second interval)", .{});
+
+    while (true) {
+        state = !state;
+
+        if (state) {
+            board.rgb_leds.setColor(hal.Color.rgb(brightness, brightness, brightness));
+        } else {
+            board.rgb_leds.clear();
+        }
+        board.rgb_leds.refresh();
+
+        log.info("LED {s} (uptime: {}ms)", .{
+            if (state) "ON" else "OFF",
+            board.uptime(),
+        });
+
+        sal.sleepMs(1000);
+    }
+}

@@ -11,6 +11,10 @@ const c = @cImport({
     @cInclude("esp_log.h");
 });
 
+/// External: esp_crt_bundle_attach from esp-idf mbedtls component
+/// Used for HTTPS certificate verification
+extern fn esp_crt_bundle_attach(conf: ?*anyopaque) callconv(.c) c_int;
+
 pub const HttpError = error{
     InitFailed,
     RequestFailed,
@@ -49,6 +53,7 @@ pub const HttpClient = struct {
         url: [:0]const u8,
         timeout_ms: u32 = 120000, // 2 minutes for large files
         buffer_size: usize = 16384, // 16KB buffer
+        is_https: bool = false, // Enable HTTPS with CA bundle
     };
 
     pub fn init(config: Config) !HttpClient {
@@ -59,6 +64,11 @@ pub const HttpClient = struct {
         http_config.buffer_size = @intCast(config.buffer_size);
         http_config.buffer_size_tx = 4096; // Match C version
         http_config.timeout_ms = @intCast(config.timeout_ms);
+
+        // Enable HTTPS with CA certificate bundle
+        if (config.is_https) {
+            http_config.crt_bundle_attach = esp_crt_bundle_attach;
+        }
 
         const handle = c.esp_http_client_init(&http_config);
         if (handle == null) {
@@ -163,4 +173,79 @@ pub const HttpClient = struct {
 
 pub fn getTimeUs() i64 {
     return c.esp_timer_get_time();
+}
+
+/// DNS over HTTPS POST request using esp_http_client
+/// Returns the DNS response body length on success
+pub fn postDns(url: []const u8, query_data: []const u8, response_buf: []u8, timeout_ms: u32) !usize {
+    // Create null-terminated URL
+    var url_buf: [256]u8 = undefined;
+    if (url.len >= url_buf.len) return HttpError.InitFailed;
+    @memcpy(url_buf[0..url.len], url);
+    url_buf[url.len] = 0;
+    const url_z: [:0]const u8 = url_buf[0..url.len :0];
+
+    // Initialize HTTP client with TLS config
+    var http_config = std.mem.zeroes(c.esp_http_client_config_t);
+    http_config.url = url_z.ptr;
+    http_config.method = c.HTTP_METHOD_POST;
+    http_config.timeout_ms = @intCast(timeout_ms);
+    http_config.buffer_size = 2048;
+    // Use certificate bundle for HTTPS verification
+    http_config.crt_bundle_attach = esp_crt_bundle_attach;
+
+    const handle = c.esp_http_client_init(&http_config);
+    if (handle == null) {
+        return HttpError.InitFailed;
+    }
+    defer _ = c.esp_http_client_cleanup(handle);
+
+    // Set headers for DoH (RFC 8484)
+    _ = c.esp_http_client_set_header(handle, "Content-Type", "application/dns-message");
+    _ = c.esp_http_client_set_header(handle, "Accept", "application/dns-message");
+
+    // Open connection
+    var write_len = c.esp_http_client_open(handle, @intCast(query_data.len));
+    if (write_len < 0) {
+        return HttpError.ConnectionFailed;
+    }
+
+    // Write POST body
+    write_len = c.esp_http_client_write(handle, query_data.ptr, @intCast(query_data.len));
+    if (write_len < 0) {
+        return HttpError.RequestFailed;
+    }
+
+    // Fetch headers
+    const content_len = c.esp_http_client_fetch_headers(handle);
+    if (content_len < 0) {
+        return HttpError.RequestFailed;
+    }
+
+    // Check status code
+    const status = c.esp_http_client_get_status_code(handle);
+    if (status != 200) {
+        return HttpError.InvalidResponse;
+    }
+
+    // Read response body
+    var total_read: usize = 0;
+    while (total_read < response_buf.len) {
+        const read_len = c.esp_http_client_read(handle, response_buf[total_read..].ptr, @intCast(response_buf.len - total_read));
+        if (read_len < 0) {
+            return HttpError.RequestFailed;
+        }
+        if (read_len == 0) break;
+        total_read += @intCast(read_len);
+
+        // Don't read more than content_length
+        if (content_len > 0 and total_read >= @as(usize, @intCast(content_len))) {
+            break;
+        }
+    }
+
+    // Close connection
+    _ = c.esp_http_client_close(handle);
+
+    return total_read;
 }
