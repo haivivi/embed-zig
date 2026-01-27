@@ -1,0 +1,11 @@
+# Hardware drivers
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "drivers_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+    ),
+)

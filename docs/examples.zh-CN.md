@@ -26,31 +26,40 @@
 
 ## 运行示例
 
-### ESP32（硬件）
+### ESP32（硬件）- Bazel
+
+```bash
+# 编译
+bazel build //examples/esp/<示例名>/zig:app
+
+# 烧录（自动检测串口）
+bazel run //examples/esp/<示例名>/zig:flash
+
+# 监控
+bazel run //examples/esp/<示例名>/zig:monitor
+```
+
+**选项：**
+
+```bash
+# 指定板子（默认: esp32s3_devkit）
+bazel build //target:app --//bazel/esp:board=korvo2_v3
+
+# 指定芯片（默认: esp32s3）
+bazel build //target:app --//bazel/esp:chip=esp32c3
+
+# 指定串口
+bazel run //target:flash --//bazel/esp:port=/dev/ttyUSB0
+```
+
+### ESP32（硬件）- idf.py
 
 ```bash
 cd examples/esp/<示例名>/zig
 idf.py set-target esp32s3
-idf.py build
+idf.py -DZIG_BOARD=<板子> build
 idf.py -p <端口> flash monitor
 ```
-
-**选择板子：**
-
-```bash
-# DevKit (默认)
-idf.py build
-
-# Korvo-2
-idf.py -DZIG_BOARD=korvo2_v3 build
-```
-
-**常用串口：**
-
-| 板子 | 串口 (macOS) |
-|------|--------------|
-| ESP32-S3-DevKit | `/dev/cu.usbmodem1301` |
-| Korvo-2 V3.1 | `/dev/cu.usbserial-120` |
 
 ### 桌面模拟（Raylib）
 
@@ -71,15 +80,14 @@ zig build run
 
 **ESP32：**
 ```bash
-cd examples/esp/gpio_button/zig
-idf.py -DZIG_BOARD=esp32s3_devkit build
-idf.py -p /dev/cu.usbmodem1301 flash monitor
+bazel build //examples/esp/gpio_button/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/gpio_button/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/gpio_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **模拟器：**
 ```bash
-cd examples/raysim/gpio_button
-zig build run
+cd examples/raysim/gpio_button && zig build run
 ```
 
 **演示内容：**
@@ -93,14 +101,14 @@ zig build run
 
 **ESP32：**
 ```bash
-cd examples/esp/led_strip_flash/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/led_strip_flash/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/led_strip_flash/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/led_strip_flash/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **模拟器：**
 ```bash
-cd examples/raysim/led_strip_flash
-zig build run
+cd examples/raysim/led_strip_flash && zig build run
 ```
 
 **演示内容：**
@@ -113,14 +121,14 @@ RGB LED 彩虹和呼吸动画。
 
 **ESP32：**
 ```bash
-cd examples/esp/led_strip_anim/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/led_strip_anim/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/led_strip_anim/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/led_strip_anim/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **模拟器：**
 ```bash
-cd examples/raysim/led_strip_anim
-zig build run
+cd examples/raysim/led_strip_anim && zig build run
 ```
 
 **演示内容：**
@@ -132,10 +140,11 @@ zig build run
 
 单个 ADC 引脚连接多个按钮（分压器）。
 
+**ESP32（仅 Korvo-2）：**
 ```bash
-cd examples/esp/adc_button/zig
-idf.py -DZIG_BOARD=korvo2_v3 build
-idf.py -p /dev/cu.usbserial-120 flash monitor
+bazel build //examples/esp/adc_button/zig:app --//bazel/esp:board=korvo2_v3 --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/adc_button/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/adc_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
@@ -149,9 +158,11 @@ idf.py -p /dev/cu.usbserial-120 flash monitor
 
 硬件定时器触发 LED 切换。
 
+**ESP32：**
 ```bash
-cd examples/esp/timer_callback/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/timer_callback/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/timer_callback/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/timer_callback/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
@@ -163,9 +174,11 @@ idf.py build && idf.py flash monitor
 
 用 PWM 控制 LED 亮度渐变。
 
+**ESP32：**
 ```bash
-cd examples/esp/pwm_fade/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/pwm_fade/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/pwm_fade/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/pwm_fade/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
@@ -179,9 +192,11 @@ idf.py build && idf.py flash monitor
 
 读取内部温度传感器。
 
+**ESP32：**
 ```bash
-cd examples/esp/temperature_sensor/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/temperature_sensor/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/temperature_sensor/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/temperature_sensor/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
@@ -193,9 +208,11 @@ idf.py build && idf.py flash monitor
 
 持久化存储，带启动计数器。
 
+**ESP32：**
 ```bash
-cd examples/esp/nvs_storage/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/nvs_storage/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/nvs_storage/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/nvs_storage/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
@@ -213,10 +230,11 @@ idf.py build && idf.py flash monitor
 
 连接 WiFi 并解析 DNS。
 
+**ESP32：**
 ```bash
-cd examples/esp/wifi_dns_lookup/zig
-# 编辑 sdkconfig.defaults 填入你的 WiFi 信息
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/wifi_dns_lookup/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/wifi_dns_lookup/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/wifi_dns_lookup/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **配置：** 在 `sdkconfig.defaults` 中设置 WiFi SSID/密码：
@@ -227,16 +245,24 @@ CONFIG_WIFI_PASSWORD="你的密码"
 
 ### http_speed_test
 
-HTTP 下载速度测量。
+HTTP 下载速度测量。有两个 Zig 实现版本：
 
+**ESP32（zig - 使用 lib/esp）：**
 ```bash
-cd examples/esp/http_speed_test/zig
-# 编辑 sdkconfig.defaults 填入你的 WiFi 信息
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/http_speed_test/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/http_speed_test/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/http_speed_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+```
+
+**ESP32（zig_std - 使用 Zig std.http）：**
+```bash
+bazel build //examples/esp/http_speed_test/zig_std:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/http_speed_test/zig_std:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/http_speed_test/zig_std:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**
-- HTTP 客户端用法
+- HTTP 客户端用法（两种方式）
 - 下载速度计算
 - 网络性能测试
 
@@ -244,9 +270,11 @@ idf.py build && idf.py flash monitor
 
 测试 PSRAM 和 IRAM 内存分配。
 
+**ESP32：**
 ```bash
-cd examples/esp/memory_attr_test/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/memory_attr_test/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/memory_attr_test/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/memory_attr_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **演示内容：**

@@ -1,0 +1,11 @@
+# DNS library
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "dns_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+    ),
+)

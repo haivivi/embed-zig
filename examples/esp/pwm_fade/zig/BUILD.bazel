@@ -1,0 +1,39 @@
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_idf_app", "esp_monitor")
+
+package(default_visibility = ["//visibility:public"])
+
+esp_idf_app(
+    name = "app",
+    srcs = glob(
+        [
+            "**/*.c",
+            "**/*.h",
+            "**/*.zig",
+            "**/*.cmake",
+            "**/*.txt",
+            "**/*.yml",
+            "**/*.zon",
+            "sdkconfig.defaults",
+            "**/Kconfig*",
+        ],
+        exclude = [
+            "build/**",
+            "managed_components/**",
+            ".zig-cache/**",
+            "sdkconfig",
+            "sdkconfig.old",
+        ],
+        allow_empty = True,
+    ),
+    cmake_modules = ["//examples/esp:cmake_modules"],
+    project_name = "pwm_fade",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
+
+esp_monitor(
+    name = "monitor",
+)

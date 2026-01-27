@@ -1,0 +1,3 @@
+# Third-party libraries
+
+package(default_visibility = ["//visibility:public"])

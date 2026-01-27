@@ -1,0 +1,37 @@
+# ESP32 build settings
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+# Board name (passed to Zig as -Dboard=xxx)
+# User defines board configuration in Zig code
+string_flag(
+    name = "board",
+    build_setting_default = "esp32s3_devkit",
+)
+
+# ESP chip type (for ESP-IDF and esptool)
+# Valid values: esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, etc.
+string_flag(
+    name = "chip",
+    build_setting_default = "esp32s3",
+)
+
+# Serial port for flash/monitor (auto-detect if empty)
+string_flag(
+    name = "port",
+    build_setting_default = "",
+)
+
+# Flash baud rate
+string_flag(
+    name = "baud",
+    build_setting_default = "460800",
+)
+
+# Build scripts
+filegroup(
+    name = "scripts",
+    srcs = glob(["scripts/*.sh"]),
+)

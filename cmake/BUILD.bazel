@@ -1,0 +1,10 @@
+# CMake modules for ESP-IDF integration
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "cmake_modules",
+    srcs = glob(["*.cmake"]),
+)
+
+exports_files(glob(["*.cmake"]))

@@ -1,0 +1,19 @@
+# Raylib simulator
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "raysim_sources",
+    srcs = glob(
+        ["**/*.zig"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "raysim_fonts",
+    srcs = glob(
+        ["fonts/**/*"],
+        allow_empty = True,
+    ),
+)

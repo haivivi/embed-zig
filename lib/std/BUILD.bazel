@@ -1,0 +1,11 @@
+# Standard library abstraction
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "std_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+    ),
+)

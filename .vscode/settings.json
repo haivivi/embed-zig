@@ -1,0 +1,13 @@
+{
+    "files.exclude": {
+        "bazel-*": true,
+        "MODULE.bazel.lock": true
+    },
+    "files.watcherExclude": {
+        "bazel-*/**": true
+    },
+    "search.exclude": {
+        "bazel-*": true,
+        "MODULE.bazel.lock": true
+    }
+}

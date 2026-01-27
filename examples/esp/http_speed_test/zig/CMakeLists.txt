@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Auto-detect and set ZIG_INSTALL based on host system
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/zig_install.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/zig_install.cmake)
 
 # Get project name from directory
 get_filename_component(CURRENT_DIR ${CMAKE_CURRENT_LIST_FILE} DIRECTORY)

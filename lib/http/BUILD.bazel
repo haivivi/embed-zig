@@ -1,0 +1,11 @@
+# HTTP library
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "http_sources",
+    srcs = glob(
+        ["**/*.zig"],
+        allow_empty = True,
+    ),
+)

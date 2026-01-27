@@ -26,31 +26,40 @@ All examples live in `examples/`. Each demonstrates specific HAL components or E
 
 ## Running Examples
 
-### ESP32 (Hardware)
+### ESP32 (Hardware) - Bazel
+
+```bash
+# Build
+bazel build //examples/esp/<example>/zig:app
+
+# Flash (auto-detect port)
+bazel run //examples/esp/<example>/zig:flash
+
+# Monitor
+bazel run //examples/esp/<example>/zig:monitor
+```
+
+**Options:**
+
+```bash
+# Specify board (default: esp32s3_devkit)
+bazel build //target:app --//bazel/esp:board=korvo2_v3
+
+# Specify chip (default: esp32s3)
+bazel build //target:app --//bazel/esp:chip=esp32c3
+
+# Specify serial port
+bazel run //target:flash --//bazel/esp:port=/dev/ttyUSB0
+```
+
+### ESP32 (Hardware) - idf.py
 
 ```bash
 cd examples/esp/<example>/zig
 idf.py set-target esp32s3
-idf.py build
+idf.py -DZIG_BOARD=<board> build
 idf.py -p <PORT> flash monitor
 ```
-
-**Board Selection:**
-
-```bash
-# DevKit (default)
-idf.py build
-
-# Korvo-2
-idf.py -DZIG_BOARD=korvo2_v3 build
-```
-
-**Common Ports:**
-
-| Board | Port (macOS) |
-|-------|--------------|
-| ESP32-S3-DevKit | `/dev/cu.usbmodem1301` |
-| Korvo-2 V3.1 | `/dev/cu.usbserial-120` |
 
 ### Desktop Simulation (Raylib)
 
@@ -71,15 +80,14 @@ Button press toggles LED. Demonstrates event-driven architecture.
 
 **ESP32:**
 ```bash
-cd examples/esp/gpio_button/zig
-idf.py -DZIG_BOARD=esp32s3_devkit build
-idf.py -p /dev/cu.usbmodem1301 flash monitor
+bazel build //examples/esp/gpio_button/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/gpio_button/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/gpio_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **Simulation:**
 ```bash
-cd examples/raysim/gpio_button
-zig build run
+cd examples/raysim/gpio_button && zig build run
 ```
 
 **What it shows:**
@@ -93,14 +101,14 @@ Simple RGB LED blinking at 1Hz.
 
 **ESP32:**
 ```bash
-cd examples/esp/led_strip_flash/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/led_strip_flash/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/led_strip_flash/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/led_strip_flash/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **Simulation:**
 ```bash
-cd examples/raysim/led_strip_flash
-zig build run
+cd examples/raysim/led_strip_flash && zig build run
 ```
 
 **What it shows:**
@@ -113,14 +121,14 @@ Rainbow and breathing animations on RGB LED strip.
 
 **ESP32:**
 ```bash
-cd examples/esp/led_strip_anim/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/led_strip_anim/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/led_strip_anim/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/led_strip_anim/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **Simulation:**
 ```bash
-cd examples/raysim/led_strip_anim
-zig build run
+cd examples/raysim/led_strip_anim && zig build run
 ```
 
 **What it shows:**
@@ -132,10 +140,11 @@ zig build run
 
 Multiple buttons through single ADC pin (voltage divider).
 
+**ESP32 (Korvo-2 only):**
 ```bash
-cd examples/esp/adc_button/zig
-idf.py -DZIG_BOARD=korvo2_v3 build
-idf.py -p /dev/cu.usbserial-120 flash monitor
+bazel build //examples/esp/adc_button/zig:app --//bazel/esp:board=korvo2_v3 --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/adc_button/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/adc_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
@@ -149,9 +158,11 @@ idf.py -p /dev/cu.usbserial-120 flash monitor
 
 Hardware timer triggers LED toggle.
 
+**ESP32:**
 ```bash
-cd examples/esp/timer_callback/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/timer_callback/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/timer_callback/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/timer_callback/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
@@ -163,9 +174,11 @@ idf.py build && idf.py flash monitor
 
 LED brightness fading using PWM.
 
+**ESP32:**
 ```bash
-cd examples/esp/pwm_fade/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/pwm_fade/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/pwm_fade/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/pwm_fade/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
@@ -179,9 +192,11 @@ idf.py build && idf.py flash monitor
 
 Read internal temperature sensor.
 
+**ESP32:**
 ```bash
-cd examples/esp/temperature_sensor/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/temperature_sensor/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/temperature_sensor/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/temperature_sensor/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
@@ -193,9 +208,11 @@ idf.py build && idf.py flash monitor
 
 Persistent storage with boot counter.
 
+**ESP32:**
 ```bash
-cd examples/esp/nvs_storage/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/nvs_storage/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/nvs_storage/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/nvs_storage/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
@@ -213,10 +230,11 @@ These examples use ESP-IDF directly without HAL abstraction.
 
 Connect to WiFi and resolve DNS.
 
+**ESP32:**
 ```bash
-cd examples/esp/wifi_dns_lookup/zig
-# Edit sdkconfig.defaults with your WiFi credentials
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/wifi_dns_lookup/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/wifi_dns_lookup/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/wifi_dns_lookup/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **Configuration:** Set WiFi SSID/password in `sdkconfig.defaults`:
@@ -227,16 +245,24 @@ CONFIG_WIFI_PASSWORD="YourPassword"
 
 ### http_speed_test
 
-HTTP download speed measurement.
+HTTP download speed measurement. Two Zig implementations available:
 
+**ESP32 (zig - using lib/esp):**
 ```bash
-cd examples/esp/http_speed_test/zig
-# Edit sdkconfig.defaults with your WiFi credentials
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/http_speed_test/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/http_speed_test/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/http_speed_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+```
+
+**ESP32 (zig_std - using Zig std.http):**
+```bash
+bazel build //examples/esp/http_speed_test/zig_std:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/http_speed_test/zig_std:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/http_speed_test/zig_std:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**
-- HTTP client usage
+- HTTP client usage (two approaches)
 - Download speed calculation
 - Network performance testing
 
@@ -244,9 +270,11 @@ idf.py build && idf.py flash monitor
 
 Test PSRAM and IRAM memory placement.
 
+**ESP32:**
 ```bash
-cd examples/esp/memory_attr_test/zig
-idf.py build && idf.py flash monitor
+bazel build //examples/esp/memory_attr_test/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
+bazel run //examples/esp/memory_attr_test/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/memory_attr_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 **What it shows:**

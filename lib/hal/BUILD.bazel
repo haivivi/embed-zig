@@ -1,0 +1,11 @@
+# HAL (Hardware Abstraction Layer)
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "hal_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+    ),
+)

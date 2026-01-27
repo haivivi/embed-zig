@@ -1,0 +1,9 @@
+# ESP-IDF examples
+
+package(default_visibility = ["//visibility:public"])
+
+# Reference root cmake modules (zig_install.cmake)
+filegroup(
+    name = "cmake_modules",
+    srcs = ["//cmake:cmake_modules"],
+)

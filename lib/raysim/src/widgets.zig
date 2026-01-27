@@ -1,7 +1,7 @@
 //! UI Widgets for raysim
 //!
 //! Drawing functions for various UI components.
-//! Uses raygui for better text rendering with system fonts.
+//! Uses raygui for better text rendering with embedded font.
 
 pub const rl = @import("raylib");
 pub const rg = @import("raygui");
@@ -20,36 +20,23 @@ pub const FontSize = struct {
     pub const log: i32 = 14;
 };
 
+// Embedded font data (JetBrains Mono - OFL license)
+const font_data = @embedFile("JetBrainsMono-Regular.ttf");
+
 var custom_font: ?rl.Font = null;
 
-/// Initialize with system font (call after raylib window init)
+/// Initialize font from embedded data (cross-platform/WASM compatible)
 pub fn initFont() void {
-    // Try loading system fonts in order of preference
-    const font_paths = [_][:0]const u8{
-        // macOS system fonts
-        "/System/Library/Fonts/PingFang.ttc", // 苹方 (中文友好)
-        "/System/Library/Fonts/SFNS.ttf", // SF Pro
-        "/Library/Fonts/Arial Unicode.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        // Linux
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        // Windows
-        "C:/Windows/Fonts/msyh.ttc", // 微软雅黑
-        "C:/Windows/Fonts/segoeui.ttf",
+    const font = rl.loadFontFromMemory(".ttf", font_data, FontSize.normal, null) catch {
+        // Fall back to default font
+        rg.setStyle(.default, .{ .default = .text_size }, FontSize.normal);
+        return;
     };
-
-    for (font_paths) |path| {
-        const font = rl.loadFontEx(path, FontSize.normal, null) catch continue;
-        if (font.texture.id != 0) {
-            custom_font = font;
-            rg.setFont(font);
-            // Set default text size
-            rg.setStyle(.default, .{ .default = .text_size }, FontSize.normal);
-            return;
-        }
+    if (font.texture.id != 0) {
+        custom_font = font;
+        rg.setFont(font);
     }
-    // If no system font found, use default
+    rg.setStyle(.default, .{ .default = .text_size }, FontSize.normal);
 }
 
 /// Cleanup font resources

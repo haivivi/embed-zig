@@ -1,0 +1,99 @@
+# Audio library (Opus, Ogg bindings)
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "audio_sources",
+    srcs = glob(
+        ["**/*.zig"],
+        allow_empty = True,
+    ),
+)
+
+# Zig opus bindings - compiled as a static library
+genrule(
+    name = "opus_zig_lib",
+    srcs = [
+        "src/opus.zig",
+        "//third_party/opus:opus_headers",
+        "//third_party/opus:opus_static",
+    ],
+    outs = ["libopus_zig.a"],
+    cmd = """
+        set -e
+        export HOME=/tmp
+        export ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache
+        export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+        mkdir -p /tmp/zig-cache
+
+        OUTDIR=$$(pwd)
+        WORK=$$(mktemp -d)
+        trap "rm -rf $$WORK" EXIT
+
+        # Setup include directory structure
+        mkdir -p $$WORK/include
+
+        # Copy opus headers
+        for hdr in $(locations //third_party/opus:opus_headers); do
+            cp $$OUTDIR/$$hdr $$WORK/include/
+        done
+
+        # Copy source
+        cp $$OUTDIR/$(location src/opus.zig) $$WORK/
+
+        # Build Zig library
+        cd $$WORK
+        zig build-lib opus.zig \
+            -I$$WORK/include \
+            -lc \
+            -O ReleaseSafe \
+            --name opus_zig \
+            -femit-bin=libopus_zig.a
+
+        cp $$WORK/libopus_zig.a $$OUTDIR/$@
+    """,
+)
+
+# Zig ogg bindings - compiled as a static library
+genrule(
+    name = "ogg_zig_lib",
+    srcs = [
+        "src/ogg.zig",
+        "//third_party/ogg:ogg_headers_gen",
+        "//third_party/ogg:ogg_static",
+    ],
+    outs = ["libogg_zig.a"],
+    cmd = """
+        set -e
+        export HOME=/tmp
+        export ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache
+        export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+        mkdir -p /tmp/zig-cache
+
+        OUTDIR=$$(pwd)
+        WORK=$$(mktemp -d)
+        trap "rm -rf $$WORK" EXIT
+
+        # Setup include directory structure
+        mkdir -p $$WORK/include/ogg
+
+        # Copy ogg headers
+        for hdr in $(locations //third_party/ogg:ogg_headers_gen); do
+            cp $$OUTDIR/$$hdr $$WORK/include/ogg/
+        done
+
+        # Copy source
+        cp $$OUTDIR/$(location src/ogg.zig) $$WORK/
+
+        # Build Zig library
+        cd $$WORK
+        zig build-lib ogg.zig \
+            -I$$WORK/include \
+            -lc \
+            -O ReleaseSafe \
+            --name ogg_zig \
+            -femit-bin=libogg_zig.a
+
+        cp $$WORK/libogg_zig.a $$OUTDIR/$@
+    """,
+)

@@ -1,0 +1,9 @@
+# embed-zig libraries
+
+package(default_visibility = ["//visibility:public"])
+
+# All library source files
+filegroup(
+    name = "all_sources",
+    srcs = glob(["**/*.zig"]),
+)

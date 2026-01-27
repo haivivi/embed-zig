@@ -20,3 +20,8 @@ lib/docs/
 # GitHub Pages build output (only generated subdirs)
 pages/docs/
 pages/api/
+
+# Bazel
+bazel-*
+.bazelrc.user
+MODULE.bazel.lock

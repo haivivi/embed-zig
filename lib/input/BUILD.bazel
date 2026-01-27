@@ -1,0 +1,11 @@
+# Input library
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "input_sources",
+    srcs = glob(
+        ["**/*.zig"],
+        allow_empty = True,
+    ),
+)

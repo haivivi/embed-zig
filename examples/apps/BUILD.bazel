@@ -1,0 +1,11 @@
+# App sources for ESP-IDF examples
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "all_apps",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+    ),
+)
