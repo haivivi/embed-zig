@@ -344,13 +344,26 @@ pub fn CallbackStream(comptime SampleType: type) type {
             user_data: ?*anyopaque,
         ) CallbackResult;
 
+        /// Context passed to PortAudio callback wrapper
+        const CallbackContext = struct {
+            callback: Callback,
+            user_data: ?*anyopaque,
+            channels: i32,
+        };
+
         stream: ?*c.PaStream,
         config: StreamConfig,
+        context: CallbackContext,
 
         pub fn open(cfg: StreamConfig, callback: Callback, user_data: ?*anyopaque) Error!Self {
             var self = Self{
                 .stream = null,
                 .config = cfg,
+                .context = .{
+                    .callback = callback,
+                    .user_data = user_data,
+                    .channels = cfg.channels,
+                },
             };
 
             const device = if (cfg.device == c.paNoDevice) defaultOutputDevice() else cfg.device;
@@ -372,10 +385,10 @@ pub fn CallbackStream(comptime SampleType: type) type {
                     _: c.PaStreamCallbackFlags,
                     user: ?*anyopaque,
                 ) callconv(.c) c_int {
-                    const cb_ptr: Callback = @ptrCast(@alignCast(user));
+                    const ctx: *CallbackContext = @ptrCast(@alignCast(user));
                     const out_ptr: [*]SampleType = @ptrCast(@alignCast(output));
-                    const total_samples = frame_count * @as(c_ulong, @intCast(cfg.channels));
-                    const result = cb_ptr(out_ptr[0..total_samples], frame_count, null);
+                    const total_samples = frame_count * @as(c_ulong, @intCast(ctx.channels));
+                    const result = ctx.callback(out_ptr[0..total_samples], frame_count, ctx.user_data);
                     return @intFromEnum(result);
                 }
             };
@@ -388,10 +401,9 @@ pub fn CallbackStream(comptime SampleType: type) type {
                 @intCast(cfg.frames_per_buffer),
                 c.paClipOff,
                 CallbackWrapper.cb,
-                @ptrCast(@constCast(callback)),
+                &self.context,
             ));
 
-            _ = user_data;
             return self;
         }
 

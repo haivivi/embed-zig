@@ -37,18 +37,22 @@ const Config = struct {
 };
 
 // ============================================================================
-// Audio Ring Buffer (lock-free single producer single consumer)
+// Audio Ring Buffer (thread-safe with mutex for multiple producers)
 // ============================================================================
 
 const RingBuffer = struct {
     const BUFFER_SIZE = 16000 * 2; // 2 seconds of audio at 16kHz
 
     buffer: [BUFFER_SIZE]i16 = [_]i16{0} ** BUFFER_SIZE,
-    write_pos: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    write_pos: usize = 0,
     read_pos: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    write_mutex: std.Thread.Mutex = .{},
 
     fn write(self: *RingBuffer, data: []const i16) usize {
-        const w = self.write_pos.load(.acquire);
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+
+        const w = self.write_pos;
         const r = self.read_pos.load(.acquire);
 
         // Calculate available space
@@ -59,12 +63,13 @@ const RingBuffer = struct {
             self.buffer[(w + i) % BUFFER_SIZE] = data[i];
         }
 
-        self.write_pos.store((w + to_write) % BUFFER_SIZE, .release);
+        self.write_pos = (w + to_write) % BUFFER_SIZE;
         return to_write;
     }
 
     fn read(self: *RingBuffer, out: []i16) usize {
-        const w = self.write_pos.load(.acquire);
+        // Read is single-consumer (PortAudio callback), no mutex needed
+        const w = self.write_pos; // Direct read is safe, writer uses mutex
         const r = self.read_pos.load(.acquire);
 
         // Calculate available data
@@ -80,7 +85,7 @@ const RingBuffer = struct {
     }
 
     fn available(self: *RingBuffer) usize {
-        const w = self.write_pos.load(.acquire);
+        const w = self.write_pos;
         const r = self.read_pos.load(.acquire);
         return if (w >= r) w - r else BUFFER_SIZE - r + w;
     }
@@ -296,13 +301,19 @@ pub fn main() !void {
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--port")) {
             if (args.next()) |port_str| {
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch 9000;
+                config.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    std.debug.print("Error: Invalid port number '{s}'\n", .{port_str});
+                    return;
+                };
             }
         } else if (std.mem.eql(u8, arg, "--tone")) {
             config.generate_tone = true;
         } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--rate")) {
             if (args.next()) |rate_str| {
-                config.sample_rate = std.fmt.parseInt(u32, rate_str, 10) catch 16000;
+                config.sample_rate = std.fmt.parseInt(u32, rate_str, 10) catch {
+                    std.debug.print("Error: Invalid sample rate '{s}'\n", .{rate_str});
+                    return;
+                };
             }
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             std.debug.print(

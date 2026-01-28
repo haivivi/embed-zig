@@ -357,3 +357,100 @@ pub const MicError = error{
     NoVoiceChannels,
     InvalidChannel,
 };
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "channel mask calculation" {
+    // Test voice channel mask calculation
+    const channels = [4]ChannelRole{ .voice, .voice, .disabled, .aec_ref };
+
+    var mask: u8 = 0;
+    for (0..4) |i| {
+        if (channels[i] == .voice) {
+            mask |= @as(u8, 1) << @intCast(i);
+        }
+    }
+
+    // Channels 0 and 1 are voice, so mask should be 0b0011 = 3
+    try std.testing.expectEqual(@as(u8, 0b0011), mask);
+}
+
+test "total channels calculation" {
+    // Test total channel count (all non-disabled channels)
+    const channels = [4]ChannelRole{ .voice, .voice, .disabled, .aec_ref };
+
+    var count: u8 = 0;
+    for (channels) |role| {
+        if (role != .disabled) count += 1;
+    }
+
+    // 2 voice + 1 aec_ref = 3 total
+    try std.testing.expectEqual(@as(u8, 3), count);
+}
+
+test "de-interleave TDM data" {
+    // Simulate TDM data: 4 channels interleaved, extract channels 0 and 1 (voice)
+    // Raw data: [ch0_f0, ch1_f0, ch2_f0, ch3_f0, ch0_f1, ch1_f1, ch2_f1, ch3_f1, ...]
+    const raw_data = [_]i16{
+        100, 200, 300, 400, // Frame 0: ch0=100, ch1=200, ch2=300, ch3=400
+        110, 210, 310, 410, // Frame 1
+        120, 220, 320, 420, // Frame 2
+    };
+
+    const total_channels: usize = 4;
+    const voice_mask: u8 = 0b0011; // channels 0 and 1 are voice
+
+    var output: [6]i16 = undefined;
+    var out_idx: usize = 0;
+    const frames = raw_data.len / total_channels;
+
+    for (0..frames) |frame| {
+        const base = frame * total_channels;
+        for (0..total_channels) |ch| {
+            if ((voice_mask & (@as(u8, 1) << @intCast(ch))) != 0) {
+                output[out_idx] = raw_data[base + ch];
+                out_idx += 1;
+            }
+        }
+    }
+
+    // Expected: [100, 200, 110, 210, 120, 220] (voice channels from each frame)
+    try std.testing.expectEqual(@as(usize, 6), out_idx);
+    try std.testing.expectEqual(@as(i16, 100), output[0]);
+    try std.testing.expectEqual(@as(i16, 200), output[1]);
+    try std.testing.expectEqual(@as(i16, 110), output[2]);
+    try std.testing.expectEqual(@as(i16, 210), output[3]);
+    try std.testing.expectEqual(@as(i16, 120), output[4]);
+    try std.testing.expectEqual(@as(i16, 220), output[5]);
+}
+
+test "ceiling division for sample calculation" {
+    // Test the ceiling division used in read()
+    // Formula: (output_samples + voice_count - 1) / voice_count
+
+    // Case 1: 160 samples, 2 voice channels -> 80 frames needed
+    {
+        const output_samples: usize = 160;
+        const voice_count: usize = 2;
+        const frames_needed = (output_samples + voice_count - 1) / voice_count;
+        try std.testing.expectEqual(@as(usize, 80), frames_needed);
+    }
+
+    // Case 2: 159 samples, 2 voice channels -> 80 frames needed (ceiling)
+    {
+        const output_samples: usize = 159;
+        const voice_count: usize = 2;
+        const frames_needed = (output_samples + voice_count - 1) / voice_count;
+        try std.testing.expectEqual(@as(usize, 80), frames_needed);
+    }
+
+    // Case 3: 161 samples, 2 voice channels -> 81 frames needed
+    {
+        const output_samples: usize = 161;
+        const voice_count: usize = 2;
+        const frames_needed = (output_samples + voice_count - 1) / voice_count;
+        try std.testing.expectEqual(@as(usize, 81), frames_needed);
+    }
+}
