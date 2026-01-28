@@ -9,7 +9,8 @@
 #   ESP_BIN_OUT      - Output path for .bin file
 #   ESP_ELF_OUT      - Output path for .elf file
 #   ZIG_INSTALL      - Path to Zig installation
-#   ESP_WORK_DIR     - Work directory with copied files
+#   ESP_WORK_DIR     - Work directory with copied files (preserves repo structure)
+#   ESP_PROJECT_PATH - Project path relative to workspace (e.g., examples/esp/gpio_button/zig)
 #   ESP_EXECROOT     - Bazel execroot for output
 set -e
 
@@ -27,47 +28,11 @@ check_bazel_env "build.sh" "//examples/esp/<project>/zig:app"
 : "${ESP_BIN_OUT:?ESP_BIN_OUT not set}"
 : "${ESP_ELF_OUT:?ESP_ELF_OUT not set}"
 : "${ESP_WORK_DIR:?ESP_WORK_DIR not set}"
+: "${ESP_PROJECT_PATH:?ESP_PROJECT_PATH not set}"
 : "${ESP_EXECROOT:?ESP_EXECROOT not set}"
 
 WORK="$ESP_WORK_DIR"
-
-# =============================================================================
-# Path Rewriting
-# =============================================================================
-
-rewrite_cmake_paths() {
-    # Update CMakeLists.txt files to point to correct paths
-    if [ -f "$WORK/project/CMakeLists.txt" ]; then
-        sed -i.bak "s|\${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/|$WORK/cmake/|g" "$WORK/project/CMakeLists.txt" 2>/dev/null || true
-    fi
-
-    # Update main/CMakeLists.txt to point to correct lib path
-    if [ -f "$WORK/project/main/CMakeLists.txt" ]; then
-        sed -i.bak "s|\${CMAKE_CURRENT_SOURCE_DIR}/../../../../../lib/|$WORK/lib/|g" "$WORK/project/main/CMakeLists.txt" 2>/dev/null || true
-        sed -i.bak "s|\${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/|$WORK/lib/|g" "$WORK/project/main/CMakeLists.txt" 2>/dev/null || true
-        sed -i.bak "s|\${CMAKE_CURRENT_SOURCE_DIR}/../../../lib/|$WORK/lib/|g" "$WORK/project/main/CMakeLists.txt" 2>/dev/null || true
-        sed -i.bak "s|\${CMAKE_CURRENT_SOURCE_DIR}/../../lib/|$WORK/lib/|g" "$WORK/project/main/CMakeLists.txt" 2>/dev/null || true
-    fi
-}
-
-rewrite_zig_paths() {
-    # Update build.zig.zon to point to correct lib and apps paths
-    if [ -f "$WORK/project/main/build.zig.zon" ]; then
-        sed -i.bak 's|"../../../../../lib/|"../../lib/|g' "$WORK/project/main/build.zig.zon" 2>/dev/null || true
-        sed -i.bak 's|"../../../../lib/|"../../lib/|g' "$WORK/project/main/build.zig.zon" 2>/dev/null || true
-        sed -i.bak 's|"../../../lib/|"../../lib/|g' "$WORK/project/main/build.zig.zon" 2>/dev/null || true
-        sed -i.bak 's|"../../../../apps/|"../../apps/|g' "$WORK/project/main/build.zig.zon" 2>/dev/null || true
-        sed -i.bak 's|"../../../apps/|"../../apps/|g' "$WORK/project/main/build.zig.zon" 2>/dev/null || true
-    fi
-
-    # Update apps build.zig.zon files
-    for zon_file in "$WORK/apps/"*/build.zig.zon; do
-        if [ -f "$zon_file" ]; then
-            sed -i.bak 's|"../../../lib/|"../../lib/|g' "$zon_file" 2>/dev/null || true
-            sed -i.bak 's|"../../../../lib/|"../../lib/|g' "$zon_file" 2>/dev/null || true
-        fi
-    done
-}
+PROJECT_DIR="$WORK/$ESP_PROJECT_PATH"
 
 # =============================================================================
 # Main Build
@@ -75,11 +40,8 @@ rewrite_zig_paths() {
 
 main() {
     echo "[esp_build] Work directory: $WORK"
+    echo "[esp_build] Project path: $ESP_PROJECT_PATH"
     echo "[esp_build] Board: $ESP_BOARD, Chip: $ESP_CHIP"
-
-    # Rewrite paths
-    rewrite_cmake_paths
-    rewrite_zig_paths
 
     # Setup environment
     export ZIG_BOARD="$ESP_BOARD"
@@ -99,8 +61,8 @@ main() {
         exit 1
     fi
 
-    # Build
-    cd "$WORK/project"
+    # Build - use PROJECT_DIR which preserves the original repo structure
+    cd "$PROJECT_DIR"
     idf.py set-target "$ESP_CHIP"
     
     # Build CMake arguments using array (safe for spaces/special chars in values)
@@ -123,8 +85,8 @@ main() {
     idf.py "${CMAKE_ARGS[@]}" build
 
     # Copy outputs back to Bazel execroot
-    cp "$WORK/project/build/$ESP_PROJECT_NAME.bin" "$ESP_EXECROOT/$ESP_BIN_OUT"
-    cp "$WORK/project/build/$ESP_PROJECT_NAME.elf" "$ESP_EXECROOT/$ESP_ELF_OUT"
+    cp "$PROJECT_DIR/build/$ESP_PROJECT_NAME.bin" "$ESP_EXECROOT/$ESP_BIN_OUT"
+    cp "$PROJECT_DIR/build/$ESP_PROJECT_NAME.elf" "$ESP_EXECROOT/$ESP_ELF_OUT"
 
     echo "[esp_build] Build complete!"
 }

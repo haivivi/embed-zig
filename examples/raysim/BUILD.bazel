@@ -3,6 +3,9 @@
 # Filegroup for all raysim examples
 filegroup(
     name = "all_raysim",
-    srcs = glob(["**/*"]),
+    srcs = glob(
+        ["**/*"],
+        exclude = ["**/.zig-cache/**", "**/zig-out/**"],
+    ),
     visibility = ["//visibility:public"],
 )

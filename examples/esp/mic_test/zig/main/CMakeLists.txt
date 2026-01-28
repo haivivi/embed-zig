@@ -1,13 +1,17 @@
 # Mic Test - Zig Version
 
-# Set the path to lib/esp/src for cmake includes
-set(_ESP_PKG "${CMAKE_CURRENT_LIST_DIR}/../../../../../lib/esp/src")
+# ESP lib path: use ESP_LIB_PATH env var (Bazel) or relative path (local dev)
+if(DEFINED ENV{ESP_LIB_PATH})
+    set(_ESP_LIB $ENV{ESP_LIB_PATH})
+else()
+    set(_ESP_LIB ${CMAKE_CURRENT_LIST_DIR}/../../../../../lib)
+endif()
 
 # Include mic.cmake for I2S TDM dependencies
-include(${_ESP_PKG}/mic/mic.cmake)
+include(${_ESP_LIB}/esp/src/mic/mic.cmake)
 
 # Include I2C cmake for ES7210 communication
-include(${_ESP_PKG}/sal/i2c.cmake)
+include(${_ESP_LIB}/esp/src/sal/i2c.cmake)
 
 idf_component_register(
     SRCS "src/main.c" ${I2C_C_SOURCES} ${MIC_C_SOURCES}

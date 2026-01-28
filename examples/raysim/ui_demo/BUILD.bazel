@@ -4,6 +4,9 @@ load("//bazel/raysim:defs.bzl", "raysim_run")
 
 raysim_run(
     name = "run",
-    srcs = glob(["**/*"]),
+    srcs = glob(
+        ["**/*"],
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
     project_dir = "examples/raysim/ui_demo",
 )

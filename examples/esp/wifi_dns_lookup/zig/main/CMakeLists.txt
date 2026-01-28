@@ -1,10 +1,14 @@
 # WiFi DNS Lookup - Zig Version
 
-# ESP package path (path adjusted for Bazel build)
-set(_ESP_PKG ${CMAKE_CURRENT_LIST_DIR}/../../../../../lib/esp)
+# ESP package path: use ESP_LIB_PATH env var (Bazel) or relative path (local dev)
+if(DEFINED ENV{ESP_LIB_PATH})
+    set(_ESP_LIB $ENV{ESP_LIB_PATH})
+else()
+    set(_ESP_LIB ${CMAKE_CURRENT_LIST_DIR}/../../../../../lib)
+endif()
 
 # Include WiFi module
-include(${_ESP_PKG}/src/wifi/wifi.cmake)
+include(${_ESP_LIB}/esp/src/wifi/wifi.cmake)
 
 # IDF component
 idf_component_register(

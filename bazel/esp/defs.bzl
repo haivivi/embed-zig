@@ -86,25 +86,25 @@ def _esp_idf_app_impl(ctx):
             build_sh = f
             break
     
-    # Generate copy commands
-    src_copy_commands = _generate_copy_commands(src_files, ctx.label.package, "project")
-    cmake_copy_commands = _generate_cmake_copy_commands(cmake_files)
-    lib_copy_commands = _generate_lib_copy_commands(lib_files)
-    apps_copy_commands = _generate_apps_copy_commands(apps_files)
+    # Generate copy commands - preserve original directory structure
+    src_copy_commands = _generate_copy_commands_preserve_structure(src_files)
+    cmake_copy_commands = _generate_copy_commands_preserve_structure(cmake_files)
+    lib_copy_commands = _generate_copy_commands_preserve_structure(lib_files)
+    apps_copy_commands = _generate_copy_commands_preserve_structure(apps_files)
     
     # Create wrapper script that copies files and calls build.sh
     build_script = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
     
     # Wrapper script: sets up environment, copies files, calls build.sh
-    # Only dynamic content (file copy commands) stays here
+    # Files are copied preserving their original paths, so relative references work
     script_content = """#!/bin/bash
 set -e
 export ESP_BAZEL_RUN=1 ESP_BOARD="{board}" ESP_CHIP="{chip}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
 export ESP_WIFI_SSID="{wifi_ssid}" ESP_WIFI_PASSWORD="{wifi_password}" ESP_TEST_SERVER_IP="{test_server_ip}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
+export ESP_PROJECT_PATH="{project_path}"
 WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
-mkdir -p "$WORK/project" "$WORK/cmake" "$WORK/lib" "$WORK/apps"
 {src_copy_commands}
 {cmake_copy_commands}
 {lib_copy_commands}
@@ -121,6 +121,7 @@ exec bash "{build_sh}"
         elf_out = elf_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
         build_sh = build_sh.path if build_sh else "",
+        project_path = ctx.label.package,  # e.g., "examples/esp/gpio_button/zig"
         src_copy_commands = "\n".join(src_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
@@ -161,51 +162,17 @@ exec bash "{build_sh}"
         ),
     ]
 
-# Helper functions for generating copy commands
-def _generate_copy_commands(files, package, dest):
+# Helper function for generating copy commands - preserves original directory structure
+def _generate_copy_commands_preserve_structure(files):
+    """Generate copy commands that preserve the original directory structure.
+    
+    This allows relative paths in build.zig.zon to work without rewriting.
+    """
     commands = []
     for f in files:
+        # Use short_path which is the path relative to the workspace root
         rel_path = f.short_path
-        if rel_path.startswith(package + "/"):
-            rel_path = rel_path[len(package) + 1:]
-        commands.append('mkdir -p "$WORK/{}/$(dirname {})" && cp "{}" "$WORK/{}/{}"'.format(
-            dest, rel_path, f.path, dest, rel_path
-        ))
-    return commands
-
-def _generate_cmake_copy_commands(files):
-    commands = []
-    for f in files:
-        rel_path = f.basename
-        if "/cmake/" in f.short_path:
-            rel_path = f.short_path.split("/cmake/", 1)[1]
-        commands.append('mkdir -p "$WORK/cmake/$(dirname {})" && cp "{}" "$WORK/cmake/{}"'.format(
-            rel_path, f.path, rel_path
-        ))
-    return commands
-
-def _generate_lib_copy_commands(files):
-    commands = []
-    for f in files:
-        rel_path = f.short_path
-        if rel_path.startswith("lib/"):
-            rel_path = rel_path[4:]
-        elif "/lib/" in rel_path:
-            rel_path = rel_path.split("/lib/", 1)[1]
-        commands.append('mkdir -p "$WORK/lib/$(dirname {})" && cp "{}" "$WORK/lib/{}"'.format(
-            rel_path, f.path, rel_path
-        ))
-    return commands
-
-def _generate_apps_copy_commands(files):
-    commands = []
-    for f in files:
-        rel_path = f.short_path
-        if rel_path.startswith("examples/apps/"):
-            rel_path = rel_path[14:]
-        elif "/apps/" in rel_path:
-            rel_path = rel_path.split("/apps/", 1)[1]
-        commands.append('mkdir -p "$WORK/apps/$(dirname {})" && cp "{}" "$WORK/apps/{}"'.format(
+        commands.append('mkdir -p "$WORK/$(dirname {})" && cp "{}" "$WORK/{}"'.format(
             rel_path, f.path, rel_path
         ))
     return commands

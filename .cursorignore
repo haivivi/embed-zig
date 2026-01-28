@@ -1,0 +1,18 @@
+# Zig build cache and output
+.zig-cache/
+zig-out/
+
+# Bazel symlinks and output
+bazel-*/
+
+# Build directories
+.build/
+.build-*/
+.out/
+.downloads/
+.cache/
+build/
+tmp/
+
+# Large generated files
+MODULE.bazel.lock

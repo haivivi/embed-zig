@@ -1,7 +1,14 @@
 # GPIO Button - Zig HAL Version
 
+# ESP lib path: use ESP_LIB_PATH env var (Bazel) or relative path (local dev)
+if(DEFINED ENV{ESP_LIB_PATH})
+    set(_ESP_LIB $ENV{ESP_LIB_PATH})
+else()
+    set(_ESP_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../lib)
+endif()
+
 # Include I2C helper for TCA9554 support (Korvo-2 V3)
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../lib/esp/src/sal/i2c.cmake)
+include(${_ESP_LIB}/esp/src/sal/i2c.cmake)
 
 # Board selection (default: esp32s3_devkit)
 # Use: idf.py -DZIG_BOARD=korvo2_v3 build

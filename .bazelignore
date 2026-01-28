@@ -1,20 +1,4 @@
-# Zig build cache directories
+# Zig build cache and output directories
+# Note: glob excludes in BUILD.bazel files also handle these
 .zig-cache
-*/.zig-cache
-lib/*/.zig-cache
-lib/drivers/.zig-cache
-lib/sal/.zig-cache
-lib/hal/.zig-cache
-lib/dns/.zig-cache
-lib/http/.zig-cache
-lib/esp/.zig-cache
-lib/std/.zig-cache
-lib/input/.zig-cache
-lib/raysim/.zig-cache
-lib/audio/.zig-cache
-examples/apps/*/.zig-cache
-examples/raysim/*/.zig-cache
-
-# Zig output directory
 zig-out
-*/zig-out
