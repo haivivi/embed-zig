@@ -38,7 +38,7 @@ pub const RtcDriver = struct {
         return idf.nowMs();
     }
 
-    pub fn read(_: *Self) ?i64 {
+    pub fn nowMs(_: *Self) ?i64 {
         return null;
     }
 };
@@ -89,13 +89,27 @@ pub const LedDriver = struct {
 
 pub const rtc_spec = struct {
     pub const Driver = RtcDriver;
-    pub const meta = hal.Meta{ .id = "rtc" };
+    pub const meta = .{ .id = "rtc" };
 };
 
 pub const led_spec = struct {
     pub const Driver = LedDriver;
-    pub const meta = hal.Meta{ .id = "led.main" };
+    pub const meta = .{ .id = "led.main" };
 };
 
-// SAL (platform implementation)
-pub const sal = idf.sal;
+// Platform primitives
+pub const log = std.log.scoped(.app);
+
+pub const time = struct {
+    pub fn sleepMs(ms: u32) void {
+        idf.sal.time.sleepMs(ms);
+    }
+
+    pub fn getTimeMs() u64 {
+        return idf.nowMs();
+    }
+};
+
+pub fn isRunning() bool {
+    return true;
+}

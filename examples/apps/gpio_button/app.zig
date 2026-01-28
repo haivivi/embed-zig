@@ -4,20 +4,11 @@
 
 const hal = @import("hal");
 
-pub const platform = @import("platform.zig");
+const platform = @import("platform.zig");
 const Board = platform.Board;
-const sal = platform.sal;
-const log = sal.log;
+const log = Board.log;
 
 var led_state: bool = false;
-
-/// Check if app should continue running (supports simulator exit)
-fn shouldRun() bool {
-    if (@hasDecl(sal, "isRunning")) {
-        return sal.isRunning();
-    }
-    return true; // ESP: always run
-}
 
 pub fn run() void {
     log.info("GPIO Button Example - HAL v5", .{});
@@ -31,7 +22,7 @@ pub fn run() void {
 
     log.info("Ready! Press boot button to toggle LED", .{});
 
-    while (shouldRun()) {
+    while (true) {
         b.poll();
 
         while (b.nextEvent()) |event| {
@@ -66,6 +57,6 @@ pub fn run() void {
             }
         }
 
-        sal.sleepMs(10);
+        Board.time.sleepMs(10);
     }
 }

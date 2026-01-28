@@ -7,9 +7,7 @@ const hal = @import("hal");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const Hardware = platform.Hardware;
-const sal = platform.sal;
-const log = sal.log;
+const log = Board.log;
 const Color = hal.Color;
 
 const BUILD_TAG = "led_strip_anim_hal_v5";
@@ -86,9 +84,7 @@ fn printInfo() void {
     log.info("LED Strip Animation - HAL v5", .{});
     log.info("Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
-    log.info("Board:     {s}", .{Hardware.name});
-    log.info("LED Type:  {s}", .{Hardware.led_type});
-    log.info("LED Count: {}", .{Hardware.led_count});
+    log.info("Board:     {s}", .{Board.meta.id});
     log.info("Build:     -DZIG_BOARD={s}", .{@tagName(platform.selected_board)});
     log.info("==========================================", .{});
 }
@@ -108,9 +104,6 @@ pub fn run() void {
     board.rgb_leds.setBrightness(180);
 
     log.info("Starting demo cycle (5 seconds per mode)", .{});
-    if (std.mem.eql(u8, Hardware.led_type, "tca9554")) {
-        log.info("Note: TCA9554 only has red/blue LEDs, colors are approximated", .{});
-    }
 
     // Demo state
     var mode = DemoMode.breathing;
@@ -137,7 +130,7 @@ pub fn run() void {
 
             // Flash white briefly on mode change
             board.rgb_leds.setColor(Color.white);
-            sal.sleepMs(50);
+            Board.time.sleepMs(50);
         }
 
         // Calculate animation color based on mode
@@ -153,6 +146,6 @@ pub fn run() void {
         // Update LED through HAL
         board.rgb_leds.setColor(color);
 
-        sal.sleepMs(20);
+        Board.time.sleepMs(20);
     }
 }

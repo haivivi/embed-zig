@@ -1,0 +1,8 @@
+"""Raylib simulator examples."""
+
+# Filegroup for all raysim examples
+filegroup(
+    name = "all_raysim",
+    srcs = glob(["**/*"]),
+    visibility = ["//visibility:public"],
+)

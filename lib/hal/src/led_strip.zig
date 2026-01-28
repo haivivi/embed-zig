@@ -49,8 +49,6 @@
 
 const std = @import("std");
 
-const spec_mod = @import("spec.zig");
-
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
 // ============================================================================
@@ -59,7 +57,8 @@ const spec_mod = @import("spec.zig");
 const _RgbLedStripMarker = struct {};
 
 /// Check if a type is a RgbLedStrip peripheral (internal use only)
-pub fn isRgbLedStripType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _RgbLedStripMarker;
 }
@@ -391,14 +390,14 @@ pub fn Effects(comptime led_count: usize) type {
         }
 
         /// Gradient from one color to another across LEDs
-        pub fn gradient(comptime from: Color, comptime to: Color) [led_count]Color {
+        pub fn gradient(comptime start: Color, comptime to: Color) [led_count]Color {
             var colors: [led_count]Color = undefined;
             for (0..led_count) |i| {
                 const t: u8 = if (led_count > 1)
                     @intCast((i * 255) / (led_count - 1))
                 else
                     0;
-                colors[i] = Color.lerp(from, to, t);
+                colors[i] = Color.lerp(start, to, t);
             }
             return colors;
         }
@@ -497,14 +496,23 @@ pub fn Effects(comptime led_count: usize) type {
 ///     pub const Driver = Tca9554LedDriver;
 ///     pub const meta = hal.spec.Meta{ .id = "led.main" };
 /// };
-/// const MyLed = RgbLedStrip(led_spec);
+/// const MyLed = led_strip.from(led_spec);
 /// ```
-pub fn RgbLedStrip(comptime spec: type) type {
-    // Compile-time verification
-    spec_mod.verifyRgbLedStripSpec(spec);
+pub fn from(comptime spec: type) type {
+    comptime {
+        // Handle pointer types
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify Driver methods
+        _ = @as(*const fn (*BaseDriver, u32, Color) void, &BaseDriver.setPixel);
+        _ = @as(*const fn (*BaseDriver) u32, &BaseDriver.getPixelCount);
+        // Verify meta.id
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
@@ -632,14 +640,14 @@ pub fn RgbLedStrip(comptime spec: type) type {
         }
 
         /// Apply gradient across all pixels
-        pub fn setGradient(self: *Self, from: Color, to: Color) void {
+        pub fn setGradient(self: *Self, start: Color, to: Color) void {
             const count = self.getPixelCount();
             for (0..count) |i| {
                 const t: u8 = if (count > 1)
                     @intCast((i * 255) / (count - 1))
                 else
                     0;
-                self.setPixel(@intCast(i), Color.lerp(from, to, t));
+                self.setPixel(@intCast(i), Color.lerp(start, to, t));
             }
             self.refresh();
         }
@@ -1032,10 +1040,10 @@ test "RgbLedStrip with mock driver" {
     // Define spec
     const led_spec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "led.test" };
+        pub const meta = .{ .id = "led.test" };
     };
 
-    const TestLedStrip = RgbLedStrip(led_spec);
+    const TestLedStrip = from(led_spec);
 
     var driver = MockDriver{};
     var led = TestLedStrip.init(&driver);

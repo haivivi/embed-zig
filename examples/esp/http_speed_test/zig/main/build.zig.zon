@@ -1,12 +1,13 @@
 .{
-    .name = .http_speed_test_zig,
+    .name = .http_speed_test,
     .version = "0.1.0",
+    .fingerprint = 0x60a38c4c5ba2d175,
     .dependencies = .{
         .esp = .{ .path = "../../../../../lib/esp" },
     },
     .paths = .{
         "build.zig",
+        "build.zig.zon",
         "src",
     },
-    .fingerprint = 0x7dd08268dbd83052,
 }

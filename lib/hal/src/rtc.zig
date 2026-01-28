@@ -22,7 +22,6 @@
 //! ```
 
 const std = @import("std");
-const spec_mod = @import("spec.zig");
 
 // ============================================================================
 // Timestamp Type
@@ -166,19 +165,26 @@ pub fn isRtcReaderType(comptime T: type) bool {
     return T._hal_marker == _RtcReaderMarker;
 }
 
-/// RTC Reader HAL component
-///
-/// Provides:
-/// - uptime(): Monotonic time since boot (always available)
-/// - now(): Wall-clock time as Timestamp (may be null if not synced)
-/// - read(): Raw epoch seconds (may be null)
-pub fn RtcReader(comptime spec: type) type {
-    // Verify spec at compile time
-    spec_mod.verifyRtcReaderSpec(spec);
+/// RTC Reader namespace
+pub const reader = struct {
+    pub fn is(comptime T: type) bool {
+        return isRtcReaderType(T);
+    }
 
-    const Driver = spec.Driver;
+    /// RTC Reader HAL component
+    pub fn from(comptime spec: type) type {
+        comptime {
+            const BaseDriver = switch (@typeInfo(spec.Driver)) {
+                .pointer => |p| p.child,
+                else => spec.Driver,
+            };
+            _ = @as(*const fn (*BaseDriver) u64, &BaseDriver.uptime);
+            _ = @as(*const fn (*BaseDriver) ?i64, &BaseDriver.nowMs);
+            _ = @as([]const u8, spec.meta.id);
+        }
 
-    return struct {
+        const Driver = spec.Driver;
+        return struct {
         const Self = @This();
 
         /// HAL type marker (private, for Board detection)
@@ -206,24 +212,25 @@ pub fn RtcReader(comptime spec: type) type {
         /// Get current wall-clock time as Timestamp
         /// Returns null if time is not synchronized
         pub fn now(self: *Self) ?Timestamp {
-            if (self.driver.read()) |epoch| {
+            if (self.driver.nowMs()) |epoch| {
                 return Timestamp.fromEpoch(epoch);
             }
             return null;
         }
 
-        /// Get raw epoch seconds
+        /// Get raw epoch milliseconds
         /// Returns null if time is not synchronized
-        pub fn read(self: *Self) ?i64 {
-            return self.driver.read();
+        pub fn nowMs(self: *Self) ?i64 {
+            return self.driver.nowMs();
         }
 
         /// Check if wall-clock time is available
         pub fn isSynced(self: *Self) bool {
-            return self.driver.read() != null;
+            return self.driver.nowMs() != null;
         }
     };
-}
+    }
+};
 
 // ============================================================================
 // RtcWriter - Write time
@@ -239,18 +246,27 @@ pub fn isRtcWriterType(comptime T: type) bool {
     return T._hal_marker == _RtcWriterMarker;
 }
 
-/// RTC Writer HAL component
-///
-/// Provides:
-/// - set(epoch): Set wall-clock time from epoch seconds
-/// - setDatetime(dt): Set wall-clock time from Datetime
-pub fn RtcWriter(comptime spec: type) type {
-    // Verify spec at compile time
-    spec_mod.verifyRtcWriterSpec(spec);
+/// RTC Writer namespace
+pub const writer = struct {
+    pub fn is(comptime T: type) bool {
+        return isRtcWriterType(T);
+    }
 
-    const Driver = spec.Driver;
+    /// RTC Writer HAL component
+    pub fn from(comptime spec: type) type {
+        comptime {
+            const BaseDriver = switch (@typeInfo(spec.Driver)) {
+                .pointer => |p| p.child,
+                else => spec.Driver,
+            };
+            // setNowMs returns !void (error union)
+            var driver: BaseDriver = undefined;
+            _ = driver.setNowMs(@as(i64, 0)) catch {};
+            _ = @as([]const u8, spec.meta.id);
+        }
 
-    return struct {
+        const Driver = spec.Driver;
+        return struct {
         const Self = @This();
 
         /// HAL type marker (private, for Board detection)
@@ -270,22 +286,23 @@ pub fn RtcWriter(comptime spec: type) type {
             return .{ .driver = driver };
         }
 
-        /// Set time from Unix epoch seconds
-        pub fn set(self: *Self, epoch_secs: i64) !void {
-            try self.driver.write(epoch_secs);
+        /// Set time from Unix epoch milliseconds
+        pub fn setNowMs(self: *Self, epoch_ms: i64) !void {
+            try self.driver.setNowMs(epoch_ms);
         }
 
         /// Set time from Timestamp
         pub fn setTimestamp(self: *Self, ts: Timestamp) !void {
-            try self.driver.write(ts.epoch_secs);
+            try self.driver.setNowMs(ts.epoch_secs);
         }
 
         /// Set time from Datetime
         pub fn setDatetime(self: *Self, dt: Datetime) !void {
-            try self.driver.write(dt.toEpoch());
+            try self.driver.setNowMs(dt.toEpoch());
         }
     };
-}
+    }
+};
 
 // ============================================================================
 // Tests
@@ -332,24 +349,24 @@ test "RtcReader basic usage" {
             return self.boot_time;
         }
 
-        pub fn read(self: *@This()) ?i64 {
+        pub fn nowMs(self: *@This()) ?i64 {
             return self.epoch;
         }
     };
 
     const TestSpec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "rtc.test" };
+        pub const meta = .{ .id = "rtc.test" };
     };
 
-    const Reader = RtcReader(TestSpec);
+    const Reader = reader.from(TestSpec);
     var driver = MockDriver{};
-    var reader = Reader.init(&driver);
+    var rtc_reader = Reader.init(&driver);
 
-    try std.testing.expectEqual(@as(u64, 12345), reader.uptime());
-    try std.testing.expect(reader.isSynced());
+    try std.testing.expectEqual(@as(u64, 12345), rtc_reader.uptime());
+    try std.testing.expect(rtc_reader.isSynced());
 
-    if (reader.now()) |ts| {
+    if (rtc_reader.now()) |ts| {
         const dt = ts.toDatetime();
         try std.testing.expectEqual(@as(u16, 2026), dt.year);
     } else {
@@ -361,20 +378,20 @@ test "RtcWriter basic usage" {
     const MockDriver = struct {
         stored: ?i64 = null,
 
-        pub fn write(self: *@This(), epoch_secs: i64) !void {
-            self.stored = epoch_secs;
+        pub fn setNowMs(self: *@This(), epoch_ms: i64) !void {
+            self.stored = epoch_ms;
         }
     };
 
     const TestSpec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "rtc.test" };
+        pub const meta = .{ .id = "rtc.test" };
     };
 
-    const Writer = RtcWriter(TestSpec);
+    const Writer = writer.from(TestSpec);
     var driver = MockDriver{};
-    var writer = Writer.init(&driver);
+    var rtc_writer = Writer.init(&driver);
 
-    try writer.set(1769427296);
+    try rtc_writer.setNowMs(1769427296);
     try std.testing.expectEqual(@as(?i64, 1769427296), driver.stored);
 }

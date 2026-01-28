@@ -41,7 +41,6 @@
 //! ```
 
 const std = @import("std");
-const spec_mod = @import("spec.zig");
 
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
@@ -51,7 +50,8 @@ const spec_mod = @import("spec.zig");
 const _KvsMarker = struct {};
 
 /// Check if a type is a Kvs peripheral (internal use only)
-pub fn isKvsType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _KvsMarker;
 }
@@ -103,14 +103,24 @@ pub const KvsError = error{
 ///     pub const Driver = NvsDriver;
 ///     pub const meta = hal.spec.Meta{ .id = "kvs.main" };
 /// };
-/// const MyKvs = Kvs(kvs_spec);
+/// const MyKvs = kvs.from(kvs_spec);
 /// ```
-pub fn Kvs(comptime spec: type) type {
-    // Compile-time verification
-    spec_mod.verifyKvsSpec(spec);
+pub fn from(comptime spec: type) type {
+    comptime {
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify required method signatures
+        _ = @as(*const fn (*BaseDriver, []const u8) KvsError!u32, &BaseDriver.getU32);
+        _ = @as(*const fn (*BaseDriver, []const u8, u32) KvsError!void, &BaseDriver.setU32);
+        _ = @as(*const fn (*BaseDriver, []const u8, []u8) KvsError![]const u8, &BaseDriver.getString);
+        _ = @as(*const fn (*BaseDriver, []const u8, []const u8) KvsError!void, &BaseDriver.setString);
+        _ = @as(*const fn (*BaseDriver) KvsError!void, &BaseDriver.commit);
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
@@ -339,10 +349,10 @@ test "Kvs with mock driver" {
     // Define spec
     const kvs_spec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "kvs.test" };
+        pub const meta = .{ .id = "kvs.test" };
     };
 
-    const TestKvs = Kvs(kvs_spec);
+    const TestKvs = from(kvs_spec);
 
     var driver = MockDriver{};
     var kvs = TestKvs.init(&driver);

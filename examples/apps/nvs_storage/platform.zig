@@ -10,11 +10,17 @@ const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("boards/esp32s3_devkit.zig"),
 };
 
-/// Platform-specific SAL (logging, timing, etc.)
-pub const sal = hw.sal;
-
 /// Board specification for hal.Board
-pub const spec = struct {
-    pub const rtc = hal.RtcReader(hw.rtc_spec);
-    pub const kvs = hal.Kvs(hw.kvs_spec);
+const spec = struct {
+    pub const meta = .{ .id = hw.Hardware.name };
+
+    // Required primitives
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log;
+    pub const time = hw.time;
+
+    // HAL peripherals
+    pub const kvs = hal.kvs.from(hw.kvs_spec);
 };
+
+pub const Board = hal.Board(spec);

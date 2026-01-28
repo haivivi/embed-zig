@@ -32,6 +32,10 @@ pub const timer = @import("timer/timer.zig");
 pub const Timer = timer.Timer;
 pub const wifi = @import("wifi/wifi.zig");
 pub const Wifi = wifi.Wifi;
+pub const mic = @import("mic.zig");
+pub const Mic = mic.Mic;
+pub const MicConfig = mic.Config;
+pub const ChannelRole = mic.ChannelRole;
 
 // Board definitions
 pub const boards = struct {

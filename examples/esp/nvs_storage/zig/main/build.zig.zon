@@ -3,12 +3,8 @@
     .version = "0.1.0",
     .fingerprint = 0x1e4c233d9013eef2,
     .dependencies = .{
-        .esp = .{
-            .path = "../../../../../lib/esp",
-        },
-        .hal = .{
-            .path = "../../../../../lib/hal",
-        },
+        .esp = .{ .path = "../../../../../lib/esp" },
+        .app = .{ .path = "../../../../apps/nvs_storage" },
     },
     .paths = .{
         "build.zig",

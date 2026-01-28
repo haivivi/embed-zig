@@ -2,9 +2,15 @@ const std = @import("std");
 
 const esp = @import("esp");
 
+// Board type (only esp32s3_devkit supported)
+pub const BoardType = enum { esp32s3_devkit };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Board selection option (only esp32s3_devkit supported)
+    _ = b.option(BoardType, "board", "Target board (only esp32s3_devkit supported)") orelse .esp32s3_devkit;
 
     // Get dependencies
     const esp_dep = b.dependency("esp", .{

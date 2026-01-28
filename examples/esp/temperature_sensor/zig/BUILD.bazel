@@ -26,7 +26,7 @@ esp_idf_app(
         allow_empty = True,
     ),
     cmake_modules = ["//examples/esp:cmake_modules"],
-    project_name = "temperature_sensor",
+    project_name = "temperature_sensor_zig",
 )
 
 esp_flash(

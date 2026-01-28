@@ -84,12 +84,12 @@ pub const Socket = struct {
     }
 
     /// Close the socket
-    pub fn close(self: Self) void {
+    pub fn close(self: *Self) void {
         _ = c.close(self.fd);
     }
 
     /// Bind socket to a specific network interface (e.g., "ppp0", "wlan0")
-    pub fn bindToDevice(self: Self, interface_name: []const u8) SocketError!void {
+    pub fn bindToDevice(self: *Self, interface_name: []const u8) SocketError!void {
         var ifr: c.ifreq = std.mem.zeroes(c.ifreq);
         const name_len = @min(interface_name.len, ifr.ifr_name.len - 1);
         @memcpy(ifr.ifr_name[0..name_len], interface_name[0..name_len]);
@@ -105,7 +105,7 @@ pub const Socket = struct {
     }
 
     /// Set receive timeout
-    pub fn setRecvTimeout(self: Self, timeout_ms: u32) void {
+    pub fn setRecvTimeout(self: *Self, timeout_ms: u32) void {
         const tv = c.timeval{
             .tv_sec = @intCast(timeout_ms / 1000),
             .tv_usec = @intCast((timeout_ms % 1000) * 1000),
@@ -114,7 +114,7 @@ pub const Socket = struct {
     }
 
     /// Set send timeout
-    pub fn setSendTimeout(self: Self, timeout_ms: u32) void {
+    pub fn setSendTimeout(self: *Self, timeout_ms: u32) void {
         const tv = c.timeval{
             .tv_sec = @intCast(timeout_ms / 1000),
             .tv_usec = @intCast((timeout_ms % 1000) * 1000),
@@ -123,32 +123,32 @@ pub const Socket = struct {
     }
 
     /// Enable TCP_NODELAY (disable Nagle's algorithm)
-    pub fn setTcpNoDelay(self: Self, enable: bool) void {
+    pub fn setTcpNoDelay(self: *Self, enable: bool) void {
         var val: c_int = if (enable) 1 else 0;
         _ = c.setsockopt(self.fd, c.IPPROTO_TCP, c.TCP_NODELAY, &val, @sizeOf(c_int));
     }
 
     /// Set receive buffer size
-    pub fn setRecvBufferSize(self: Self, size: u32) void {
+    pub fn setRecvBufferSize(self: *Self, size: u32) void {
         var val: c_int = @intCast(size);
         _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_RCVBUF, &val, @sizeOf(c_int));
     }
 
     /// Set send buffer size
-    pub fn setSendBufferSize(self: Self, size: u32) void {
+    pub fn setSendBufferSize(self: *Self, size: u32) void {
         var val: c_int = @intCast(size);
         _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_SNDBUF, &val, @sizeOf(c_int));
     }
 
     /// Connect to an address (for TCP)
-    pub fn connect(self: Self, addr: Ipv4Address, port: u16) SocketError!void {
+    pub fn connect(self: *Self, addr: Ipv4Address, port: u16) SocketError!void {
         var sa = sockaddrIn(addr, port);
         const result = c.connect(self.fd, @ptrCast(&sa), @sizeOf(c.sockaddr_in));
         if (result < 0) return error.ConnectFailed;
     }
 
     /// Send data to a specific address (for UDP)
-    pub fn sendTo(self: Self, addr: Ipv4Address, port: u16, data: []const u8) SocketError!usize {
+    pub fn sendTo(self: *Self, addr: Ipv4Address, port: u16, data: []const u8) SocketError!usize {
         var sa = sockaddrIn(addr, port);
         const result = c.sendto(
             self.fd,
@@ -163,14 +163,14 @@ pub const Socket = struct {
     }
 
     /// Send data (for connected socket)
-    pub fn send(self: Self, data: []const u8) SocketError!usize {
+    pub fn send(self: *Self, data: []const u8) SocketError!usize {
         const result = c.send(self.fd, data.ptr, data.len, 0);
         if (result < 0) return error.SendFailed;
         return @intCast(result);
     }
 
     /// Receive data
-    pub fn recv(self: Self, buf: []u8) SocketError!usize {
+    pub fn recv(self: *Self, buf: []u8) SocketError!usize {
         const result = c.recv(self.fd, buf.ptr, buf.len, 0);
         if (result < 0) {
             if (c.__errno().* == c.EAGAIN or c.__errno().* == c.EWOULDBLOCK) {
@@ -182,7 +182,7 @@ pub const Socket = struct {
     }
 
     /// Receive data from (for UDP)
-    pub fn recvFrom(self: Self, buf: []u8) SocketError!usize {
+    pub fn recvFrom(self: *Self, buf: []u8) SocketError!usize {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
         const result = c.recvfrom(

@@ -14,6 +14,7 @@ const c = @cImport({
     @cInclude("mbedtls/ctr_drbg.h");
     @cInclude("mbedtls/error.h");
     @cInclude("mbedtls/net_sockets.h");
+    @cInclude("mbedtls/x509_crt.h");
     @cInclude("esp_crt_bundle.h");
 });
 
@@ -39,6 +40,9 @@ pub const Options = struct {
     skip_cert_verify: bool = false,
     /// Connection timeout in milliseconds
     timeout_ms: u32 = 30000,
+    /// Custom CA certificate (PEM format, null-terminated)
+    /// If provided, only this CA will be trusted (not the system bundle)
+    ca_cert: ?[:0]const u8 = null,
 };
 
 // ============================================================================
@@ -52,6 +56,7 @@ pub const TlsStream = struct {
     conf: c.mbedtls_ssl_config,
     entropy: c.mbedtls_entropy_context,
     ctr_drbg: c.mbedtls_ctr_drbg_context,
+    cacert: c.mbedtls_x509_crt,
 
     // Underlying socket
     socket_fd: c_int,
@@ -61,6 +66,7 @@ pub const TlsStream = struct {
 
     // Initialization state
     initialized: bool = false,
+    has_custom_ca: bool = false,
 
     const Self = @This();
 
@@ -71,6 +77,7 @@ pub const TlsStream = struct {
             .conf = undefined,
             .entropy = undefined,
             .ctr_drbg = undefined,
+            .cacert = undefined,
             .socket_fd = sock.fd,
             .options = options,
         };
@@ -80,6 +87,7 @@ pub const TlsStream = struct {
         c.mbedtls_ssl_config_init(&self.conf);
         c.mbedtls_entropy_init(&self.entropy);
         c.mbedtls_ctr_drbg_init(&self.ctr_drbg);
+        c.mbedtls_x509_crt_init(&self.cacert);
 
         // Seed random number generator
         const ret = c.mbedtls_ctr_drbg_seed(
@@ -106,12 +114,29 @@ pub const TlsStream = struct {
             return error.InitFailed;
         }
 
-        // Set authentication mode
+        // Force TLS 1.2
+        c.mbedtls_ssl_conf_min_tls_version(&self.conf, c.MBEDTLS_SSL_VERSION_TLS1_2);
+        c.mbedtls_ssl_conf_max_tls_version(&self.conf, c.MBEDTLS_SSL_VERSION_TLS1_2);
+
+        // Set authentication mode and CA
         if (options.skip_cert_verify) {
             c.mbedtls_ssl_conf_authmode(&self.conf, c.MBEDTLS_SSL_VERIFY_NONE);
-        } else {
+        } else if (options.ca_cert) |ca_pem| {
+            // Use custom CA certificate
             c.mbedtls_ssl_conf_authmode(&self.conf, c.MBEDTLS_SSL_VERIFY_REQUIRED);
-            // Attach ESP certificate bundle for CA verification
+            std.log.info("Parsing CA cert: {} bytes", .{ca_pem.len});
+            const parse_ret = c.mbedtls_x509_crt_parse(&self.cacert, ca_pem.ptr, ca_pem.len + 1);
+            if (parse_ret != 0) {
+                std.log.err("CA cert parse failed: {}", .{parse_ret});
+                self.deinit();
+                return error.CertificateError;
+            }
+            std.log.info("CA cert parsed successfully", .{});
+            c.mbedtls_ssl_conf_ca_chain(&self.conf, &self.cacert, null);
+            self.has_custom_ca = true;
+        } else {
+            // Use ESP certificate bundle
+            c.mbedtls_ssl_conf_authmode(&self.conf, c.MBEDTLS_SSL_VERIFY_REQUIRED);
             _ = c.esp_crt_bundle_attach(&self.conf);
         }
 
@@ -179,6 +204,9 @@ pub const TlsStream = struct {
         return total_sent;
     }
 
+    /// Get last error code (for debugging)
+    pub var last_error: c_int = 0;
+
     /// Receive decrypted data
     pub fn recv(self: *Self, buf: []u8) TlsError!usize {
         if (!self.initialized) return error.InitFailed;
@@ -193,7 +221,18 @@ pub const TlsStream = struct {
                 continue;
             } else if (ret == c.MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
                 return error.ConnectionClosed;
+            } else if (ret == c.MBEDTLS_ERR_NET_RECV_FAILED) {
+                // Network receive failed - check errno
+                const lwip = @cImport(@cInclude("lwip/sockets.h"));
+                const errno_val = lwip.__errno().*;
+                if (errno_val == lwip.EAGAIN or errno_val == lwip.EWOULDBLOCK) {
+                    return error.Timeout;
+                }
+                last_error = ret;
+                return error.RecvFailed;
             } else {
+                // Store error code for debugging
+                last_error = ret;
                 return error.RecvFailed;
             }
         }
@@ -210,8 +249,12 @@ pub const TlsStream = struct {
         c.mbedtls_ssl_config_free(&self.conf);
         c.mbedtls_ctr_drbg_free(&self.ctr_drbg);
         c.mbedtls_entropy_free(&self.entropy);
+        if (self.has_custom_ca) {
+            c.mbedtls_x509_crt_free(&self.cacert);
+        }
 
         self.initialized = false;
+        self.has_custom_ca = false;
     }
 
     // ========================================================================

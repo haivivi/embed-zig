@@ -39,7 +39,6 @@
 
 const std = @import("std");
 
-const spec_mod = @import("spec.zig");
 
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
@@ -49,7 +48,8 @@ const spec_mod = @import("spec.zig");
 const _WifiMarker = struct {};
 
 /// Check if a type is a Wifi peripheral (internal use only)
-pub fn isWifiType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _WifiMarker;
 }
@@ -127,12 +127,21 @@ pub const Status = struct {
 
 /// WiFi HAL wrapper
 /// Wraps a platform-specific WiFi driver and provides unified interface
-pub fn Wifi(comptime spec: type) type {
-    // Verify spec at compile time
-    spec_mod.verifyWifiSpec(spec);
+pub fn from(comptime spec: type) type {
+    comptime {
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify required method signatures
+        _ = @as(*const fn (*BaseDriver, []const u8, []const u8) anyerror!void, &BaseDriver.connect);
+        _ = @as(*const fn (*BaseDriver) void, &BaseDriver.disconnect);
+        _ = @as(*const fn (*const BaseDriver) bool, &BaseDriver.isConnected);
+        _ = @as(*const fn (*const BaseDriver) ?IpAddress, &BaseDriver.getIpAddress);
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
@@ -307,10 +316,10 @@ test "Wifi basic operations" {
 
     const mock_spec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "wifi.test" };
+        pub const meta = .{ .id = "wifi.test" };
     };
 
-    const TestWifi = Wifi(mock_spec);
+    const TestWifi = from(mock_spec);
 
     var driver = MockDriver{};
     var wifi = TestWifi.init(&driver);
@@ -360,12 +369,12 @@ test "Signal quality calculation" {
         }
     };
 
-    const mock_spec = struct {
+    const mock_spec2 = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "wifi.test2" };
+        pub const meta = .{ .id = "wifi.test2" };
     };
 
-    const TestWifi = Wifi(mock_spec);
+    const TestWifi = from(mock_spec2);
 
     var driver = MockDriver{};
     var wifi = TestWifi.init(&driver);

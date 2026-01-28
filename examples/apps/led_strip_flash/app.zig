@@ -6,9 +6,7 @@ const hal = @import("hal");
 const platform = @import("platform.zig");
 
 const Board = platform.Board;
-const Hardware = platform.Hardware;
-const sal = platform.sal;
-const log = sal.log;
+const log = Board.log;
 
 const BUILD_TAG = "led_strip_flash_hal_v5";
 
@@ -17,9 +15,7 @@ fn printBoardInfo() void {
     log.info("LED Strip Flash - HAL v5", .{});
     log.info("Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
-    log.info("Board:     {s}", .{Hardware.name});
-    log.info("LED Type:  {s}", .{Hardware.led_type});
-    log.info("LED Count: {d}", .{Hardware.led_count});
+    log.info("Board:     {s}", .{Board.meta.id});
     log.info("Build:     -DZIG_BOARD={s}", .{@tagName(platform.selected_board)});
     log.info("==========================================", .{});
 }
@@ -58,6 +54,6 @@ pub fn run() void {
             board.uptime(),
         });
 
-        sal.sleepMs(1000);
+        Board.time.sleepMs(1000);
     }
 }

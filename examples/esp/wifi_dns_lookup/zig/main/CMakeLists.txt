@@ -1,6 +1,6 @@
 # WiFi DNS Lookup - Zig Version
 
-# ESP package path
+# ESP package path (path adjusted for Bazel build)
 set(_ESP_PKG ${CMAKE_CURRENT_LIST_DIR}/../../../../../lib/esp)
 
 # Include WiFi module

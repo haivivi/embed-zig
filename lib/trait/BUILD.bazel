@@ -1,0 +1,12 @@
+# Trait (Interface definitions)
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "trait_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        exclude = [".zig-cache/**", "zig-out/**"],
+        allow_empty = True,
+    ),
+)

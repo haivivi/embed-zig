@@ -7,8 +7,22 @@ const std = @import("std");
 const idf = @import("esp");
 const hal = @import("hal");
 
-// Export SAL for app.zig
-pub const sal = idf.sal;
+// Platform primitives
+pub const log = std.log.scoped(.app);
+
+pub const time = struct {
+    pub fn sleepMs(ms: u32) void {
+        idf.sal.time.sleepMs(ms);
+    }
+
+    pub fn getTimeMs() u64 {
+        return idf.nowMs();
+    }
+};
+
+pub fn isRunning() bool {
+    return true;
+}
 
 // Hardware parameters from lib/esp/boards
 const hw_params = idf.boards.korvo2_v3;
@@ -40,7 +54,7 @@ pub const RtcDriver = struct {
         return idf.nowMs();
     }
 
-    pub fn read(_: *Self) ?i64 {
+    pub fn nowMs(_: *Self) ?i64 {
         return null;
     }
 };
@@ -97,7 +111,7 @@ pub const AdcReader = struct {
 
 pub const rtc_spec = struct {
     pub const Driver = RtcDriver;
-    pub const meta = hal.Meta{ .id = "rtc" };
+    pub const meta = .{ .id = "rtc" };
 };
 
 /// Button group spec with ADC ranges
@@ -118,5 +132,5 @@ pub const button_group_spec = struct {
     pub const ref_value: u16 = 4095;
     pub const ref_tolerance: u16 = 500;
 
-    pub const meta = hal.Meta{ .id = "buttons.adc" };
+    pub const meta = .{ .id = "buttons.adc" };
 };

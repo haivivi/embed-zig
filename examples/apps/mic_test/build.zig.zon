@@ -1,0 +1,23 @@
+.{
+    .name = .mic_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xa4bb4181689b341c,
+    .dependencies = .{
+        .esp = .{
+            .path = "../../../lib/esp",
+        },
+        .hal = .{
+            .path = "../../../lib/hal",
+        },
+        .drivers = .{
+            .path = "../../../lib/drivers",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+}

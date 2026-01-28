@@ -12,15 +12,15 @@ const hw = switch (selected_board) {
 };
 
 const spec = struct {
-    // Required: time source
-    pub const rtc = hal.RtcReader(hw.rtc_spec);
+    pub const meta = .{ .id = hw.Hardware.name };
 
-    // LED strip
-    pub const rgb_leds = hal.RgbLedStrip(hw.led_spec);
+    // Required primitives
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log;
+    pub const time = hw.time;
+
+    // HAL peripherals
+    pub const rgb_leds = hal.led_strip.from(hw.led_spec);
 };
 
 pub const Board = hal.Board(spec);
-pub const Hardware = hw.Hardware;
-
-// Export SAL for app.zig
-pub const sal = hw.sal;

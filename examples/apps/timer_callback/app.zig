@@ -8,9 +8,7 @@ const idf = @import("esp");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const Hardware = platform.Hardware;
-const sal = platform.sal;
-const log = sal.log;
+const log = Board.log;
 
 const BUILD_TAG = "timer_callback_hal_v5";
 
@@ -36,8 +34,7 @@ pub fn run() void {
     log.info("Hardware Timer Example - HAL v5", .{});
     log.info("Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
-    log.info("Board:     {s}", .{Hardware.name});
-    log.info("LED Type:  {s}", .{Hardware.led_type});
+    log.info("Board:     {s}", .{Board.meta.id});
     log.info("==========================================", .{});
 
     // Initialize board (HAL)
@@ -97,6 +94,6 @@ pub fn run() void {
                 board.uptime(),
             });
         }
-        sal.sleepMs(10);
+        Board.time.sleepMs(10);
     }
 }

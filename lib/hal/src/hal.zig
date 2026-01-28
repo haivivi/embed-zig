@@ -60,27 +60,34 @@ pub const Board = @import("board.zig").Board;
 pub const SimpleQueue = @import("board.zig").SimpleQueue;
 
 // ============================================================================
+// Trait Module (re-exported for convenience)
+// ============================================================================
+
+/// Trait interfaces (log, time, etc.)
+pub const trait = @import("trait");
+
+// ============================================================================
 // HAL Components
 // ============================================================================
 
-/// RGB LED Strip HAL wrapper (addressable LEDs)
-pub const RgbLedStrip = @import("led_strip.zig").RgbLedStrip;
-/// Single Button HAL wrapper
-pub const Button = @import("button.zig").Button;
-/// Button Group HAL wrapper (ADC mode)
-pub const ButtonGroup = @import("button_group.zig").ButtonGroup;
-/// WiFi HAL wrapper
-pub const Wifi = @import("wifi.zig").Wifi;
-/// RTC Reader HAL wrapper
-pub const RtcReader = @import("rtc.zig").RtcReader;
-/// RTC Writer HAL wrapper
-pub const RtcWriter = @import("rtc.zig").RtcWriter;
-/// Single LED HAL wrapper
-pub const Led = @import("led.zig").Led;
-/// Temperature Sensor HAL wrapper
-pub const TempSensor = @import("temp_sensor.zig").TempSensor;
-/// Key-Value Store HAL wrapper
-pub const Kvs = @import("kvs.zig").Kvs;
+/// RGB LED Strip module (hal.led_strip.from, hal.led_strip.is)
+pub const led_strip = @import("led_strip.zig");
+/// Single Button module (hal.button.from, hal.button.is)
+pub const button = @import("button.zig");
+/// Button Group module (hal.button_group.from, hal.button_group.is)
+pub const button_group = @import("button_group.zig");
+/// WiFi module (hal.wifi.from, hal.wifi.is)
+pub const wifi = @import("wifi.zig");
+/// RTC module (hal.rtc.reader.from, hal.rtc.writer.from)
+pub const rtc = @import("rtc.zig");
+/// Single LED module (hal.led.from, hal.led.is)
+pub const led = @import("led.zig");
+/// Temperature Sensor module (hal.temp_sensor.from, hal.temp_sensor.is)
+pub const temp_sensor = @import("temp_sensor.zig");
+/// Key-Value Store module (hal.kvs.from, hal.kvs.is)
+pub const kvs = @import("kvs.zig");
+/// Microphone module (hal.mic.from, hal.mic.is)
+pub const mic = @import("mic.zig");
 
 // ============================================================================
 // Common Types
@@ -88,8 +95,6 @@ pub const Kvs = @import("kvs.zig").Kvs;
 
 /// RGB Color
 pub const Color = @import("led_strip.zig").Color;
-/// Component metadata
-pub const Meta = @import("spec.zig").Meta;
 /// Button action types
 pub const ButtonAction = @import("button.zig").ButtonAction;
 
@@ -149,45 +154,31 @@ pub const WifiFailReason = wifi_mod.FailReason;
 pub const WifiConnectConfig = wifi_mod.ConnectConfig;
 pub const WifiStatus = wifi_mod.Status;
 
-// ============================================================================
-// Specification
-// ============================================================================
-
-/// Hardware specification module
-pub const spec = @import("spec.zig");
-
-// ============================================================================
-// Module Access (for advanced usage)
-// ============================================================================
-
-pub const button_group = @import("button_group.zig");
-pub const led_strip = @import("led_strip.zig");
-pub const button = @import("button.zig");
+/// Event module
 pub const event = @import("event.zig");
-pub const wifi = @import("wifi.zig");
-pub const led = @import("led.zig");
-pub const temp_sensor = @import("temp_sensor.zig");
-pub const kvs = @import("kvs.zig");
-
-// ============================================================================
-// Module Access (for advanced usage)
-// ============================================================================
-
-pub const rtc = @import("rtc.zig");
 
 // ============================================================================
 // Tests
 // ============================================================================
 
+// ============================================================================
+// Microphone Types
+// ============================================================================
+
+/// Microphone configuration
+pub const MicConfig = mic.Config;
+/// Microphone sample format
+pub const MicSampleFormat = mic.SampleFormat;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
     _ = @import("board.zig");
-    _ = @import("spec.zig");
     _ = @import("button_group.zig");
     _ = @import("wifi.zig");
     _ = @import("rtc.zig");
     _ = @import("led.zig");
     _ = @import("temp_sensor.zig");
     _ = @import("kvs.zig");
+    _ = @import("mic.zig");
 }

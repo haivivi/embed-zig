@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_binary")
+
+go_binary(
+    name = "server",
+    srcs = ["main.go"],
+    data = [
+        "certs/ca.crt",
+        "certs/ca.key",
+        "certs/server.crt",
+        "certs/server.key",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["certs/ca.crt"])

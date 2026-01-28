@@ -37,7 +37,6 @@
 //! ```
 
 const std = @import("std");
-const spec_mod = @import("spec.zig");
 
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
@@ -47,7 +46,8 @@ const spec_mod = @import("spec.zig");
 const _TempSensorMarker = struct {};
 
 /// Check if a type is a TempSensor peripheral (internal use only)
-pub fn isTempSensorType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _TempSensorMarker;
 }
@@ -76,14 +76,20 @@ pub fn isTempSensorType(comptime T: type) bool {
 ///     pub const Driver = Esp32TempDriver;
 ///     pub const meta = hal.spec.Meta{ .id = "temp.internal" };
 /// };
-/// const MyTemp = TempSensor(temp_spec);
+/// const MyTemp = temp_sensor.from(temp_spec);
 /// ```
-pub fn TempSensor(comptime spec: type) type {
-    // Compile-time verification
-    spec_mod.verifyTempSensorSpec(spec);
+pub fn from(comptime spec: type) type {
+    comptime {
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify readCelsius signature (check type, don't call)
+        _ = @as(*const fn (*BaseDriver) anyerror!f32, &BaseDriver.readCelsius);
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
@@ -172,10 +178,10 @@ test "TempSensor with mock driver" {
     // Define spec
     const temp_spec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "temp.test" };
+        pub const meta = .{ .id = "temp.test" };
     };
 
-    const TestTemp = TempSensor(temp_spec);
+    const TestTemp = from(temp_spec);
 
     var driver = MockDriver{ .temperature = 25.0 };
     var temp = TestTemp.init(&driver);
@@ -197,13 +203,13 @@ test "TempSensor with mock driver" {
 }
 
 test "Temperature conversions" {
-    const TestTemp = TempSensor(struct {
+    const TestTemp = from(struct {
         pub const Driver = struct {
             pub fn readCelsius(_: *@This()) !f32 {
                 return 0;
             }
         };
-        pub const meta = spec_mod.Meta{ .id = "test" };
+        pub const meta = .{ .id = "test" };
     });
 
     // Celsius to Fahrenheit

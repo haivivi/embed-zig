@@ -1,14 +1,17 @@
-//! Stream adapter for sal.socket
+//! Stream adapter for trait.socket
 //!
 //! Provides simple read/write interface for HTTP client.
-//! TLS support is provided by platform-specific implementations (e.g., esp.sal.tls).
+//! TLS support is provided by platform-specific implementations (e.g., esp.trait.tls).
 
 const std = @import("std");
+const trait = @import("trait");
 
 /// Socket Stream - wraps a generic socket type with read/write interface
 pub fn SocketStream(comptime Socket: type) type {
+    const socket = trait.socket.from(Socket);
+
     return struct {
-        socket: Socket,
+        inner: socket,
 
         const Self = @This();
 
@@ -23,13 +26,13 @@ pub fn SocketStream(comptime Socket: type) type {
             Timeout,
         };
 
-        pub fn init(socket: Socket) Self {
-            return .{ .socket = socket };
+        pub fn init(s: socket) Self {
+            return .{ .inner = s };
         }
 
         /// Read from socket
         pub fn read(self: *Self, dest: []u8) ReadError!usize {
-            const n = self.socket.recv(dest) catch |err| {
+            const n = self.inner.recv(dest) catch |err| {
                 return switch (err) {
                     error.Timeout => error.Timeout,
                     error.Closed => error.ConnectionClosed,
@@ -41,7 +44,7 @@ pub fn SocketStream(comptime Socket: type) type {
 
         /// Write to socket
         pub fn write(self: *Self, data: []const u8) WriteError!usize {
-            return self.socket.send(data) catch |err| {
+            return self.inner.send(data) catch |err| {
                 return switch (err) {
                     error.Timeout => error.Timeout,
                     else => error.SocketError,
@@ -59,35 +62,21 @@ pub fn SocketStream(comptime Socket: type) type {
 
         /// Close socket
         pub fn close(self: *Self) void {
-            self.socket.close();
+            self.inner.close();
         }
     };
 }
 
-/// TLS Stream Interface
-///
-/// This is an interface definition for TLS implementations.
-/// Platform-specific implementations (like esp.sal.tls.TlsStream) should provide:
-/// - init(socket, options) -> TlsStream
-/// - handshake(hostname) -> error!void
-/// - send(data) -> error!usize
-/// - recv(buf) -> error!usize
-/// - deinit() -> void
-///
-/// Example usage:
-///   const TlsStream = esp.sal.tls.TlsStream;
-///   const HttpClient = http.ClientWithTls(Socket, TlsStream);
-pub const TlsStreamInterface = struct {
-    pub const Error = error{
-        InitFailed,
-        HandshakeFailed,
-        SendFailed,
-        RecvFailed,
-        ConnectionClosed,
-    };
+// =============================================================================
+// TLS Stream Interface
+// =============================================================================
+//
+// TLS 接口定义在 trait.tls 中，包括：
+// - trait.tls.from - TLS 流类型 stub
+// - trait.tls.Options - TLS 配置选项
+// - trait.tls.Error - TLS 错误类型
+//
+// Example usage:
+//   const TlsStream = esp.trait.tls.from;
+//   const HttpClient = http.ClientWithTls(Socket, TlsStream);
 
-    pub const Options = struct {
-        skip_cert_verify: bool = false,
-        timeout_ms: u32 = 30000,
-    };
-};

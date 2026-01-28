@@ -1,6 +1,6 @@
 //! HTTP Client
 //!
-//! A simple HTTP/1.1 client that works with sal.socket.
+//! A simple HTTP/1.1 client that works with trait.socket.
 //! Supports HTTP (plain) and HTTPS (with platform TLS implementation).
 //! Supports DNS resolution (with user-provided resolver).
 //!
@@ -23,6 +23,8 @@
 //!     fn resolve(self: *Resolver, host: []const u8) ?[4]u8
 
 const std = @import("std");
+
+const trait = @import("trait");
 
 const stream_mod = @import("stream.zig");
 
@@ -110,26 +112,32 @@ pub const ClientError = error{
 
 /// HTTP Client - HTTP only, no TLS, no DNS resolver
 pub fn Client(comptime Socket: type) type {
-    return ClientImpl(Socket, void, void);
+    const socket = trait.socket.from(Socket);
+    return ClientImpl(socket, void, void);
 }
 
 /// HTTP Client with TLS - supports HTTP and HTTPS, no DNS resolver
-pub fn ClientWithTls(comptime Socket: type, comptime TlsStreamType: type) type {
-    return ClientImpl(Socket, TlsStreamType, void);
+pub fn ClientWithTls(comptime Socket: type, comptime TlsStream: type) type {
+    const socket = trait.socket.from(Socket);
+    // TODO: trait.tls.from(TlsStream) when implemented
+    return ClientImpl(socket, TlsStream, void);
 }
 
 /// HTTP Client with DNS resolver - HTTP only with DNS resolution
-pub fn ClientWithResolver(comptime Socket: type, comptime ResolverType: type) type {
-    return ClientImpl(Socket, void, ResolverType);
+pub fn ClientWithResolver(comptime Socket: type, comptime Resolver: type) type {
+    const socket = trait.socket.from(Socket);
+    return ClientImpl(socket, void, Resolver);
 }
 
 /// Full-featured HTTP Client - HTTP, HTTPS, and DNS resolution
 pub fn ClientFull(
     comptime Socket: type,
-    comptime TlsStreamType: type,
-    comptime ResolverType: type,
+    comptime TlsStream: type,
+    comptime Resolver: type,
 ) type {
-    return ClientImpl(Socket, TlsStreamType, ResolverType);
+    const socket = trait.socket.from(Socket);
+    // TODO: trait.tls.from(TlsStream) when implemented
+    return ClientImpl(socket, TlsStream, Resolver);
 }
 
 // =============================================================================
@@ -473,6 +481,10 @@ const ParsedUrl = struct {
     port: u16,
     path: []const u8,
 };
+
+// =============================================================================
+// URL Parsing
+// =============================================================================
 
 fn parseUrl(url: []const u8) ?ParsedUrl {
     var is_https = false;

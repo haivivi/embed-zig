@@ -1,13 +1,31 @@
 {
     "files.exclude": {
         "bazel-*": true,
+        "zig-output": true,
+        "**/zig-out": true,
+        "**/.zig-cache": true,
+        "**/.build-*": true,
+        "**/.downloads": true,
+        "**/.out": true,
         "MODULE.bazel.lock": true
     },
     "files.watcherExclude": {
-        "bazel-*/**": true
+        "bazel-*/**": true,
+        "zig-output/**": true,
+        "**/zig-out/**": true,
+        "**/.zig-cache/**": true,
+        "**/.build-*/**": true,
+        "**/.downloads/**": true,
+        "**/.out/**": true
     },
     "search.exclude": {
         "bazel-*": true,
+        "zig-output": true,
+        "**/zig-out": true,
+        "**/.zig-cache": true,
+        "**/.build-*": true,
+        "**/.downloads": true,
+        "**/.out": true,
         "MODULE.bazel.lock": true
     }
 }

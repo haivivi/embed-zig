@@ -7,5 +7,6 @@ filegroup(
     srcs = glob(
         ["**/*.zig", "**/*.zon"],
         allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
     ),
 )

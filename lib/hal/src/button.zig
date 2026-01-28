@@ -48,7 +48,6 @@
 const std = @import("std");
 
 const event_mod = @import("event.zig");
-const spec_mod = @import("spec.zig");
 
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
@@ -58,7 +57,8 @@ const spec_mod = @import("spec.zig");
 const _ButtonMarker = struct {};
 
 /// Check if a type is a Button peripheral (internal use only)
-pub fn isButtonType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _ButtonMarker;
 }
@@ -129,14 +129,22 @@ pub const ButtonConfig = struct {
 /// - Long press detection
 ///
 /// spec must define:
-/// - `Driver`: struct with isPressed() method
-/// - `meta`: spec.Meta with component id
-pub fn Button(comptime spec: type) type {
-    // Compile-time verification
-    spec_mod.verifyButtonSpec(spec);
+/// - `Driver`: struct with isPressed() method  
+/// - `meta`: with id field
+pub fn from(comptime spec: type) type {
+    comptime {
+        // Handle pointer types to avoid shallow copy
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify Driver.isPressed signature
+        _ = @as(*const fn (*BaseDriver) bool, &BaseDriver.isPressed);
+        // Verify meta.id
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
@@ -692,10 +700,10 @@ test "Button with mock driver - press and release" {
 
     const btn_spec = struct {
         pub const Driver = MockButtonDriver;
-        pub const meta = spec_mod.Meta{ .id = "btn.test" };
+        pub const meta = .{ .id = "btn.test" };
     };
 
-    const TestButton = Button(btn_spec);
+    const TestButton = from(btn_spec);
 
     var driver = MockButtonDriver{};
     var btn = TestButton.initWithConfig(&driver, .{
@@ -737,10 +745,10 @@ test "Button long press detection" {
 
     const btn_spec = struct {
         pub const Driver = MockButtonDriver;
-        pub const meta = spec_mod.Meta{ .id = "btn.long" };
+        pub const meta = .{ .id = "btn.long" };
     };
 
-    const TestButton = Button(btn_spec);
+    const TestButton = from(btn_spec);
 
     var driver = MockButtonDriver{};
     var btn = TestButton.initWithConfig(&driver, .{
@@ -782,10 +790,10 @@ test "Button double click detection" {
 
     const btn_spec = struct {
         pub const Driver = MockButtonDriver;
-        pub const meta = spec_mod.Meta{ .id = "btn.dbl" };
+        pub const meta = .{ .id = "btn.dbl" };
     };
 
-    const TestButton = Button(btn_spec);
+    const TestButton = from(btn_spec);
 
     var driver = MockButtonDriver{};
     var btn = TestButton.initWithConfig(&driver, .{

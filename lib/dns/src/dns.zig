@@ -9,7 +9,7 @@
 //!   const esp = @import("esp");
 //!
 //!   // Create resolver with platform socket
-//!   const Resolver = dns.Resolver(esp.sal.socket.Socket);
+//!   const Resolver = dns.Resolver(esp.trait.socket.from);
 //!   var resolver = Resolver{
 //!       .server = .{ 223, 5, 5, 5 },  // AliDNS
 //!       .protocol = .udp,
@@ -19,6 +19,8 @@
 //!   const ip = try resolver.resolve("www.google.com");
 
 const std = @import("std");
+
+const trait = @import("trait");
 
 pub const Ipv4Address = [4]u8;
 
@@ -41,17 +43,10 @@ pub const Protocol = enum {
 
 /// DNS Resolver - generic over socket type
 ///
-/// `Socket` must provide:
-///   - `tcp() !Socket`
-///   - `udp() !Socket`
-///   - `close()`
-///   - `connect(addr: Ipv4Address, port: u16) !void`
-///   - `send(data: []const u8) !usize`
-///   - `recv(buf: []u8) !usize`
-///   - `sendTo(addr: Ipv4Address, port: u16, data: []const u8) !usize`
-///   - `recvFrom(buf: []u8) !usize`
-///   - `setRecvTimeout(ms: u32) void`
+/// `Socket` must implement the Socket interface (tcp/udp/send/recv/etc).
 pub fn Resolver(comptime Socket: type) type {
+    const socket = trait.socket.from(Socket);
+
     return struct {
         /// DNS server address (for UDP/TCP)
         server: Ipv4Address = .{ 8, 8, 8, 8 }, // Google DNS default
@@ -77,7 +72,7 @@ pub fn Resolver(comptime Socket: type) type {
         }
 
         fn resolveUdp(self: *const Self, hostname: []const u8) DnsError!Ipv4Address {
-            var sock = Socket.udp() catch return error.SocketError;
+            var sock = socket.udp() catch return error.SocketError;
             defer sock.close();
 
             sock.setRecvTimeout(self.timeout_ms);
@@ -103,7 +98,7 @@ pub fn Resolver(comptime Socket: type) type {
         }
 
         fn resolveTcp(self: *const Self, hostname: []const u8) DnsError!Ipv4Address {
-            var sock = Socket.tcp() catch return error.SocketError;
+            var sock = socket.tcp() catch return error.SocketError;
             defer sock.close();
 
             sock.setRecvTimeout(self.timeout_ms);

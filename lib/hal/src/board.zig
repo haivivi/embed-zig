@@ -2,20 +2,30 @@
 //!
 //! Automatically manages HAL peripherals, drivers, and event queue.
 //!
-//! ## Required: RtcReader
+//! ## Required Fields
 //!
-//! Every board spec MUST have `rtc` (RtcReader) for time source.
-//! Other peripherals are optional.
+//! Every board spec MUST have:
+//! - `rtc` (RtcReader) - time source
+//! - `log` - logging type (info/err/warn/debug methods)
+//! - `time` - time type (sleepMs/getTimeMs methods)
+//! - `isRunning` - run check function: fn() bool
 //!
-//! ## Minimal board.zig
+//! Optional peripherals: buttons, rgb_leds, led, temp, kvs, mic, etc.
+//!
+//! ## Minimal platform.zig
 //!
 //! ```zig
 //! const hal = @import("hal");
-//! const hw = @import("korvo2_v3.zig");
+//! const hw = @import("boards/xxx.zig");
 //!
 //! const spec = struct {
 //!     // Required: time source
 //!     pub const rtc = hal.RtcReader(hw.rtc_spec);
+//!
+//!     // Required: platform primitives
+//!     pub const log = hw.log;
+//!     pub const time = hw.time;
+//!     pub const isRunning = hw.isRunning;
 //!     
 //!     // Optional peripherals
 //!     pub const ButtonId = enum(u8) { vol_up, vol_down };
@@ -26,29 +36,33 @@
 //! pub const Board = hal.Board(spec);
 //! ```
 //!
-//! ## main.zig Usage
+//! ## app.zig Usage
 //!
 //! ```zig
-//! var board = try Board.init();
-//! defer board.deinit();
+//! const platform = @import("platform.zig");
+//! const Board = platform.Board;
+//! const log = Board.log;
 //!
-//! while (true) {
-//!     board.poll();
-//!     while (board.nextEvent()) |event| {
-//!         switch (event) {
-//!             .button => |btn| handleButton(btn),
-//!             else => {},
+//! pub fn run() void {
+//!     var board: Board = undefined;
+//!     board.init() catch return;
+//!     defer board.deinit();
+//!
+//!     while (Board.isRunning()) {
+//!         board.poll();
+//!         while (board.nextEvent()) |event| {
+//!             switch (event) {
+//!                 .button => |btn| handleButton(btn),
+//!                 else => {},
+//!             }
 //!         }
+//!         Board.time.sleepMs(10);
 //!     }
-//!     board.led.setColor(hal.Color.red);
-//!     
-//!     // Time access
-//!     const uptime_ms = board.rtc.uptime();
-//!     if (board.rtc.now()) |time| { ... }
 //! }
 //! ```
 
 const std = @import("std");
+const trait = @import("trait");
 
 const button_group_mod = @import("button_group.zig");
 const button_mod = @import("button.zig");
@@ -59,6 +73,7 @@ const rtc_mod = @import("rtc.zig");
 const wifi_mod = @import("wifi.zig");
 const temp_sensor_mod = @import("temp_sensor.zig");
 const kvs_mod = @import("kvs.zig");
+const mic_mod = @import("mic.zig");
 
 // ============================================================================
 // Simple Queue (Default implementation)
@@ -115,31 +130,23 @@ pub fn SimpleQueue(comptime T: type, comptime capacity: usize) type {
 // Spec Analysis
 // ============================================================================
 
-const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, temp_sensor, kvs, unknown };
+const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, temp_sensor, kvs, mic, unknown };
 
 fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (@typeInfo(T) != .@"struct") return .unknown;
     if (!@hasDecl(T, "_hal_marker")) return .unknown;
-    if (button_group_mod.isButtonGroupType(T)) return .button_group;
-    if (button_mod.isButtonType(T)) return .button;
-    if (rgb_led_strip_mod.isRgbLedStripType(T)) return .rgb_led_strip;
-    if (led_mod.isLedType(T)) return .led;
-    if (wifi_mod.isWifiType(T)) return .wifi;
-    if (temp_sensor_mod.isTempSensorType(T)) return .temp_sensor;
-    if (kvs_mod.isKvsType(T)) return .kvs;
+    if (button_group_mod.is(T)) return .button_group;
+    if (button_mod.is(T)) return .button;
+    if (rgb_led_strip_mod.is(T)) return .rgb_led_strip;
+    if (led_mod.is(T)) return .led;
+    if (wifi_mod.is(T)) return .wifi;
+    if (temp_sensor_mod.is(T)) return .temp_sensor;
+    if (kvs_mod.is(T)) return .kvs;
+    if (mic_mod.is(T)) return .mic;
     return .unknown;
 }
 
 fn SpecAnalysis(comptime spec: type) type {
-    // Verify required: rtc (RtcReader)
-    if (!@hasDecl(spec, "rtc")) {
-        @compileError("Board spec must have 'rtc' (hal.RtcReader) for time source");
-    }
-    const rtc_field = @field(spec, "rtc");
-    if (@typeInfo(@TypeOf(rtc_field)) != .type or !rtc_mod.isRtcReaderType(rtc_field)) {
-        @compileError("Board spec.rtc must be a hal.RtcReader type");
-    }
-
     return struct {
         pub const button_group_count = countType(spec, .button_group);
         pub const button_count = countType(spec, .button);
@@ -148,11 +155,12 @@ fn SpecAnalysis(comptime spec: type) type {
         pub const wifi_count = countType(spec, .wifi);
         pub const temp_sensor_count = countType(spec, .temp_sensor);
         pub const kvs_count = countType(spec, .kvs);
+        pub const mic_count = countType(spec, .mic);
         pub const has_buttons = button_group_count > 0 or button_count > 0;
         pub const ButtonId = extractButtonId(spec);
 
-        // RtcReader type (required)
-        pub const RtcReaderType = @field(spec, "rtc");
+        // RtcReader type (required) - spec.rtc is already a HAL type
+        pub const RtcReaderType = spec.rtc;
         pub const RtcDriverType = RtcReaderType.DriverType;
 
         fn countType(comptime s: type, comptime kind: PeripheralKind) comptime_int {
@@ -182,7 +190,7 @@ fn SpecAnalysis(comptime spec: type) type {
                     const F = @TypeOf(@field(s, decl.name));
                     if (@typeInfo(F) == .type) {
                         const T = @field(s, decl.name);
-                        if (button_group_mod.isButtonGroupType(T)) return T.ButtonIdType;
+                        if (button_group_mod.is(T)) return T.ButtonIdType;
                     }
                 }
             }
@@ -198,9 +206,30 @@ fn SpecAnalysis(comptime spec: type) type {
 
 /// Create a Board type from spec
 ///
-/// Required: spec.rtc (RtcReader) for time source
-/// Optional: buttons, button, led, wifi, etc.
+/// Required fields (all must be HAL/trait types):
+/// - rtc: hal.rtc.reader.from(hw.rtc_spec)
+/// - log: trait.log.from(hw.log)
+/// - time: trait.time.from(hw.time)
+/// - meta: .{ .id = "board_name" }
+///
+/// Optional peripherals: buttons, button, led, rgb_leds, wifi, temp, kvs, mic
 pub fn Board(comptime spec: type) type {
+    comptime {
+        // Verify required: rtc (must be hal.rtc.reader type)
+        if (!rtc_mod.reader.is(spec.rtc)) {
+            @compileError("spec.rtc must be hal.rtc.reader.from(rtc_spec)");
+        }
+
+        // Verify required: log (validates via trait.log.from)
+        _ = trait.log.from(spec.log);
+
+        // Verify required: time (validates via trait.time.from)
+        _ = trait.time.from(spec.time);
+
+        // Verify required: meta.id
+        _ = @as([]const u8, spec.meta.id);
+    }
+
     const analysis = SpecAnalysis(spec);
 
     // Get Queue implementation from spec or use default
@@ -223,6 +252,8 @@ pub fn Board(comptime spec: type) type {
     const TempSensorDriverType = if (analysis.temp_sensor_count > 0) TempSensorType.DriverType else void;
     const KvsType = if (analysis.kvs_count > 0) getKvsType(spec) else void;
     const KvsDriverType = if (analysis.kvs_count > 0) KvsType.DriverType else void;
+    const MicType = if (analysis.mic_count > 0) getMicType(spec) else void;
+    const MicDriverType = if (analysis.mic_count > 0) MicType.DriverType else void;
 
     // Generate Event type
     const Event = union(enum) {
@@ -249,6 +280,20 @@ pub fn Board(comptime spec: type) type {
         pub const TempSensor = TempSensorType;
         pub const Kvs = KvsType;
         pub const RtcReader = RtcReaderType;
+        pub const Microphone = MicType;
+
+        // ================================================================
+        // Board Metadata
+        // ================================================================
+
+        pub const meta = spec.meta;
+
+        // ================================================================
+        // Platform Primitives (from spec, wrapped by trait)
+        // ================================================================
+
+        pub const log = trait.log.from(spec.log);
+        pub const time = trait.time.from(spec.time);
 
         // ================================================================
         // Fields
@@ -284,6 +329,10 @@ pub fn Board(comptime spec: type) type {
         // Kvs (if present)
         kvs_driver: if (analysis.kvs_count > 0) KvsDriverType else void,
         kvs: if (analysis.kvs_count > 0) KvsType else void,
+
+        // Microphone (if present)
+        mic_driver: if (analysis.mic_count > 0) MicDriverType else void,
+        mic: if (analysis.mic_count > 0) MicType else void,
 
         // ================================================================
         // Lifecycle
@@ -356,6 +405,19 @@ pub fn Board(comptime spec: type) type {
                 }
             }
 
+            // Initialize Microphone driver
+            if (analysis.mic_count > 0) {
+                self.mic_driver = try MicDriverType.init();
+                errdefer {
+                    if (analysis.kvs_count > 0) self.kvs_driver.deinit();
+                    if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
+            }
+
             // Initialize HAL wrappers with driver pointers (now pointing to correct locations)
             self.rtc = RtcReaderType.init(&self.rtc_driver);
             if (analysis.button_group_count > 0) {
@@ -376,6 +438,9 @@ pub fn Board(comptime spec: type) type {
             if (analysis.kvs_count > 0) {
                 self.kvs = KvsType.init(&self.kvs_driver);
             }
+            if (analysis.mic_count > 0) {
+                self.mic = MicType.init(&self.mic_driver);
+            }
         }
 
         // Static wrapper for uptime (used by ButtonGroup)
@@ -390,6 +455,9 @@ pub fn Board(comptime spec: type) type {
 
         /// Deinitialize board
         pub fn deinit(self: *Self) void {
+            if (analysis.mic_count > 0) {
+                self.mic_driver.deinit();
+            }
             if (analysis.kvs_count > 0) {
                 self.kvs_driver.deinit();
             }
@@ -495,7 +563,7 @@ fn getButtonGroupType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (button_group_mod.isButtonGroupType(T)) return T;
+                if (button_group_mod.is(T)) return T;
             }
         }
     }
@@ -508,7 +576,7 @@ fn getButtonType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (button_mod.isButtonType(T)) return T;
+                if (button_mod.is(T)) return T;
             }
         }
     }
@@ -521,7 +589,7 @@ fn getRgbLedStripType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (rgb_led_strip_mod.isRgbLedStripType(T)) return T;
+                if (rgb_led_strip_mod.is(T)) return T;
             }
         }
     }
@@ -534,7 +602,7 @@ fn getLedType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (led_mod.isLedType(T)) return T;
+                if (led_mod.is(T)) return T;
             }
         }
     }
@@ -547,7 +615,7 @@ fn getTempSensorType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (temp_sensor_mod.isTempSensorType(T)) return T;
+                if (temp_sensor_mod.is(T)) return T;
             }
         }
     }
@@ -560,11 +628,24 @@ fn getKvsType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (kvs_mod.isKvsType(T)) return T;
+                if (kvs_mod.is(T)) return T;
             }
         }
     }
     @compileError("No Kvs found in spec");
+}
+
+fn getMicType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (mic_mod.isMicrophoneType(T)) return T;
+            }
+        }
+    }
+    @compileError("No Microphone found in spec");
 }
 
 fn ButtonEventPayload(comptime ButtonId: type) type {
@@ -616,18 +697,35 @@ test "SpecAnalysis with rtc only" {
         pub fn uptime(_: *@This()) u64 {
             return 0;
         }
-        pub fn read(_: *@This()) ?i64 {
+        pub fn nowMs(_: *@This()) ?i64 {
             return null;
         }
     };
 
     const rtc_spec = struct {
         pub const Driver = MockRtcDriver;
-        pub const meta = @import("spec.zig").Meta{ .id = "rtc" };
+        pub const meta = .{ .id = "rtc" };
+    };
+
+    const MockLog = struct {
+        pub fn info(comptime _: []const u8, _: anytype) void {}
+        pub fn err(comptime _: []const u8, _: anytype) void {}
+        pub fn warn(comptime _: []const u8, _: anytype) void {}
+        pub fn debug(comptime _: []const u8, _: anytype) void {}
+    };
+
+    const MockTime = struct {
+        pub fn sleepMs(_: u32) void {}
+        pub fn getTimeMs() u64 {
+            return 0;
+        }
     };
 
     const minimal_spec = struct {
-        pub const rtc = rtc_mod.RtcReader(rtc_spec);
+        pub const meta = .{ .id = "test.board" };
+        pub const rtc = rtc_spec;
+        pub const log = MockLog;
+        pub const time = MockTime;
     };
     const analysis = SpecAnalysis(minimal_spec);
 

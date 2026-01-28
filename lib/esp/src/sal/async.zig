@@ -9,6 +9,7 @@ const c = @cImport({
     @cInclude("freertos/FreeRTOS.h");
     @cInclude("freertos/task.h");
     @cInclude("freertos/semphr.h");
+    @cInclude("freertos/idf_additions.h");
 });
 
 /// Task function signature
@@ -246,18 +247,18 @@ pub const WaitGroup = struct {
         // Increment counter before spawning
         self.add(1);
 
-        // Create FreeRTOS task
-        var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
-        task_params.pvTaskCode = wgGoWrapper;
-        task_params.pcName = name.ptr;
-        task_params.usStackDepth = options.stack_size / @sizeOf(c.StackType_t);
-        task_params.puxStackBuffer = @ptrCast(@alignCast(stack.ptr));
-        task_params.pvParameters = go_ctx;
-        task_params.uxPriority = options.priority;
-
+        // Create FreeRTOS task using standard API
         var handle: c.TaskHandle_t = null;
         const core_id: c.BaseType_t = if (options.core < 0) c.tskNO_AFFINITY else options.core;
-        const result = c.xTaskCreateRestrictedPinnedToCore(&task_params, &handle, core_id);
+        const result = c.xTaskCreatePinnedToCore(
+            wgGoWrapper,
+            name.ptr,
+            options.stack_size / @sizeOf(c.StackType_t),
+            go_ctx,
+            options.priority,
+            &handle,
+            core_id,
+        );
 
         if (result != c.pdPASS) {
             self.done(); // Decrement on error
@@ -265,5 +266,9 @@ pub const WaitGroup = struct {
             allocator.destroy(go_ctx);
             return error.TaskCreateFailed;
         }
+
+        // Store stack reference in go_ctx for later cleanup
+        // Note: With xTaskCreatePinnedToCore, stack is managed by FreeRTOS
+        // We still keep our stack allocation for potential custom memory placement
     }
 };

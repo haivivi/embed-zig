@@ -12,8 +12,8 @@ embed-zig is built on three layers of abstraction. Each layer is independent and
 │                      HAL (lib/hal)                           │
 │          Board-agnostic hardware abstraction                 │
 ├─────────────────────────────────────────────────────────────┤
-│                      SAL (lib/sal)                           │
-│           Cross-platform system primitives                   │
+│                    Trait (lib/trait)                         │
+│            Interface definitions (contracts)                 │
 ├─────────────────────────────┬───────────────────────────────┤
 │       ESP (lib/esp)         │      Raysim (lib/raysim)      │
 │    ESP-IDF bindings         │    Desktop simulation         │
@@ -25,11 +25,11 @@ embed-zig is built on three layers of abstraction. Each layer is independent and
 
 ---
 
-## SAL: System Abstraction Layer
+## Trait: Interface Contracts
 
-**Location:** `lib/sal/`
+**Location:** `lib/trait/`
 
-SAL provides cross-platform primitives that work identically whether you're on FreeRTOS, a desktop OS, or bare metal.
+Trait provides interface definitions (contracts) for cross-platform abstractions. These are compile-time validated interfaces.
 
 ### Modules
 
@@ -44,7 +44,7 @@ SAL provides cross-platform primitives that work identically whether you're on F
 ### Usage
 
 ```zig
-const sal = @import("sal");
+const sal = @import("trait");
 
 // Sleep
 sal.time.sleepMs(100);
@@ -60,14 +60,14 @@ sal.log.info("Temperature: {d}°C", .{temp});
 
 ### Implementations
 
-SAL is an interface. The actual implementation comes from the platform:
+Trait defines interfaces. The actual implementations come from platforms:
 
 | Platform | Implementation | Location |
 |----------|----------------|----------|
 | ESP32 | FreeRTOS wrappers | `lib/esp/src/sal/` |
 | Desktop | std.Thread wrappers | `lib/std/src/sal/` |
 
-Your code imports `sal`, and the build system links the correct backend.
+SDK modules import `trait` for interface validation, and use platform-specific implementations at runtime.
 
 ---
 
@@ -157,7 +157,7 @@ while (true) {
             // ...
         }
     }
-    sal.time.sleepMs(10);
+    board.sleepMs(10);
 }
 ```
 
@@ -270,7 +270,7 @@ C interop is necessary for ESP-IDF, but we keep it at the edges:
 ├──────────────────────────────────────┤
 │              HAL                     │  ← Pure Zig
 ├──────────────────────────────────────┤
-│              SAL                     │  ← Pure Zig (interface)
+│             Trait                    │  ← Pure Zig (interface)
 ├──────────────────────────────────────┤
 │         ESP Bindings                 │  ← Zig with @cImport
 ├──────────────────────────────────────┤

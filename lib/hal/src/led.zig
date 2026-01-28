@@ -32,7 +32,7 @@
 //! };
 //!
 //! // Create HAL wrapper
-//! const MyLed = hal.Led(led_spec);
+//! const MyLed = hal.led.from(led_spec);
 //! var led = MyLed.init(&driver_instance);
 //!
 //! // Use unified interface
@@ -41,35 +41,31 @@
 //! ```
 
 const std = @import("std");
-const spec_mod = @import("spec.zig");
+const builtin = @import("builtin");
+
 
 // ============================================================================
-// Private Type Marker (for hal.Board identification)
+// Type Marker (for hal.Board identification)
 // ============================================================================
 
-/// Private marker type - NOT exported, used only for comptime type identification
 const _LedMarker = struct {};
 
-/// Check if a type is a Led peripheral (internal use only)
-pub fn isLedType(comptime T: type) bool {
+/// Check if a type is a Led peripheral (for hal.Board)
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _LedMarker;
 }
 
 // ============================================================================
-// PwmLed HAL Wrapper
+// LED HAL Component
 // ============================================================================
 
-/// LED HAL component
-///
-/// Wraps a low-level Driver and provides:
-/// - Unified brightness control interface
-/// - Fade in/out effects
-/// - Enable/disable control
+/// Create LED HAL component from spec
 ///
 /// spec must define:
-/// - `Driver`: struct with setDuty, getDuty, fade methods
-/// - `meta`: spec.Meta with component id
+/// - `Driver`: struct with setDuty, getDuty methods
+/// - `meta`: hal.Meta with component id
 ///
 /// Driver required methods:
 /// - `fn setDuty(self: *Self, duty: u16) void` - Set duty cycle (0-65535)
@@ -82,24 +78,25 @@ pub fn isLedType(comptime T: type) bool {
 /// ```zig
 /// const led_spec = struct {
 ///     pub const Driver = LedcPwmDriver;
-///     pub const meta = hal.spec.Meta{ .id = "led.main" };
+///     pub const meta = hal.Meta{ .id = "led.main" };
 /// };
-/// const MyLed = Led(led_spec);
+/// const MyLed = hal.led.from(led_spec);
 /// ```
-pub fn Led(comptime spec: type) type {
-    // Compile-time verification
-    spec_mod.verifyLedSpec(spec);
+pub fn from(comptime spec: type) type {
+    // Comptime validation - verify spec interface
+    comptime {
+        // Verify Driver methods signature
+        _ = @as(*const fn (*spec.Driver, u16) void, &spec.Driver.setDuty);
+        _ = @as(*const fn (*const spec.Driver) u16, &spec.Driver.getDuty);
+        // Verify meta.id
+        _ = @as([]const u8, spec.meta.id);
+    }
 
     const Driver = spec.Driver;
-
     return struct {
         const Self = @This();
 
-        // ================================================================
-        // Type Identification (for hal.Board)
-        // ================================================================
-
-        /// Private marker for type identification (DO NOT use externally)
+        /// Type marker for hal.Board identification
         pub const _hal_marker = _LedMarker;
 
         /// Exported types for hal.Board to access
@@ -257,10 +254,10 @@ test "Led with mock driver" {
     // Define spec
     const led_spec = struct {
         pub const Driver = MockDriver;
-        pub const meta = spec_mod.Meta{ .id = "led.test" };
+        pub const meta = .{ .id = "led.test" };
     };
 
-    const TestLed = Led(led_spec);
+    const TestLed = from(led_spec);
 
     var driver = MockDriver{};
     var led = TestLed.init(&driver);

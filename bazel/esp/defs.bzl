@@ -35,7 +35,7 @@ Build:
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
+load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP", "DEFAULT_WIFI_SSID", "DEFAULT_WIFI_PASSWORD", "DEFAULT_TEST_SERVER_IP")
 
 # =============================================================================
 # esp_idf_app - Build ESP-IDF project with Zig
@@ -74,6 +74,9 @@ def _esp_idf_app_impl(ctx):
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     chip = ctx.attr._chip[BuildSettingInfo].value if ctx.attr._chip and BuildSettingInfo in ctx.attr._chip else DEFAULT_CHIP
+    wifi_ssid = ctx.attr._wifi_ssid[BuildSettingInfo].value if ctx.attr._wifi_ssid and BuildSettingInfo in ctx.attr._wifi_ssid else DEFAULT_WIFI_SSID
+    wifi_password = ctx.attr._wifi_password[BuildSettingInfo].value if ctx.attr._wifi_password and BuildSettingInfo in ctx.attr._wifi_password else DEFAULT_WIFI_PASSWORD
+    test_server_ip = ctx.attr._test_server_ip[BuildSettingInfo].value if ctx.attr._test_server_ip and BuildSettingInfo in ctx.attr._test_server_ip else DEFAULT_TEST_SERVER_IP
     
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
@@ -98,6 +101,7 @@ def _esp_idf_app_impl(ctx):
 set -e
 export ESP_BAZEL_RUN=1 ESP_BOARD="{board}" ESP_CHIP="{chip}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
+export ESP_WIFI_SSID="{wifi_ssid}" ESP_WIFI_PASSWORD="{wifi_password}" ESP_TEST_SERVER_IP="{test_server_ip}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 mkdir -p "$WORK/project" "$WORK/cmake" "$WORK/lib" "$WORK/apps"
@@ -109,6 +113,9 @@ exec bash "{build_sh}"
 """.format(
         board = board,
         chip = chip,
+        wifi_ssid = wifi_ssid,
+        wifi_password = wifi_password,
+        test_server_ip = test_server_ip,
         project_name = project_name,
         bin_out = bin_file.path,
         elf_out = elf_file.path,
@@ -235,6 +242,15 @@ esp_idf_app = rule(
         ),
         "_chip": attr.label(
             default = "//bazel/esp:chip",
+        ),
+        "_wifi_ssid": attr.label(
+            default = "//bazel/esp:wifi_ssid",
+        ),
+        "_wifi_password": attr.label(
+            default = "//bazel/esp:wifi_password",
+        ),
+        "_test_server_ip": attr.label(
+            default = "//bazel/esp:test_server_ip",
         ),
         "_scripts": attr.label(
             default = "//bazel/esp:scripts",

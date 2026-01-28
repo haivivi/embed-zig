@@ -145,19 +145,19 @@ pub const Socket = struct {
     }
 
     /// Close the socket
-    pub fn close(self: Self) void {
+    pub fn close(self: *Self) void {
         _ = c.close(self.fd);
     }
 
     /// Connect to IPv4 address (simplified for DNS/HTTP)
-    pub fn connect(self: Self, addr: Ipv4Address, port: u16) SocketError!void {
+    pub fn connect(self: *Self, addr: Ipv4Address, port: u16) SocketError!void {
         const sa = sockaddrIn(addr, port);
         const result = c.connect(self.fd, @ptrCast(&sa), @sizeOf(c.sockaddr_in));
         if (result < 0) return error.ConnectFailed;
     }
 
     /// Connect to Address union (for backward compatibility)
-    pub fn connectAddr(self: Self, addr: Address, port: u16) SocketError!void {
+    pub fn connectAddr(self: *Self, addr: Address, port: u16) SocketError!void {
         const sa = switch (addr) {
             .ipv4 => |ipv4| sockaddrIn(ipv4, port),
             .ipv6 => return error.InvalidAddress, // TODO: IPv6 support
@@ -167,14 +167,14 @@ pub const Socket = struct {
     }
 
     /// Send data (for connected socket)
-    pub fn send(self: Self, data: []const u8) SocketError!usize {
+    pub fn send(self: *Self, data: []const u8) SocketError!usize {
         const result = c.send(self.fd, data.ptr, data.len, 0);
         if (result < 0) return error.SendFailed;
         return @intCast(result);
     }
 
     /// Receive data
-    pub fn recv(self: Self, buf: []u8) SocketError!usize {
+    pub fn recv(self: *Self, buf: []u8) SocketError!usize {
         const result = c.recv(self.fd, buf.ptr, buf.len, 0);
         if (result < 0) {
             if (c.__errno().* == c.EAGAIN or c.__errno().* == c.EWOULDBLOCK) {
@@ -187,7 +187,7 @@ pub const Socket = struct {
     }
 
     /// Send data to IPv4 address (simplified for DNS)
-    pub fn sendTo(self: Self, addr: Ipv4Address, port: u16, data: []const u8) SocketError!usize {
+    pub fn sendTo(self: *Self, addr: Ipv4Address, port: u16, data: []const u8) SocketError!usize {
         const sa = sockaddrIn(addr, port);
         const result = c.sendto(
             self.fd,
@@ -202,7 +202,7 @@ pub const Socket = struct {
     }
 
     /// Send data to Address union (backward compatibility)
-    pub fn sendToAddr(self: Self, addr: Address, port: u16, data: []const u8) SocketError!usize {
+    pub fn sendToAddr(self: *Self, addr: Address, port: u16, data: []const u8) SocketError!usize {
         const sa = switch (addr) {
             .ipv4 => |ipv4| sockaddrIn(ipv4, port),
             .ipv6 => return error.InvalidAddress,
@@ -220,7 +220,7 @@ pub const Socket = struct {
     }
 
     /// Receive data from (simplified - just returns length)
-    pub fn recvFrom(self: Self, buf: []u8) SocketError!usize {
+    pub fn recvFrom(self: *Self, buf: []u8) SocketError!usize {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
         const result = c.recvfrom(
@@ -242,7 +242,7 @@ pub const Socket = struct {
     }
 
     /// Receive data with sender info (for UDP)
-    pub fn recvFromAddr(self: Self, buf: []u8) SocketError!struct { len: usize, addr: Address, port: u16 } {
+    pub fn recvFromAddr(self: *Self, buf: []u8) SocketError!struct { len: usize, addr: Address, port: u16 } {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
         const result = c.recvfrom(
@@ -275,7 +275,7 @@ pub const Socket = struct {
     }
 
     /// Set socket options (batch)
-    pub fn setOptions(self: Self, options: Options) void {
+    pub fn setOptions(self: *Self, options: Options) void {
         if (options.recv_timeout_ms > 0) self.setRecvTimeout(options.recv_timeout_ms);
         if (options.send_timeout_ms > 0) self.setSendTimeout(options.send_timeout_ms);
         if (options.recv_buffer_size > 0) {
@@ -290,25 +290,25 @@ pub const Socket = struct {
     }
 
     /// Set receive timeout
-    pub fn setRecvTimeout(self: Self, timeout_ms: u32) void {
+    pub fn setRecvTimeout(self: *Self, timeout_ms: u32) void {
         const tv = timeval(timeout_ms);
         _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_RCVTIMEO, &tv, @sizeOf(c.timeval));
     }
 
     /// Set send timeout
-    pub fn setSendTimeout(self: Self, timeout_ms: u32) void {
+    pub fn setSendTimeout(self: *Self, timeout_ms: u32) void {
         const tv = timeval(timeout_ms);
         _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_SNDTIMEO, &tv, @sizeOf(c.timeval));
     }
 
     /// Enable/disable TCP_NODELAY
-    pub fn setTcpNoDelay(self: Self, enable: bool) void {
+    pub fn setTcpNoDelay(self: *Self, enable: bool) void {
         var val: c_int = if (enable) 1 else 0;
         _ = c.setsockopt(self.fd, c.IPPROTO_TCP, c.TCP_NODELAY, &val, @sizeOf(c_int));
     }
 
     /// Bind socket to a specific network interface
-    pub fn bindToDevice(self: Self, interface_name: []const u8) SocketError!void {
+    pub fn bindToDevice(self: *Self, interface_name: []const u8) SocketError!void {
         var ifr: c.ifreq = std.mem.zeroes(c.ifreq);
         const name_len = @min(interface_name.len, ifr.ifr_name.len - 1);
         @memcpy(ifr.ifr_name[0..name_len], interface_name[0..name_len]);
@@ -324,7 +324,7 @@ pub const Socket = struct {
     }
 
     /// Get the underlying file descriptor
-    pub fn getFd(self: Self) c_int {
+    pub fn getFd(self: *Self) c_int {
         return self.fd;
     }
 
