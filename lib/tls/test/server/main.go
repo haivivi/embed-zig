@@ -1,16 +1,15 @@
 // TLS Test Server
 //
-// A multi-protocol TLS test server that generates its own CA and server certificates.
-// Used for testing the pure Zig TLS client implementation.
+// A comprehensive TLS test server that covers:
+// - TLS 1.2 and TLS 1.3
+// - Multiple cipher suites (AES-GCM, ChaCha20-Poly1305)
+// - Multiple key types (RSA, ECDSA P-256, ECDSA P-384)
+// - Multiple curves for key exchange (X25519, P-256, P-384)
+// - Extensions: SNI, ALPN
+// - Large data transfer tests
 //
 // Usage:
 //   go run main.go [options]
-//
-// Options:
-//   -port PORT        Server port (default: 8443)
-//   -ca-out PATH      Write CA cert to file
-//   -cert-out PATH    Write server cert to file
-//   -key-out PATH     Write server key to file
 
 package main
 
@@ -37,109 +36,211 @@ import (
 
 // TestCase represents a TLS test scenario
 type TestCase struct {
-	Name        string
-	MinVersion  uint16
-	MaxVersion  uint16
-	CipherSuite uint16 // 0 means use default
-	KeyType     string // "rsa" or "ecdsa"
+	Name         string
+	MinVersion   uint16
+	MaxVersion   uint16
+	CipherSuites []uint16 // Empty means use defaults
+	CurvePrefs   []tls.CurveID
+	KeyType      string // "rsa", "ecdsa-p256", "ecdsa-p384"
+	ALPN         []string
+	RequireSNI   bool
 }
 
 var testCases = []TestCase{
-	// TLS 1.3 tests
-	{Name: "tls13_aes128gcm", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, KeyType: "ecdsa"},
-	{Name: "tls13_aes256gcm", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, KeyType: "ecdsa"},
-	{Name: "tls13_chacha20", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, KeyType: "ecdsa"},
+	// ==========================================
+	// TLS 1.3 Tests
+	// ==========================================
 
-	// TLS 1.2 tests with ECDSA
-	{Name: "tls12_ecdhe_ecdsa_aes128", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, KeyType: "ecdsa"},
-	{Name: "tls12_ecdhe_ecdsa_aes256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, KeyType: "ecdsa"},
-	{Name: "tls12_ecdhe_ecdsa_chacha20", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, KeyType: "ecdsa"},
+	// TLS 1.3 with different cipher suites
+	{Name: "tls13_aes128gcm", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CipherSuites: []uint16{tls.TLS_AES_128_GCM_SHA256}, KeyType: "ecdsa-p256"},
+	{Name: "tls13_aes256gcm", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384}, KeyType: "ecdsa-p256"},
+	{Name: "tls13_chacha20", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CipherSuites: []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}, KeyType: "ecdsa-p256"},
 
-	// TLS 1.2 tests with RSA
-	{Name: "tls12_ecdhe_rsa_aes128", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, KeyType: "rsa"},
-	{Name: "tls12_ecdhe_rsa_aes256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, KeyType: "rsa"},
-	{Name: "tls12_ecdhe_rsa_chacha20", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, KeyType: "rsa"},
+	// TLS 1.3 with different curves
+	{Name: "tls13_x25519", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CurvePrefs: []tls.CurveID{tls.X25519}, KeyType: "ecdsa-p256"},
+	{Name: "tls13_p256", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CurvePrefs: []tls.CurveID{tls.CurveP256}, KeyType: "ecdsa-p256"},
+	{Name: "tls13_p384", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		CurvePrefs: []tls.CurveID{tls.CurveP384}, KeyType: "ecdsa-p384"},
+
+	// ==========================================
+	// TLS 1.2 ECDSA Tests
+	// ==========================================
+
+	// TLS 1.2 ECDSA P-256
+	{Name: "tls12_ecdsa_p256_aes128", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}, KeyType: "ecdsa-p256"},
+	{Name: "tls12_ecdsa_p256_aes256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384}, KeyType: "ecdsa-p256"},
+	{Name: "tls12_ecdsa_p256_chacha20", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256}, KeyType: "ecdsa-p256"},
+
+	// TLS 1.2 ECDSA P-384
+	{Name: "tls12_ecdsa_p384_aes256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384}, KeyType: "ecdsa-p384"},
+
+	// ==========================================
+	// TLS 1.2 RSA Tests
+	// ==========================================
+
+	{Name: "tls12_rsa_aes128", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}, KeyType: "rsa"},
+	{Name: "tls12_rsa_aes256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384}, KeyType: "rsa"},
+	{Name: "tls12_rsa_chacha20", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256}, KeyType: "rsa"},
+
+	// ==========================================
+	// TLS 1.2 Curve Tests
+	// ==========================================
+
+	{Name: "tls12_curve_x25519", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CurvePrefs: []tls.CurveID{tls.X25519}, KeyType: "ecdsa-p256"},
+	{Name: "tls12_curve_p256", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CurvePrefs: []tls.CurveID{tls.CurveP256}, KeyType: "ecdsa-p256"},
+	{Name: "tls12_curve_p384", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		CurvePrefs: []tls.CurveID{tls.CurveP384}, KeyType: "ecdsa-p384"},
+
+	// ==========================================
+	// Extension Tests
+	// ==========================================
+
+	// SNI test (requires correct hostname)
+	{Name: "ext_sni_required", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		KeyType: "ecdsa-p256", RequireSNI: true},
+
+	// ALPN tests
+	{Name: "ext_alpn_h2", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		KeyType: "ecdsa-p256", ALPN: []string{"h2", "http/1.1"}},
+	{Name: "ext_alpn_http11", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		KeyType: "ecdsa-p256", ALPN: []string{"http/1.1"}},
+
+	// ==========================================
+	// Data Transfer Tests
+	// ==========================================
+
+	// Large data test (for testing record layer)
+	{Name: "data_large_transfer", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		KeyType: "ecdsa-p256"},
 }
 
-// CertBundle holds CA and server certificates
+// CertBundle holds CA and server certificates for a specific key type
 type CertBundle struct {
+	KeyType    string
 	CACert     *x509.Certificate
 	CACertPEM  []byte
 	CAKey      interface{}
 	ServerCert tls.Certificate
 }
 
+var certBundles map[string]*CertBundle
+
 func main() {
-	port := flag.Int("port", 8443, "Server port")
-	caOut := flag.String("ca-out", "", "Write CA cert to file")
-	_ = flag.String("cert-out", "", "Write server cert to file (not implemented)")
-	_ = flag.String("key-out", "", "Write server key to file (not implemented)")
-	ecdsaOnly := flag.Bool("ecdsa-only", false, "Only generate ECDSA certificates")
-	rsaOnly := flag.Bool("rsa-only", false, "Only generate RSA certificates")
+	port := flag.Int("port", 8443, "Base server port")
+	caOut := flag.String("ca-out", "", "Write CA certs to directory")
+	listTests := flag.Bool("list", false, "List all test cases")
 	flag.Parse()
 
-	log.Println("TLS Test Server")
-	log.Println("===============")
+	// List tests and exit
+	if *listTests {
+		fmt.Println("Available test cases:")
+		for i, tc := range testCases {
+			fmt.Printf("  [%2d] %-30s port=%d version=%s key=%s\n",
+				i, tc.Name, *port+i, versionName(tc.MaxVersion), tc.KeyType)
+		}
+		return
+	}
 
-	// Generate certificates
-	log.Println("Generating certificates...")
+	log.Println("TLS Test Server - Comprehensive Test Suite")
+	log.Println("==========================================")
 
-	var ecdsaBundle, rsaBundle *CertBundle
-	var err error
+	// Generate certificates for all key types
+	log.Println("\nGenerating certificates...")
+	certBundles = make(map[string]*CertBundle)
 
-	if !*rsaOnly {
-		ecdsaBundle, err = generateCertBundle("ecdsa")
+	keyTypes := []string{"rsa", "ecdsa-p256", "ecdsa-p384"}
+	for _, keyType := range keyTypes {
+		bundle, err := generateCertBundle(keyType)
 		if err != nil {
-			log.Fatalf("Failed to generate ECDSA certificates: %v", err)
+			log.Fatalf("Failed to generate %s certificates: %v", keyType, err)
 		}
-		log.Println("  ECDSA certificates generated")
+		certBundles[keyType] = bundle
+		log.Printf("  ✓ %s certificates generated", keyType)
 	}
 
-	if !*ecdsaOnly {
-		rsaBundle, err = generateCertBundle("rsa")
-		if err != nil {
-			log.Fatalf("Failed to generate RSA certificates: %v", err)
+	// Write CA certs if requested
+	if *caOut != "" {
+		os.MkdirAll(*caOut, 0755)
+		for keyType, bundle := range certBundles {
+			path := fmt.Sprintf("%s/ca_%s.pem", *caOut, keyType)
+			if err := os.WriteFile(path, bundle.CACertPEM, 0644); err != nil {
+				log.Printf("  Warning: failed to write %s: %v", path, err)
+			} else {
+				log.Printf("  CA cert written to %s", path)
+			}
 		}
-		log.Println("  RSA certificates generated")
 	}
 
-	// Write certificates to files if requested
-	if *caOut != "" && ecdsaBundle != nil {
-		if err := os.WriteFile(*caOut, ecdsaBundle.CACertPEM, 0644); err != nil {
-			log.Fatalf("Failed to write CA cert: %v", err)
-		}
-		log.Printf("  CA cert written to %s", *caOut)
-	}
-
-	// Start servers for each test case
+	// Start servers
 	var wg sync.WaitGroup
 	basePort := *port
 
 	log.Println("\nStarting test servers:")
+	log.Println("─────────────────────────────────────────────────────────────")
+
+	// Group by category
+	categories := map[string][]int{
+		"TLS 1.3 Ciphers":    {},
+		"TLS 1.3 Curves":     {},
+		"TLS 1.2 ECDSA":      {},
+		"TLS 1.2 RSA":        {},
+		"TLS 1.2 Curves":     {},
+		"Extensions":         {},
+		"Data Transfer":      {},
+	}
 
 	for i, tc := range testCases {
-		// Skip based on flags
-		if *ecdsaOnly && tc.KeyType == "rsa" {
+		switch {
+		case strings.HasPrefix(tc.Name, "tls13_aes") || strings.HasPrefix(tc.Name, "tls13_chacha"):
+			categories["TLS 1.3 Ciphers"] = append(categories["TLS 1.3 Ciphers"], i)
+		case strings.HasPrefix(tc.Name, "tls13_x25519") || strings.HasPrefix(tc.Name, "tls13_p"):
+			categories["TLS 1.3 Curves"] = append(categories["TLS 1.3 Curves"], i)
+		case strings.HasPrefix(tc.Name, "tls12_ecdsa"):
+			categories["TLS 1.2 ECDSA"] = append(categories["TLS 1.2 ECDSA"], i)
+		case strings.HasPrefix(tc.Name, "tls12_rsa"):
+			categories["TLS 1.2 RSA"] = append(categories["TLS 1.2 RSA"], i)
+		case strings.HasPrefix(tc.Name, "tls12_curve"):
+			categories["TLS 1.2 Curves"] = append(categories["TLS 1.2 Curves"], i)
+		case strings.HasPrefix(tc.Name, "ext_"):
+			categories["Extensions"] = append(categories["Extensions"], i)
+		case strings.HasPrefix(tc.Name, "data_"):
+			categories["Data Transfer"] = append(categories["Data Transfer"], i)
+		}
+	}
+
+	// Print categorized test cases
+	catOrder := []string{"TLS 1.3 Ciphers", "TLS 1.3 Curves", "TLS 1.2 ECDSA", "TLS 1.2 RSA", "TLS 1.2 Curves", "Extensions", "Data Transfer"}
+	for _, cat := range catOrder {
+		indices := categories[cat]
+		if len(indices) == 0 {
 			continue
 		}
-		if *rsaOnly && tc.KeyType == "ecdsa" {
-			continue
+		log.Printf("\n  %s:", cat)
+		for _, i := range indices {
+			tc := testCases[i]
+			log.Printf("    [%2d] %-30s port=%d", i, tc.Name, basePort+i)
 		}
+	}
 
-		var bundle *CertBundle
-		if tc.KeyType == "ecdsa" {
-			bundle = ecdsaBundle
-		} else {
-			bundle = rsaBundle
-		}
-
+	// Start all servers
+	for i, tc := range testCases {
+		bundle := certBundles[tc.KeyType]
 		if bundle == nil {
+			log.Printf("Warning: no cert bundle for %s", tc.KeyType)
 			continue
 		}
 
@@ -149,43 +250,66 @@ func main() {
 			defer wg.Done()
 			runTestServer(tc, port, bundle)
 		}(tc, serverPort, bundle)
-
-		log.Printf("  [%d] %s on port %d", i, tc.Name, serverPort)
 	}
 
-	// Print test info
-	log.Println("\nTest server ready. Test cases:")
-	for i, tc := range testCases {
-		if (*ecdsaOnly && tc.KeyType == "rsa") || (*rsaOnly && tc.KeyType == "ecdsa") {
-			continue
-		}
-		log.Printf("  curl -k https://localhost:%d/test  # %s", basePort+i, tc.Name)
-	}
-
+	// Print test commands
+	log.Println("\n─────────────────────────────────────────────────────────────")
+	log.Println("Test commands (curl):")
+	log.Printf("  curl -k https://localhost:%d/test", basePort)
 	log.Println("\nPress Ctrl+C to stop...")
 	wg.Wait()
 }
 
+func versionName(v uint16) string {
+	switch v {
+	case tls.VersionTLS12:
+		return "TLS1.2"
+	case tls.VersionTLS13:
+		return "TLS1.3"
+	default:
+		return fmt.Sprintf("0x%04x", v)
+	}
+}
+
 func generateCertBundle(keyType string) (*CertBundle, error) {
-	// Generate CA key
-	var caKey interface{}
+	var curve elliptic.Curve
+	var caKey, serverKey interface{}
 	var err error
 
-	if keyType == "ecdsa" {
-		caKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	} else {
+	switch keyType {
+	case "rsa":
 		caKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, err
+		}
+		serverKey, err = rsa.GenerateKey(rand.Reader, 2048)
+	case "ecdsa-p256":
+		curve = elliptic.P256()
+		caKey, err = ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		serverKey, err = ecdsa.GenerateKey(curve, rand.Reader)
+	case "ecdsa-p384":
+		curve = elliptic.P384()
+		caKey, err = ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		serverKey, err = ecdsa.GenerateKey(curve, rand.Reader)
+	default:
+		return nil, fmt.Errorf("unknown key type: %s", keyType)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate CA key: %v", err)
+		return nil, err
 	}
 
-	// Generate CA certificate
+	// CA certificate
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			Organization: []string{"Zig TLS Test CA"},
-			CommonName:   "Zig TLS Test CA",
+			CommonName:   fmt.Sprintf("Zig TLS Test CA (%s)", keyType),
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(24 * time.Hour),
@@ -195,37 +319,16 @@ func generateCertBundle(keyType string) (*CertBundle, error) {
 		MaxPathLen:            1,
 	}
 
-	var caPublicKey interface{}
-	if keyType == "ecdsa" {
-		caPublicKey = &caKey.(*ecdsa.PrivateKey).PublicKey
-	} else {
-		caPublicKey = &caKey.(*rsa.PrivateKey).PublicKey
-	}
-
+	caPublicKey := publicKey(caKey)
 	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPublicKey, caKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CA certificate: %v", err)
+		return nil, err
 	}
 
-	caCert, err := x509.ParseCertificate(caCertDER)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse CA certificate: %v", err)
-	}
-
+	caCert, _ := x509.ParseCertificate(caCertDER)
 	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
 
-	// Generate server key
-	var serverKey interface{}
-	if keyType == "ecdsa" {
-		serverKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	} else {
-		serverKey, err = rsa.GenerateKey(rand.Reader, 2048)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate server key: %v", err)
-	}
-
-	// Generate server certificate
+	// Server certificate
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
@@ -236,43 +339,59 @@ func generateCertBundle(keyType string) (*CertBundle, error) {
 		NotAfter:    time.Now().Add(24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{"localhost", "127.0.0.1"},
+		DNSNames:    []string{"localhost", "test.local"},
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
 	}
 
-	var serverPublicKey interface{}
-	if keyType == "ecdsa" {
-		serverPublicKey = &serverKey.(*ecdsa.PrivateKey).PublicKey
-	} else {
-		serverPublicKey = &serverKey.(*rsa.PrivateKey).PublicKey
-	}
-
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, serverPublicKey, caKey)
+	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, publicKey(serverKey), caKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create server certificate: %v", err)
+		return nil, err
 	}
 
 	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER})
-
-	var serverKeyPEM []byte
-	if keyType == "ecdsa" {
-		keyBytes, _ := x509.MarshalECPrivateKey(serverKey.(*ecdsa.PrivateKey))
-		serverKeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-	} else {
-		serverKeyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey.(*rsa.PrivateKey))})
-	}
+	serverKeyPEM := pemEncodeKey(serverKey)
 
 	serverCert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create server TLS certificate: %v", err)
+		return nil, err
 	}
 
 	return &CertBundle{
+		KeyType:    keyType,
 		CACert:     caCert,
 		CACertPEM:  caCertPEM,
 		CAKey:      caKey,
 		ServerCert: serverCert,
 	}, nil
+}
+
+func publicKey(key interface{}) interface{} {
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		return &k.PublicKey
+	case *ecdsa.PrivateKey:
+		return &k.PublicKey
+	default:
+		return nil
+	}
+}
+
+func pemEncodeKey(key interface{}) []byte {
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		return pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(k),
+		})
+	case *ecdsa.PrivateKey:
+		b, _ := x509.MarshalECPrivateKey(k)
+		return pem.EncodeToMemory(&pem.Block{
+			Type:  "EC PRIVATE KEY",
+			Bytes: b,
+		})
+	default:
+		return nil
+	}
 }
 
 func runTestServer(tc TestCase, port int, bundle *CertBundle) {
@@ -282,8 +401,29 @@ func runTestServer(tc TestCase, port int, bundle *CertBundle) {
 		MaxVersion:   tc.MaxVersion,
 	}
 
-	if tc.CipherSuite != 0 {
-		tlsConfig.CipherSuites = []uint16{tc.CipherSuite}
+	if len(tc.CipherSuites) > 0 {
+		tlsConfig.CipherSuites = tc.CipherSuites
+	}
+
+	if len(tc.CurvePrefs) > 0 {
+		tlsConfig.CurvePreferences = tc.CurvePrefs
+	}
+
+	if len(tc.ALPN) > 0 {
+		tlsConfig.NextProtos = tc.ALPN
+	}
+
+	// SNI verification callback
+	if tc.RequireSNI {
+		tlsConfig.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			if hello.ServerName == "" {
+				return nil, fmt.Errorf("SNI required but not provided")
+			}
+			if hello.ServerName != "localhost" && hello.ServerName != "test.local" {
+				return nil, fmt.Errorf("unknown server name: %s", hello.ServerName)
+			}
+			return nil, nil // Use default config
+		}
 	}
 
 	listener, err := tls.Listen("tcp", fmt.Sprintf(":%d", port), tlsConfig)
@@ -310,6 +450,9 @@ func handleConnection(conn net.Conn, tc TestCase) {
 		return
 	}
 
+	// Set deadline
+	conn.SetDeadline(time.Now().Add(30 * time.Second))
+
 	// Complete handshake
 	if err := tlsConn.Handshake(); err != nil {
 		log.Printf("[%s] Handshake failed: %v", tc.Name, err)
@@ -317,11 +460,12 @@ func handleConnection(conn net.Conn, tc TestCase) {
 	}
 
 	state := tlsConn.ConnectionState()
-	log.Printf("[%s] Connection: version=0x%04x cipher=0x%04x",
-		tc.Name, state.Version, state.CipherSuite)
+	log.Printf("[%s] Connected: version=0x%04x cipher=0x%04x curve=%s alpn=%s sni=%s",
+		tc.Name, state.Version, state.CipherSuite,
+		curveName(state.CurveID), state.NegotiatedProtocol, state.ServerName)
 
 	// Read request
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65536)
 	n, err := conn.Read(buf)
 	if err != nil && err != io.EOF {
 		return
@@ -329,19 +473,77 @@ func handleConnection(conn net.Conn, tc TestCase) {
 
 	request := string(buf[:n])
 
-	// Simple HTTP response
+	// Handle different test endpoints
 	var response string
-	if strings.HasPrefix(request, "GET /test") || strings.HasPrefix(request, "GET / ") {
-		body := fmt.Sprintf(`{"test":"%s","version":"0x%04x","cipher":"0x%04x","ok":true}`,
-			tc.Name, state.Version, state.CipherSuite)
-		response = fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-			len(body), body)
-	} else if strings.HasPrefix(request, "PING") {
-		// Simple ping/pong for basic connectivity test
+
+	switch {
+	case strings.HasPrefix(request, "GET /test"):
+		// Standard test endpoint
+		body := fmt.Sprintf(`{
+  "test": "%s",
+  "version": "0x%04x",
+  "version_name": "%s",
+  "cipher": "0x%04x",
+  "cipher_name": "%s",
+  "curve": "%s",
+  "alpn": "%s",
+  "sni": "%s",
+  "key_type": "%s",
+  "ok": true
+}`,
+			tc.Name,
+			state.Version, versionName(state.Version),
+			state.CipherSuite, tls.CipherSuiteName(state.CipherSuite),
+			curveName(state.CurveID),
+			state.NegotiatedProtocol,
+			state.ServerName,
+			tc.KeyType)
+		response = httpResponse(200, "application/json", body)
+
+	case strings.HasPrefix(request, "GET /large"):
+		// Large data transfer test (1MB)
+		data := strings.Repeat("X", 1024*1024)
+		response = httpResponse(200, "application/octet-stream", data)
+
+	case strings.HasPrefix(request, "GET /echo"):
+		// Echo test
+		response = httpResponse(200, "text/plain", request)
+
+	case strings.HasPrefix(request, "PING"):
+		// Simple ping/pong
 		response = "PONG\n"
-	} else {
-		response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
+	default:
+		response = httpResponse(404, "text/plain", "Not Found")
 	}
 
 	conn.Write([]byte(response))
+}
+
+func httpResponse(status int, contentType, body string) string {
+	statusText := "OK"
+	switch status {
+	case 404:
+		statusText = "Not Found"
+	case 500:
+		statusText = "Internal Server Error"
+	}
+
+	return fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		status, statusText, contentType, len(body), body)
+}
+
+func curveName(id tls.CurveID) string {
+	switch id {
+	case tls.CurveP256:
+		return "P-256"
+	case tls.CurveP384:
+		return "P-384"
+	case tls.CurveP521:
+		return "P-521"
+	case tls.X25519:
+		return "X25519"
+	default:
+		return fmt.Sprintf("0x%04x", uint16(id))
+	}
 }
