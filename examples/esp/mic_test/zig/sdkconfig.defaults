@@ -11,8 +11,8 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
-# Stack size for main task (default 3584 is too small for HAL Board)
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# Stack size for main task (needs extra for I2S TDM + mic buffer)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 
 # I2S configuration
 CONFIG_I2S_SUPPRESS_DEPRECATE_WARN=y
