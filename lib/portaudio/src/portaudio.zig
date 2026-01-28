@@ -355,8 +355,20 @@ pub fn CallbackStream(comptime SampleType: type) type {
         config: StreamConfig,
         context: CallbackContext,
 
-        pub fn open(cfg: StreamConfig, callback: Callback, user_data: ?*anyopaque) Error!Self {
-            var self = Self{
+        /// Initialize a callback stream.
+        ///
+        /// IMPORTANT: This function takes a pointer to self because PortAudio stores
+        /// a pointer to self.context internally. The caller must ensure that `self`
+        /// remains at a stable memory location for the lifetime of the stream.
+        ///
+        /// Usage:
+        /// ```
+        /// var stream: CallbackStream(i16) = undefined;
+        /// try stream.init(config, callback, user_data);
+        /// defer stream.close();
+        /// ```
+        pub fn init(self: *Self, cfg: StreamConfig, callback: Callback, user_data: ?*anyopaque) Error!void {
+            self.* = Self{
                 .stream = null,
                 .config = cfg,
                 .context = .{
@@ -403,8 +415,6 @@ pub fn CallbackStream(comptime SampleType: type) type {
                 CallbackWrapper.cb,
                 &self.context,
             ));
-
-            return self;
         }
 
         pub fn close(self: *Self) void {

@@ -107,6 +107,7 @@ pub fn Mic(comptime Adc: type) type {
         voice_channel_mask: u8 = 0,
         ref_channel: ?u8 = null,
         aec_enabled: bool = true,
+        total_channels: u8 = 0, // Cached I2S channel count (set during init)
 
         // Buffers for multi-channel capture and processing
         raw_buffer: [raw_buffer_size]i16 = undefined,
@@ -146,6 +147,7 @@ pub fn Mic(comptime Adc: type) type {
                 .config = config,
                 .i2s = i2s,
                 .aec_enabled = config.aec_enabled,
+                .total_channels = i2s_channels,
             };
 
             // Analyze channel configuration
@@ -250,13 +252,9 @@ pub fn Mic(comptime Adc: type) type {
             return out_idx;
         }
 
-        /// Get the total number of I2S channels (up to last active)
+        /// Get the total number of I2S channels (cached from init)
         fn getTotalChannels(self: *const Self) usize {
-            var last: usize = 2; // minimum
-            for (self.config.channels, 0..) |role, i| {
-                if (role != .disabled) last = @max(last, i + 1);
-            }
-            return last;
+            return self.total_channels;
         }
 
         // ================================================================

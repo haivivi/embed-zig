@@ -260,6 +260,8 @@ fn runServer(address: net.Address) !void {
         };
 
         // Handle client in separate thread
+        // Note: This test server spawns unbounded threads. For production use,
+        // implement a thread pool or connection limit to prevent DoS.
         _ = std.Thread.spawn(.{}, handleClient, .{conn}) catch |err| {
             std.debug.print("[ERROR] Thread spawn failed: {}\n", .{err});
             conn.stream.close();
@@ -300,21 +302,25 @@ pub fn main() !void {
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--port")) {
-            if (args.next()) |port_str| {
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch {
-                    std.debug.print("Error: Invalid port number '{s}'\n", .{port_str});
-                    return;
-                };
-            }
+            const port_str = args.next() orelse {
+                std.debug.print("Error: --port requires a value\n", .{});
+                return;
+            };
+            config.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                std.debug.print("Error: Invalid port number '{s}'\n", .{port_str});
+                return;
+            };
         } else if (std.mem.eql(u8, arg, "--tone")) {
             config.generate_tone = true;
         } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--rate")) {
-            if (args.next()) |rate_str| {
-                config.sample_rate = std.fmt.parseInt(u32, rate_str, 10) catch {
-                    std.debug.print("Error: Invalid sample rate '{s}'\n", .{rate_str});
-                    return;
-                };
-            }
+            const rate_str = args.next() orelse {
+                std.debug.print("Error: --rate requires a value\n", .{});
+                return;
+            };
+            config.sample_rate = std.fmt.parseInt(u32, rate_str, 10) catch {
+                std.debug.print("Error: Invalid sample rate '{s}'\n", .{rate_str});
+                return;
+            };
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             std.debug.print(
                 \\Mic Test Server

@@ -45,8 +45,10 @@ esp_err_t i2s_tdm_helper_init_rx(
 
     // Channel configuration
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(port, I2S_ROLE_MASTER);
-    chan_cfg.dma_desc_num = 6;
-    chan_cfg.dma_frame_num = 240;
+    // DMA buffer: 6 descriptors * 240 frames = 1440 frames total (~90ms at 16kHz)
+    // This provides enough buffering to handle OS scheduling jitter
+    chan_cfg.dma_desc_num = 6;    // Number of DMA descriptors (buffers)
+    chan_cfg.dma_frame_num = 240; // Frames per descriptor (~15ms at 16kHz)
 
     // Allocate RX channel only
     esp_err_t ret = i2s_new_channel(&chan_cfg, NULL, rx_handle);
