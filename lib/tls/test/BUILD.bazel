@@ -1,0 +1,65 @@
+# TLS Integration Tests
+#
+# These tests verify the pure Zig TLS implementation against a Go test server.
+#
+# Usage:
+#   bazel test //lib/tls/test:unit_tests           # Unit tests only
+#   bazel test //lib/tls/test:integration_tests    # Full integration tests
+#   bazel run //lib/tls/test:tls_test_server       # Run server manually
+
+package(default_visibility = ["//visibility:public"])
+
+# Go TLS test server
+# Generates self-signed CA and supports multiple TLS versions/ciphers
+load("@rules_go//go:def.bzl", "go_binary")
+
+go_binary(
+    name = "tls_test_server",
+    srcs = ["server/main.go"],
+    visibility = ["//visibility:public"],
+)
+
+# Shell script to run the test server standalone
+sh_binary(
+    name = "run_server",
+    srcs = ["run_server.sh"],
+    data = [":tls_test_server"],
+)
+
+# Full integration test (starts Go server, runs tests, stops server)
+sh_test(
+    name = "integration_tests",
+    srcs = ["run_tests.sh"],
+    args = ["--full"],
+    data = [
+        ":tls_test_server",
+        "//lib/tls:tls_sources",
+    ],
+    tags = [
+        "integration",
+        "requires-network",
+        "local",  # Must run locally, not in sandbox
+    ],
+    timeout = "short",
+)
+
+# Unit tests only (no server required)
+sh_test(
+    name = "unit_tests",
+    srcs = ["run_tests.sh"],
+    data = ["//lib/tls:tls_sources"],
+    tags = ["unit"],
+    timeout = "short",
+)
+
+# Test source files
+filegroup(
+    name = "test_files",
+    srcs = glob(["*.zig"]),
+)
+
+# Server source files
+filegroup(
+    name = "server_files",
+    srcs = glob(["server/*"]),
+)
