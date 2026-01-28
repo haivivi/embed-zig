@@ -109,6 +109,7 @@ fn buildPortAudio(
         lib_module.linkSystemLibrary("asound", .{});
         lib_module.linkSystemLibrary("pthread", .{});
     }
+    // Note: Windows is not currently supported. PRs welcome to add WASAPI/DirectSound backend.
 
     return b.addLibrary(.{
         .linkage = .static,

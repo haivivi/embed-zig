@@ -183,8 +183,8 @@ fn handleClient(connection: net.Server.Connection) void {
         }
 
         if (header_read != 4) {
-            std.debug.print("[ERROR] Incomplete header: {} bytes\n", .{header_read});
-            continue;
+            std.debug.print("[ERROR] Incomplete header: {} bytes, closing connection\n", .{header_read});
+            break; // Incomplete header means stream is corrupted, must disconnect
         }
 
         const packet_len = std.mem.readInt(u32, &header_buf, .little);

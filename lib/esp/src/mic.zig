@@ -119,11 +119,13 @@ pub fn Mic(comptime Adc: type) type {
                 if (role != .disabled) active_channels += 1;
             }
             // Ensure we have at least the channels up to the last active one
+            // I2S requires minimum 2 channels (stereo) even if only mono is used
+            const min_i2s_channels: u8 = 2;
             var last_active: u8 = 0;
             for (config.channels, 0..) |role, i| {
                 if (role != .disabled) last_active = @intCast(i + 1);
             }
-            const i2s_channels = @max(last_active, 2); // At least 2 for I2S stereo
+            const i2s_channels = @max(last_active, min_i2s_channels);
 
             // Initialize I2S TDM
             var i2s = try I2sTdm.init(.{
