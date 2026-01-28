@@ -328,8 +328,8 @@
                         <p>与开发板无关的 API，支持按钮、LED、传感器等。相同代码运行在不同硬件上。</p>
                     </div>
                     <div class="feature-card">
-                        <h3>系统抽象层</h3>
-                        <p>跨平台原语，用于线程、同步、定时器和日志记录。</p>
+                        <h3>接口契约</h3>
+                        <p>跨平台接口契约：日志、时间、套接字、TLS、I2C。</p>
                     </div>
                     <div class="feature-card">
                         <h3>桌面模拟</h3>
@@ -1012,8 +1012,8 @@
             drawLayer(margin + halfW + gap, y, halfW, rowH, '嵌入式SDK', 'HTTP, MQTT, 音视频...');
             y += rowH + gap;
             
-            // Layer 3: SAL
-            drawLayer(margin, y, boxW, rowH, 'SAL', 'lib/sal');
+            // Layer 3: Trait
+            drawLayer(margin, y, boxW, rowH, 'Trait', 'lib/trait');
             y += rowH + gap;
             
             // Layer 4: Platform

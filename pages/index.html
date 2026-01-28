@@ -330,8 +330,8 @@
                         <p>Board-agnostic APIs for buttons, LEDs, sensors, and more. Same code runs on different hardware.</p>
                     </div>
                     <div class="feature-card">
-                        <h3>System Abstraction</h3>
-                        <p>Cross-platform primitives for threads, synchronization, timers, and logging.</p>
+                        <h3>Trait Interfaces</h3>
+                        <p>Interface contracts for cross-platform abstractions: log, time, socket, tls, i2c.</p>
                     </div>
                     <div class="feature-card">
                         <h3>Desktop Simulation</h3>
@@ -1015,8 +1015,8 @@
             drawLayer(margin + halfW + gap, y, halfW, rowH, 'Embed SDK', 'HTTP, MQTT, Audio...');
             y += rowH + gap;
             
-            // Layer 3: SAL
-            drawLayer(margin, y, boxW, rowH, 'SAL', 'lib/sal');
+            // Layer 3: Trait
+            drawLayer(margin, y, boxW, rowH, 'Trait', 'lib/trait');
             y += rowH + gap;
             
             // Layer 4: Platform
