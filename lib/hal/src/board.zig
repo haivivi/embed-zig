@@ -641,7 +641,7 @@ fn getMicType(comptime spec: type) type {
             const F = @TypeOf(@field(spec, decl.name));
             if (@typeInfo(F) == .type) {
                 const T = @field(spec, decl.name);
-                if (mic_mod.isMicrophoneType(T)) return T;
+                if (mic_mod.is(T)) return T;
             }
         }
     }

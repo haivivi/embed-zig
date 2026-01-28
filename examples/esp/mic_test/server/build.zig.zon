@@ -1,0 +1,10 @@
+.{
+    .name = .mic_server,
+    .version = "0.1.0",
+    .fingerprint = 0x57059a1af5745d7f,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

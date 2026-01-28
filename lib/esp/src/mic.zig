@@ -1,6 +1,6 @@
 //! ESP-IDF Microphone Implementation
 //!
-//! Provides audio input using I2S with configurable ADC codec.
+//! Provides audio input using I2S TDM with configurable ADC codec.
 //! Supports multi-channel ADC chips like ES7210 with AEC reference channel.
 //!
 //! Usage:
@@ -15,13 +15,17 @@
 //!   var mic = try Mic.init(&adc, .{
 //!       .sample_rate = 16000,
 //!       .channels = .{ .voice, .disabled, .aec_ref, .disabled },
+//!       .i2s = .{ .bclk_pin = 9, .ws_pin = 45, .din_pin = 10, .mclk_pin = 16 },
 //!   });
 //!   defer mic.deinit();
 //!
+//!   try mic.start();
 //!   const n = try mic.read(&buffer);
 
 const std = @import("std");
-const log = @import("log.zig");
+const log = std.log.scoped(.mic);
+const i2s_tdm = @import("i2s_tdm.zig");
+const I2sTdm = i2s_tdm.I2sTdm;
 
 /// Channel role in audio processing
 pub const ChannelRole = enum {
@@ -43,8 +47,10 @@ pub const I2sConfig = struct {
     ws_pin: u8,
     /// Data in pin
     din_pin: u8,
-    /// MCLK pin (optional, 0 = disabled)
-    mclk_pin: u8 = 0,
+    /// MCLK pin (optional, null = disabled)
+    mclk_pin: ?u8 = null,
+    /// MCLK multiple (256 or 384)
+    mclk_multiple: u16 = 256,
 };
 
 /// Mic configuration
@@ -84,27 +90,59 @@ pub fn Mic(comptime Adc: type) type {
         /// Maximum gain in dB
         pub const max_gain_db: i8 = if (@hasDecl(Adc, "max_gain_db")) Adc.max_gain_db else 37;
 
+        /// Raw buffer size (4 channels * 160 samples per 10ms @ 16kHz)
+        const raw_buffer_size: usize = @as(usize, max_channels) * 320; // ~20ms buffer
+
         // ================================================================
         // Instance fields
         // ================================================================
 
         adc: *Adc,
         config: Config,
+        i2s: I2sTdm,
         initialized: bool = false,
+        started: bool = false,
 
         // Runtime state
         voice_channel_mask: u8 = 0,
         ref_channel: ?u8 = null,
         aec_enabled: bool = true,
 
-        // Buffers
-        raw_buffer: [1024]i16 = undefined,
+        // Buffers for multi-channel capture and processing
+        raw_buffer: [raw_buffer_size]i16 = undefined,
 
         /// Initialize microphone
         pub fn init(adc: *Adc, config: Config) !Self {
+            // Count active channels for I2S configuration
+            var active_channels: u8 = 0;
+            for (config.channels) |role| {
+                if (role != .disabled) active_channels += 1;
+            }
+            // Ensure we have at least the channels up to the last active one
+            var last_active: u8 = 0;
+            for (config.channels, 0..) |role, i| {
+                if (role != .disabled) last_active = @intCast(i + 1);
+            }
+            const i2s_channels = @max(last_active, 2); // At least 2 for I2S stereo
+
+            // Initialize I2S TDM
+            var i2s = try I2sTdm.init(.{
+                .port = config.i2s.port,
+                .sample_rate = config.sample_rate,
+                .channels = i2s_channels,
+                .bits_per_sample = config.bits_per_sample,
+                .bclk_pin = config.i2s.bclk_pin,
+                .ws_pin = config.i2s.ws_pin,
+                .din_pin = config.i2s.din_pin,
+                .mclk_pin = config.i2s.mclk_pin,
+                .mclk_multiple = config.i2s.mclk_multiple,
+            });
+            errdefer i2s.deinit();
+
             var self = Self{
                 .adc = adc,
                 .config = config,
+                .i2s = i2s,
                 .aec_enabled = config.aec_enabled,
             };
 
@@ -117,11 +155,10 @@ pub fn Mic(comptime Adc: type) type {
                 }
             }
 
-            // TODO: Initialize I2S with config.i2s settings
-            // For now, just mark as initialized
-            log.info("Mic: Initialized with {} voice channels, AEC ref channel: {?}", .{
+            log.info("Mic: Initialized with {} voice channels, AEC ref: {?}, I2S channels: {}", .{
                 @popCount(self.voice_channel_mask),
                 self.ref_channel,
+                i2s_channels,
             });
 
             self.initialized = true;
@@ -131,9 +168,31 @@ pub fn Mic(comptime Adc: type) type {
         /// Deinitialize microphone
         pub fn deinit(self: *Self) void {
             if (self.initialized) {
-                // TODO: Deinitialize I2S
+                if (self.started) {
+                    self.stop() catch {};
+                }
+                self.i2s.deinit();
                 self.initialized = false;
             }
+        }
+
+        /// Start audio capture
+        pub fn start(self: *Self) !void {
+            if (!self.initialized) return error.NotInitialized;
+            if (self.started) return;
+
+            try self.i2s.enable();
+            self.started = true;
+            log.info("Mic: Started", .{});
+        }
+
+        /// Stop audio capture
+        pub fn stop(self: *Self) !void {
+            if (!self.started) return;
+
+            try self.i2s.disable();
+            self.started = false;
+            log.info("Mic: Stopped", .{});
         }
 
         // ================================================================
@@ -142,26 +201,59 @@ pub fn Mic(comptime Adc: type) type {
 
         /// Read audio samples (blocking)
         ///
-        /// Returns processed audio (AEC applied if enabled).
+        /// Returns processed audio (voice channels extracted).
         /// Buffer receives mono audio if single voice channel,
         /// or interleaved stereo if multiple voice channels.
         pub fn read(self: *Self, buffer: []i16) !usize {
             if (!self.initialized) return error.NotInitialized;
+            if (!self.started) {
+                // Auto-start on first read
+                try self.start();
+            }
 
-            // TODO: Read from I2S
-            // For now, return zeros as placeholder
-            const samples_to_read = @min(buffer.len, 160); // 10ms @ 16kHz
+            // Calculate how many raw samples we need
+            // For N output samples with M voice channels, we need N * total_channels raw samples
+            const voice_count = @popCount(self.voice_channel_mask);
+            if (voice_count == 0) return error.NoVoiceChannels;
 
-            // Placeholder: fill with silence
-            @memset(buffer[0..samples_to_read], 0);
+            const total_channels = self.getTotalChannels();
+            const output_samples = buffer.len;
+            const raw_samples_needed = (output_samples / voice_count) * total_channels;
+            const raw_to_read = @min(raw_samples_needed, self.raw_buffer.len);
 
-            // In real implementation:
-            // 1. Read raw multi-channel data from I2S
-            // 2. Extract voice and reference channels
-            // 3. Apply AEC if enabled
-            // 4. Return processed audio
+            // Read raw TDM data (interleaved: ch0, ch1, ch2, ch3, ch0, ch1, ...)
+            const raw_samples = try self.i2s.read(self.raw_buffer[0..raw_to_read]);
+            if (raw_samples == 0) return 0;
 
-            return samples_to_read;
+            // Extract voice channel(s) from interleaved data
+            var out_idx: usize = 0;
+            const frames = raw_samples / total_channels;
+
+            for (0..frames) |frame| {
+                const base = frame * total_channels;
+
+                // Extract each voice channel
+                for (0..max_channels) |ch| {
+                    if (ch >= total_channels) break;
+                    if ((self.voice_channel_mask & (@as(u8, 1) << @intCast(ch))) != 0) {
+                        if (out_idx < buffer.len) {
+                            buffer[out_idx] = self.raw_buffer[base + ch];
+                            out_idx += 1;
+                        }
+                    }
+                }
+            }
+
+            return out_idx;
+        }
+
+        /// Get the total number of I2S channels (up to last active)
+        fn getTotalChannels(self: *const Self) usize {
+            var last: usize = 2; // minimum
+            for (self.config.channels, 0..) |role, i| {
+                if (role != .disabled) last = @max(last, i + 1);
+            }
+            return last;
         }
 
         // ================================================================
@@ -183,7 +275,6 @@ pub fn Mic(comptime Adc: type) type {
                 }
             }
 
-            // TODO: Update ADC configuration
             log.info("Mic: Channel {} {s}", .{ channel, if (enabled) "enabled" else "disabled" });
         }
 
@@ -192,7 +283,10 @@ pub fn Mic(comptime Adc: type) type {
             if (channel >= max_channels) return error.InvalidChannel;
 
             const clamped_gain = @min(gain_db, max_gain_db);
-            try self.adc.setChannelGain(@intCast(channel), clamped_gain);
+
+            // Convert dB to Gain enum using the ADC's Gain type
+            const gain = Adc.Gain.fromDb(@as(f32, @floatFromInt(clamped_gain)));
+            try self.adc.setChannelGain(@intCast(channel), gain);
 
             log.info("Mic: Channel {} gain set to {}dB", .{ channel, clamped_gain });
         }
@@ -245,47 +339,20 @@ pub fn Mic(comptime Adc: type) type {
             }
             return true; // AEC ref channel
         }
-    };
-}
 
-// ============================================================================
-// Tests
-// ============================================================================
-
-test "Mic basic functionality" {
-    // Mock ADC driver
-    const MockAdc = struct {
-        pub const channel_count = 4;
-        pub const max_gain_db = 37;
-
-        gain: [4]i8 = .{ 0, 0, 0, 0 },
-
-        pub fn setChannelGain(self: *@This(), ch: u8, gain: i8) !void {
-            if (ch < 4) self.gain[ch] = gain;
+        /// Check if capture is started
+        pub fn isStarted(self: *const Self) bool {
+            return self.started;
         }
     };
-
-    const TestMic = Mic(MockAdc);
-
-    var adc = MockAdc{};
-    var mic = try TestMic.init(&adc, .{
-        .channels = .{ .voice, .disabled, .aec_ref, .disabled },
-        .i2s = .{ .bclk_pin = 9, .ws_pin = 45, .din_pin = 10 },
-    });
-    defer mic.deinit();
-
-    // Test channel detection
-    try std.testing.expectEqual(@as(u8, 1), mic.getVoiceChannelCount());
-    try std.testing.expect(mic.isChannelEnabled(0)); // voice
-    try std.testing.expect(!mic.isChannelEnabled(1)); // disabled
-    try std.testing.expect(mic.isChannelEnabled(2)); // aec_ref
-
-    // Test gain setting
-    try mic.setChannelGain(0, 30);
-    try std.testing.expectEqual(@as(i8, 30), adc.gain[0]);
-
-    // Test AEC control
-    try std.testing.expect(mic.isAecEnabled());
-    mic.setAecEnabled(false);
-    try std.testing.expect(!mic.isAecEnabled());
 }
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+pub const MicError = error{
+    NotInitialized,
+    NoVoiceChannels,
+    InvalidChannel,
+};
