@@ -460,9 +460,9 @@ func handleConnection(conn net.Conn, tc TestCase) {
 	}
 
 	state := tlsConn.ConnectionState()
-	log.Printf("[%s] Connected: version=0x%04x cipher=0x%04x curve=%s alpn=%s sni=%s",
+	log.Printf("[%s] Connected: version=0x%04x cipher=0x%04x alpn=%s sni=%s",
 		tc.Name, state.Version, state.CipherSuite,
-		curveName(state.CurveID), state.NegotiatedProtocol, state.ServerName)
+		state.NegotiatedProtocol, state.ServerName)
 
 	// Read request
 	buf := make([]byte, 65536)
@@ -485,7 +485,6 @@ func handleConnection(conn net.Conn, tc TestCase) {
   "version_name": "%s",
   "cipher": "0x%04x",
   "cipher_name": "%s",
-  "curve": "%s",
   "alpn": "%s",
   "sni": "%s",
   "key_type": "%s",
@@ -494,7 +493,6 @@ func handleConnection(conn net.Conn, tc TestCase) {
 			tc.Name,
 			state.Version, versionName(state.Version),
 			state.CipherSuite, tls.CipherSuiteName(state.CipherSuite),
-			curveName(state.CurveID),
 			state.NegotiatedProtocol,
 			state.ServerName,
 			tc.KeyType)
@@ -531,19 +529,4 @@ func httpResponse(status int, contentType, body string) string {
 
 	return fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		status, statusText, contentType, len(body), body)
-}
-
-func curveName(id tls.CurveID) string {
-	switch id {
-	case tls.CurveP256:
-		return "P-256"
-	case tls.CurveP384:
-		return "P-384"
-	case tls.CurveP521:
-		return "P-521"
-	case tls.X25519:
-		return "X25519"
-	default:
-		return fmt.Sprintf("0x%04x", uint16(id))
-	}
 }

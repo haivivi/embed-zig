@@ -7,6 +7,12 @@ filegroup(
     srcs = glob(
         ["**/*.zig", "**/*.zon"],
         allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
+        exclude = [".zig-cache/**", "zig-out/**", "test/**"],
     ),
+)
+
+# Alias for consistency
+alias(
+    name = "sources",
+    actual = ":tls_sources",
 )
