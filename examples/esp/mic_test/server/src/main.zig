@@ -44,7 +44,7 @@ const RingBuffer = struct {
     const BUFFER_SIZE = 16000 * 2; // 2 seconds of audio at 16kHz
 
     buffer: [BUFFER_SIZE]i16 = [_]i16{0} ** BUFFER_SIZE,
-    write_pos: usize = 0,
+    write_pos: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     read_pos: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     write_mutex: std.Thread.Mutex = .{},
 
@@ -52,7 +52,7 @@ const RingBuffer = struct {
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
 
-        const w = self.write_pos;
+        const w = self.write_pos.load(.acquire);
         const r = self.read_pos.load(.acquire);
 
         // Calculate available space
@@ -63,13 +63,13 @@ const RingBuffer = struct {
             self.buffer[(w + i) % BUFFER_SIZE] = data[i];
         }
 
-        self.write_pos = (w + to_write) % BUFFER_SIZE;
+        self.write_pos.store((w + to_write) % BUFFER_SIZE, .release);
         return to_write;
     }
 
     fn read(self: *RingBuffer, out: []i16) usize {
         // Read is single-consumer (PortAudio callback), no mutex needed
-        const w = self.write_pos; // Direct read is safe, writer uses mutex
+        const w = self.write_pos.load(.acquire);
         const r = self.read_pos.load(.acquire);
 
         // Calculate available data
@@ -85,7 +85,7 @@ const RingBuffer = struct {
     }
 
     fn available(self: *RingBuffer) usize {
-        const w = self.write_pos;
+        const w = self.write_pos.load(.acquire);
         const r = self.read_pos.load(.acquire);
         return if (w >= r) w - r else BUFFER_SIZE - r + w;
     }
@@ -214,8 +214,8 @@ fn handleClient(connection: net.Server.Connection) void {
         }
 
         if (total_read != packet_len) {
-            std.debug.print("[ERROR] Incomplete packet: {}/{} bytes\n", .{ total_read, packet_len });
-            continue;
+            std.debug.print("[ERROR] Incomplete packet: {}/{} bytes, closing connection\n", .{ total_read, packet_len });
+            break; // Stream corrupted, must disconnect
         }
 
         // Convert bytes to samples and write to ring buffer
