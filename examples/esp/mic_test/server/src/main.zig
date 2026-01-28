@@ -189,8 +189,14 @@ fn handleClient(connection: net.Server.Connection) void {
             continue;
         }
 
-        // Read audio data
-        var audio_buf: [8192]u8 = undefined;
+        // Validate packet_len is even (i16 samples require 2 bytes each)
+        if (packet_len % 2 != 0) {
+            std.debug.print("[ERROR] Invalid packet length (must be even): {} bytes\n", .{packet_len});
+            continue;
+        }
+
+        // Read audio data (aligned for i16 access)
+        var audio_buf: [8192]u8 align(@alignOf(i16)) = undefined;
         var total_read: usize = 0;
 
         while (total_read < packet_len) {
@@ -240,6 +246,8 @@ fn runServer(address: net.Address) !void {
     }
     std.debug.print("===========================================\n\n", .{});
 
+    // Note: This is a test/debug tool, not a production server.
+    // For production use, consider implementing a thread pool or connection limit.
     while (true) {
         const conn = server.accept() catch |err| {
             std.debug.print("[ERROR] Accept failed: {}\n", .{err});

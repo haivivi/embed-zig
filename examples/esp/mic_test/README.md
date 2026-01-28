@@ -15,8 +15,13 @@ Microphone test for Korvo-2 V3 board with ES7210 4-channel ADC.
 cd examples/esp/mic_test/zig
 source ~/esp/esp-adf/esp-idf/export.sh
 idf.py -DZIG_BOARD=korvo2_v3 build
-idf.py -p /dev/cu.usbserial-120 flash monitor
+idf.py -p <your-serial-port> flash monitor
 ```
+
+**Serial port examples:**
+- macOS: `/dev/cu.usbserial-*` or `/dev/cu.usbmodem*`
+- Linux: `/dev/ttyUSB0` or `/dev/ttyACM0`
+- Windows: `COM3`, `COM4`, etc.
 
 The device will read from the microphone and log audio levels to console.
 
@@ -27,12 +32,11 @@ A TCP server is provided to receive and play audio from the device.
 ### Build the Server
 
 ```bash
-# Requires PortAudio
-# macOS: brew install portaudio
-
 cd examples/esp/mic_test/server
 zig build
 ```
+
+PortAudio is built from source automatically - no system dependencies required.
 
 ### Run the Server
 

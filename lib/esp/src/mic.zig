@@ -218,7 +218,8 @@ pub fn Mic(comptime Adc: type) type {
 
             const total_channels = self.getTotalChannels();
             const output_samples = buffer.len;
-            const raw_samples_needed = (output_samples / voice_count) * total_channels;
+            // Round up to ensure we read enough frames for the requested output samples
+            const raw_samples_needed = ((output_samples + voice_count - 1) / voice_count) * total_channels;
             const raw_to_read = @min(raw_samples_needed, self.raw_buffer.len);
 
             // Read raw TDM data (interleaved: ch0, ch1, ch2, ch3, ch0, ch1, ...)
