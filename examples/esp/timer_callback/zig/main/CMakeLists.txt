@@ -1,6 +1,6 @@
 # Timer Callback - Zig HAL v5
 
-# Include timer module CMake
+# Include timer module CMake (path adjusted for Bazel build)
 include(${CMAKE_CURRENT_LIST_DIR}/../../../../../lib/esp/src/timer/timer.cmake)
 
 idf_component_register(

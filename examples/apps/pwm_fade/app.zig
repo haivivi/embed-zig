@@ -6,8 +6,7 @@
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const sal = platform.sal;
-const log = sal.log;
+const log = Board.log;
 
 const FADE_TIME_MS: u32 = 2000;
 
@@ -36,13 +35,13 @@ pub fn run() void {
         board.led.fadeIn(FADE_TIME_MS);
 
         // Small delay at max brightness
-        sal.sleepMs(200);
+        Board.time.sleepMs(200);
 
         // Fade out to 0%
         log.info("Cycle {}: Fading out...", .{cycle});
         board.led.fadeOut(FADE_TIME_MS);
 
         // Small delay at min brightness
-        sal.sleepMs(200);
+        Board.time.sleepMs(200);
     }
 }

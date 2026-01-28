@@ -1,6 +1,6 @@
 //! HTTP Client Library
 //!
-//! A simple HTTP/1.1 client that works with sal.socket abstraction.
+//! A simple HTTP/1.1 client that works with trait.socket abstraction.
 //! Supports HTTP (plain), HTTPS (with platform TLS), and DNS resolution.
 //!
 //! ## HTTP Only (IP addresses only)
@@ -54,26 +54,24 @@ pub const Response = client.Response;
 pub const ClientError = client.ClientError;
 pub const stream = @import("stream.zig");
 pub const SocketStream = stream.SocketStream;
-pub const TlsStreamInterface = stream.TlsStreamInterface;
+// TLS interface is defined in trait.tls (trait.tls.from, trait.tls.Options, trait.tls.Error)
 
 // Re-exports for convenience
 
+const trait = @import("trait");
+
 /// Simple GET request (HTTP only, IP addresses only)
 pub fn get(comptime Socket: type, url: []const u8, buffer: []u8) ClientError!Response {
-    const HttpClient = Client(Socket);
+    const socket = trait.socket.from(Socket);
+    const HttpClient = Client(socket);
     const c = HttpClient{};
     return c.get(url, buffer);
 }
 
 /// Simple POST request (HTTP only, IP addresses only)
 pub fn post(comptime Socket: type, url: []const u8, body: ?[]const u8, buffer: []u8) ClientError!Response {
-    const HttpClient = Client(Socket);
+    const socket = trait.socket.from(Socket);
+    const HttpClient = Client(socket);
     const c = HttpClient{};
     return c.post(url, body, buffer);
-}
-
-test "url parsing" {
-    const std = @import("std");
-    _ = std;
-    // TODO: Add actual tests
 }

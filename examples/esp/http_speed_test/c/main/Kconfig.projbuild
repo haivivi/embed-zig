@@ -2,26 +2,22 @@ menu "HTTP Speed Test Configuration"
 
     config WIFI_SSID
         string "WiFi SSID"
-        default "HAIVIVI-MFG"
-        help
-            WiFi SSID to connect to.
+        default "myssid"
 
     config WIFI_PASSWORD
         string "WiFi Password"
-        default "!haivivi"
-        help
-            WiFi password.
+        default "mypassword"
 
     config TEST_SERVER_IP
         string "Test Server IP"
         default "192.168.1.100"
-        help
-            IP address of the speed test server.
 
     config TEST_SERVER_PORT
         int "Test Server Port"
         default 8080
-        help
-            Port of the speed test server.
+
+    config TEST_SERVER_PORT_STR
+        string "Test Server Port (string)"
+        default "8080"
 
 endmenu

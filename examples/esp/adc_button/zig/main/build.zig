@@ -2,9 +2,15 @@ const std = @import("std");
 
 const esp = @import("esp");
 
+// Board type (only korvo2_v3 supported for ADC button)
+pub const BoardType = enum { korvo2_v3 };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Board selection option (only korvo2_v3 supported)
+    _ = b.option(BoardType, "board", "Target board (only korvo2_v3 supported)") orelse .korvo2_v3;
 
     // Get dependencies
     const esp_dep = b.dependency("esp", .{

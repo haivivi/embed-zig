@@ -59,8 +59,6 @@ const std = @import("std");
 const button_mod = @import("button.zig");
 /// Re-export ButtonAction from button module for consistency
 pub const ButtonAction = button_mod.ButtonAction;
-const spec_mod = @import("spec.zig");
-
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
 // ============================================================================
@@ -70,7 +68,8 @@ const spec_mod = @import("spec.zig");
 const _ButtonGroupMarker = struct {};
 
 /// Check if a type is a ButtonGroup peripheral (internal use only)
-pub fn isButtonGroupType(comptime T: type) bool {
+pub fn is(comptime T: type) bool {
+    if (@typeInfo(T) != .@"struct") return false;
     if (!@hasDecl(T, "_hal_marker")) return false;
     return T._hal_marker == _ButtonGroupMarker;
 }
@@ -118,24 +117,20 @@ pub fn ButtonGroupEvent(comptime ButtonId: type) type {
 /// - `meta`: spec.Meta with component id
 ///
 /// ButtonId must be an enum(u8) type defined by the application.
-pub fn ButtonGroup(comptime spec: type, comptime ButtonId: type) type {
-    // Compile-time verification
+pub fn from(comptime spec: type, comptime ButtonId: type) type {
     comptime {
-        if (!@hasDecl(spec, "Driver")) {
-            @compileError("ButtonGroup spec must define Driver type");
-        }
-        if (!@hasDecl(spec.Driver, "readRaw")) {
-            @compileError("ButtonGroup Driver must have readRaw() -> u16 method");
-        }
-        if (!@hasDecl(spec, "ranges")) {
-            @compileError("ButtonGroup spec must define ranges: &[_]Range");
-        }
-        if (!@hasDecl(spec, "ref_value")) {
-            @compileError("ButtonGroup spec must define ref_value: u16");
-        }
-        if (!@hasDecl(spec, "meta")) {
-            @compileError("ButtonGroup spec must define meta: hal.Meta");
-        }
+        const BaseDriver = switch (@typeInfo(spec.Driver)) {
+            .pointer => |p| p.child,
+            else => spec.Driver,
+        };
+        // Verify Driver.readRaw signature
+        _ = @as(*const fn (*BaseDriver) u16, &BaseDriver.readRaw);
+        // Verify ranges
+        _ = @as([]const Range, spec.ranges);
+        // Verify ref_value
+        _ = @as(u16, spec.ref_value);
+        // Verify meta.id
+        _ = @as([]const u8, spec.meta.id);
     }
 
     const Driver = spec.Driver;
@@ -432,10 +427,10 @@ test "ButtonGroup ADC mode" {
         };
         pub const ref_value: u16 = 4095;
         pub const ref_tolerance: u16 = 200;
-        pub const meta = spec_mod.Meta{ .id = "buttons.test" };
+        pub const meta = .{ .id = "buttons.test" };
     };
 
-    const TestButtonGroup = ButtonGroup(btns_spec, TestButtonId);
+    const TestButtonGroup = from(btns_spec, TestButtonId);
 
     var driver = MockDriver{};
     var btns = TestButtonGroup.initWithConfig(&driver, MockTime.now, .{
@@ -500,10 +495,10 @@ test "ButtonGroup long press" {
             .{ .id = 0, .min = 200, .max = 400 },
         };
         pub const ref_value: u16 = 4095;
-        pub const meta = spec_mod.Meta{ .id = "buttons.long" };
+        pub const meta = .{ .id = "buttons.long" };
     };
 
-    const TestButtonGroup = ButtonGroup(btns_spec, TestButtonId);
+    const TestButtonGroup = from(btns_spec, TestButtonId);
 
     var driver = MockDriver{};
     var btns = TestButtonGroup.initWithConfig(&driver, MockTime.now, .{
@@ -560,10 +555,10 @@ test "ButtonGroup double click" {
             .{ .id = 0, .min = 200, .max = 400 },
         };
         pub const ref_value: u16 = 4095;
-        pub const meta = spec_mod.Meta{ .id = "buttons.double" };
+        pub const meta = .{ .id = "buttons.double" };
     };
 
-    const TestButtonGroup = ButtonGroup(btns_spec, TestButtonId);
+    const TestButtonGroup = from(btns_spec, TestButtonId);
 
     var driver = MockDriver{};
     var btns = TestButtonGroup.initWithConfig(&driver, MockTime.now, .{

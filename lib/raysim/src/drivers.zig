@@ -116,21 +116,35 @@ pub const sal = struct {
             std.debug.print("[ERROR] {s}\n", .{msg});
         }
 
+        pub fn warn(comptime fmt: []const u8, args: anytype) void {
+            var buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
+            state.addLog(msg);
+            std.debug.print("[WARN] {s}\n", .{msg});
+        }
+
         pub fn debug(comptime fmt: []const u8, args: anytype) void {
             _ = fmt;
             _ = args;
         }
     };
 
-    /// Sleep with early exit support
-    pub fn sleepMs(ms: u32) void {
-        var remaining = ms;
-        while (remaining > 0 and state.isRunning()) {
-            const chunk = @min(remaining, 50);
-            std.Thread.sleep(@as(u64, chunk) * std.time.ns_per_ms);
-            remaining -= chunk;
+    pub const time = struct {
+        /// Sleep with early exit support
+        pub fn sleepMs(ms: u32) void {
+            var remaining = ms;
+            while (remaining > 0 and state.isRunning()) {
+                const chunk = @min(remaining, 50);
+                std.Thread.sleep(@as(u64, chunk) * std.time.ns_per_ms);
+                remaining -= chunk;
+            }
         }
-    }
+
+        pub fn getTimeMs() u64 {
+            const now = std.time.milliTimestamp();
+            return @intCast(now - state.start_time);
+        }
+    };
 
     /// Check if simulator is still running
     pub fn isRunning() bool {

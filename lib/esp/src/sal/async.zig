@@ -9,6 +9,7 @@ const c = @cImport({
     @cInclude("freertos/FreeRTOS.h");
     @cInclude("freertos/task.h");
     @cInclude("freertos/semphr.h");
+    @cInclude("freertos/idf_additions.h");
 });
 
 /// Task function signature
@@ -246,7 +247,15 @@ pub const WaitGroup = struct {
         // Increment counter before spawning
         self.add(1);
 
-        // Create FreeRTOS task
+        // Create FreeRTOS task using ESP-IDF's xTaskCreateRestrictedPinnedToCore
+        // This allows us to use custom stack memory (e.g., from PSRAM via allocator).
+        //
+        // Note on xTaskCreateRestrictedPinnedToCore (ESP-IDF extension):
+        // Unlike standard FreeRTOS xTaskCreateRestricted, this function takes
+        // OWNERSHIP of the provided stack by setting ucStaticallyAllocated =
+        // tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB. Therefore, the kernel WILL
+        // free this stack when the task is deleted. DO NOT manually free this
+        // stack, or a double-free crash will occur.
         var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
         task_params.pvTaskCode = wgGoWrapper;
         task_params.pcName = name.ptr;
@@ -265,5 +274,7 @@ pub const WaitGroup = struct {
             allocator.destroy(go_ctx);
             return error.TaskCreateFailed;
         }
+
+        // Note: Stack is now owned by FreeRTOS, will be freed when task deletes
     }
 };

@@ -6,11 +6,35 @@ const std = @import("std");
 const hal = @import("hal");
 const idf = @import("esp");
 
+const hw_params = idf.boards.esp32s3_devkit;
+
 // ============================================================================
-// Platform SAL
+// Hardware Info
 // ============================================================================
 
-pub const sal = idf.sal;
+pub const Hardware = struct {
+    pub const name = hw_params.name;
+};
+
+// ============================================================================
+// Platform primitives
+// ============================================================================
+
+pub const log = std.log.scoped(.app);
+
+pub const time = struct {
+    pub fn sleepMs(ms: u32) void {
+        idf.sal.time.sleepMs(ms);
+    }
+
+    pub fn getTimeMs() u64 {
+        return idf.nowMs();
+    }
+};
+
+pub fn isRunning() bool {
+    return true;
+}
 
 // ============================================================================
 // RTC Driver (required by hal.Board)
@@ -27,14 +51,14 @@ pub const RtcDriver = struct {
         return idf.nowMs();
     }
 
-    pub fn read(_: *RtcDriver) ?i64 {
+    pub fn nowMs(_: *RtcDriver) ?i64 {
         return null; // No RTC hardware, return null
     }
 };
 
 pub const rtc_spec = struct {
     pub const Driver = RtcDriver;
-    pub const meta = hal.Meta{ .id = "rtc.esp32s3" };
+    pub const meta = .{ .id = "rtc.esp32s3" };
 };
 
 // ============================================================================
@@ -148,5 +172,5 @@ pub const KvsDriver = struct {
 
 pub const kvs_spec = struct {
     pub const Driver = KvsDriver;
-    pub const meta = hal.Meta{ .id = "kvs.nvs" };
+    pub const meta = .{ .id = "kvs.nvs" };
 };

@@ -10,11 +10,15 @@ const hw = switch (build_options.board) {
 };
 
 const spec = struct {
-    pub const rtc = hal.RtcReader(hw.rtc_spec);
-    pub const led = hal.Led(hw.led_spec);
+    pub const meta = .{ .id = hw.Hardware.name };
+
+    // Required primitives
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log;
+    pub const time = hw.time;
+
+    // HAL peripherals
+    pub const led = hal.led.from(hw.led_spec);
 };
 
 pub const Board = hal.Board(spec);
-
-// SAL (from platform)
-pub const sal = hw.sal;

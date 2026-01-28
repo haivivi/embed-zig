@@ -15,7 +15,8 @@ filegroup(
         "//lib/esp:esp_c_sources",
         "//lib/esp:esp_cmake",
         "//lib/hal:hal_sources",
-        "//lib/sal:sal_sources",
+        "//lib/http:http_sources",
+        "//lib/trait:trait_sources",
         "//lib/std:std_sources",
     ],
 )

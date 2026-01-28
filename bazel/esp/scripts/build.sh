@@ -102,7 +102,25 @@ main() {
     # Build
     cd "$WORK/project"
     idf.py set-target "$ESP_CHIP"
-    idf.py -DZIG_BOARD="$ESP_BOARD" build
+    
+    # Build CMake arguments using array (safe for spaces/special chars in values)
+    CMAKE_ARGS=()
+    CMAKE_ARGS+=("-DZIG_BOARD=$ESP_BOARD")
+    
+    # Add WiFi settings if specified
+    if [ -n "$ESP_WIFI_SSID" ]; then
+        CMAKE_ARGS+=("-DCONFIG_WIFI_SSID=$ESP_WIFI_SSID")
+        echo "[esp_build] WiFi SSID: $ESP_WIFI_SSID"
+    fi
+    if [ -n "$ESP_WIFI_PASSWORD" ]; then
+        CMAKE_ARGS+=("-DCONFIG_WIFI_PASSWORD=$ESP_WIFI_PASSWORD")
+    fi
+    if [ -n "$ESP_TEST_SERVER_IP" ]; then
+        CMAKE_ARGS+=("-DCONFIG_TEST_SERVER_IP=$ESP_TEST_SERVER_IP")
+        echo "[esp_build] Test server IP: $ESP_TEST_SERVER_IP"
+    fi
+    
+    idf.py "${CMAKE_ARGS[@]}" build
 
     # Copy outputs back to Bazel execroot
     cp "$WORK/project/build/$ESP_PROJECT_NAME.bin" "$ESP_EXECROOT/$ESP_BIN_OUT"

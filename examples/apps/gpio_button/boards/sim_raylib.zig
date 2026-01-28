@@ -63,18 +63,20 @@ pub const LedDriver = struct {
 
 pub const rtc_spec = struct {
     pub const Driver = raysim.RtcDriver;
-    pub const meta = hal.Meta{ .id = "rtc" };
+    pub const meta = .{ .id = "rtc" };
 };
 
 pub const button_spec = struct {
     pub const Driver = raysim.ButtonDriver;
-    pub const meta = hal.Meta{ .id = "button.boot" };
+    pub const meta = .{ .id = "button.boot" };
 };
 
 pub const led_spec = struct {
     pub const Driver = LedDriver;
-    pub const meta = hal.Meta{ .id = "led.main" };
+    pub const meta = .{ .id = "led.main" };
 };
 
-// SAL (from raysim)
-pub const sal = raysim.sal;
+// Platform primitives
+pub const log = raysim.sal.log;
+pub const time = raysim.sal.time;
+pub const isRunning = raysim.sal.isRunning;

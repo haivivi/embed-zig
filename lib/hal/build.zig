@@ -4,11 +4,21 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Get trait dependency
+    const trait_dep = b.dependency("trait", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const trait_module = trait_dep.module("trait");
+
     // HAL module
     const hal_module = b.addModule("hal", .{
         .root_source_file = b.path("src/hal.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "trait", .module = trait_module },
+        },
     });
 
     const test_step = b.step("test", "Run HAL unit tests");
@@ -27,6 +37,9 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(file),
                 .target = target,
                 .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "trait", .module = trait_module },
+                },
             }),
         });
         const run_tests = b.addRunArtifact(tests);

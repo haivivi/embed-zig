@@ -1,0 +1,16 @@
+.{
+    .name = .temperature_sensor_app,
+    .version = "0.1.0",
+    .fingerprint = 0x9bc629aeb76e8049,
+    .dependencies = .{
+        .esp = .{ .path = "../../../lib/esp" },
+        .hal = .{ .path = "../../../lib/hal" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+}

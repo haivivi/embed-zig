@@ -10,16 +10,19 @@ const hw = switch (build_options.board) {
 };
 
 const spec = struct {
-    pub const rtc = hal.RtcReader(hw.rtc_spec);
+    pub const meta = .{ .id = hw.Hardware.name };
+
+    // Button ID type
     pub const ButtonId = enum(u8) { boot = 0 };
-    pub const button = hal.Button(hw.button_spec);
-    pub const rgb_leds = hal.RgbLedStrip(hw.led_spec);
+
+    // Required primitives
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log; // trait - validated by Board
+    pub const time = hw.time; // trait - validated by Board
+
+    // HAL peripherals
+    pub const button = hal.button.from(hw.button_spec);
+    pub const rgb_leds = hal.led_strip.from(hw.led_spec);
 };
 
 pub const Board = hal.Board(spec);
-
-// SAL (from platform)
-pub const sal = hw.sal;
-
-// Export hw for simulator access
-pub const Hardware = hw;

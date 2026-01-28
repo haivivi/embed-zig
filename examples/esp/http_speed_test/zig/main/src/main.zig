@@ -1,153 +1,119 @@
-//! HTTP Speed Test - Zig Version (esp_http_client)
-//!
-//! Tests HTTP download speed using esp_http_client
-//! Runs on PSRAM task stack via SAL
+//! HTTP Speed Test - Zig std Version
+//! Tests HTTP download speed using LWIP sockets
 
 const std = @import("std");
-
-const idf = @import("esp");
-const log = idf.sal.log;
+const idf = @import("esp_idf");
 
 const c = @cImport({
     @cInclude("sdkconfig.h");
 });
 
-const BUILD_TAG = "https_speed_zig_esp_v2";
-
-// HTTPS test URL - Tsinghua Mirror Python 3.12 (27MB)
-const HTTPS_TEST_URL = "https://mirrors.tuna.tsinghua.edu.cn/python/3.12.0/Python-3.12.0.tgz";
-
 pub const std_options: std.Options = .{
+    .log_level = .info,
     .logFn = idf.log.stdLogFn,
 };
 
-/// Progress callback with WiFi RSSI
-fn progressCallback(info: idf.http.ProgressInfo) void {
-    // Get WiFi RSSI via idf.wifi module
-    const rssi = idf.wifi.getRssi();
-    log.info("Progress: {} bytes ({} KB/s) | RSSI: {} | IRAM: {}, PSRAM: {} free", .{
-        info.bytes,
-        info.speed_kbps,
-        rssi,
-        info.iram_free,
-        info.psram_free,
-    });
+const Socket = idf.sal.socket.Socket;
+
+pub fn main() !void {
+    std.log.info("=== HTTP Speed Test (Zig std) ===", .{});
+
+    const server_ip: []const u8 = std.mem.sliceTo(c.CONFIG_TEST_SERVER_IP, 0);
+    const server_port: u16 = c.CONFIG_TEST_SERVER_PORT;
+    std.log.info("Server: {s}:{}", .{ server_ip, server_port });
+
+    // Wait for WiFi (initialized by stub.c)
+    idf.delayMs(2000);
+
+    // Run tests
+    runHttpTest(server_ip, server_port, "/test/10m", "HTTP Download 10MB");
+    idf.delayMs(1000);
+    runHttpTest(server_ip, server_port, "/test/52428800", "HTTP Download 50MB");
+
+    std.log.info("=== Test Complete ===", .{});
 }
 
-fn printMemoryStats() void {
-    log.info("=== Heap Memory Statistics ===", .{});
+fn runHttpTest(host: []const u8, port: u16, path: []const u8, test_name: []const u8) void {
+    std.log.info("--- {s} ---", .{test_name});
 
-    const internal = idf.heap.getInternalStats();
-    log.info("Internal DRAM: Total={} Free={} Used={}", .{
-        internal.total,
-        internal.free,
-        internal.used,
-    });
+    const start_ms = idf.sal.time.nowMs();
 
-    const psram = idf.heap.getPsramStats();
-    if (psram.total > 0) {
-        log.info("External PSRAM: Total={} Free={} Used={}", .{
-            psram.total,
-            psram.free,
-            psram.used,
-        });
+    // Parse IP address directly (no DNS needed for IP literals)
+    const addr = idf.net.parseIpv4(host) orelse {
+        std.log.err("Invalid IP address: {s}", .{host});
+        return;
+    };
+
+    // Create socket
+    var sock = Socket.tcp() catch |err| {
+        std.log.err("Socket create failed: {}", .{err});
+        return;
+    };
+    defer sock.close();
+
+    sock.setRecvTimeout(60000);
+    sock.setSendTimeout(60000);
+
+    // Connect
+    sock.connect(addr, port) catch |err| {
+        std.log.err("Connect failed: {}", .{err});
+        return;
+    };
+
+    // Build HTTP request
+    var request_buf: [256]u8 = undefined;
+    const request = std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}:{}\r\nConnection: close\r\n\r\n", .{ path, host, port }) catch {
+        std.log.err("Request too long", .{});
+        return;
+    };
+
+    // Send request
+    var sent: usize = 0;
+    while (sent < request.len) {
+        const n = sock.send(request[sent..]) catch |err| {
+            std.log.err("Send failed: {}", .{err});
+            return;
+        };
+        if (n == 0) {
+            std.log.err("Send returned 0", .{});
+            return;
+        }
+        sent += n;
     }
-}
 
-fn runSpeedTest(url: [:0]const u8, test_name: []const u8) void {
-    log.info("--- {s} ---", .{test_name});
-    log.info("URL: {s}", .{url});
+    // Receive response
+    var total_bytes: usize = 0;
+    var last_print: usize = 0;
+    var recv_buf: [16384]u8 = undefined;
+    var header_done = false;
 
-    // Set progress callback with WiFi RSSI
-    idf.http.setProgressCallback(progressCallback);
-
-    var client = idf.HttpClient.init(.{
-        .url = url,
-        .timeout_ms = 120000, // 2 minutes for large HTTPS downloads
-        .buffer_size = 16384,
-        .is_https = true, // Enable HTTPS with CA bundle
-    }) catch {
-        log.err("Failed to init HTTP client", .{});
-        return;
-    };
-    defer client.deinit();
-
-    // Record memory AFTER init (same as C version)
-    const mem_before = idf.heap.heap_caps_get_free_size(idf.heap.MALLOC_CAP_INTERNAL);
-
-    const result = client.download() catch {
-        log.err("HTTP request failed", .{});
-        return;
-    };
-
-    // Record memory after download
-    const mem_after = idf.heap.heap_caps_get_free_size(idf.heap.MALLOC_CAP_INTERNAL);
-
-    log.info("Status: {}, Content-Length: {}", .{ result.status_code, result.content_length });
-    log.info("Downloaded: {} bytes in {} ms", .{ result.bytes, result.duration_ms });
-    log.info("Speed: {} KB/s", .{result.speedKBps()});
-
-    const mem_used = if (mem_before > mem_after) mem_before - mem_after else 0;
-    log.info("Memory used during download: {} bytes", .{mem_used});
-}
-
-fn runHttpsSpeedTest() void {
-    log.info("", .{});
-    log.info("=== HTTPS Speed Test (Zig esp_http_client) ===", .{});
-    log.info("Note: Using ESP-IDF CA certificate bundle", .{});
-
-    // Test HTTPS download - Tsinghua Mirror Python 3.12 (27MB)
-    runSpeedTest(HTTPS_TEST_URL, "HTTPS Download 27MB (Tsinghua Mirror)");
-
-    log.info("", .{});
-    log.info("=== HTTPS Speed Test Complete ===", .{});
-    printMemoryStats();
-}
-
-export fn app_main() void {
-    log.info("==========================================", .{});
-    log.info("  HTTP Speed Test - Zig esp_http_client", .{});
-    log.info("  Build Tag: {s}", .{BUILD_TAG});
-    log.info("==========================================", .{});
-
-    printMemoryStats();
-
-    // Initialize WiFi
-    log.info("", .{});
-    log.info("Initializing WiFi...", .{});
-
-    var wifi = idf.Wifi.init() catch |err| {
-        log.err("WiFi init failed: {}", .{err});
-        return;
-    };
-
-    // Connect to WiFi (use sentinel-terminated strings for C interop)
-    const ssid: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_SSID));
-    const password: [:0]const u8 = std.mem.span(@as([*:0]const u8, c.CONFIG_WIFI_PASSWORD));
-
-    log.info("Connecting to SSID: {s}", .{ssid});
-
-    wifi.connect(.{
-        .ssid = ssid,
-        .password = password,
-        .timeout_ms = 30000,
-    }) catch |err| {
-        log.err("WiFi connect failed: {}", .{err});
-        return;
-    };
-
-    // Print IP address
-    const ip_bytes = wifi.getIpAddress();
-    log.info("Connected! IP: {}.{}.{}.{}", .{ ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3] });
-
-    printMemoryStats();
-
-    // Run HTTPS speed test
-    runHttpsSpeedTest();
-
-    // Keep running
     while (true) {
-        idf.sal.sleepMs(10000);
-        log.info("Still running...", .{});
+        const n = sock.recv(&recv_buf) catch break;
+        if (n == 0) break;
+
+        if (!header_done) {
+            // Skip HTTP header
+            if (std.mem.indexOf(u8, recv_buf[0..n], "\r\n\r\n")) |pos| {
+                total_bytes += n - (pos + 4);
+                header_done = true;
+            }
+        } else {
+            total_bytes += n;
+        }
+
+        // Progress every 1MB
+        if (total_bytes - last_print >= 1024 * 1024) {
+            const elapsed_ms = idf.sal.time.nowMs() - start_ms;
+            const speed = if (elapsed_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / elapsed_ms)) else 0;
+            std.log.info("Progress: {} bytes ({} KB/s)", .{ total_bytes, speed });
+            last_print = total_bytes;
+        }
     }
+
+    const end_ms = idf.sal.time.nowMs();
+    const duration_ms = end_ms - start_ms;
+    const speed = if (duration_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / duration_ms)) else 0;
+
+    std.log.info("Downloaded: {} bytes in {} ms", .{ total_bytes, duration_ms });
+    std.log.info("Speed: {} KB/s", .{speed});
 }

@@ -5,27 +5,28 @@
 //! - Read chip temperature periodically
 //! - Display temperature statistics
 
-const platform = @import("platform");
 const hal = @import("hal");
-const sal = platform.sal;
 
-const Board = hal.Board(platform.spec);
+const platform = @import("platform.zig");
+
+const Board = platform.Board;
+const log = Board.log;
 
 pub fn run() void {
-    sal.log.info("==========================================", .{});
-    sal.log.info("Temperature Sensor Example", .{});
-    sal.log.info("==========================================", .{});
+    log.info("==========================================", .{});
+    log.info("Temperature Sensor Example", .{});
+    log.info("==========================================", .{});
 
     var board: Board = undefined;
     board.init() catch |err| {
-        sal.log.err("Board init failed: {}", .{err});
+        log.err("Board init failed: {}", .{err});
         return;
     };
     defer board.deinit();
 
-    sal.log.info("Board initialized", .{});
-    sal.log.info("Note: This is chip internal temperature, not ambient!", .{});
-    sal.log.info("", .{});
+    log.info("Board initialized", .{});
+    log.info("Note: This is chip internal temperature, not ambient!", .{});
+    log.info("", .{});
 
     var reading_count: u32 = 0;
     var min_temp: i32 = 100;
@@ -36,8 +37,8 @@ pub fn run() void {
 
         // Read temperature
         const temp = board.temp.readCelsius() catch |err| {
-            sal.log.err("Failed to read temperature: {}", .{err});
-            sal.sleepMs(1000);
+            log.err("Failed to read temperature: {}", .{err});
+            Board.time.sleepMs(1000);
             continue;
         };
 
@@ -49,13 +50,13 @@ pub fn run() void {
         if (temp_int > max_temp) max_temp = temp_int;
 
         // Display reading
-        sal.log.info("Reading #{}: {}C (min: {}, max: {})", .{
+        log.info("Reading #{}: {}C (min: {}, max: {})", .{
             reading_count,
             temp_int,
             min_temp,
             max_temp,
         });
 
-        sal.sleepMs(2000);
+        Board.time.sleepMs(2000);
     }
 }

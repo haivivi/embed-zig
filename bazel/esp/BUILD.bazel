@@ -30,6 +30,26 @@ string_flag(
     build_setting_default = "460800",
 )
 
+# WiFi SSID (overrides CONFIG_WIFI_SSID in sdkconfig)
+# Note: Default is a public WiFi for development/testing, not a security concern
+string_flag(
+    name = "wifi_ssid",
+    build_setting_default = "HAIVIVI-MFG",
+)
+
+# WiFi password (overrides CONFIG_WIFI_PASSWORD in sdkconfig)
+# Note: Default is a public WiFi for development/testing, not a security concern
+string_flag(
+    name = "wifi_password",
+    build_setting_default = "!haivivi",
+)
+
+# Test server IP (for http_speed_test example)
+string_flag(
+    name = "test_server_ip",
+    build_setting_default = "",
+)
+
 # Build scripts
 filegroup(
     name = "scripts",

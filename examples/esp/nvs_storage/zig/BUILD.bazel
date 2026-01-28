@@ -26,7 +26,7 @@ esp_idf_app(
         allow_empty = True,
     ),
     cmake_modules = ["//examples/esp:cmake_modules"],
-    project_name = "nvs_storage",
+    project_name = "nvs_storage_zig",
 )
 
 esp_flash(

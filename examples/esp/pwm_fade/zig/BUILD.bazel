@@ -26,7 +26,7 @@ esp_idf_app(
         allow_empty = True,
     ),
     cmake_modules = ["//examples/esp:cmake_modules"],
-    project_name = "pwm_fade",
+    project_name = "pwm_fade_zig",
 )
 
 esp_flash(

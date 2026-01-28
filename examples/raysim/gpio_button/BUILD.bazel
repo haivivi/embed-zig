@@ -1,0 +1,9 @@
+"""GPIO Button Raylib Simulator."""
+
+load("//bazel/raysim:defs.bzl", "raysim_run")
+
+raysim_run(
+    name = "run",
+    srcs = glob(["**/*"]),
+    project_dir = "examples/raysim/gpio_button",
+)

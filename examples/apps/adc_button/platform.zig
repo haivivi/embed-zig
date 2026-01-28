@@ -25,16 +25,21 @@ pub const ButtonId = enum(u8) {
     }
 };
 
-const spec = struct {
-    // Required: time source
-    pub const rtc = hal.RtcReader(hw.rtc_spec);
+const OuterButtonId = ButtonId;
 
-    // ADC button group (6 buttons via resistor ladder)
-    pub const buttons = hal.ButtonGroup(hw.button_group_spec, ButtonId);
+const spec = struct {
+    pub const meta = .{ .id = hw.Hardware.name };
+
+    // Button ID type (required for button_group)
+    pub const ButtonId = OuterButtonId;
+
+    // Required primitives
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log;
+    pub const time = hw.time;
+
+    // HAL peripherals
+    pub const buttons = hal.button_group.from(hw.button_group_spec, OuterButtonId);
 };
 
 pub const Board = hal.Board(spec);
-pub const Hardware = hw.Hardware;
-
-// Export SAL for app.zig
-pub const sal = hw.sal;

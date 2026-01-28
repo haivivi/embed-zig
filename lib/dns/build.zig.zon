@@ -2,7 +2,11 @@
     .name = .dns,
     .version = "0.1.0",
     .fingerprint = 0x82eddc41f38f67f6,
-    .dependencies = .{},
+    .dependencies = .{
+        .trait = .{
+            .path = "../trait",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

@@ -2,9 +2,17 @@ const std = @import("std");
 
 const esp = @import("esp");
 
+/// Supported board types (for Bazel compatibility)
+pub const BoardType = enum {
+    esp32s3_devkit,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Board selection option (for Bazel compatibility, not used in this example)
+    _ = b.option(BoardType, "board", "Target board") orelse .esp32s3_devkit;
 
     // Get esp dependency
     const esp_dep = b.dependency("esp", .{

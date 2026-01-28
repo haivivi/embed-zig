@@ -3,25 +3,15 @@
 //! Demonstrates ADC button group with HAL.
 //! Hardware: ESP32-S3-Korvo-2 V3 with 6 ADC buttons
 
-const hal = @import("hal");
-
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const Hardware = platform.Hardware;
 const ButtonId = platform.ButtonId;
-const sal = platform.sal;
-const log = sal.log;
-
-const BUILD_TAG = "adc_button_hal_v5";
+const log = Board.log;
 
 fn printBoardInfo() void {
     log.info("==========================================", .{});
-    log.info("ADC Button Example - HAL v5", .{});
-    log.info("Build Tag: {s}", .{BUILD_TAG});
-    log.info("==========================================", .{});
-    log.info("Board:       {s}", .{Hardware.name});
-    log.info("ADC Channel: {}", .{@intFromEnum(Hardware.adc_channel)});
-    log.info("Buttons:     6 (auto-managed)", .{});
+    log.info("ADC Button Example", .{});
+    log.info("Board: {s}", .{Board.meta.id});
     log.info("==========================================", .{});
 }
 
@@ -91,6 +81,6 @@ pub fn run() void {
             log.info("[DEBUG] raw={} uptime={}ms", .{ raw, board.uptime() });
         }
 
-        sal.sleepMs(10);
+        Board.time.sleepMs(10);
     }
 }

@@ -16,6 +16,7 @@
 //!   try gpio.write(.pin6, .high);
 
 const std = @import("std");
+const trait = @import("trait");
 
 /// TCA9554 register addresses
 pub const Register = enum(u8) {
@@ -57,24 +58,10 @@ pub const Level = enum(u1) {
     high = 1,
 };
 
-/// I2C interface requirements
-/// The I2C type must provide these functions:
-/// - writeRead(addr, write_buf, read_buf) !void
-/// - write(addr, buf) !void
-pub fn I2cInterface(comptime I2c: type) type {
-    return struct {
-        // Verify required functions exist
-        comptime {
-            if (!@hasDecl(I2c, "writeRead") and !@hasField(I2c, "writeRead")) {
-                @compileError("I2C type must have writeRead function");
-            }
-        }
-    };
-}
-
 /// TCA9554 GPIO Expander Driver
 /// Generic over I2C bus type for platform independence
-pub fn Tca9554(comptime I2c: type) type {
+pub fn Tca9554(comptime I2cImpl: type) type {
+    const I2c = trait.i2c.from(I2cImpl);
     return struct {
         const Self = @This();
 
@@ -88,9 +75,9 @@ pub fn Tca9554(comptime I2c: type) type {
         config_cache: u8 = 0xFF, // All inputs by default
 
         /// Initialize driver with I2C bus and device address
-        pub fn init(i2c: I2c, address: u7) Self {
+        pub fn init(i2c_impl: I2cImpl, address: u7) Self {
             return .{
-                .i2c = i2c,
+                .i2c = I2c.wrap(i2c_impl),
                 .address = address,
             };
         }
