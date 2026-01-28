@@ -1,0 +1,16 @@
+.{
+    .name = .portaudio,
+    .version = "0.1.0",
+    .fingerprint = 0x2a7a2a3114c24da5,
+    .dependencies = .{
+        .portaudio_src = .{
+            .url = "https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz",
+            .hash = "N-V-__8AAIh5aQCpbkLYeulmEGSD4zUZGclbfIEplCw1X9Fz",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -20,6 +20,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const trait_dep = b.dependency("trait", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create app module
     const app_module = b.addModule("app", .{
         .root_source_file = b.path("app.zig"),
@@ -31,4 +36,5 @@ pub fn build(b: *std.Build) void {
     app_module.addImport("esp", esp_dep.module("esp"));
     app_module.addImport("hal", hal_dep.module("hal"));
     app_module.addImport("drivers", drivers_dep.module("drivers"));
+    app_module.addImport("trait", trait_dep.module("trait"));
 }

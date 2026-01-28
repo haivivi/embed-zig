@@ -2,6 +2,9 @@
 //!
 //! Demonstrates microphone input with AEC using HAL.
 //! Hardware: ESP32-S3-Korvo-2 V3 with ES7210 4-channel ADC
+//!
+//! This example reads audio from the microphone and logs level information.
+//! For TCP streaming to a server, see the server/ directory and README.
 
 const std = @import("std");
 const hal = @import("hal");
@@ -11,7 +14,7 @@ const Board = platform.Board;
 const Hardware = platform.Hardware;
 const log = Board.log;
 
-const BUILD_TAG = "mic_test_v1";
+const BUILD_TAG = "mic_test_v2";
 
 fn printBoardInfo() void {
     log.info("==========================================", .{});
@@ -21,6 +24,7 @@ fn printBoardInfo() void {
     log.info("Board:       {s}", .{Hardware.name});
     log.info("ADC:         ES7210 (4-channel)", .{});
     log.info("Sample Rate: {}Hz", .{Hardware.sample_rate});
+    log.info("Mode:        Local (level monitoring)", .{});
     log.info("==========================================", .{});
 }
 
@@ -37,32 +41,12 @@ pub fn run() void {
 
     log.info("Board initialized", .{});
 
-    // Test individual channels (factory test mode)
-    log.info("==========================================", .{});
-    log.info("Factory Test: Testing individual channels", .{});
-    log.info("==========================================", .{});
-
-    // Test MIC1 only
-    testChannel(&board, 0, "MIC1");
-
-    // Test MIC2 only (if enabled)
-    testChannel(&board, 1, "MIC2");
-
-    // Test MIC3 (AEC reference)
-    testChannel(&board, 2, "MIC3 (AEC Ref)");
-
-    log.info("==========================================", .{});
-    log.info("Factory test complete!", .{});
-    log.info("==========================================", .{});
-
-    // Normal operation: enable all configured channels
-    log.info("Switching to normal recording mode...", .{});
-
     // Set recommended gains
     board.mic.setGain(30) catch |err| {
         log.err("Failed to set gain: {}", .{err});
     };
 
+    log.info("Starting local recording mode...", .{});
     log.info("Recording... (press Ctrl+C to stop)", .{});
 
     // Main recording loop
@@ -96,32 +80,6 @@ pub fn run() void {
 
         Board.time.sleepMs(10);
     }
-}
-
-fn testChannel(board: *Board, channel: u8, name: []const u8) void {
-    log.info("Testing {s}...", .{name});
-
-    // Enable only this channel
-    for (0..4) |i| {
-        board.mic.setChannelEnabled(@intCast(i), i == channel) catch {};
-    }
-
-    // Read some samples
-    var buffer: [160]i16 = undefined;
-    var max_amplitude: i16 = 0;
-
-    for (0..10) |_| { // Read 100ms
-        const samples = board.mic.read(&buffer) catch continue;
-        for (buffer[0..samples]) |sample| {
-            const abs = if (sample < 0) -sample else sample;
-            if (abs > max_amplitude) max_amplitude = abs;
-        }
-        Board.time.sleepMs(10);
-    }
-
-    const level_db = amplitudeToDb(max_amplitude);
-    const status = if (max_amplitude > 100) "OK" else "LOW/NO SIGNAL";
-    log.info("  {s}: {s} (level: {}dB, amplitude: {})", .{ name, status, level_db, max_amplitude });
 }
 
 fn amplitudeToDb(amplitude: i16) i16 {

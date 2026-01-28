@@ -5,14 +5,16 @@
 const hal = @import("hal");
 const hw = @import("boards/korvo2_v3.zig");
 
-const spec = struct {
-    pub const meta = .{ .id = hw.Hardware.name };
+pub const Hardware = hw.Hardware;
 
-    // Required: time source
-    pub const rtc = hw.rtc_spec;
+const spec = struct {
+    pub const meta = .{ .id = Hardware.name };
+
+    // Required: time source (wrapped with hal.rtc.reader.from)
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
 
     // Microphone (ES7210 via I2S)
-    pub const mic = hw.mic_spec;
+    pub const mic = hal.mic.from(hw.mic_spec);
 
     // Platform primitives
     pub const log = hw.log;

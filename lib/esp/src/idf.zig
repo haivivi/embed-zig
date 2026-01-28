@@ -36,6 +36,9 @@ pub const mic = @import("mic.zig");
 pub const Mic = mic.Mic;
 pub const MicConfig = mic.Config;
 pub const ChannelRole = mic.ChannelRole;
+pub const i2s_tdm = @import("i2s_tdm.zig");
+pub const I2sTdm = i2s_tdm.I2sTdm;
+pub const I2sTdmConfig = i2s_tdm.Config;
 
 // Board definitions
 pub const boards = struct {

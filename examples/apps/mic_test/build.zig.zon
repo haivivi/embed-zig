@@ -12,6 +12,9 @@
         .drivers = .{
             .path = "../../../lib/drivers",
         },
+        .trait = .{
+            .path = "../../../lib/trait",
+        },
     },
     .paths = .{
         "build.zig",

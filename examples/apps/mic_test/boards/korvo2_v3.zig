@@ -3,7 +3,7 @@
 //! Hardware:
 //! - ES7210 4-channel ADC (I2C address 0x40)
 //! - ES8311 Codec for speaker (not used for mic input)
-//! - I2S for audio data transfer
+//! - I2S TDM for audio data transfer
 //!
 //! Channel Configuration:
 //! - MIC1 (Channel 0): Main voice microphone
@@ -49,7 +49,8 @@ pub const Hardware = struct {
     pub const i2c_sda: u8 = 17;
     pub const i2c_scl: u8 = 18;
 
-    // I2S pins
+    // I2S pins (directly connected to ES7210)
+    pub const i2s_port: u8 = hw_params.mic_i2s_port;
     pub const i2s_bclk: u8 = 9;
     pub const i2s_ws: u8 = 45;
     pub const i2s_din: u8 = 10;
@@ -82,7 +83,7 @@ pub const RtcDriver = struct {
 };
 
 // ============================================================================
-// Microphone Driver (ES7210 + I2S)
+// Microphone Driver (ES7210 + I2S TDM)
 // ============================================================================
 
 /// I2C bus type
@@ -91,7 +92,14 @@ const I2c = idf.sal.I2c;
 /// ES7210 ADC driver type
 const Es7210 = drivers.Es7210(*I2c);
 
-/// Microphone driver combining ES7210 ADC with I2S
+/// ESP Mic type with ES7210 ADC
+const EspMic = idf.Mic(Es7210);
+
+/// Microphone driver combining ES7210 ADC with I2S TDM
+///
+/// This driver manages both the ES7210 ADC (via I2C) and the I2S TDM
+/// interface for audio data transfer. The ES7210 is configured via I2C
+/// and outputs audio data via I2S in TDM mode.
 pub const MicDriver = struct {
     const Self = @This();
 
@@ -102,19 +110,17 @@ pub const MicDriver = struct {
     // Instance fields
     i2c: I2c,
     adc: Es7210,
+    mic: EspMic,
     initialized: bool = false,
-
-    // Channel state (runtime configurable)
-    channel_enabled: [4]bool = .{ true, false, true, false }, // MIC1 + MIC3
-    channel_gain: [4]i8 = .{ 30, 30, 10, 0 }, // Voice=30dB, Ref=10dB
 
     pub fn init() !Self {
         var self = Self{
             .i2c = undefined,
             .adc = undefined,
+            .mic = undefined,
         };
 
-        // Initialize I2C
+        // Initialize I2C bus
         self.i2c = try I2c.init(.{
             .sda = Hardware.i2c_sda,
             .scl = Hardware.i2c_scl,
@@ -122,28 +128,59 @@ pub const MicDriver = struct {
         });
         errdefer self.i2c.deinit();
 
-        // Initialize ES7210 ADC
+        // Initialize ES7210 ADC via I2C
         self.adc = Es7210.init(&self.i2c, .{
             .address = Hardware.es7210_addr,
             .mic_select = .{
-                .mic1 = true, // Voice
-                .mic2 = false,
+                .mic1 = true, // Voice microphone
+                .mic2 = false, // Not used
                 .mic3 = true, // AEC reference
-                .mic4 = false,
+                .mic4 = false, // Not used
             },
         });
 
-        // Open and configure ADC
+        // Open and configure the ADC
         try self.adc.open();
         errdefer self.adc.close() catch {};
 
-        // Set initial gains
-        try self.adc.setChannelGain(0, 30); // MIC1: voice
-        try self.adc.setChannelGain(2, 10); // MIC3: AEC ref (lower gain)
+        // Initialize the integrated Mic driver (includes I2S TDM)
+        self.mic = try EspMic.init(&self.adc, .{
+            .sample_rate = Hardware.sample_rate,
+            .bits_per_sample = 16,
+            .channels = .{
+                .voice, // MIC1: Main voice
+                .disabled, // MIC2: Not used
+                .aec_ref, // MIC3: AEC reference
+                .disabled, // MIC4: Not used
+            },
+            .aec_enabled = true,
+            .i2s = .{
+                .port = Hardware.i2s_port,
+                .bclk_pin = Hardware.i2s_bclk,
+                .ws_pin = Hardware.i2s_ws,
+                .din_pin = Hardware.i2s_din,
+                .mclk_pin = Hardware.i2s_mclk,
+                .mclk_multiple = 256,
+            },
+        });
+        errdefer self.mic.deinit();
 
-        // TODO: Initialize I2S
-        // For now, just mark as initialized
-        std.log.info("MicDriver: ES7210 initialized on I2C 0x{x:0>2}", .{Hardware.es7210_addr});
+        // Set initial gains
+        try self.mic.setChannelGain(0, 30); // MIC1: voice (30dB)
+        try self.mic.setChannelGain(2, 10); // MIC3: AEC ref (10dB)
+
+        std.log.info("MicDriver: ES7210 + I2S TDM initialized", .{});
+        std.log.info("  I2C: SDA={}, SCL={}, addr=0x{x:0>2}", .{
+            Hardware.i2c_sda,
+            Hardware.i2c_scl,
+            Hardware.es7210_addr,
+        });
+        std.log.info("  I2S: BCLK={}, WS={}, DIN={}, MCLK={}", .{
+            Hardware.i2s_bclk,
+            Hardware.i2s_ws,
+            Hardware.i2s_din,
+            Hardware.i2s_mclk,
+        });
 
         self.initialized = true;
         return self;
@@ -151,9 +188,11 @@ pub const MicDriver = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.initialized) {
+            self.mic.deinit();
             self.adc.close() catch {};
             self.i2c.deinit();
             self.initialized = false;
+            std.log.info("MicDriver: Deinitialized", .{});
         }
     }
 
@@ -162,51 +201,43 @@ pub const MicDriver = struct {
     // ================================================================
 
     /// Read audio samples (blocking)
-    /// Returns mono audio after AEC processing
+    ///
+    /// Returns mono audio from the voice channel(s).
+    /// The I2S TDM driver captures all channels, and this function
+    /// extracts only the voice channel data.
     pub fn read(self: *Self, buffer: []i16) !usize {
         if (!self.initialized) return error.NotInitialized;
-
-        // TODO: Implement actual I2S read
-        // 1. Read multi-channel data from I2S (ES7210 TDM output)
-        // 2. Extract MIC1 (voice) and MIC3 (reference)
-        // 3. Apply AEC
-        // 4. Return processed mono audio
-
-        // Placeholder: return silence
-        const samples = @min(buffer.len, 160);
-        @memset(buffer[0..samples], 0);
-        return samples;
+        return self.mic.read(buffer);
     }
 
-    /// Set gain for a specific channel (runtime)
+    /// Set gain for all voice channels
     pub fn setGain(self: *Self, gain_db: i8) !void {
-        // Set gain for all voice channels
-        for (0..4) |i| {
-            if (self.channel_enabled[i] and i != 2) { // Not AEC ref
-                try self.setChannelGain(@intCast(i), gain_db);
-            }
-        }
+        if (!self.initialized) return error.NotInitialized;
+        try self.mic.setGain(gain_db);
     }
 
     /// Set gain for a specific channel
     pub fn setChannelGain(self: *Self, channel: u8, gain_db: i8) !void {
-        if (channel >= 4) return error.InvalidChannel;
-
-        const clamped = @min(gain_db, max_gain_db);
-        self.channel_gain[channel] = clamped;
-
-        if (self.initialized) {
-            try self.adc.setChannelGain(@intCast(channel), @enumFromInt(@as(u8, @intCast(clamped / 3))));
-        }
+        if (!self.initialized) return error.NotInitialized;
+        try self.mic.setChannelGain(channel, gain_db);
     }
 
     /// Enable or disable a channel (for factory testing)
     pub fn setChannelEnabled(self: *Self, channel: u8, enabled: bool) !void {
-        if (channel >= 4) return error.InvalidChannel;
-        self.channel_enabled[channel] = enabled;
+        if (!self.initialized) return error.NotInitialized;
+        try self.mic.setChannelEnabled(channel, enabled);
+    }
 
-        // TODO: Update ES7210 mic selection
-        std.log.info("MicDriver: Channel {} {s}", .{ channel, if (enabled) "enabled" else "disabled" });
+    /// Start audio capture (optional - auto-starts on first read)
+    pub fn start(self: *Self) !void {
+        if (!self.initialized) return error.NotInitialized;
+        try self.mic.start();
+    }
+
+    /// Stop audio capture
+    pub fn stop(self: *Self) !void {
+        if (!self.initialized) return error.NotInitialized;
+        try self.mic.stop();
     }
 };
 
@@ -224,6 +255,6 @@ pub const mic_spec = struct {
     pub const meta = .{ .id = "mic.es7210" };
     pub const config = hal.MicConfig{
         .sample_rate = Hardware.sample_rate,
-        .channels = 1, // Mono output after AEC
+        .channels = 1, // Mono output (voice channel only)
     };
 };

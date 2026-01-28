@@ -19,6 +19,7 @@
 
 const std = @import("std");
 const trait = @import("trait");
+const es7210 = @This();
 
 /// ES7210 I2C address (7-bit, depends on AD1/AD0 pins)
 pub const Address = enum(u7) {
@@ -203,11 +204,18 @@ pub fn Es7210(comptime I2cImpl: type) type {
     return struct {
         const Self = @This();
 
+        /// Gain type alias for external access
+        pub const Gain = es7210.Gain;
+
+        /// Constants from parent module
+        pub const channel_count: u8 = 4;
+        pub const max_gain_db: i8 = 37;
+
         i2c: I2c,
         config: Config,
         is_open: bool = false,
         enabled: bool = false,
-        gain: Gain = .@"30dB",
+        gain: Self.Gain = .@"30dB",
         clock_off_reg: u8 = 0,
 
         /// Initialize driver with I2C bus and configuration
@@ -400,7 +408,7 @@ pub fn Es7210(comptime I2cImpl: type) type {
         }
 
         /// Set gain for all enabled microphones
-        pub fn setGainAll(self: *Self, gain: Gain) !void {
+        pub fn setGainAll(self: *Self, gain: Self.Gain) !void {
             self.gain = gain;
             const gain_val = @intFromEnum(gain);
 
@@ -419,7 +427,7 @@ pub fn Es7210(comptime I2cImpl: type) type {
         }
 
         /// Set gain for a specific microphone channel (0-3)
-        pub fn setChannelGain(self: *Self, channel: u2, gain: Gain) !void {
+        pub fn setChannelGain(self: *Self, channel: u2, gain: Self.Gain) !void {
             const reg: Register = @enumFromInt(@intFromEnum(Register.mic1_gain) + channel);
             try self.updateRegister(reg, 0x0F, @intFromEnum(gain));
         }
