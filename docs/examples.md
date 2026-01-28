@@ -192,31 +192,45 @@ HTTP download benchmark. Requires running the test server on your computer.
 bazel run //examples/esp/http_speed_test/server:run
 ```
 
-- **Zig esp_http / ESP32-S3-DevKit** (bin: 872KB, RAM: 344KB, PSRAM: 8MB, HTTPS: ~400KB/s)
+- **Zig / ESP32-S3-DevKit** (bin: 758KB)
   ```bash
-  bazel build //examples/esp/http_speed_test/zig:app \
-      --//bazel/esp:board=esp32s3_devkit \
-      --//bazel/esp:test_server_ip=<YOUR_IP>
-  bazel run //examples/esp/http_speed_test/zig:flash \
-      --//bazel/esp:chip=esp32s3 \
-      --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/http_speed_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+  cd examples/esp/http_speed_test/zig
+  idf.py set-target esp32s3
+  idf.py menuconfig  # Set TEST_SERVER_IP
+  idf.py build
+  idf.py -p /dev/ttyUSB0 flash monitor
   ```
 
-- **Zig std / ESP32-S3-DevKit** (bin: 835KB, RAM: 345KB, PSRAM: 8MB, HTTP: ~900KB/s)
-  ```bash
-  bazel build //examples/esp/http_speed_test/zig_std:app \
-      --//bazel/esp:board=esp32s3_devkit \
-      --//bazel/esp:test_server_ip=<YOUR_IP>
-  bazel run //examples/esp/http_speed_test/zig_std:flash \
-      --//bazel/esp:chip=esp32s3 \
-      --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/http_speed_test/zig_std:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
-
-- **C / ESP32-S3** (bin: 855KB, RAM: 344KB, PSRAM: 8MB, HTTPS: ~400KB/s)
+- **C / ESP32-S3** (bin: 861KB)
   ```bash
   cd examples/esp/http_speed_test/c
+  idf.py set-target esp32s3
+  idf.py menuconfig  # Set TEST_SERVER_IP
+  idf.py build
+  idf.py -p /dev/ttyUSB0 flash monitor
+  ```
+
+## https_speed_test
+
+HTTPS download benchmark with self-signed certificates. Requires running the test server.
+
+**First, start the HTTPS test server:**
+```bash
+bazel run //examples/esp/https_speed_test/server:run
+```
+
+- **Zig / ESP32-S3-DevKit** (bin: 813KB)
+  ```bash
+  cd examples/esp/https_speed_test/zig
+  idf.py set-target esp32s3
+  idf.py menuconfig  # Set TEST_SERVER_IP
+  idf.py build
+  idf.py -p /dev/ttyUSB0 flash monitor
+  ```
+
+- **C / ESP32-S3** (bin: 862KB)
+  ```bash
+  cd examples/esp/https_speed_test/c
   idf.py set-target esp32s3
   idf.py menuconfig  # Set TEST_SERVER_IP
   idf.py build

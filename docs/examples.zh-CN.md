@@ -18,6 +18,7 @@
 | [nvs_storage](#nvs_storage) | 持久化键值存储 | Kvs | ①② |
 | [wifi_dns_lookup](#wifi_dns_lookup) | WiFi + DNS 解析 | (直接 idf) | ①② |
 | [http_speed_test](#http_speed_test) | HTTP 下载测速 | (直接 idf) | ①② |
+| [https_speed_test](#https_speed_test) | HTTPS 下载测速 | (直接 idf) | ①② |
 | [memory_attr_test](#memory_attr_test) | PSRAM/IRAM 测试 | (直接 idf) | ①② |
 
 > ① ESP32-S3-DevKit　② Korvo-2 V3.1　③ Raylib 模拟器
@@ -245,26 +246,67 @@ CONFIG_WIFI_PASSWORD="你的密码"
 
 ### http_speed_test
 
-HTTP 下载速度测量。有两个 Zig 实现版本：
+HTTP 下载速度测量。需要先启动测试服务器。
 
-**ESP32（zig - 使用 lib/esp）：**
+**启动测试服务器：**
 ```bash
-bazel build //examples/esp/http_speed_test/zig:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
-bazel run //examples/esp/http_speed_test/zig:flash --//bazel/esp:port=/dev/ttyUSB0
-bazel run //examples/esp/http_speed_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/esp/http_speed_test/server:run
 ```
 
-**ESP32（zig_std - 使用 Zig std.http）：**
+**ESP32（Zig）：**
 ```bash
-bazel build //examples/esp/http_speed_test/zig_std:app --//bazel/esp:board=esp32s3_devkit --//bazel/esp:chip=esp32s3
-bazel run //examples/esp/http_speed_test/zig_std:flash --//bazel/esp:port=/dev/ttyUSB0
-bazel run //examples/esp/http_speed_test/zig_std:monitor --//bazel/esp:port=/dev/ttyUSB0
+cd examples/esp/http_speed_test/zig
+idf.py set-target esp32s3
+idf.py menuconfig  # 设置 TEST_SERVER_IP
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+**ESP32（C）：**
+```bash
+cd examples/esp/http_speed_test/c
+idf.py set-target esp32s3
+idf.py menuconfig  # 设置 TEST_SERVER_IP
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
 **演示内容：**
-- HTTP 客户端用法（两种方式）
+- HTTP 客户端用法
 - 下载速度计算
 - 网络性能测试
+
+### https_speed_test
+
+HTTPS 下载速度测量，使用自签名证书。需要先启动测试服务器。
+
+**启动 HTTPS 测试服务器：**
+```bash
+bazel run //examples/esp/https_speed_test/server:run
+```
+
+**ESP32（Zig）：**
+```bash
+cd examples/esp/https_speed_test/zig
+idf.py set-target esp32s3
+idf.py menuconfig  # 设置 TEST_SERVER_IP
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+**ESP32（C）：**
+```bash
+cd examples/esp/https_speed_test/c
+idf.py set-target esp32s3
+idf.py menuconfig  # 设置 TEST_SERVER_IP
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+**演示内容：**
+- HTTPS 客户端用法
+- 自签名证书验证
+- TLS 连接性能测试
 
 ### memory_attr_test
 

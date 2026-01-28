@@ -24,7 +24,7 @@ embed-zig provides a unified development experience for embedded systems. Write 
 ### Key Features
 
 - **HAL** — Board-agnostic hardware abstraction (buttons, LEDs, sensors)
-- **SAL** — Cross-platform system primitives (threads, sync, time)
+- **Trait** — Interface contracts for cross-platform abstractions
 - **ESP** — Idiomatic Zig bindings for ESP-IDF
 - **Raysim** — Desktop simulation with Raylib GUI
 - **Pre-built Zig** — Compiler with Xtensa support for ESP32
@@ -79,9 +79,9 @@ cd examples/raysim/gpio_button && zig build run
 embed-zig/
 ├── lib/
 │   ├── hal/          # Hardware Abstraction Layer
-│   ├── sal/          # System Abstraction Layer (interface)
-│   ├── esp/          # ESP-IDF bindings + SAL impl
-│   └── raysim/       # Raylib simulation + SAL impl
+│   ├── trait/        # Interface contracts (log, time, socket, tls, i2c)
+│   ├── esp/          # ESP-IDF bindings + trait impl
+│   └── raysim/       # Raylib simulation + trait impl
 ├── examples/
 │   ├── apps/         # Platform-independent app logic
 │   ├── esp/          # ESP32 entry points
