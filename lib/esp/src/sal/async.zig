@@ -247,18 +247,26 @@ pub const WaitGroup = struct {
         // Increment counter before spawning
         self.add(1);
 
-        // Create FreeRTOS task using standard API
+        // Create FreeRTOS task using ESP-IDF's xTaskCreateRestrictedPinnedToCore
+        // This allows us to use custom stack memory (e.g., from PSRAM via allocator).
+        //
+        // Note on xTaskCreateRestrictedPinnedToCore (ESP-IDF extension):
+        // Unlike standard FreeRTOS xTaskCreateRestricted, this function takes
+        // OWNERSHIP of the provided stack by setting ucStaticallyAllocated =
+        // tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB. Therefore, the kernel WILL
+        // free this stack when the task is deleted. DO NOT manually free this
+        // stack, or a double-free crash will occur.
+        var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
+        task_params.pvTaskCode = wgGoWrapper;
+        task_params.pcName = name.ptr;
+        task_params.usStackDepth = options.stack_size / @sizeOf(c.StackType_t);
+        task_params.puxStackBuffer = @ptrCast(@alignCast(stack.ptr));
+        task_params.pvParameters = go_ctx;
+        task_params.uxPriority = options.priority;
+
         var handle: c.TaskHandle_t = null;
         const core_id: c.BaseType_t = if (options.core < 0) c.tskNO_AFFINITY else options.core;
-        const result = c.xTaskCreatePinnedToCore(
-            wgGoWrapper,
-            name.ptr,
-            options.stack_size / @sizeOf(c.StackType_t),
-            go_ctx,
-            options.priority,
-            &handle,
-            core_id,
-        );
+        const result = c.xTaskCreateRestrictedPinnedToCore(&task_params, &handle, core_id);
 
         if (result != c.pdPASS) {
             self.done(); // Decrement on error
@@ -267,8 +275,6 @@ pub const WaitGroup = struct {
             return error.TaskCreateFailed;
         }
 
-        // Store stack reference in go_ctx for later cleanup
-        // Note: With xTaskCreatePinnedToCore, stack is managed by FreeRTOS
-        // We still keep our stack allocation for potential custom memory placement
+        // Note: Stack is now owned by FreeRTOS, will be freed when task deletes
     }
 };

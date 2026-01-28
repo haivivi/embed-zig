@@ -31,12 +31,14 @@ string_flag(
 )
 
 # WiFi SSID (overrides CONFIG_WIFI_SSID in sdkconfig)
+# Note: Default is a public WiFi for development/testing, not a security concern
 string_flag(
     name = "wifi_ssid",
     build_setting_default = "HAIVIVI-MFG",
 )
 
 # WiFi password (overrides CONFIG_WIFI_PASSWORD in sdkconfig)
+# Note: Default is a public WiFi for development/testing, not a security concern
 string_flag(
     name = "wifi_password",
     build_setting_default = "!haivivi",

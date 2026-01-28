@@ -18,6 +18,7 @@ Options:
 # Defaults
 DEFAULT_BOARD = "esp32s3_devkit"
 DEFAULT_CHIP = "esp32s3"
+# Note: Default WiFi credentials are for a public development network, not a security concern
 DEFAULT_WIFI_SSID = "HAIVIVI-MFG"
 DEFAULT_WIFI_PASSWORD = "!haivivi"
 DEFAULT_TEST_SERVER_IP = ""
