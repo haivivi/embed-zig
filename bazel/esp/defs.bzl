@@ -267,10 +267,10 @@ def _esp_zig_app_impl(ctx):
     cmake_prefix = "cmake"
     if lib_files:
         first_lib = lib_files[0].short_path
-        lib_idx = first_lib.find("/lib/")
-        if lib_idx >= 0:
-            lib_prefix = first_lib[:lib_idx + 4]  # e.g., "../embed_zig+/lib"
-            cmake_prefix = first_lib[:lib_idx] + "/cmake"  # e.g., "../embed_zig+/cmake"
+        parts = first_lib.split("/lib/", 1)
+        if len(parts) == 2:
+            lib_prefix = parts[0] + "/lib"
+            cmake_prefix = parts[0] + "/cmake"
     
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
@@ -466,9 +466,10 @@ cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
 }}
 ZONEOF
 
-# Calculate fingerprint by running zig and extracting suggested value
+# Calculate fingerprint by running zig build --fetch to get suggested value
+# Note: --fetch works without a valid build, just needs build.zig.zon to exist
 cd "$WORK/$ESP_PROJECT_PATH/main"
-FINGERPRINT=$("$ZIG_INSTALL/zig" build --build-file build.zig 2>&1 | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+FINGERPRINT=$("$ZIG_INSTALL/zig" build --fetch 2>&1 | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
 cd - > /dev/null
 
 if [ -n "$FINGERPRINT" ]; then
