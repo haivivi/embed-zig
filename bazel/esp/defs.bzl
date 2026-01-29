@@ -260,6 +260,18 @@ def _esp_zig_app_impl(ctx):
     # Get lib files
     lib_files = ctx.attr._libs.files.to_list()
     
+    # Detect lib/cmake prefix from files (handles external repo case)
+    # Internal: "lib/esp/..." -> lib_prefix="lib", cmake_prefix="cmake"
+    # External: "../embed_zig+/lib/esp/..." -> lib_prefix="../embed_zig+/lib", cmake_prefix="../embed_zig+/cmake"
+    lib_prefix = "lib"
+    cmake_prefix = "cmake"
+    if lib_files:
+        first_lib = lib_files[0].short_path
+        lib_idx = first_lib.find("/lib/")
+        if lib_idx >= 0:
+            lib_prefix = first_lib[:lib_idx + 4]  # e.g., "../embed_zig+/lib"
+            cmake_prefix = first_lib[:lib_idx] + "/cmake"  # e.g., "../embed_zig+/cmake"
+    
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     
@@ -323,7 +335,7 @@ def _esp_zig_app_impl(ctx):
     extra_deps_zig_decls = ""
     for dep in ctx.attr.extra_deps:
         dep_name = dep.lstrip(".")
-        extra_deps_zon += '        .{name} = .{{ .path = "../../lib/{name}" }},\n'.format(name = dep_name)
+        extra_deps_zon += '        .{name} = .{{ .path = "../../{lib_prefix}/{name}" }},\n'.format(name = dep_name, lib_prefix = lib_prefix)
         extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
         extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
         .target = target,
@@ -361,7 +373,7 @@ mkdir -p "$WORK/$ESP_PROJECT_PATH/main/src"
 # Generate top-level CMakeLists.txt
 cat > "$WORK/$ESP_PROJECT_PATH/CMakeLists.txt" << 'CMAKEOF'
 cmake_minimum_required(VERSION 3.16)
-include(${{CMAKE_CURRENT_SOURCE_DIR}}/../cmake/zig_install.cmake)
+include(${{CMAKE_CURRENT_SOURCE_DIR}}/../{cmake_prefix}/zig_install.cmake)
 include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
 project({project_name})
 CMAKEOF
@@ -371,7 +383,7 @@ cat > "$WORK/$ESP_PROJECT_PATH/main/CMakeLists.txt" << 'MAINCMAKEOF'
 # Auto-generated ESP-IDF component CMakeLists.txt
 
 # Set _ESP_LIB to the lib directory in the work tree
-get_filename_component(_ESP_LIB "${{CMAKE_CURRENT_SOURCE_DIR}}/../../lib" ABSOLUTE)
+get_filename_component(_ESP_LIB "${{CMAKE_CURRENT_SOURCE_DIR}}/../../{lib_prefix}" ABSOLUTE)
 
 {extra_cmake}
 
@@ -443,7 +455,7 @@ cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
     .name = .{app_name},
     .version = "0.1.0",
     .dependencies = .{{
-        .esp = .{{ .path = "../../lib/esp" }},
+        .esp = .{{ .path = "../../{lib_prefix}/esp" }},
         .app = .{{ .path = "../../{app_path}" }},
 {extra_deps_zon}    }},
     .paths = .{{
@@ -678,6 +690,8 @@ exec bash "{build_sh}"
         app_copy_commands = "\n".join(app_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
+        lib_prefix = lib_prefix,
+        cmake_prefix = cmake_prefix,
         requires = requires,
         force_link = force_link,
         extra_cmake = extra_cmake,
