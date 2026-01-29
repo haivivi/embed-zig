@@ -6,10 +6,24 @@
         .dns = .{
             .path = "../dns",
         },
+        .idf = .{
+            .path = "idf",
+        },
+        .impl = .{
+            .path = "impl",
+        },
+        .trait = .{
+            .path = "../trait",
+        },
+        .hal = .{
+            .path = "../hal",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "idf",
+        "impl",
     },
 }

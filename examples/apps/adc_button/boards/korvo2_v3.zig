@@ -6,19 +6,21 @@
 const std = @import("std");
 
 const hal = @import("hal");
-const idf = @import("esp");
-const hw_params = idf.boards.korvo2_v3;
+const esp = @import("esp");
+
+const idf = esp.idf;
+const hw_params = esp.boards.korvo2_v3;
 
 // Platform primitives
 pub const log = std.log.scoped(.app);
 
 pub const time = struct {
     pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
+        idf.time.sleepMs(ms);
     }
 
     pub fn getTimeMs() u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 };
 
@@ -51,7 +53,7 @@ pub const RtcDriver = struct {
     pub fn deinit(_: *Self) void {}
 
     pub fn uptime(_: *Self) u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 
     pub fn nowMs(_: *Self) ?i64 {

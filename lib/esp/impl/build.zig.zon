@@ -1,0 +1,21 @@
+.{
+    .name = .impl,
+    .version = "0.1.0",
+    .fingerprint = 0x4c5e6b63ea2dfcea,
+    .dependencies = .{
+        .idf = .{
+            .path = "../idf",
+        },
+        .trait = .{
+            .path = "../../trait",
+        },
+        .hal = .{
+            .path = "../../hal",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

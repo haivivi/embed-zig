@@ -4,9 +4,10 @@
 
 const std = @import("std");
 const hal = @import("hal");
-const idf = @import("esp");
+const esp = @import("esp");
 
-const hw_params = idf.boards.esp32s3_devkit;
+const idf = esp.idf;
+const hw_params = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
@@ -24,11 +25,11 @@ pub const log = std.log.scoped(.app);
 
 pub const time = struct {
     pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
+        idf.time.sleepMs(ms);
     }
 
     pub fn getTimeMs() u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 };
 
@@ -48,7 +49,7 @@ pub const RtcDriver = struct {
     pub fn deinit(_: *RtcDriver) void {}
 
     pub fn uptime(_: *RtcDriver) u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 
     pub fn nowMs(_: *RtcDriver) ?i64 {

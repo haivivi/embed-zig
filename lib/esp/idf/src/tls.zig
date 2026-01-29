@@ -1,11 +1,11 @@
-//! SAL TLS Implementation - mbedTLS (ESP-IDF)
+//! mbedTLS Wrapper for ESP-IDF
 //!
-//! Implements sal.tls interface using ESP-IDF's mbedTLS.
-//! This wraps the C mbedTLS API for use in Zig code.
+//! Provides TLS stream encryption using ESP-IDF's mbedTLS.
+//! Wraps the C mbedTLS API for idiomatic Zig usage.
 
 const std = @import("std");
 
-const net_socket = @import("../net/socket.zig");
+const net_socket = @import("net/socket.zig");
 
 const c = @cImport({
     @cInclude("stdbool.h");
@@ -19,7 +19,7 @@ const c = @cImport({
 });
 
 // ============================================================================
-// Types (matching sal.tls interface)
+// Types
 // ============================================================================
 
 /// TLS errors

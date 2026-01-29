@@ -473,10 +473,18 @@ const esp = @import("esp");
 pub fn build(b: *std.Build) void {{
     const target = b.standardTargetOptions(.{{}});
     const optimize = b.standardOptimizeOption(.{{}});
+    
+    // Board selection - passed from CMake via -Dboard=<board_name>
+    const board = b.option([]const u8, "board", "Target board") orelse "esp32s3_devkit";
 
+    // Convert board string to enum for app dependency
+    const BoardType = enum {{ korvo2_v3, esp32s3_devkit, sim_raylib }};
+    const board_enum = std.meta.stringToEnum(BoardType, board) orelse .esp32s3_devkit;
+    
     const app_dep = b.dependency("app", .{{
         .target = target,
         .optimize = optimize,
+        .board = board_enum,
     }});
 
     const esp_dep = b.dependency("esp", .{{
@@ -610,7 +618,7 @@ if [ "$RUN_APP_IN_PSRAM" = "y" ]; then
 //! ESP Platform Entry Point (PSRAM Task Mode)
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const app = @import("app");
 pub const env_module = @import("env.zig");
 
@@ -633,7 +641,7 @@ else
 
 pub const std_options = std.Options{{
     .log_level = log_level,
-    .logFn = idf.log.stdLogFn,
+    .logFn = esp.idf.log.stdLogFn,
 }};
 
 /// PSRAM task stack size (32KB, can be larger since it's in PSRAM)
@@ -701,7 +709,7 @@ else
 //! ESP Platform Entry Point
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const app = @import("app");
 pub const env_module = @import("env.zig");
 
@@ -721,7 +729,7 @@ else
 
 pub const std_options = std.Options{{
     .log_level = log_level,
-    .logFn = idf.log.stdLogFn,
+    .logFn = esp.idf.log.stdLogFn,
 }};
 
 export fn app_main() void {{

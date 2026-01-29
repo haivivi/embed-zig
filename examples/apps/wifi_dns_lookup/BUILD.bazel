@@ -31,7 +31,7 @@ esp_zig_app(
         "esp_http_client_cleanup",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES"],
     extra_deps = ["hal", "dns"],

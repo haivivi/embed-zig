@@ -1,7 +1,7 @@
-//! SAL Thread Implementation - FreeRTOS (Low-level)
+//! FreeRTOS Task Wrapper (Low-level)
 //!
-//! Implements sal.thread interface using FreeRTOS tasks with PSRAM stack support.
-//! For most use cases, prefer `sal.async_` which provides higher-level
+//! Low-level FreeRTOS task creation with PSRAM stack support.
+//! For most use cases, prefer `idf.async_` which provides higher-level
 //! `go()` and `WaitGroup` primitives.
 
 const std = @import("std");
@@ -15,7 +15,7 @@ const c = @cImport({
 });
 
 // ============================================================================
-// Types (matching sal.thread interface)
+// Types
 // ============================================================================
 
 /// Task function type

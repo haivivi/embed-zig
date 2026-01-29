@@ -12,8 +12,8 @@
 //!   const buf = try heap.psram.alloc(u8, 32768);
 //!   defer heap.psram.free(buf);
 //!
-//!   // Use with sal.thread
-//!   const result = try sal.thread.go(heap.psram, "task", fn, arg, .{});
+//!   // Use with idf.async_
+//!   try idf.async_.go(heap.psram, "task", fn, arg, .{});
 
 const std = @import("std");
 

@@ -1,0 +1,12 @@
+# ESP trait + hal implementations
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "impl_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)

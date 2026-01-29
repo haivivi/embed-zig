@@ -4,7 +4,9 @@
 //! LED toggled via timer callback, actual update in main loop.
 
 const hal = @import("hal");
-const idf = @import("esp");
+const esp = @import("esp");
+
+const idf = esp.idf;
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

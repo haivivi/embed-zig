@@ -5,10 +5,11 @@
 //! - BSD Sockets via LWIP
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const hal = @import("hal");
 
-const hw_params = idf.boards.esp32s3_devkit;
+const idf = esp.idf;
+const hw_params = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
@@ -20,10 +21,10 @@ pub const Hardware = struct {
 };
 
 // ============================================================================
-// Socket Implementation (from ESP SAL)
+// Socket Implementation (from ESP IDF)
 // ============================================================================
 
-pub const socket = idf.sal.socket.Socket;
+pub const socket = idf.socket.Socket;
 
 // ============================================================================
 // RTC Driver
@@ -39,7 +40,7 @@ pub const RtcDriver = struct {
     pub fn deinit(_: *Self) void {}
 
     pub fn uptime(_: *Self) u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 
     pub fn nowMs(_: *Self) ?i64 {
@@ -152,11 +153,11 @@ pub const log = std.log.scoped(.app);
 
 pub const time = struct {
     pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
+        idf.time.sleepMs(ms);
     }
 
     pub fn getTimeMs() u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 };
 

@@ -1,7 +1,7 @@
-//! SAL Queue Implementation - FreeRTOS
+//! FreeRTOS Queue Wrapper
 //!
-//! Implements sal.Queue interface using FreeRTOS xQueue.
-//! Thread-safe bounded FIFO queue with ISR support.
+//! Thread-safe bounded FIFO queue using FreeRTOS xQueue.
+//! Supports ISR context operations.
 
 const std = @import("std");
 
