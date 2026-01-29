@@ -12,7 +12,9 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add ESP deps to the module itself
-    addEspDeps(b, idf_module) catch {};
+    addEspDeps(b, idf_module) catch |err| {
+        std.log.warn("Failed to add ESP dependencies: {}", .{err});
+    };
 }
 
 /// Add all ESP-IDF include paths and dependencies to a module

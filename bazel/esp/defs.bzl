@@ -484,7 +484,10 @@ pub fn build(b: *std.Build) void {{
 
     // Convert board string to enum for app dependency
     const BoardType = enum {{ {boards_enum_fields} }};
-    const board_enum = std.meta.stringToEnum(BoardType, board) orelse .{default_board};
+    const board_enum = std.meta.stringToEnum(BoardType, board) orelse {{
+        std.log.err("Unknown board '{{s}}'. Supported boards: {boards_enum_fields}", .{{board}});
+        @panic("Invalid board specified");
+    }};
     
     const app_dep = b.dependency("app", .{{
         .target = target,
