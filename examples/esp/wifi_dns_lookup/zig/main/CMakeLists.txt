@@ -1,4 +1,4 @@
-# WiFi DNS Lookup - Zig Version
+# WiFi DNS Lookup - Zig HAL Version
 
 # ESP package path: use ESP_LIB_PATH env var (Bazel) or relative path (local dev)
 if(DEFINED ENV{ESP_LIB_PATH})

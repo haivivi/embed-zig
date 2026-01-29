@@ -3,9 +3,8 @@
     .version = "0.1.0",
     .fingerprint = 0x629f3d7752ad8019,
     .dependencies = .{
-        .esp = .{
-            .path = "../../../../../lib/esp",
-        },
+        .esp = .{ .path = "../../../../../lib/esp" },
+        .app = .{ .path = "../../../../apps/wifi_dns_lookup" },
     },
     .paths = .{
         "build.zig",

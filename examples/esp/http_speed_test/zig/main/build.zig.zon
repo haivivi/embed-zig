@@ -4,6 +4,7 @@
     .fingerprint = 0x60a38c4c5ba2d175,
     .dependencies = .{
         .esp = .{ .path = "../../../../../lib/esp" },
+        .app = .{ .path = "../../../../apps/http_speed_test" },
     },
     .paths = .{
         "build.zig",
