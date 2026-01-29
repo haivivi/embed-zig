@@ -1,12 +1,21 @@
 const std = @import("std");
 const esp = @import("esp");
 
+pub const BoardType = @import("app").BoardType;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Board option (unused in this test, but required by esp_zig_build)
-    _ = b.option([]const u8, "board", "Target board (ignored)");
+    // Board selection option
+    const board = b.option(BoardType, "board", "Target board") orelse .esp32s3_devkit;
+
+    // Get app dependency (passes board option through)
+    const app_dep = b.dependency("app", .{
+        .target = target,
+        .optimize = optimize,
+        .board = board,
+    });
 
     // Get esp dependency
     const esp_dep = b.dependency("esp", .{
@@ -21,7 +30,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    root_module.addImport("esp_idf", esp_dep.module("esp"));
+    root_module.addImport("esp", esp_dep.module("esp"));
+    root_module.addImport("app", app_dep.module("app"));
 
     const lib = b.addLibrary(.{
         .name = "main_zig",
@@ -33,5 +43,6 @@ pub fn build(b: *std.Build) void {
         @panic("Failed to add ESP dependencies");
     };
 
+    root_module.addIncludePath(b.path("include"));
     b.installArtifact(lib);
 }

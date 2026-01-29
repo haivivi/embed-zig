@@ -4,8 +4,10 @@
 //! - 6 ADC buttons on ADC1 Channel 4
 
 const std = @import("std");
-const idf = @import("esp");
+
 const hal = @import("hal");
+const idf = @import("esp");
+const hw_params = idf.boards.korvo2_v3;
 
 // Platform primitives
 pub const log = std.log.scoped(.app);
@@ -25,8 +27,6 @@ pub fn isRunning() bool {
 }
 
 // Hardware parameters from lib/esp/boards
-const hw_params = idf.boards.korvo2_v3;
-
 // ============================================================================
 // Hardware Info
 // ============================================================================

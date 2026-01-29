@@ -1,0 +1,17 @@
+.{
+    .name = .wifi_dns_lookup_app,
+    .version = "0.1.0",
+    .fingerprint = 0xb3b1172257967ed,
+    .dependencies = .{
+        .esp = .{ .path = "../../../lib/esp" },
+        .hal = .{ .path = "../../../lib/hal" },
+        .dns = .{ .path = "../../../lib/dns" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+}

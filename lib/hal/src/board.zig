@@ -10,7 +10,11 @@
 //! - `time` - time type (sleepMs/getTimeMs methods)
 //! - `isRunning` - run check function: fn() bool
 //!
-//! Optional peripherals: buttons, rgb_leds, led, temp, kvs, mic, etc.
+//! ## Optional Traits
+//!
+//! - `socket` - socket type (tcp/udp/send/recv methods) for network operations
+//!
+//! Optional peripherals: buttons, rgb_leds, led, temp, kvs, mic, wifi, etc.
 //!
 //! ## Minimal platform.zig
 //!
@@ -248,6 +252,8 @@ pub fn Board(comptime spec: type) type {
     const RgbLedStripDriverType = if (analysis.rgb_led_strip_count > 0) RgbLedStripType.DriverType else void;
     const LedType = if (analysis.led_count > 0) getLedType(spec) else void;
     const LedDriverType = if (analysis.led_count > 0) LedType.DriverType else void;
+    const WifiType = if (analysis.wifi_count > 0) getWifiType(spec) else void;
+    const WifiDriverType = if (analysis.wifi_count > 0) WifiType.DriverType else void;
     const TempSensorType = if (analysis.temp_sensor_count > 0) getTempSensorType(spec) else void;
     const TempSensorDriverType = if (analysis.temp_sensor_count > 0) TempSensorType.DriverType else void;
     const KvsType = if (analysis.kvs_count > 0) getKvsType(spec) else void;
@@ -277,6 +283,7 @@ pub fn Board(comptime spec: type) type {
         pub const Button = ButtonType;
         pub const RgbLedStrip = RgbLedStripType;
         pub const Led = LedType;
+        pub const Wifi = WifiType;
         pub const TempSensor = TempSensorType;
         pub const Kvs = KvsType;
         pub const RtcReader = RtcReaderType;
@@ -294,6 +301,12 @@ pub fn Board(comptime spec: type) type {
 
         pub const log = trait.log.from(spec.log);
         pub const time = trait.time.from(spec.time);
+
+        /// Socket type (optional - for network operations)
+        pub const socket = if (@hasDecl(spec, "socket"))
+            trait.socket.from(spec.socket)
+        else
+            void;
 
         // ================================================================
         // Fields
@@ -321,6 +334,10 @@ pub fn Board(comptime spec: type) type {
         // Led (if present)
         led_driver: if (analysis.led_count > 0) LedDriverType else void,
         led: if (analysis.led_count > 0) LedType else void,
+
+        // Wifi (if present)
+        wifi_driver: if (analysis.wifi_count > 0) WifiDriverType else void,
+        wifi: if (analysis.wifi_count > 0) WifiType else void,
 
         // TempSensor (if present)
         temp_driver: if (analysis.temp_sensor_count > 0) TempSensorDriverType else void,
@@ -382,10 +399,22 @@ pub fn Board(comptime spec: type) type {
                 }
             }
 
+            // Initialize Wifi driver
+            if (analysis.wifi_count > 0) {
+                self.wifi_driver = try WifiDriverType.init();
+                errdefer {
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
+            }
+
             // Initialize TempSensor driver
             if (analysis.temp_sensor_count > 0) {
                 self.temp_driver = try TempSensorDriverType.init();
                 errdefer {
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
                     if (analysis.button_group_count > 0) self.buttons_driver.deinit();
@@ -398,6 +427,7 @@ pub fn Board(comptime spec: type) type {
                 self.kvs_driver = try KvsDriverType.init();
                 errdefer {
                     if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
                     if (analysis.button_group_count > 0) self.buttons_driver.deinit();
@@ -411,6 +441,7 @@ pub fn Board(comptime spec: type) type {
                 errdefer {
                     if (analysis.kvs_count > 0) self.kvs_driver.deinit();
                     if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
                     if (analysis.button_group_count > 0) self.buttons_driver.deinit();
@@ -431,6 +462,9 @@ pub fn Board(comptime spec: type) type {
             }
             if (analysis.led_count > 0) {
                 self.led = LedType.init(&self.led_driver);
+            }
+            if (analysis.wifi_count > 0) {
+                self.wifi = WifiType.init(&self.wifi_driver);
             }
             if (analysis.temp_sensor_count > 0) {
                 self.temp = TempSensorType.init(&self.temp_driver);
@@ -463,6 +497,9 @@ pub fn Board(comptime spec: type) type {
             }
             if (analysis.temp_sensor_count > 0) {
                 self.temp_driver.deinit();
+            }
+            if (analysis.wifi_count > 0) {
+                self.wifi_driver.deinit();
             }
             if (analysis.led_count > 0) {
                 self.led.off();
@@ -607,6 +644,19 @@ fn getLedType(comptime spec: type) type {
         }
     }
     @compileError("No Led found in spec");
+}
+
+fn getWifiType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (wifi_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No Wifi found in spec");
 }
 
 fn getTempSensorType(comptime spec: type) type {

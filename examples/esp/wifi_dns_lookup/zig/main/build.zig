@@ -1,17 +1,21 @@
 const std = @import("std");
 const esp = @import("esp");
 
-/// Supported board types (for Bazel compatibility)
-pub const BoardType = enum {
-    esp32s3_devkit,
-};
+pub const BoardType = @import("app").BoardType;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Board selection option (for Bazel compatibility, not used in this example)
-    _ = b.option(BoardType, "board", "Target board") orelse .esp32s3_devkit;
+    // Board selection option
+    const board = b.option(BoardType, "board", "Target board") orelse .esp32s3_devkit;
+
+    // Get app dependency (passes board option through)
+    const app_dep = b.dependency("app", .{
+        .target = target,
+        .optimize = optimize,
+        .board = board,
+    });
 
     // Get esp dependency
     const esp_dep = b.dependency("esp", .{
@@ -19,15 +23,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Root module (entry point)
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-
-    // Add esp module
     root_module.addImport("esp", esp_dep.module("esp"));
+    root_module.addImport("app", app_dep.module("app"));
 
     const lib = b.addLibrary(.{
         .name = "main_zig",
