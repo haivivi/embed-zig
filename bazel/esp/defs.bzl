@@ -469,7 +469,13 @@ ZONEOF
 # Calculate fingerprint by running zig build --fetch to get suggested value
 # Note: --fetch works without a valid build, just needs build.zig.zon to exist
 cd "$WORK/$ESP_PROJECT_PATH/main"
-FINGERPRINT=$("$ZIG_INSTALL/zig" build --fetch 2>&1 | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+echo "[fingerprint] CWD: $(pwd)"
+echo "[fingerprint] ZIG_INSTALL: $ZIG_INSTALL"
+echo "[fingerprint] build.zig.zon exists: $(test -f build.zig.zon && echo yes || echo no)"
+ZIG_OUTPUT=$("$ZIG_INSTALL/zig" build --fetch 2>&1 || true)
+echo "[fingerprint] Zig output: $ZIG_OUTPUT"
+FINGERPRINT=$(echo "$ZIG_OUTPUT" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+echo "[fingerprint] FINGERPRINT: '$FINGERPRINT'"
 cd - > /dev/null
 
 if [ -n "$FINGERPRINT" ]; then
@@ -477,6 +483,9 @@ if [ -n "$FINGERPRINT" ]; then
     awk -v fp="$FINGERPRINT" '/[.]version = "0[.]1[.]0",/ {{ print; print "    .fingerprint = " fp ","; next }} 1' \\
         "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp"
     mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
+    echo "[fingerprint] Inserted fingerprint into build.zig.zon"
+else
+    echo "[fingerprint] WARNING: No fingerprint extracted!"
 fi
 
 # Generate main/src/main.c
