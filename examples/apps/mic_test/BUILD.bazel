@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["korvo2_v3"],
     requires = ["driver", "esp_driver_i2s", "esp_driver_gpio", "esp_driver_i2c"],
     force_link = [
         "${MIC_FORCE_LINK}",

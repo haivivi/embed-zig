@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["korvo2_v3"],
     requires = ["driver", "esp_adc"],
     force_link = [
         "adc_oneshot_new_unit",

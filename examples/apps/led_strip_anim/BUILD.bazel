@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit", "korvo2_v3"],
     requires = ["driver", "led_strip", "esp_driver_i2c"],
     force_link = [
         "led_strip_refresh",

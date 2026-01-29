@@ -346,6 +346,11 @@ def _esp_zig_app_impl(ctx):
         else:
             idf_deps_yml += '  {}: "*"\n'.format(dep)
     
+    # Board types for generated build.zig (from boards attribute)
+    boards_list = ctx.attr.boards if ctx.attr.boards else ["esp32s3_devkit"]
+    boards_enum_fields = ", ".join(boards_list)
+    default_board = boards_list[0]
+    
     # Extra lib dependencies for build.zig.zon
     extra_deps_zon = ""
     extra_deps_zig_imports = ""
@@ -475,11 +480,11 @@ pub fn build(b: *std.Build) void {{
     const optimize = b.standardOptimizeOption(.{{}});
     
     // Board selection - passed from CMake via -Dboard=<board_name>
-    const board = b.option([]const u8, "board", "Target board") orelse "esp32s3_devkit";
+    const board = b.option([]const u8, "board", "Target board") orelse "{default_board}";
 
     // Convert board string to enum for app dependency
-    const BoardType = enum {{ korvo2_v3, esp32s3_devkit, sim_raylib }};
-    const board_enum = std.meta.stringToEnum(BoardType, board) orelse .esp32s3_devkit;
+    const BoardType = enum {{ {boards_enum_fields} }};
+    const board_enum = std.meta.stringToEnum(BoardType, board) orelse .{default_board};
     
     const app_dep = b.dependency("app", .{{
         .target = target,
@@ -782,6 +787,8 @@ exec bash "{build_sh}"
         extra_deps_zig_decls = extra_deps_zig_decls,
         idf_deps_yml = idf_deps_yml,
         sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
+        boards_enum_fields = boards_enum_fields,
+        default_board = default_board,
     )
     
     ctx.actions.write(
@@ -830,6 +837,10 @@ esp_zig_app = rule(
         ),
         "project_name": attr.string(
             doc = "Project name (defaults to target name)",
+        ),
+        "boards": attr.string_list(
+            default = ["esp32s3_devkit"],
+            doc = "Supported board types for this app (first one is default)",
         ),
         "requires": attr.string_list(
             default = ["driver"],

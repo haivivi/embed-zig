@@ -24,6 +24,7 @@ make_env_file(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "esp_http_client"],
     force_link = [
         "${WIFI_FORCE_LINK}",

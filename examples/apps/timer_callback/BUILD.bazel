@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["driver", "esp_timer", "led_strip"],
     force_link = [
         "${TIMER_FORCE_LINK}",
