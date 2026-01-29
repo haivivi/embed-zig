@@ -2,22 +2,32 @@
 
 [中文](./examples.zh-CN.md) | English
 
+## Build & Flash
+
+All examples follow the same pattern:
+
+```bash
+# Build
+bazel build //examples/apps/<name>:esp
+
+# Flash (specify port)
+bazel run //examples/apps/<name>:flash --//bazel/esp:port=/dev/ttyUSB0
+```
+
 ## gpio_button
 
 Button input with LED toggle.
 
-- **Zig / ESP32-S3-DevKit** (bin: 252KB, RAM: 390KB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/gpio_button/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/gpio_button/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/gpio_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+  bazel build //examples/apps/gpio_button:esp
+  bazel run //examples/apps/gpio_button:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-- **Zig / Korvo-2 V3** (bin: 253KB, RAM: 390KB, PSRAM: 8MB)
+- **Zig / Korvo-2 V3**
   ```bash
-  bazel build //examples/esp/gpio_button/zig:app --//bazel/esp:board=korvo2_v3
-  bazel run //examples/esp/gpio_button/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB1
-  bazel run //examples/esp/gpio_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB1
+  bazel build //examples/apps/gpio_button:esp --//bazel/esp:board=korvo2_v3
+  bazel run //examples/apps/gpio_button:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
 - **Zig / Desktop Simulator (Raylib)**
@@ -25,240 +35,181 @@ Button input with LED toggle.
   bazel run //examples/raysim/gpio_button:run
   ```
 
-- **C / ESP32-S3** (bin: 220KB, RAM: 392KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/gpio_button/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
-  ```
-
 ## led_strip_flash
 
 RGB LED strip blinking.
 
-- **Zig / ESP32-S3-DevKit** (bin: 249KB, RAM: 391KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/led_strip_flash/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/led_strip_flash/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/led_strip_flash/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+  bazel build //examples/apps/led_strip_flash:esp
+  bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-- **Zig / Korvo-2 V3** (bin: 244KB, RAM: 391KB, PSRAM: 8MB)
+- **Zig / Korvo-2 V3**
   ```bash
-  bazel build //examples/esp/led_strip_flash/zig:app --//bazel/esp:board=korvo2_v3
-  bazel run //examples/esp/led_strip_flash/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB1
-  bazel run //examples/esp/led_strip_flash/zig:monitor --//bazel/esp:port=/dev/ttyUSB1
-  ```
-
-- **C / ESP32-S3** (bin: 218KB, RAM: 392KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/led_strip_flash/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/led_strip_flash:esp --//bazel/esp:board=korvo2_v3
+  bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
 ## led_strip_anim
 
 LED animation effects.
 
-- **Zig / ESP32-S3-DevKit** (bin: 243KB, RAM: 391KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/led_strip_anim/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/led_strip_anim/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/led_strip_anim/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+  bazel build //examples/apps/led_strip_anim:esp
+  bazel run //examples/apps/led_strip_anim:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-- **Zig / Korvo-2 V3** (bin: 243KB, RAM: 391KB, PSRAM: 8MB)
+- **Zig / Korvo-2 V3**
   ```bash
-  bazel build //examples/esp/led_strip_anim/zig:app --//bazel/esp:board=korvo2_v3
-  bazel run //examples/esp/led_strip_anim/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB1
-  bazel run //examples/esp/led_strip_anim/zig:monitor --//bazel/esp:port=/dev/ttyUSB1
+  bazel build //examples/apps/led_strip_anim:esp --//bazel/esp:board=korvo2_v3
+  bazel run //examples/apps/led_strip_anim:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
 ## adc_button
 
 ADC-based button matrix.
 
-- **Zig / Korvo-2 V3** (bin: 219KB, RAM: 397KB, PSRAM: 8MB)
+- **Zig / Korvo-2 V3**
   ```bash
-  bazel build //examples/esp/adc_button/zig:app --//bazel/esp:board=korvo2_v3
-  bazel run //examples/esp/adc_button/zig:flash --//bazel/esp:board=korvo2_v3 --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB1
-  bazel run //examples/esp/adc_button/zig:monitor --//bazel/esp:port=/dev/ttyUSB1
+  bazel build //examples/apps/adc_button:esp --//bazel/esp:board=korvo2_v3
+  bazel run //examples/apps/adc_button:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
 ## timer_callback
 
 Hardware timer callbacks.
 
-- **Zig / ESP32-S3-DevKit** (bin: 235KB, RAM: 391KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/timer_callback/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/timer_callback/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/timer_callback/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
-
-- **C / ESP32-S3** (bin: 222KB, RAM: 391KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/timer_callback/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/timer_callback:esp
+  bazel run //examples/apps/timer_callback:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
 ## pwm_fade
 
 LED brightness fading.
 
-- **Zig / ESP32-S3-DevKit** (bin: 210KB, RAM: 396KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/pwm_fade/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/pwm_fade/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/pwm_fade/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
-
-- **C / ESP32-S3** (bin: 201KB, RAM: 396KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/pwm_fade/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/pwm_fade:esp
+  bazel run //examples/apps/pwm_fade:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
 ## temperature_sensor
 
 Internal temperature sensor.
 
-- **Zig / ESP32-S3-DevKit** (bin: 206KB, RAM: 397KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/temperature_sensor/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/temperature_sensor/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/temperature_sensor/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
-
-- **C / ESP32-S3** (bin: 197KB, RAM: 397KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/temperature_sensor/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/temperature_sensor:esp
+  bazel run //examples/apps/temperature_sensor:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
 ## nvs_storage
 
 Persistent key-value storage.
 
-- **Zig / ESP32-S3-DevKit** (bin: 223KB, RAM: 396KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/nvs_storage/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/nvs_storage/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/nvs_storage/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+  bazel build //examples/apps/nvs_storage:esp
+  bazel run //examples/apps/nvs_storage:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-- **C / ESP32-S3** (bin: 223KB, RAM: 396KB, PSRAM: 8MB)
+## mic_test
+
+Microphone audio capture with ES7210 codec.
+
+- **Zig / Korvo-2 V3**
   ```bash
-  cd examples/esp/nvs_storage/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/mic_test:esp --//bazel/esp:board=korvo2_v3
+  bazel run //examples/apps/mic_test:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
 ## wifi_dns_lookup
 
-WiFi + DNS resolution.
+WiFi connection + DNS resolution.
 
-- **Zig / ESP32-S3-DevKit** (bin: 869KB, RAM: 345KB, PSRAM: 8MB)
-  ```bash
-  bazel build //examples/esp/wifi_dns_lookup/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/wifi_dns_lookup/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/wifi_dns_lookup/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
+**Environment variables:**
+- `WIFI_SSID` - WiFi network name (via `--define`)
+- `WIFI_PASSWORD` - WiFi password (via `--action_env` for security)
 
-- **C / ESP32-S3** (bin: 854KB, RAM: 344KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  cd examples/esp/wifi_dns_lookup/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  # Build with WiFi credentials
+  WIFI_PASSWORD=secret bazel build //examples/apps/wifi_dns_lookup:esp \
+      --define WIFI_SSID=MyNetwork \
+      --action_env=WIFI_PASSWORD
+
+  # Flash
+  WIFI_PASSWORD=secret bazel run //examples/apps/wifi_dns_lookup:flash \
+      --//bazel/esp:port=/dev/ttyUSB0 \
+      --define WIFI_SSID=MyNetwork \
+      --action_env=WIFI_PASSWORD
   ```
 
 ## http_speed_test
 
-HTTP download benchmark. Requires running the test server on your computer.
+HTTP download benchmark.
 
-**First, start the test server:**
+**First, start the test server on your computer:**
 ```bash
-bazel run //examples/esp/http_speed_test/server:run
+cd examples/apps/http_speed_test/server && python3 server.py
+# Or: bazel run //examples/apps/http_speed_test/server:run
 ```
 
-- **Zig / ESP32-S3-DevKit** (bin: 758KB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  cd examples/esp/http_speed_test/zig
-  idf.py set-target esp32s3
-  idf.py menuconfig  # Set TEST_SERVER_IP
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
-  ```
+  WIFI_PASSWORD=secret bazel build //examples/apps/http_speed_test:esp \
+      --define WIFI_SSID=MyNetwork \
+      --define TEST_SERVER_IP=192.168.1.100 \
+      --action_env=WIFI_PASSWORD
 
-- **C / ESP32-S3** (bin: 861KB)
-  ```bash
-  cd examples/esp/http_speed_test/c
-  idf.py set-target esp32s3
-  idf.py menuconfig  # Set TEST_SERVER_IP
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  WIFI_PASSWORD=secret bazel run //examples/apps/http_speed_test:flash \
+      --//bazel/esp:port=/dev/ttyUSB0 \
+      --define WIFI_SSID=MyNetwork \
+      --define TEST_SERVER_IP=192.168.1.100 \
+      --action_env=WIFI_PASSWORD
   ```
 
 ## https_speed_test
 
-HTTPS download benchmark with self-signed certificates. Requires running the test server.
+HTTPS download benchmark with TLS.
 
 **First, start the HTTPS test server:**
 ```bash
-bazel run //examples/esp/https_speed_test/server:run
+cd examples/apps/https_speed_test/server && python3 server.py
+# Or: bazel run //examples/apps/https_speed_test/server:run
 ```
 
-- **Zig / ESP32-S3-DevKit** (bin: 813KB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  cd examples/esp/https_speed_test/zig
-  idf.py set-target esp32s3
-  idf.py menuconfig  # Set TEST_SERVER_IP
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
-  ```
+  WIFI_PASSWORD=secret bazel build //examples/apps/https_speed_test:esp \
+      --define WIFI_SSID=MyNetwork \
+      --define TEST_SERVER_IP=192.168.1.100 \
+      --action_env=WIFI_PASSWORD
 
-- **C / ESP32-S3** (bin: 862KB)
-  ```bash
-  cd examples/esp/https_speed_test/c
-  idf.py set-target esp32s3
-  idf.py menuconfig  # Set TEST_SERVER_IP
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  WIFI_PASSWORD=secret bazel run //examples/apps/https_speed_test:flash \
+      --//bazel/esp:port=/dev/ttyUSB0 \
+      --define WIFI_SSID=MyNetwork \
+      --define TEST_SERVER_IP=192.168.1.100 \
+      --action_env=WIFI_PASSWORD
   ```
 
 ## memory_attr_test
 
-PSRAM/IRAM placement.
+PSRAM/IRAM memory placement test.
 
-- **Zig / ESP32-S3-DevKit** (bin: 212KB, RAM: 397KB, PSRAM: 8MB)
+- **Zig / ESP32-S3-DevKit**
   ```bash
-  bazel build //examples/esp/memory_attr_test/zig:app --//bazel/esp:board=esp32s3_devkit
-  bazel run //examples/esp/memory_attr_test/zig:flash --//bazel/esp:chip=esp32s3 --//bazel/esp:port=/dev/ttyUSB0
-  bazel run //examples/esp/memory_attr_test/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
-  ```
-
-- **C / ESP32-S3** (bin: 195KB, RAM: 397KB, PSRAM: 8MB)
-  ```bash
-  cd examples/esp/memory_attr_test/c
-  idf.py set-target esp32s3
-  idf.py build
-  idf.py -p /dev/ttyUSB0 flash monitor
+  bazel build //examples/apps/memory_attr_test:esp
+  bazel run //examples/apps/memory_attr_test:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
 ## ui_demo
 
-UI components demo (desktop only).
+UI components demo (desktop simulator only).
 
 - **Zig / Desktop Simulator (Raylib)**
   ```bash

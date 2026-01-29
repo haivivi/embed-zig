@@ -29,7 +29,7 @@ fn timerCallback(
     return false;
 }
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     log.info("==========================================", .{});
     log.info("Hardware Timer Example - HAL v5", .{});
     log.info("Build Tag: {s}", .{BUILD_TAG});

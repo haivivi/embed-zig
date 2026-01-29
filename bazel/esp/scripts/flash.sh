@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 # Check Bazel environment
-check_bazel_env "flash.sh" "//examples/esp/<project>/zig:flash"
+check_bazel_env "flash.sh" "//examples/apps/<project>:flash"
 
 # Configuration from environment (set by Bazel)
 : "${ESP_CHIP:=esp32s3}"

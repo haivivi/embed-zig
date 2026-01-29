@@ -13,20 +13,17 @@ const TlsStream = platform.tls;
 
 const BUILD_TAG = "https_speed_test_hal_v1";
 
-/// Run HTTPS speed test with server configuration
-pub fn runWithConfig(
-    wifi_ssid: [:0]const u8,
-    wifi_password: [:0]const u8,
-    server_ip: []const u8,
-    server_port: u16,
-    ca_cert: ?[:0]const u8,
-) void {
+/// Run HTTPS speed test with env from platform
+pub fn run(env: anytype) void {
+    // Use ca_cert from env if available, otherwise null (skip verification)
+    const ca_cert: ?[:0]const u8 = if (@hasField(@TypeOf(env), "ca_cert")) env.ca_cert else null;
+
     log.info("==========================================", .{});
     log.info("  HTTPS Speed Test - HAL Version", .{});
     log.info("  Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
 
-    log.info("Server: {s}:{}", .{ server_ip, server_port });
+    log.info("Server: {s}:{}", .{ env.test_server_ip, env.test_server_port });
 
     // Initialize board
     var b: Board = undefined;
@@ -39,9 +36,9 @@ pub fn runWithConfig(
     // Connect to WiFi
     log.info("", .{});
     log.info("Connecting to WiFi...", .{});
-    log.info("SSID: {s}", .{wifi_ssid});
+    log.info("SSID: {s}", .{env.wifi_ssid});
 
-    b.wifi.connect(wifi_ssid, wifi_password) catch |err| {
+    b.wifi.connect(env.wifi_ssid, env.wifi_password) catch |err| {
         log.err("WiFi connect failed: {}", .{err});
         return;
     };
@@ -55,9 +52,9 @@ pub fn runWithConfig(
 
     // Run tests
     Board.time.sleepMs(1000);
-    runHttpsTest(server_ip, server_port, "/test/10m", "HTTPS Download 10MB", ca_cert);
+    runHttpsTest(env.test_server_ip, env.test_server_port, "/test/10m", "HTTPS Download 10MB", ca_cert);
     Board.time.sleepMs(1000);
-    runHttpsTest(server_ip, server_port, "/test/52428800", "HTTPS Download 50MB", ca_cert);
+    runHttpsTest(env.test_server_ip, env.test_server_port, "/test/52428800", "HTTPS Download 50MB", ca_cert);
 
     log.info("", .{});
     log.info("=== Test Complete ===", .{});

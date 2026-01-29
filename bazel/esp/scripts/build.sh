@@ -4,13 +4,12 @@
 #
 # Required environment variables (set by wrapper):
 #   ESP_BOARD        - Board name (e.g., esp32s3_devkit)
-#   ESP_CHIP         - Chip type (e.g., esp32s3)
 #   ESP_PROJECT_NAME - Project name for output files
 #   ESP_BIN_OUT      - Output path for .bin file
 #   ESP_ELF_OUT      - Output path for .elf file
 #   ZIG_INSTALL      - Path to Zig installation
 #   ESP_WORK_DIR     - Work directory with copied files (preserves repo structure)
-#   ESP_PROJECT_PATH - Project path relative to workspace (e.g., examples/esp/gpio_button/zig)
+#   ESP_PROJECT_PATH - Project path relative to workspace (e.g., esp_project)
 #   ESP_EXECROOT     - Bazel execroot for output
 set -e
 
@@ -19,11 +18,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 # Check Bazel environment
-check_bazel_env "build.sh" "//examples/esp/<project>/zig:app"
+check_bazel_env "build.sh" "//examples/apps/<project>:esp"
 
 # Validate required variables
 : "${ESP_BOARD:?ESP_BOARD not set}"
-: "${ESP_CHIP:?ESP_CHIP not set}"
 : "${ESP_PROJECT_NAME:?ESP_PROJECT_NAME not set}"
 : "${ESP_BIN_OUT:?ESP_BIN_OUT not set}"
 : "${ESP_ELF_OUT:?ESP_ELF_OUT not set}"
@@ -41,7 +39,7 @@ PROJECT_DIR="$WORK/$ESP_PROJECT_PATH"
 main() {
     echo "[esp_build] Work directory: $WORK"
     echo "[esp_build] Project path: $ESP_PROJECT_PATH"
-    echo "[esp_build] Board: $ESP_BOARD, Chip: $ESP_CHIP"
+    echo "[esp_build] Board: $ESP_BOARD"
 
     # Setup environment
     export ZIG_BOARD="$ESP_BOARD"
@@ -63,11 +61,26 @@ main() {
 
     # Build - use PROJECT_DIR which preserves the original repo structure
     cd "$PROJECT_DIR"
+    
+    # Extract chip type from sdkconfig.defaults
+    ESP_CHIP=$(grep -E '^CONFIG_IDF_TARGET=' sdkconfig.defaults | sed 's/CONFIG_IDF_TARGET="\(.*\)"/\1/' | head -1)
+    if [ -z "$ESP_CHIP" ]; then
+        echo "[esp_build] Error: CONFIG_IDF_TARGET not found in sdkconfig.defaults"
+        exit 1
+    fi
+    echo "[esp_build] Chip (from sdkconfig): $ESP_CHIP"
+    
     idf.py set-target "$ESP_CHIP"
     
     # Build CMake arguments using array (safe for spaces/special chars in values)
     CMAKE_ARGS=()
     CMAKE_ARGS+=("-DZIG_BOARD=$ESP_BOARD")
+    
+    # Support both WIFI_SSID and ESP_WIFI_SSID formats from env file
+    : "${ESP_WIFI_SSID:=$WIFI_SSID}"
+    : "${ESP_WIFI_PASSWORD:=$WIFI_PASSWORD}"
+    : "${ESP_TEST_SERVER_IP:=$TEST_SERVER_IP}"
+    : "${ESP_TEST_SERVER_PORT:=$TEST_SERVER_PORT}"
     
     # Add WiFi settings if specified
     if [ -n "$ESP_WIFI_SSID" ]; then
@@ -80,6 +93,10 @@ main() {
     if [ -n "$ESP_TEST_SERVER_IP" ]; then
         CMAKE_ARGS+=("-DCONFIG_TEST_SERVER_IP=$ESP_TEST_SERVER_IP")
         echo "[esp_build] Test server IP: $ESP_TEST_SERVER_IP"
+    fi
+    if [ -n "$ESP_TEST_SERVER_PORT" ]; then
+        CMAKE_ARGS+=("-DCONFIG_TEST_SERVER_PORT=$ESP_TEST_SERVER_PORT")
+        echo "[esp_build] Test server port: $ESP_TEST_SERVER_PORT"
     fi
     
     idf.py "${CMAKE_ARGS[@]}" build

@@ -2,50 +2,23 @@
 
 中文 | [English](./bootstrap.md)
 
-## TL;DR
+## 前置要求
+
+### 1. 安装 Bazel
 
 ```bash
-# 1. 下载支持 Xtensa 的 Zig
-curl -LO https://github.com/haivivi/embed-zig/releases/download/zig-0.14.0-xtensa/zig-aarch64-macos-none-baseline.tar.xz
-tar -xJf zig-aarch64-macos-none-baseline.tar.xz
-export PATH=$PWD/zig-aarch64-macos-none-baseline:$PATH
+# macOS
+brew install bazel
 
-# 2. 设置 ESP-IDF
-cd ~/esp/esp-idf && source export.sh
-
-# 3. 编译烧录示例
-cd examples/esp/led_strip_flash/zig
-idf.py build && idf.py flash monitor
+# Linux (Ubuntu/Debian)
+sudo apt install apt-transport-https curl gnupg
+curl -fsSL https://bazel.build/bazel-release.pub.gpg | gpg --dearmor > bazel.gpg
+sudo mv bazel.gpg /etc/apt/trusted.gpg.d/
+echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
+sudo apt update && sudo apt install bazel
 ```
 
-完成。你的 LED 应该在闪烁了。
-
----
-
-## 详细设置
-
-### 1. 预编译 Zig 编译器
-
-标准 Zig 不支持 Xtensa（ESP32 的架构）。下载我们的预编译版本：
-
-| 平台 | 下载 |
-|------|------|
-| macOS ARM64 | `zig-aarch64-macos-none-baseline.tar.xz` |
-| macOS x86_64 | `zig-x86_64-macos-none-baseline.tar.xz` |
-| Linux x86_64 | `zig-x86_64-linux-gnu-baseline.tar.xz` |
-| Linux ARM64 | `zig-aarch64-linux-gnu-baseline.tar.xz` |
-
-[从 GitHub Releases 下载 →](https://github.com/haivivi/embed-zig/releases)
-
-```bash
-# 验证 Xtensa 支持
-zig targets | grep xtensa
-# 应该显示: xtensa-esp32, xtensa-esp32s2, xtensa-esp32s3
-```
-
-### 2. ESP-IDF 环境
-
-embed-zig 与 ESP-IDF 集成。先安装它：
+### 2. 安装 ESP-IDF
 
 ```bash
 # 克隆 ESP-IDF (推荐 v5.x)
@@ -60,69 +33,65 @@ source ~/esp/esp-idf/export.sh
 ### 3. 克隆本仓库
 
 ```bash
-git clone https://github.com/haivivi/embed-zig.git
-cd embed-zig
-```
-
-### 4. 编译示例
-
-```bash
-cd examples/esp/led_strip_flash/zig
-
-# 设置目标芯片
-idf.py set-target esp32s3
-
-# 编译
-idf.py build
-
-# 烧录并监控
-idf.py -p /dev/cu.usbmodem1301 flash monitor
-# 按 Ctrl+] 退出监控
+git clone https://github.com/haivivi/zig-bootstrap.git
+cd zig-bootstrap
 ```
 
 ---
 
-## 板子选择
+## 快速上手
 
-很多示例支持多种板子。用 `-DZIG_BOARD` 选择：
+```bash
+# 激活 ESP-IDF
+source ~/esp/esp-idf/export.sh
+
+# 编译示例
+bazel build //examples/apps/led_strip_flash:esp
+
+# 烧录到设备
+bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
+```
+
+完成。你的 LED 应该在闪烁了。
+
+---
+
+## 编译命令
+
+### 编译
+
+```bash
+bazel build //examples/apps/<名称>:esp
+```
+
+### 烧录
+
+```bash
+bazel run //examples/apps/<名称>:flash --//bazel/esp:port=/dev/ttyUSB0
+```
+
+### 板子选择
 
 ```bash
 # ESP32-S3-DevKitC (默认)
-idf.py build
+bazel build //examples/apps/gpio_button:esp
 
-# ESP32-S3-Korvo-2 V3.1
-idf.py -DZIG_BOARD=korvo2_v3 build
+# ESP32-S3-Korvo-2 V3
+bazel build //examples/apps/gpio_button:esp --//bazel/esp:board=korvo2_v3
 ```
 
 | 板子 | 参数 | 特性 |
 |------|------|------|
 | ESP32-S3-DevKitC | `esp32s3_devkit` | GPIO 按钮，单色 LED |
-| ESP32-S3-Korvo-2 | `korvo2_v3` | ADC 按钮，RGB LED 灯带 |
+| ESP32-S3-Korvo-2 | `korvo2_v3` | ADC 按钮，RGB LED 灯带，麦克风 |
 
----
+### 环境变量（WiFi 示例）
 
-## 作为依赖使用
-
-添加到你的 `build.zig.zon`：
-
-```zig
-.dependencies = .{
-    .hal = .{
-        .url = "https://github.com/haivivi/embed-zig/archive/refs/heads/main.tar.gz",
-        .hash = "...",  // 运行 zig build 获取 hash
-    },
-    .esp = .{
-        .url = "https://github.com/haivivi/embed-zig/archive/refs/heads/main.tar.gz",
-        .hash = "...",
-    },
-},
-```
-
-在你的 `build.zig` 中：
-
-```zig
-const hal = b.dependency("hal", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("hal", hal.module("hal"));
+```bash
+# 传递 WiFi 凭证
+WIFI_PASSWORD=密码 bazel build //examples/apps/wifi_dns_lookup:esp \
+    --define WIFI_SSID=网络名 \
+    --action_env=WIFI_PASSWORD
 ```
 
 ---
@@ -136,42 +105,41 @@ ESP-IDF 环境未激活：
 source ~/esp/esp-idf/export.sh
 ```
 
-### "Stack overflow in main task"
-
-在 `sdkconfig.defaults` 中增加栈大小：
-```
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-```
-
-然后重新编译：
-```bash
-rm sdkconfig && idf.py fullclean && idf.py build
-```
-
-### "sdkconfig.defaults 修改不生效"
+### Bazel 缓存问题
 
 ```bash
-rm sdkconfig && idf.py fullclean && idf.py build
+bazel clean --expunge
 ```
 
-### Zig 缓存问题
+### 拉取更新后编译错误
 
 ```bash
-rm -rf .zig-cache build
-idf.py fullclean && idf.py build
+bazel clean
+bazel build //examples/apps/<名称>:esp
 ```
 
 ---
 
-## 为什么需要定制 Zig 编译器？
+## 为什么用 Bazel？
 
-Zig 官方版本不包含 Xtensa 后端支持。ESP32（原版）、ESP32-S2 和 ESP32-S3 使用 Xtensa 内核。
+- **封闭式构建**：Zig 工具链自动下载
+- **缓存**：只重新编译改动的部分
+- **跨平台**：macOS 和 Linux 使用相同命令
+- **可复现**：相同源码 = 相同二进制
 
-我们维护一个分支：
-1. 合并 Espressif 的 LLVM Xtensa 补丁
-2. 基于打过补丁的 LLVM 编译 Zig
-3. 为常见平台提供预编译二进制
+支持 Xtensa 的 Zig 编译器由 Bazel 自动获取，无需手动下载。
 
-ESP32-C3/C6 使用 RISC-V，可以用标准 Zig。但对于 Xtensa 芯片，你需要我们的构建版本。
+---
 
-如果你想自己编译，参见 [bootstrap/](https://github.com/haivivi/embed-zig/tree/main/bootstrap)。
+## 备选：直接使用 idf.py
+
+如果你更习惯直接用 ESP-IDF：
+
+```bash
+cd examples/esp/led_strip_flash/zig
+idf.py set-target esp32s3
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+注意：这需要手动下载支持 Xtensa 的 Zig 编译器。

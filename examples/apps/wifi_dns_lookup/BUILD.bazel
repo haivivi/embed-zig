@@ -1,0 +1,46 @@
+# WiFi DNS Lookup App
+
+load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+load("//bazel:env.bzl", "make_env_file")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*"]),
+)
+
+# Environment from command line
+# Usage:
+#   bazel build //examples/apps/wifi_dns_lookup:esp --define WIFI_SSID=xxx --define WIFI_PASSWORD=yyy
+# Or with env var:
+#   WIFI_PASSWORD=secret bazel build ... --define WIFI_SSID=xxx --action_env=WIFI_PASSWORD
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID"],
+    env_vars = ["WIFI_PASSWORD"],
+)
+
+esp_zig_app(
+    name = "esp",
+    app = ":srcs",
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "esp_http_client"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+        "esp_http_client_init",
+        "esp_http_client_cleanup",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/src/wifi/wifi.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES"],
+    extra_deps = ["hal", "dns"],
+    sdkconfig = "//examples/esp:esp32s3_wifi",
+    app_config = "//examples/esp:app_internal",
+    env = ":env",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":esp",
+)

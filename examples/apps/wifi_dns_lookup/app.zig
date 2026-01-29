@@ -86,8 +86,8 @@ fn dnsLookupTest() void {
     }
 }
 
-/// Run with WiFi credentials from platform
-pub fn runWithConfig(wifi_ssid: [:0]const u8, wifi_password: [:0]const u8) void {
+/// Run with env from platform
+pub fn run(env: anytype) void {
     log.info("==========================================", .{});
     log.info("  WiFi DNS Lookup - HAL Version", .{});
     log.info("  Build Tag: {s}", .{BUILD_TAG});
@@ -106,9 +106,9 @@ pub fn runWithConfig(wifi_ssid: [:0]const u8, wifi_password: [:0]const u8) void 
     // Connect to WiFi
     log.info("", .{});
     log.info("Connecting to WiFi...", .{});
-    log.info("SSID: {s}", .{wifi_ssid});
+    log.info("SSID: {s}", .{env.wifi_ssid});
 
-    b.wifi.connect(wifi_ssid, wifi_password) catch |err| {
+    b.wifi.connect(env.wifi_ssid, env.wifi_password) catch |err| {
         log.err("WiFi connect failed: {}", .{err});
         return;
     };

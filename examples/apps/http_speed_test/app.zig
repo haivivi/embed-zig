@@ -12,19 +12,14 @@ const Socket = trait.socket.from(Board.socket);
 
 const BUILD_TAG = "http_speed_test_hal_v1";
 
-/// Run HTTP speed test with server configuration
-pub fn runWithConfig(
-    wifi_ssid: [:0]const u8,
-    wifi_password: [:0]const u8,
-    server_ip: []const u8,
-    server_port: u16,
-) void {
+/// Run HTTP speed test with env from platform
+pub fn run(env: anytype) void {
     log.info("==========================================", .{});
     log.info("  HTTP Speed Test - HAL Version", .{});
     log.info("  Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
 
-    log.info("Server: {s}:{}", .{ server_ip, server_port });
+    log.info("Server: {s}:{}", .{ env.test_server_ip, env.test_server_port });
 
     // Initialize board
     var b: Board = undefined;
@@ -37,9 +32,9 @@ pub fn runWithConfig(
     // Connect to WiFi
     log.info("", .{});
     log.info("Connecting to WiFi...", .{});
-    log.info("SSID: {s}", .{wifi_ssid});
+    log.info("SSID: {s}", .{env.wifi_ssid});
 
-    b.wifi.connect(wifi_ssid, wifi_password) catch |err| {
+    b.wifi.connect(env.wifi_ssid, env.wifi_password) catch |err| {
         log.err("WiFi connect failed: {}", .{err});
         return;
     };
@@ -53,9 +48,9 @@ pub fn runWithConfig(
 
     // Run tests
     Board.time.sleepMs(1000);
-    runHttpTest(server_ip, server_port, "/test/10m", "HTTP Download 10MB");
+    runHttpTest(env.test_server_ip, env.test_server_port, "/test/10m", "HTTP Download 10MB");
     Board.time.sleepMs(1000);
-    runHttpTest(server_ip, server_port, "/test/52428800", "HTTP Download 50MB");
+    runHttpTest(env.test_server_ip, env.test_server_port, "/test/52428800", "HTTP Download 50MB");
 
     log.info("", .{});
     log.info("=== Test Complete ===", .{});

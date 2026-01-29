@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 # Check Bazel environment
-check_bazel_env "monitor.sh" "//examples/esp/<project>/zig:monitor"
+check_bazel_env "monitor.sh" "//bazel/esp:monitor"
 
 # Configuration from environment (set by Bazel)
 : "${ESP_BOARD:=esp32s3_devkit}"

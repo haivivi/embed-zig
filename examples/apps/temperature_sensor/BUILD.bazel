@@ -1,0 +1,27 @@
+# Temperature Sensor App
+
+load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "esp",
+    app = ":srcs",
+    requires = ["driver", "esp_adc", "esp_driver_tsens"],
+    force_link = [
+        "temperature_sensor_install",
+    ],
+    extra_deps = ["hal"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":esp",
+)

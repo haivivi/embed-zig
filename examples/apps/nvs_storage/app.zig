@@ -13,7 +13,7 @@ const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     log.info("==========================================", .{});
     log.info("NVS Storage Example - HAL", .{});
     log.info("==========================================", .{});

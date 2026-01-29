@@ -9,6 +9,7 @@ zig-out
 build
 tmp
 sdkconfig
+!sdkconfig/
 sdkconfig.old
 managed_components
 

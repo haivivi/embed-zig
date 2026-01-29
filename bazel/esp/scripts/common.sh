@@ -19,8 +19,8 @@ check_bazel_env() {
         echo "    bazel run $bazel_target"
         echo ""
         echo "Examples:"
-        echo "    bazel run //examples/esp/led_strip_flash/zig:flash"
-        echo "    bazel run //examples/esp/led_strip_flash/zig:monitor"
+        echo "    bazel run //examples/apps/led_strip_flash:flash"
+        echo "    bazel run //bazel/esp:monitor"
         echo ""
         exit 1
     fi

@@ -89,7 +89,7 @@ fn printInfo() void {
     log.info("==========================================", .{});
 }
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     printInfo();
 
     // Initialize board

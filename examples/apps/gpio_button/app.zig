@@ -10,7 +10,7 @@ const log = Board.log;
 
 var led_state: bool = false;
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     log.info("GPIO Button Example - HAL v5", .{});
 
     var b: Board = undefined;

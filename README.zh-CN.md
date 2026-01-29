@@ -38,7 +38,7 @@ tar -xJf zig-aarch64-macos-none-baseline.tar.xz && export PATH=$PWD/zig-aarch64-
 
 # 设置 ESP-IDF 并编译示例
 cd ~/esp/esp-idf && source export.sh
-cd examples/esp/led_strip_flash/zig && idf.py build && idf.py flash monitor
+bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 或者在模拟器中运行（无需硬件）：

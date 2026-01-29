@@ -1,0 +1,24 @@
+# Memory Attribute Test
+# Tests PSRAM, IRAM, DRAM memory placement - no HAL dependency
+
+load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "esp",
+    app = ":srcs",
+    requires = ["driver"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":esp",
+)

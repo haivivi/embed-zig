@@ -40,7 +40,7 @@ tar -xJf zig-aarch64-macos-none-baseline.tar.xz && export PATH=$PWD/zig-aarch64-
 
 # Set up ESP-IDF and build an example
 cd ~/esp/esp-idf && source export.sh
-cd examples/esp/led_strip_flash/zig && idf.py build && idf.py flash monitor
+bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
 ```
 
 Or run in simulation (no hardware needed):

@@ -28,7 +28,7 @@ fn printBoardInfo() void {
     log.info("==========================================", .{});
 }
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     printBoardInfo();
 
     // Initialize board

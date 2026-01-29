@@ -184,7 +184,7 @@ function(esp_zig_build)
             -Doptimize=${ZIG_BUILD_TYPE}
             -Dtarget=${ZIG_TARGET}
             -Dcpu=${TARGET_CPU_MODEL}
-            -Dboard=${ZIG_BOARD}
+            ${ZIG_OPTIONS}
             -freference-trace
             --prominent-compile-errors
             --cache-dir ${CMAKE_BINARY_DIR}/../.zig-cache

@@ -1,0 +1,4 @@
+# ESP sdkconfig modules
+# Each module corresponds to ESP-IDF components
+
+package(default_visibility = ["//visibility:public"])

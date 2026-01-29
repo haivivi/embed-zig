@@ -10,7 +10,7 @@ const log = Board.log;
 
 const FADE_TIME_MS: u32 = 2000;
 
-pub fn run() void {
+pub fn run(_: anytype) void {
     log.info("==========================================", .{});
     log.info("PWM Fade Example - HAL v5", .{});
     log.info("==========================================", .{});

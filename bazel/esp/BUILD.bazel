@@ -11,13 +11,6 @@ string_flag(
     build_setting_default = "esp32s3_devkit",
 )
 
-# ESP chip type (for ESP-IDF and esptool)
-# Valid values: esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, etc.
-string_flag(
-    name = "chip",
-    build_setting_default = "esp32s3",
-)
-
 # Serial port for flash/monitor (auto-detect if empty)
 string_flag(
     name = "port",
@@ -28,26 +21,6 @@ string_flag(
 string_flag(
     name = "baud",
     build_setting_default = "460800",
-)
-
-# WiFi SSID (overrides CONFIG_WIFI_SSID in sdkconfig)
-# Note: Default is a public WiFi for development/testing, not a security concern
-string_flag(
-    name = "wifi_ssid",
-    build_setting_default = "HAIVIVI-MFG",
-)
-
-# WiFi password (overrides CONFIG_WIFI_PASSWORD in sdkconfig)
-# Note: Default is a public WiFi for development/testing, not a security concern
-string_flag(
-    name = "wifi_password",
-    build_setting_default = "!haivivi",
-)
-
-# Test server IP (for http_speed_test example)
-string_flag(
-    name = "test_server_ip",
-    build_setting_default = "",
 )
 
 # Build scripts

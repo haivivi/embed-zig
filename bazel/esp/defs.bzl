@@ -19,23 +19,44 @@ Usage:
 
 Build:
     # Default board (esp32s3_devkit)
-    bazel build //examples/esp/led_strip_flash/zig:app
+    bazel build //examples/apps/led_strip_flash:esp
     
     # Specify board
-    bazel build //examples/esp/led_strip_flash/zig:app --//bazel/esp:board=korvo2_v3
+    bazel build //examples/apps/led_strip_flash:esp --//bazel/esp:board=korvo2_v3
     
     # Flash (auto-detect port)
-    bazel run //examples/esp/led_strip_flash/zig:flash
+    bazel run //examples/apps/led_strip_flash:flash
     
     # Flash to specific port
-    bazel run //examples/esp/led_strip_flash/zig:flash --//bazel/esp:port=/dev/ttyUSB0
+    bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
     
     # Monitor
-    bazel run //examples/esp/led_strip_flash/zig:monitor --//bazel/esp:port=/dev/ttyUSB0
+    bazel run //bazel/esp:monitor --//bazel/esp:port=/dev/ttyUSB0
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP", "DEFAULT_WIFI_SSID", "DEFAULT_WIFI_PASSWORD", "DEFAULT_TEST_SERVER_IP")
+load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
+
+# sdkconfig modules (each corresponds to ESP-IDF components)
+# All modules are independent rules that generate .sdkconfig fragments
+load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
+load("//bazel/esp/sdkconfig:psram.bzl", "esp_psram")
+load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
+load("//bazel/esp/sdkconfig:log.bzl", "esp_log")
+load("//bazel/esp/sdkconfig:wifi.bzl", "esp_wifi")
+load("//bazel/esp/sdkconfig:lwip.bzl", "esp_lwip")
+load("//bazel/esp/sdkconfig:spiffs.bzl", "esp_spiffs")
+load("//bazel/esp/sdkconfig:littlefs.bzl", "esp_littlefs")
+# Non-IDF configs
+load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
+load("//bazel/esp/sdkconfig:validate.bzl", "esp_validate")
+load("//bazel:env.bzl", "make_env_file")
+
+# Labels relative to this repository (works when used from external repos)
+_LIBS_LABEL = Label("//:all_libs")
+_CMAKE_MODULES_LABEL = Label("//cmake:cmake_modules")
+_SCRIPTS_LABEL = Label("//bazel/esp:scripts")
+_APPS_LABEL = Label("//examples/apps:all_apps")
 
 # =============================================================================
 # esp_idf_app - Build ESP-IDF project with Zig
@@ -73,10 +94,6 @@ def _esp_idf_app_impl(ctx):
     
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
-    chip = ctx.attr._chip[BuildSettingInfo].value if ctx.attr._chip and BuildSettingInfo in ctx.attr._chip else DEFAULT_CHIP
-    wifi_ssid = ctx.attr._wifi_ssid[BuildSettingInfo].value if ctx.attr._wifi_ssid and BuildSettingInfo in ctx.attr._wifi_ssid else DEFAULT_WIFI_SSID
-    wifi_password = ctx.attr._wifi_password[BuildSettingInfo].value if ctx.attr._wifi_password and BuildSettingInfo in ctx.attr._wifi_password else DEFAULT_WIFI_PASSWORD
-    test_server_ip = ctx.attr._test_server_ip[BuildSettingInfo].value if ctx.attr._test_server_ip and BuildSettingInfo in ctx.attr._test_server_ip else DEFAULT_TEST_SERVER_IP
     
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
@@ -99,9 +116,8 @@ def _esp_idf_app_impl(ctx):
     # Files are copied preserving their original paths, so relative references work
     script_content = """#!/bin/bash
 set -e
-export ESP_BAZEL_RUN=1 ESP_BOARD="{board}" ESP_CHIP="{chip}"
+export ESP_BAZEL_RUN=1 ESP_BOARD="{board}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
-export ESP_WIFI_SSID="{wifi_ssid}" ESP_WIFI_PASSWORD="{wifi_password}" ESP_TEST_SERVER_IP="{test_server_ip}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 export ESP_PROJECT_PATH="{project_path}"
 WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
@@ -112,16 +128,12 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 exec bash "{build_sh}"
 """.format(
         board = board,
-        chip = chip,
-        wifi_ssid = wifi_ssid,
-        wifi_password = wifi_password,
-        test_server_ip = test_server_ip,
         project_name = project_name,
         bin_out = bin_file.path,
         elf_out = elf_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
         build_sh = build_sh.path if build_sh else "",
-        project_path = ctx.label.package,  # e.g., "examples/esp/gpio_button/zig"
+        project_path = ctx.label.package,  # e.g., "examples/apps/gpio_button"
         src_copy_commands = "\n".join(src_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
@@ -186,7 +198,7 @@ esp_idf_app = rule(
         ),
         "cmake_modules": attr.label_list(
             allow_files = True,
-            default = ["//cmake:cmake_modules"],
+            default = [_CMAKE_MODULES_LABEL],
             doc = "CMake module files (e.g., zig_install.cmake)",
         ),
         "project_name": attr.string(
@@ -197,34 +209,593 @@ esp_idf_app = rule(
             doc = "Zig compiler with Xtensa support",
         ),
         "_libs": attr.label(
-            default = "//:all_libs",
+            default = _LIBS_LABEL,
             doc = "Library files from embed-zig",
         ),
         "_apps": attr.label(
-            default = "//examples/apps:all_apps",
+            default = _APPS_LABEL,
             doc = "App files from embed-zig examples",
         ),
         "_board": attr.label(
             default = "//bazel/esp:board",
         ),
-        "_chip": attr.label(
-            default = "//bazel/esp:chip",
-        ),
-        "_wifi_ssid": attr.label(
-            default = "//bazel/esp:wifi_ssid",
-        ),
-        "_wifi_password": attr.label(
-            default = "//bazel/esp:wifi_password",
-        ),
-        "_test_server_ip": attr.label(
-            default = "//bazel/esp:test_server_ip",
-        ),
         "_scripts": attr.label(
-            default = "//bazel/esp:scripts",
+            default = _SCRIPTS_LABEL,
             doc = "Build scripts",
         ),
     },
     doc = "Build an ESP-IDF project with Zig support",
+)
+
+# =============================================================================
+# esp_zig_app - Build ESP-IDF project from app (generates shell automatically)
+# =============================================================================
+
+def _esp_zig_app_impl(ctx):
+    """Build an ESP-IDF project with Zig, generating the ESP shell automatically."""
+    
+    # Output files
+    project_name = ctx.attr.project_name or ctx.label.name
+    bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
+    elf_file = ctx.actions.declare_file("{}.elf".format(project_name))
+    
+    # Get app files
+    app_files = ctx.attr.app.files.to_list()
+    app_path = ctx.attr.app.label.package  # e.g., "examples/apps/gpio_button"
+    app_name = ctx.attr.app.label.package.split("/")[-1]  # e.g., "gpio_button"
+    
+    # Collect cmake module files
+    cmake_files = []
+    for cmake in ctx.attr.cmake_modules:
+        cmake_files.extend(cmake.files.to_list())
+    
+    # Get Zig toolchain path
+    zig_files = ctx.attr._zig_toolchain.files.to_list()
+    zig_bin = None
+    for f in zig_files:
+        if f.basename == "zig" and f.is_source:
+            zig_bin = f
+            break
+    
+    # Get lib files
+    lib_files = ctx.attr._libs.files.to_list()
+    
+    # Build settings
+    board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
+    
+    # Get env file if provided
+    env_file = None
+    if ctx.attr.env:
+        env_files = ctx.attr.env.files.to_list()
+        if env_files:
+            env_file = env_files[0]
+    
+    # Get script files
+    script_files = ctx.attr._scripts.files.to_list()
+    build_sh = None
+    for f in script_files:
+        if f.basename == "build.sh":
+            build_sh = f
+            break
+    
+    # Get sdkconfig file if provided
+    sdkconfig_file = None
+    sdkconfig_files = []
+    if ctx.attr.sdkconfig:
+        sdkconfig_files = ctx.attr.sdkconfig.files.to_list()
+        if sdkconfig_files:
+            sdkconfig_file = sdkconfig_files[0]
+    
+    # Get app_config file if provided (for run_in_psram setting)
+    app_config_file = None
+    app_config_files = []
+    run_in_psram = False
+    if ctx.attr.app_config:
+        app_config_files = ctx.attr.app_config.files.to_list()
+        if app_config_files:
+            app_config_file = app_config_files[0]
+            # We'll pass this to the shell script to parse
+            run_in_psram = True  # Will be determined at runtime from file
+    
+    # Generate copy commands
+    app_copy_commands = _generate_copy_commands_preserve_structure(app_files)
+    cmake_copy_commands = _generate_copy_commands_preserve_structure(cmake_files)
+    lib_copy_commands = _generate_copy_commands_preserve_structure(lib_files)
+    
+    # ESP-IDF configuration from attributes
+    requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "driver"
+    force_link = "\n        ".join(ctx.attr.force_link) if ctx.attr.force_link else ""
+    extra_cmake = "\n".join(ctx.attr.extra_cmake) if ctx.attr.extra_cmake else ""
+    extra_c_sources = " ".join(["${" + s + "}" for s in ctx.attr.extra_c_sources]) if ctx.attr.extra_c_sources else ""
+    
+    # IDF component manager dependencies
+    idf_deps_yml = ""
+    for dep in ctx.attr.idf_deps:
+        parts = dep.split(":")
+        if len(parts) == 2:
+            idf_deps_yml += '  {}: "{}"\n'.format(parts[0], parts[1])
+        else:
+            idf_deps_yml += '  {}: "*"\n'.format(dep)
+    
+    # Extra lib dependencies for build.zig.zon
+    extra_deps_zon = ""
+    extra_deps_zig_imports = ""
+    extra_deps_zig_decls = ""
+    for dep in ctx.attr.extra_deps:
+        dep_name = dep.lstrip(".")
+        extra_deps_zon += '        .{name} = .{{ .path = "../../lib/{name}" }},\n'.format(name = dep_name)
+        extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
+        extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
+        .target = target,
+        .optimize = optimize,
+    }});
+'''.format(name = dep_name)
+    
+    # Create wrapper script
+    build_script = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
+    
+    script_content = """#!/bin/bash
+set -e
+export ESP_BAZEL_RUN=1 ESP_BOARD="{board}"
+export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
+export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
+export ESP_GENERATE_SHELL=1
+export ESP_APP_NAME="{app_name}"
+export ESP_APP_PATH="{app_path}"
+{env_file_export}
+
+# Load app config if provided (for run_in_psram)
+{app_config_source}
+
+WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
+
+# Copy files preserving structure
+{app_copy_commands}
+{cmake_copy_commands}
+{lib_copy_commands}
+
+# Generate ESP shell project
+export ESP_PROJECT_PATH="esp_project"
+mkdir -p "$WORK/$ESP_PROJECT_PATH/main/src"
+
+# Generate top-level CMakeLists.txt
+cat > "$WORK/$ESP_PROJECT_PATH/CMakeLists.txt" << 'CMAKEOF'
+cmake_minimum_required(VERSION 3.16)
+include(${{CMAKE_CURRENT_SOURCE_DIR}}/../cmake/zig_install.cmake)
+include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
+project({project_name})
+CMAKEOF
+
+# Generate main/CMakeLists.txt
+cat > "$WORK/$ESP_PROJECT_PATH/main/CMakeLists.txt" << 'MAINCMAKEOF'
+# Auto-generated ESP-IDF component CMakeLists.txt
+
+# Set _ESP_LIB to the lib directory in the work tree
+get_filename_component(_ESP_LIB "${{CMAKE_CURRENT_SOURCE_DIR}}/../../lib" ABSOLUTE)
+
+{extra_cmake}
+
+if(NOT DEFINED ZIG_BOARD)
+    set(ZIG_BOARD "esp32s3_devkit")
+endif()
+message(STATUS "[{app_name}] Board: ${{ZIG_BOARD}}")
+
+idf_component_register(
+    SRCS "src/main.c" {extra_c_sources}
+    INCLUDE_DIRS "."
+    REQUIRES {requires}
+)
+
+esp_zig_build(
+    FORCE_LINK
+        {force_link}
+)
+MAINCMAKEOF
+
+# Generate main/build.zig
+cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig" << 'BUILDZIGEOF'
+const std = @import("std");
+const esp = @import("esp");
+
+pub fn build(b: *std.Build) void {{
+    const target = b.standardTargetOptions(.{{}});
+    const optimize = b.standardOptimizeOption(.{{}});
+
+    const app_dep = b.dependency("app", .{{
+        .target = target,
+        .optimize = optimize,
+    }});
+
+    const esp_dep = b.dependency("esp", .{{
+        .target = target,
+        .optimize = optimize,
+    }});
+
+{extra_deps_zig_decls}
+    const root_module = b.createModule(.{{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }});
+    root_module.addImport("esp", esp_dep.module("esp"));
+    root_module.addImport("app", app_dep.module("app"));
+{extra_deps_zig_imports}
+
+    const lib = b.addLibrary(.{{
+        .name = "main_zig",
+        .linkage = .static,
+        .root_module = root_module,
+    }});
+
+    esp.addEspDeps(b, root_module) catch {{
+        @panic("Failed to add ESP dependencies");
+    }};
+
+    root_module.addIncludePath(b.path("include"));
+    b.installArtifact(lib);
+}}
+BUILDZIGEOF
+
+# Generate main/build.zig.zon (without fingerprint first)
+cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
+.{{
+    .name = .{app_name},
+    .version = "0.1.0",
+    .dependencies = .{{
+        .esp = .{{ .path = "../../lib/esp" }},
+        .app = .{{ .path = "../../{app_path}" }},
+{extra_deps_zon}    }},
+    .paths = .{{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    }},
+}}
+ZONEOF
+
+# Calculate fingerprint by running zig and extracting suggested value
+cd "$WORK/$ESP_PROJECT_PATH/main"
+FINGERPRINT=$("$ZIG_INSTALL/zig" build --build-file build.zig 2>&1 | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+cd - > /dev/null
+
+if [ -n "$FINGERPRINT" ]; then
+    # Insert fingerprint into build.zig.zon using awk (more portable than sed)
+    awk -v fp="$FINGERPRINT" '/[.]version = "0[.]1[.]0",/ {{ print; print "    .fingerprint = " fp ","; next }} 1' \\
+        "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp"
+    mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
+fi
+
+# Generate main/src/main.c
+cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.c" << 'MAINCEOF'
+// Entry point - calls Zig's app_main
+extern void app_main(void);
+MAINCEOF
+
+# Generate main/src/env.zig - dynamic env from env file
+# Parse env file and generate Zig struct
+ENV_STRUCT_FIELDS=""
+ENV_STRUCT_VALUES=""
+
+if [ -n "$ESP_ENV_FILE" ] && [ -f "$ESP_ENV_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip comments and empty lines
+        case "$line" in
+            '#'*|"") continue ;;
+        esac
+        # Parse KEY=VALUE or KEY="VALUE" or export KEY=VALUE
+        line="${{line#export }}"  # Remove export prefix if present
+        key="${{line%%=*}}"
+        value="${{line#*=}}"
+        # Remove quotes from value
+        value="${{value#'"'}}"
+        value="${{value%'"'}}"
+        # Convert to lowercase for Zig field name
+        field=$(echo "$key" | tr '[:upper:]' '[:lower:]')
+        # Add to struct fields and values
+        if [ -n "$ENV_STRUCT_FIELDS" ]; then
+            ENV_STRUCT_FIELDS="$ENV_STRUCT_FIELDS
+    $field: [:0]const u8,"
+            ENV_STRUCT_VALUES="$ENV_STRUCT_VALUES
+    .$field = \\"$value\\","
+        else
+            ENV_STRUCT_FIELDS="    $field: [:0]const u8,"
+            ENV_STRUCT_VALUES="    .$field = \\"$value\\","
+        fi
+    done < "$ESP_ENV_FILE"
+fi
+
+# Generate env.zig
+cat > "$WORK/$ESP_PROJECT_PATH/main/src/env.zig" << ENVZIGEOF
+//! Application Environment (generated from env file)
+
+pub const Env = struct {{
+$ENV_STRUCT_FIELDS
+}};
+
+pub const env: Env = .{{
+$ENV_STRUCT_VALUES
+}};
+ENVZIGEOF
+
+# Generate main/src/main.zig - unified entry point
+# Check if RUN_APP_IN_PSRAM is set (from app_config)
+if [ "$RUN_APP_IN_PSRAM" = "y" ]; then
+    # PSRAM task version - larger stack in PSRAM
+    cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
+//! ESP Platform Entry Point (PSRAM Task Mode)
+
+const std = @import("std");
+const idf = @import("esp");
+const app = @import("app");
+pub const env_module = @import("env.zig");
+
+const c = @cImport({{
+    @cInclude("sdkconfig.h");
+    @cInclude("freertos/FreeRTOS.h");
+    @cInclude("freertos/task.h");
+    @cInclude("esp_heap_caps.h");
+}});
+
+/// Log level from sdkconfig (CONFIG_LOG_DEFAULT_LEVEL)
+const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4)
+    .debug
+else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3)
+    .info
+else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2)
+    .warn
+else
+    .err;
+
+pub const std_options = std.Options{{
+    .log_level = log_level,
+    .logFn = idf.log.stdLogFn,
+}};
+
+/// PSRAM task stack size (32KB, can be larger since it's in PSRAM)
+const PSRAM_TASK_STACK_SIZE = 32 * 1024;
+const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
+
+/// Static task control block (in internal RAM for performance)
+var task_tcb: c.StaticTask_t = undefined;
+
+/// Stack buffer allocated in PSRAM
+var psram_stack: ?[*]c.StackType_t = null;
+
+fn appTaskFn(_: ?*anyopaque) callconv(.c) void {{
+    app.run(env_module.env);
+    // Task should not return, but if it does, loop forever
+    while (true) {{
+        c.vTaskDelay(c.portMAX_DELAY);
+    }}
+}}
+
+export fn app_main() void {{
+    std.log.info("Starting app in PSRAM task (stack: {{d}}KB)", .{{PSRAM_TASK_STACK_SIZE / 1024}});
+    
+    // Allocate stack in PSRAM
+    psram_stack = @ptrCast(@alignCast(c.heap_caps_malloc(
+        PSRAM_TASK_STACK_SIZE,
+        c.MALLOC_CAP_SPIRAM,
+    )));
+    
+    if (psram_stack == null) {{
+        std.log.err("Failed to allocate PSRAM stack!", .{{}});
+        // Fallback to direct call
+        app.run(env_module.env);
+        return;
+    }}
+    
+    std.log.info("PSRAM stack allocated at {{*}}", .{{psram_stack}});
+    
+    // Create task with static allocation
+    const task_handle = c.xTaskCreateStatic(
+        appTaskFn,              // Task function
+        "app",                  // Task name
+        PSRAM_TASK_STACK_WORDS, // Stack size in words
+        null,                   // Parameters
+        5,                      // Priority
+        psram_stack.?,          // Stack buffer (in PSRAM)
+        &task_tcb,              // Task control block
+    );
+    
+    if (task_handle == null) {{
+        std.log.err("Failed to create PSRAM task!", .{{}});
+        c.heap_caps_free(psram_stack);
+        // Fallback to direct call
+        app.run(env_module.env);
+        return;
+    }}
+    
+    std.log.info("PSRAM task created successfully", .{{}});
+    // app_main returns, the app task continues running
+}}
+MAINZIGEOF
+else
+    # Direct call version - runs in main task
+    cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
+//! ESP Platform Entry Point
+
+const std = @import("std");
+const idf = @import("esp");
+const app = @import("app");
+pub const env_module = @import("env.zig");
+
+const c = @cImport({{
+    @cInclude("sdkconfig.h");
+}});
+
+/// Log level from sdkconfig (CONFIG_LOG_DEFAULT_LEVEL)
+const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4)
+    .debug
+else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3)
+    .info
+else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2)
+    .warn
+else
+    .err;
+
+pub const std_options = std.Options{{
+    .log_level = log_level,
+    .logFn = idf.log.stdLogFn,
+}};
+
+export fn app_main() void {{
+    app.run(env_module.env);
+}}
+MAINZIGEOF
+fi
+
+# Generate sdkconfig.defaults
+cat > "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults" << SDKCONFIGEOF
+# Auto-generated sdkconfig defaults
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+SDKCONFIGEOF
+
+# Append user-provided sdkconfig if exists
+{sdkconfig_append}
+
+# Generate idf_component.yml if there are IDF component manager dependencies
+if [ -n "{idf_deps_yml}" ]; then
+cat > "$WORK/$ESP_PROJECT_PATH/main/idf_component.yml" << 'IDFCOMPEOF'
+dependencies:
+{idf_deps_yml}IDFCOMPEOF
+fi
+
+exec bash "{build_sh}"
+""".format(
+        board = board,
+        env_file_export = 'export ESP_ENV_FILE="$(pwd)/{}"'.format(env_file.path) if env_file else "",
+        app_config_source = 'source "{}"'.format(app_config_file.path) if app_config_file else "",
+        project_name = project_name,
+        bin_out = bin_file.path,
+        elf_out = elf_file.path,
+        zig_dir = zig_bin.dirname if zig_bin else "",
+        build_sh = build_sh.path if build_sh else "",
+        app_name = app_name,
+        app_path = app_path,
+        app_copy_commands = "\n".join(app_copy_commands),
+        cmake_copy_commands = "\n".join(cmake_copy_commands),
+        lib_copy_commands = "\n".join(lib_copy_commands),
+        requires = requires,
+        force_link = force_link,
+        extra_cmake = extra_cmake,
+        extra_c_sources = extra_c_sources,
+        extra_deps_zon = extra_deps_zon,
+        extra_deps_zig_imports = extra_deps_zig_imports,
+        extra_deps_zig_decls = extra_deps_zig_decls,
+        idf_deps_yml = idf_deps_yml,
+        sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
+    )
+    
+    ctx.actions.write(
+        output = build_script,
+        content = script_content,
+        is_executable = True,
+    )
+    
+    # Collect all inputs
+    env_files = [env_file] if env_file else []
+    app_cfg_files = [app_config_file] if app_config_file else []
+    inputs = app_files + cmake_files + zig_files + lib_files + script_files + sdkconfig_files + env_files + app_cfg_files + [build_script]
+    
+    # Run build
+    ctx.actions.run_shell(
+        command = build_script.path,
+        inputs = inputs,
+        outputs = [bin_file, elf_file],
+        execution_requirements = {
+            "local": "1",
+            "requires-network": "1",
+        },
+        mnemonic = "EspZigBuild",
+        progress_message = "Building ESP Zig app %s (board=%s)" % (ctx.label, board),
+        use_default_shell_env = True,
+    )
+    
+    return [
+        DefaultInfo(
+            files = depset([bin_file, elf_file]),
+            runfiles = ctx.runfiles(files = [bin_file, elf_file]),
+        ),
+        OutputGroupInfo(
+            bin = depset([bin_file]),
+            elf = depset([elf_file]),
+        ),
+    ]
+
+esp_zig_app = rule(
+    implementation = _esp_zig_app_impl,
+    attrs = {
+        "app": attr.label(
+            mandatory = True,
+            allow_files = True,
+            doc = "App target from examples/apps/",
+        ),
+        "project_name": attr.string(
+            doc = "Project name (defaults to target name)",
+        ),
+        "requires": attr.string_list(
+            default = ["driver"],
+            doc = "ESP-IDF component dependencies (REQUIRES in CMakeLists.txt)",
+        ),
+        "force_link": attr.string_list(
+            default = [],
+            doc = "Symbols to force link (FORCE_LINK in esp_zig_build)",
+        ),
+        "extra_cmake": attr.string_list(
+            default = [],
+            doc = "Extra CMake commands (e.g., include statements)",
+        ),
+        "extra_c_sources": attr.string_list(
+            default = [],
+            doc = "Extra C source variables (e.g., I2C_C_SOURCES)",
+        ),
+        "extra_deps": attr.string_list(
+            default = [],
+            doc = "Extra lib dependencies (e.g., hal, drivers)",
+        ),
+        "idf_deps": attr.string_list(
+            default = [],
+            doc = "IDF component manager dependencies (e.g., espressif/led_strip:^3.0.0)",
+        ),
+        "sdkconfig": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "sdkconfig target from esp_sdkconfig rule (e.g., //examples/esp:esp32s3)",
+        ),
+        "app_config": attr.label(
+            allow_single_file = True,
+            doc = "App runtime config from esp_app rule (e.g., //examples/esp:app)",
+        ),
+        "env": attr.label(
+            allow_single_file = True,
+            doc = """Environment file with KEY=VALUE pairs (one per line).
+            Variables: WIFI_SSID, WIFI_PASSWORD, TEST_SERVER_IP, TEST_SERVER_PORT.
+            Example file:
+                WIFI_SSID=MyWiFi
+                WIFI_PASSWORD=secret""",
+        ),
+        "cmake_modules": attr.label_list(
+            allow_files = True,
+            default = [_CMAKE_MODULES_LABEL],
+            doc = "CMake module files",
+        ),
+        "_zig_toolchain": attr.label(
+            default = "@zig_toolchain//:zig_files",
+        ),
+        "_libs": attr.label(
+            default = _LIBS_LABEL,
+        ),
+        "_board": attr.label(
+            default = "//bazel/esp:board",
+        ),
+        "_scripts": attr.label(
+            default = _SCRIPTS_LABEL,
+        ),
+    },
+    doc = "Build an ESP-IDF Zig app, generating the ESP shell automatically",
 )
 
 # =============================================================================
@@ -249,7 +820,6 @@ def _esp_flash_impl(ctx):
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "460800"
-    chip = ctx.attr._chip[BuildSettingInfo].value if ctx.attr._chip and BuildSettingInfo in ctx.attr._chip else DEFAULT_CHIP
     
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
@@ -265,7 +835,6 @@ export ESP_BAZEL_RUN=1
 
 # Configuration
 export ESP_BOARD="{board}"
-export ESP_CHIP="{chip}"
 export ESP_BAUD="{baud}"
 export ESP_BIN="{bin_path}"
 export ESP_PORT_CONFIG="{port}"
@@ -281,18 +850,18 @@ if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_flash"; then
     exit 1
 fi
 
-echo "[esp_flash] Board: $ESP_BOARD, Chip: $ESP_CHIP"
+echo "[esp_flash] Board: $ESP_BOARD"
 echo "[esp_flash] Flashing to $PORT at $ESP_BAUD baud..."
 echo "[esp_flash] Binary: $ESP_BIN"
 
-"$IDF_PYTHON" -m esptool --chip "$ESP_CHIP" --port "$PORT" --baud "$ESP_BAUD" \\
+# esptool auto-detects chip type
+"$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
     --before default_reset --after hard_reset \\
     write_flash -z 0x10000 "$ESP_BIN"
 
 echo "[esp_flash] Flash complete!"
 """.format(
         board = board,
-        chip = chip,
         baud = baud,
         port = port,
         bin_path = bin_file.short_path,
@@ -323,9 +892,6 @@ esp_flash = rule(
         "_board": attr.label(
             default = "//bazel/esp:board",
         ),
-        "_chip": attr.label(
-            default = "//bazel/esp:chip",
-        ),
         "_port": attr.label(
             default = "//bazel/esp:port",
         ),
@@ -333,7 +899,7 @@ esp_flash = rule(
             default = "//bazel/esp:baud",
         ),
         "_scripts": attr.label(
-            default = "//bazel/esp:scripts",
+            default = _SCRIPTS_LABEL,
         ),
     },
     doc = "Flash an ESP-IDF binary to a device",
@@ -430,8 +996,106 @@ esp_monitor = rule(
             default = "//bazel/esp:port",
         ),
         "_scripts": attr.label(
-            default = "//bazel/esp:scripts",
+            default = _SCRIPTS_LABEL,
         ),
     },
     doc = "Monitor serial output from an ESP32 device",
+)
+
+# =============================================================================
+# esp_sdkconfig - Concatenate sdkconfig fragments from modules
+# =============================================================================
+
+def _esp_sdkconfig_impl(ctx):
+    """Concatenate sdkconfig fragments from module rules."""
+    out = ctx.actions.declare_file(ctx.attr.name + ".defaults")
+    
+    # Collect all module fragments (in order)
+    module_files = []
+    
+    # Required modules
+    module_files.append(ctx.file.core)
+    module_files.append(ctx.file.freertos)
+    module_files.append(ctx.file.log)
+    
+    # Optional modules
+    if ctx.attr.psram:
+        module_files.append(ctx.file.psram)
+    if ctx.attr.wifi:
+        module_files.append(ctx.file.wifi)
+    if ctx.attr.lwip:
+        module_files.append(ctx.file.lwip)
+    if ctx.attr.spiffs:
+        module_files.append(ctx.file.spiffs)
+    if ctx.attr.littlefs:
+        module_files.append(ctx.file.littlefs)
+    
+    # Concatenate all fragments
+    cmd = "echo '# Auto-generated sdkconfig' > {out} && cat {files} >> {out}".format(
+        out = out.path,
+        files = " ".join([f.path for f in module_files]),
+    )
+    ctx.actions.run_shell(
+        inputs = module_files,
+        outputs = [out],
+        command = cmd,
+    )
+    
+    return [DefaultInfo(files = depset([out]))]
+
+esp_sdkconfig = rule(
+    implementation = _esp_sdkconfig_impl,
+    attrs = {
+        # Required modules
+        "core": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "esp_core rule output",
+        ),
+        "freertos": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "esp_freertos rule output",
+        ),
+        "log": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "esp_log rule output",
+        ),
+        # Optional modules
+        "psram": attr.label(
+            allow_single_file = True,
+            doc = "esp_psram rule output",
+        ),
+        "wifi": attr.label(
+            allow_single_file = True,
+            doc = "esp_wifi rule output",
+        ),
+        "lwip": attr.label(
+            allow_single_file = True,
+            doc = "esp_lwip rule output",
+        ),
+        "spiffs": attr.label(
+            allow_single_file = True,
+            doc = "esp_spiffs rule output",
+        ),
+        "littlefs": attr.label(
+            allow_single_file = True,
+            doc = "esp_littlefs rule output",
+        ),
+    },
+    doc = """Concatenate sdkconfig fragments from module rules.
+
+Required:
+    - core     : esp_core
+    - freertos : esp_freertos  
+    - log      : esp_log
+
+Optional:
+    - psram    : esp_psram
+    - wifi     : esp_wifi
+    - lwip     : esp_lwip
+    - spiffs   : esp_spiffs
+    - littlefs : esp_littlefs
+""",
 )

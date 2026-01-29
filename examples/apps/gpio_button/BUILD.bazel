@@ -1,0 +1,36 @@
+# GPIO Button App
+
+load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*"]),
+)
+
+# Build ESP-IDF app from this app source (no shell needed!)
+esp_zig_app(
+    name = "esp",
+    app = ":srcs",
+    requires = ["driver", "led_strip", "esp_driver_i2c"],
+    force_link = [
+        "led_strip_refresh",
+        "led_strip_new_rmt_device",
+        "${I2C_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "# _ESP_LIB is set by the generated shell to point to $WORK/lib",
+        "include(${_ESP_LIB}/esp/src/sal/i2c.cmake)",
+    ],
+    extra_c_sources = ["I2C_C_SOURCES"],
+    extra_deps = ["hal", "drivers"],
+    idf_deps = ["espressif/led_strip:^3.0.0"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":esp",
+)

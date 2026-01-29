@@ -1,0 +1,31 @@
+# HTTPS Speed Test App
+
+load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "esp",
+    app = ":srcs",
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "mbedtls"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/src/wifi/wifi.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES"],
+    extra_deps = ["hal", "trait"],
+    sdkconfig = "//examples/esp:esp32s3_wifi",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":esp",
+)
