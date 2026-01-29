@@ -272,6 +272,23 @@ def _esp_zig_app_impl(ctx):
             lib_prefix = parts[0] + "/lib"
             cmake_prefix = parts[0] + "/cmake"
     
+    # Calculate path from app directory to lib directory
+    # app is at $WORK/{app_path}/, lib is at $WORK/../{lib_prefix}/
+    # Need: "../" * (app_path_depth + 1) + lib_prefix_without_leading_dotdot
+    app_depth = len(app_path.split("/"))
+    dotdots_to_work = "../" * app_depth  # from app to $WORK
+    if lib_prefix.startswith("../"):
+        # External lib: lib_prefix = "../embed_zig+/lib"
+        # Path from $WORK to lib = "../embed_zig+/lib"
+        # Total path = dotdots_to_work + lib_prefix = "../../../" + "../embed_zig+/lib"
+        app_to_lib_prefix = dotdots_to_work + lib_prefix
+    else:
+        # Internal lib: lib_prefix = "lib"
+        # Path from $WORK to lib = "lib"
+        # But lib files are copied to $WORK/../lib/ due to short_path behavior
+        # Actually for internal, lib is at $WORK/lib/
+        app_to_lib_prefix = dotdots_to_work + lib_prefix
+    
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     
@@ -365,6 +382,50 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 {app_copy_commands}
 {cmake_copy_commands}
 {lib_copy_commands}
+
+# Generate app build.zig.zon with correct relative paths to lib (without fingerprint first)
+cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
+.{{
+    .name = .{app_name}_app,
+    .version = "0.1.0",
+    .dependencies = .{{
+        .esp = .{{
+            .path = "{app_to_lib_prefix}/esp",
+        }},
+        .hal = .{{
+            .path = "{app_to_lib_prefix}/hal",
+        }},
+        .drivers = .{{
+            .path = "{app_to_lib_prefix}/drivers",
+        }},
+    }},
+    .paths = .{{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    }},
+}}
+APPZONEOF
+
+# Calculate fingerprint for app build.zig.zon
+cd "$WORK/{app_path}"
+APP_ZIG_OUTPUT=$(HOME="$WORK" "$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" --global-cache-dir "$WORK/.zig-global-cache" 2>&1 || true)
+APP_FINGERPRINT=$(echo "$APP_ZIG_OUTPUT" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+cd - > /dev/null
+
+if [ -n "$APP_FINGERPRINT" ]; then
+    awk -v fp="$APP_FINGERPRINT" '
+        /\\.version = "0\\.1\\.0",/ {{
+            print
+            print "    .fingerprint = " fp ","
+            next
+        }}
+        {{ print }}
+    ' "$WORK/{app_path}/build.zig.zon" > "$WORK/{app_path}/build.zig.zon.new"
+    mv "$WORK/{app_path}/build.zig.zon.new" "$WORK/{app_path}/build.zig.zon"
+fi
 
 # Generate ESP shell project
 export ESP_PROJECT_PATH="esp_project"
@@ -469,15 +530,24 @@ ZONEOF
 # Calculate fingerprint by running zig build --fetch to get suggested value
 # Note: --fetch works without a valid build, just needs build.zig.zon to exist
 # Use --cache-dir to avoid "AppDataDirUnavailable" error in Bazel sandbox where $HOME may not be set
+# Calculate fingerprint by running zig build --fetch
+# Set HOME and cache dirs for Bazel sandbox compatibility
 cd "$WORK/$ESP_PROJECT_PATH/main"
-FINGERPRINT=$("$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" 2>&1 | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+ZIG_OUTPUT=$(HOME="$WORK" "$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" --global-cache-dir "$WORK/.zig-global-cache" 2>&1 || true)
+FINGERPRINT=$(echo "$ZIG_OUTPUT" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
 cd - > /dev/null
 
 if [ -n "$FINGERPRINT" ]; then
-    # Insert fingerprint into build.zig.zon using awk (more portable than sed)
-    awk -v fp="$FINGERPRINT" '/[.]version = "0[.]1[.]0",/ {{ print; print "    .fingerprint = " fp ","; next }} 1' \\
-        "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp"
-    mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.tmp" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
+    # Insert fingerprint using awk
+    awk -v fp="$FINGERPRINT" '
+        /\\.version = "0\\.1\\.0",/ {{
+            print
+            print "    .fingerprint = " fp ","
+            next
+        }}
+        {{ print }}
+    ' "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new"
+    mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
 fi
 
 # Generate main/src/main.c
@@ -694,6 +764,7 @@ exec bash "{build_sh}"
         lib_copy_commands = "\n".join(lib_copy_commands),
         lib_prefix = lib_prefix,
         cmake_prefix = cmake_prefix,
+        app_to_lib_prefix = app_to_lib_prefix,
         requires = requires,
         force_link = force_link,
         extra_cmake = extra_cmake,
