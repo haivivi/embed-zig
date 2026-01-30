@@ -25,7 +25,12 @@ pub const LedStripDriver = struct {
 
     /// Initialize LED strip driver
     pub fn init(gpio: u8, num_leds: u16) !Self {
-        const strip = try idf.LedStrip.init(gpio, num_leds);
+        const strip = try idf.LedStrip.init(.{
+            .strip_gpio_num = @intCast(gpio),
+            .max_leds = num_leds,
+        }, .{
+            .resolution_hz = 10_000_000, // Default RMT resolution
+        });
         return .{ .strip = strip, .num_leds = num_leds };
     }
 
@@ -37,13 +42,16 @@ pub const LedStripDriver = struct {
     /// Set single LED color (required by hal.led_strip)
     pub fn setPixel(self: *Self, index: u16, color: hal.Color) void {
         if (index < self.num_leds) {
-            self.strip.setPixel(index, color.r, color.g, color.b);
+            self.strip.setPixel(@intCast(index), color.r, color.g, color.b) catch {};
         }
     }
 
     /// Set all LEDs to same color (required by hal.led_strip)
     pub fn fill(self: *Self, color: hal.Color) void {
-        self.strip.fill(color.r, color.g, color.b);
+        var i: u32 = 0;
+        while (i < self.num_leds) : (i += 1) {
+            self.strip.setPixel(i, color.r, color.g, color.b) catch {};
+        }
     }
 
     /// Refresh/update the LED strip (required by hal.led_strip)
