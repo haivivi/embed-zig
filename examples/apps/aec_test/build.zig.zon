@@ -1,0 +1,16 @@
+.{
+    .name = "aec_test",
+    .version = "0.1.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "app.zig",
+        "platform.zig",
+        "boards",
+    },
+    .dependencies = .{
+        .esp = .{ .path = "../../../lib/esp" },
+        .hal = .{ .path = "../../../lib/hal" },
+        .drivers = .{ .path = "../../../lib/drivers" },
+    },
+}

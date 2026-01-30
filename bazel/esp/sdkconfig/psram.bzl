@@ -30,11 +30,11 @@ def _esp_psram_impl(ctx):
     
     lines.append("CONFIG_SPIRAM_TYPE_AUTO=y")
     lines.append("CONFIG_SPIRAM_BOOT_INIT=y")
-    lines.append("CONFIG_SPIRAM_USE_MALLOC=y")
-    lines.append("CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0")
-    lines.append("CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y")
-    lines.append("CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y")
-    lines.append("CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y")
+    # Use CAPS_ALLOC mode: malloc() uses internal RAM only,
+    # PSRAM only via heap_caps_malloc(..., MALLOC_CAP_SPIRAM)
+    lines.append("CONFIG_SPIRAM_USE_CAPS_ALLOC=y")
+    # Disable external BSS - can cause BSS init issues
+    # lines.append("CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y")
     
     ctx.actions.write(out, "\n".join(lines) + "\n")
     return [DefaultInfo(files = depset([out]))]

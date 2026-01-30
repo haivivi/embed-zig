@@ -1,31 +1,50 @@
 //! ESP-IDF Microphone Implementation
 //!
-//! Provides audio input using I2S TDM with configurable ADC codec.
+//! Provides audio input using I2S with configurable ADC codec.
 //! Supports multi-channel ADC chips like ES7210 with AEC reference channel.
+//! Integrates AEC (Acoustic Echo Cancellation) processing when enabled.
 //!
 //! Usage:
 //!   const idf = @import("esp");
 //!   const drivers = @import("drivers");
+//!
+//!   // Create I2S bus (shared with speaker)
+//!   var i2s = try idf.I2s.init(.{ ... });
 //!
 //!   // Create with ES7210 ADC driver
 //!   const Es7210 = drivers.Es7210(idf.I2c);
 //!   const Mic = idf.Mic(Es7210);
 //!
 //!   var adc = try Es7210.init(&i2c, .{});
-//!   var mic = try Mic.init(&adc, .{
-//!       .sample_rate = 16000,
-//!       .channels = .{ .voice, .disabled, .aec_ref, .disabled },
-//!       .i2s = .{ .bclk_pin = 9, .ws_pin = 45, .din_pin = 10, .mclk_pin = 16 },
+//!   var mic = try Mic.init(&adc, &i2s, .{
+//!       .channels = .{ .aec_ref, .voice, .disabled, .voice },  // RMNM format
+//!       .aec = .{ .enabled = true, .mode = .voice_communication },
 //!   });
 //!   defer mic.deinit();
 //!
 //!   try mic.start();
-//!   const n = try mic.read(&buffer);
+//!   const n = try mic.read(&buffer);  // Returns AEC-processed audio
 
 const std = @import("std");
 const log = std.log.scoped(.mic);
-const i2s_tdm = @import("i2s_tdm.zig");
-const I2sTdm = i2s_tdm.I2sTdm;
+const i2s_mod = @import("i2s.zig");
+const I2s = i2s_mod.I2s;
+
+// ============================================================================
+// AEC C Helper bindings
+// ============================================================================
+
+/// Opaque AEC handle type
+const AecHandle = opaque {};
+
+/// AEC helper C functions
+extern fn aec_helper_create(input_format: [*:0]const u8, filter_length: c_int, aec_type: c_int, mode: c_int) ?*AecHandle;
+extern fn aec_helper_process(handle: *AecHandle, indata: [*]const i16, outdata: [*]i16) c_int;
+extern fn aec_helper_get_chunksize(handle: *AecHandle) c_int;
+extern fn aec_helper_get_total_channels(handle: *AecHandle) c_int;
+extern fn aec_helper_destroy(handle: *AecHandle) void;
+extern fn aec_helper_alloc_buffer(samples: c_int) ?[*]i16;
+extern fn aec_helper_free_buffer(buf: [*]i16) void;
 
 /// Channel role in audio processing
 pub const ChannelRole = enum {
@@ -33,38 +52,58 @@ pub const ChannelRole = enum {
     disabled,
     /// Voice microphone input
     voice,
-    /// AEC reference signal (e.g., from speaker output)
+    /// AEC reference signal (e.g., from speaker output loopback)
     aec_ref,
 };
 
-/// I2S configuration
-pub const I2sConfig = struct {
-    /// I2S port number
-    port: u8 = 0,
-    /// Bit clock pin
-    bclk_pin: u8,
-    /// Word select (LRCK) pin
-    ws_pin: u8,
-    /// Data in pin
-    din_pin: u8,
-    /// MCLK pin (optional, null = disabled)
-    mclk_pin: ?u8 = null,
-    /// MCLK multiple (256 or 384)
-    mclk_multiple: u16 = 256,
+/// AEC processing mode
+pub const AecMode = enum(c_int) {
+    /// Speech recognition - optimized for wake word detection
+    speech_recognition = 0,
+    /// Voice communication - optimized for full-duplex calls (16kHz)
+    voice_communication = 1,
+    /// Voice communication 8kHz - lower quality, lower CPU
+    voice_communication_8k = 2,
+};
+
+/// AEC performance mode
+pub const AecPerfMode = enum(c_int) {
+    /// Low cost mode - lower CPU usage
+    low_cost = 0,
+    /// High performance mode - better quality
+    high_perf = 1,
+};
+
+/// AEC (Acoustic Echo Cancellation) configuration
+pub const AecConfig = struct {
+    /// Enable AEC processing
+    enabled: bool = true,
+    /// AEC mode - determines optimization target
+    mode: AecMode = .voice_communication,
+    /// Performance mode
+    perf_mode: AecPerfMode = .low_cost,
+    /// Filter length (1-6, higher = better but more CPU)
+    /// Recommended: 4 for ESP32-S3
+    filter_length: u8 = 4,
 };
 
 /// Mic configuration
 pub const Config = struct {
-    /// Sample rate in Hz
-    sample_rate: u32 = 16000,
-    /// Bits per sample
-    bits_per_sample: u8 = 16,
     /// Channel roles (up to 4 channels for ES7210)
-    channels: [4]ChannelRole = .{ .voice, .disabled, .aec_ref, .disabled },
-    /// Enable AEC processing
-    aec_enabled: bool = true,
-    /// I2S configuration
-    i2s: I2sConfig,
+    /// 
+    /// ES7210 TDM output order (per datasheet Fig.2e): Ch1, Ch3, Ch2, Ch4
+    /// With I2S STD 32-bit stereo:
+    ///   L (32-bit) = [MIC1 (HI)] + [MIC3/REF (LO)]
+    ///   R (32-bit) = [MIC2 (HI)] + [MIC4 (LO)]
+    /// 
+    /// Channel mapping for Korvo-2 V3:
+    ///   Channel 0 = MIC1 (voice)
+    ///   Channel 1 = MIC3/REF (aec_ref)
+    ///   Channel 2 = MIC2 (voice)
+    ///   Channel 3 = MIC4 (disabled)
+    channels: [4]ChannelRole = .{ .voice, .aec_ref, .voice, .disabled },
+    /// AEC configuration
+    aec: AecConfig = .{},
 };
 
 /// ESP Microphone driver
@@ -90,92 +129,141 @@ pub fn Mic(comptime Adc: type) type {
         /// Maximum gain in dB
         pub const max_gain_db: i8 = if (@hasDecl(Adc, "max_gain_db")) Adc.max_gain_db else 37;
 
-        /// Raw buffer size (4 channels * 160 samples per 10ms @ 16kHz)
-        const raw_buffer_size: usize = @as(usize, max_channels) * 320; // ~20ms buffer
+        /// AEC chunk size in samples (typically 256 for 16ms @ 16kHz)
+        /// This is determined at runtime by the AEC library
+        const aec_chunk_size: usize = 256;
+
+        /// Raw buffer size - needs to hold at least one AEC chunk * total channels
+        const raw_buffer_size: usize = aec_chunk_size * @as(usize, max_channels);
 
         // ================================================================
         // Instance fields
         // ================================================================
 
         adc: *Adc,
+        i2s: *I2s,
         config: Config,
-        i2s: I2sTdm,
         initialized: bool = false,
         started: bool = false,
 
         // Runtime state
         voice_channel_mask: u8 = 0,
         ref_channel: ?u8 = null,
-        aec_enabled: bool = true,
-        total_channels: u8 = 0, // Cached I2S channel count (set during init)
+        total_channels: u8 = 0, // Logical channels (from AEC format, e.g., "RM" = 2)
+        bits_per_sample: u8 = 16, // I2S bits per sample (16 or 32)
 
-        // Buffers for multi-channel capture and processing
-        raw_buffer: [raw_buffer_size]i16 = undefined,
+        // AEC state
+        aec_handle: ?*AecHandle = null,
+        aec_chunk: usize = 0, // Actual chunk size from AEC library
+        aec_input_format: [8:0]u8 = undefined, // e.g., "RM\x00"
+        aec_out_buffer: ?[*]i16 = null, // 16-byte aligned buffer from heap
+
+        // Buffer for multi-channel capture and processing
+        // I2S data is 32-bit per channel, we convert to 16-bit for AEC
+        raw_buffer_32: [raw_buffer_size]i32 = undefined, // Raw 32-bit I2S data
+        raw_buffer: [raw_buffer_size]i16 = undefined, // Converted 16-bit for AEC
 
         /// Initialize microphone
-        pub fn init(adc: *Adc, config: Config) !Self {
-            // Count active channels for I2S configuration
-            var active_channels: u8 = 0;
-            for (config.channels) |role| {
-                if (role != .disabled) active_channels += 1;
-            }
-            // Ensure we have at least the channels up to the last active one
-            // I2S requires minimum 2 channels (stereo) even if only mono is used
-            const min_i2s_channels: u8 = 2;
-            var last_active: u8 = 0;
-            for (config.channels, 0..) |role, i| {
-                if (role != .disabled) last_active = @intCast(i + 1);
-            }
-            const i2s_channels = @max(last_active, min_i2s_channels);
-
-            // Initialize I2S TDM
-            var i2s = try I2sTdm.init(.{
-                .port = config.i2s.port,
-                .sample_rate = config.sample_rate,
-                .channels = i2s_channels,
-                .bits_per_sample = config.bits_per_sample,
-                .bclk_pin = config.i2s.bclk_pin,
-                .ws_pin = config.i2s.ws_pin,
-                .din_pin = config.i2s.din_pin,
-                .mclk_pin = config.i2s.mclk_pin,
-                .mclk_multiple = config.i2s.mclk_multiple,
-            });
-            errdefer i2s.deinit();
-
+        /// i2s: shared I2S bus instance (must be initialized with RX enabled)
+        pub fn init(adc: *Adc, i2s: *I2s, config: Config) !Self {
             var self = Self{
                 .adc = adc,
-                .config = config,
                 .i2s = i2s,
-                .aec_enabled = config.aec_enabled,
-                .total_channels = i2s_channels,
+                .config = config,
+                .bits_per_sample = i2s.config.bits_per_sample,
             };
+
+            // For STD mode with ES7210 TDM:
+            // ES7210 TDM output (per datasheet): Ch1, Ch3, Ch2, Ch4
+            // I2S STD 32-bit stereo:
+            //   L (32-bit) = [MIC1 (HI)] + [MIC3/REF (LO)]
+            //   R (32-bit) = [MIC2 (HI)] + [MIC4 (LO)]
+            // Channel mapping:
+            //   Channel 0 = MIC1 (L_HI)
+            //   Channel 1 = REF/MIC3 (L_LO)
+            //   Channel 2 = MIC2 (R_HI)
+            //   Channel 3 = MIC4 (R_LO)
 
             // Analyze channel configuration
             for (config.channels, 0..) |role, i| {
                 switch (role) {
-                    .voice => self.voice_channel_mask |= @as(u8, 1) << @intCast(i),
-                    .aec_ref => self.ref_channel = @intCast(i),
+                    .voice => {
+                        self.voice_channel_mask |= @as(u8, 1) << @intCast(i);
+                    },
+                    .aec_ref => {
+                        self.ref_channel = @intCast(i);
+                    },
                     .disabled => {},
                 }
             }
 
-            log.info("Mic: Initialized with {} voice channels, AEC ref: {?}, I2S channels: {}", .{
+            // For AEC with ES7210 TDM + I2S STD mode, always use "MR" format
+            // We extract MIC1 (L_HI) and REF (L_LO) in readWithAec
+            self.aec_input_format[0] = 'M';
+            self.aec_input_format[1] = 'R';
+            self.aec_input_format[2] = 0; // Null terminate
+            self.total_channels = 2; // "MR" = 2 logical channels for AEC
+
+            log.info("Mic: Initialized with {} voice channels, AEC ref: {?}, format: MR", .{
                 @popCount(self.voice_channel_mask),
                 self.ref_channel,
-                i2s_channels,
             });
+
+            // Initialize AEC if enabled and ref channel is configured
+            if (config.aec.enabled and self.ref_channel != null) {
+                log.info("Mic: Creating AEC with format: {s}", .{@as([*:0]const u8, &self.aec_input_format)});
+
+                self.aec_handle = aec_helper_create(
+                    &self.aec_input_format,
+                    @intCast(config.aec.filter_length),
+                    @intFromEnum(config.aec.mode),
+                    @intFromEnum(config.aec.perf_mode),
+                );
+
+                if (self.aec_handle) |handle| {
+                    self.aec_chunk = @intCast(aec_helper_get_chunksize(handle));
+
+                    // Allocate 16-byte aligned output buffer (required by ESP-SR AEC)
+                    self.aec_out_buffer = aec_helper_alloc_buffer(@intCast(self.aec_chunk));
+                    if (self.aec_out_buffer == null) {
+                        log.err("Mic: Failed to allocate aligned AEC output buffer", .{});
+                        aec_helper_destroy(handle);
+                        self.aec_handle = null;
+                    } else {
+                        log.info("Mic: AEC enabled, chunk size: {} samples", .{self.aec_chunk});
+                    }
+                } else {
+                    log.warn("Mic: Failed to create AEC, continuing without echo cancellation", .{});
+                }
+            } else {
+                log.info("Mic: AEC disabled", .{});
+            }
 
             self.initialized = true;
             return self;
         }
 
         /// Deinitialize microphone
+        /// Note: Does not deinit I2S (managed externally)
         pub fn deinit(self: *Self) void {
             if (self.initialized) {
                 if (self.started) {
                     self.stop() catch {};
                 }
-                self.i2s.deinit();
+
+                // Free AEC output buffer
+                if (self.aec_out_buffer) |buf| {
+                    aec_helper_free_buffer(buf);
+                    self.aec_out_buffer = null;
+                }
+
+                // Destroy AEC instance
+                if (self.aec_handle) |handle| {
+                    log.info("Mic: Destroying AEC", .{});
+                    aec_helper_destroy(handle);
+                    self.aec_handle = null;
+                }
+
                 self.initialized = false;
             }
         }
@@ -185,7 +273,7 @@ pub fn Mic(comptime Adc: type) type {
             if (!self.initialized) return error.NotInitialized;
             if (self.started) return;
 
-            try self.i2s.enable();
+            try self.i2s.enableRx();
             self.started = true;
             log.info("Mic: Started", .{});
         }
@@ -194,7 +282,7 @@ pub fn Mic(comptime Adc: type) type {
         pub fn stop(self: *Self) !void {
             if (!self.started) return;
 
-            try self.i2s.disable();
+            try self.i2s.disableRx();
             self.started = false;
             log.info("Mic: Stopped", .{});
         }
@@ -205,9 +293,11 @@ pub fn Mic(comptime Adc: type) type {
 
         /// Read audio samples (blocking)
         ///
-        /// Returns processed audio (voice channels extracted).
-        /// Buffer receives mono audio if single voice channel,
-        /// or interleaved stereo if multiple voice channels.
+        /// Returns processed audio:
+        /// - If AEC is enabled: echo-cancelled mono audio
+        /// - If AEC is disabled: voice channels extracted from raw TDM data
+        ///
+        /// Buffer receives mono audio (single channel output from AEC).
         pub fn read(self: *Self, buffer: []i16) !usize {
             if (!self.initialized) return error.NotInitialized;
             if (!self.started) {
@@ -215,37 +305,137 @@ pub fn Mic(comptime Adc: type) type {
                 try self.start();
             }
 
-            // Calculate how many raw samples we need
-            // For N output samples with M voice channels, we need N * total_channels raw samples
             const voice_count = @popCount(self.voice_channel_mask);
             if (voice_count == 0) return error.NoVoiceChannels;
 
             const total_channels = self.getTotalChannels();
-            const output_samples = buffer.len;
-            // Round up to ensure we read enough frames for the requested output samples
-            const raw_samples_needed = ((output_samples + voice_count - 1) / voice_count) * total_channels;
-            const raw_to_read = @min(raw_samples_needed, self.raw_buffer.len);
 
-            // Read raw TDM data (interleaved: ch0, ch1, ch2, ch3, ch0, ch1, ...)
-            const raw_samples = try self.i2s.read(self.raw_buffer[0..raw_to_read]);
+            // If AEC is enabled, use AEC processing path
+            if (self.aec_handle) |aec_handle| {
+                return self.readWithAec(aec_handle, buffer, total_channels);
+            }
+
+            // No AEC - extract voice channels directly from TDM data
+            return self.readWithoutAec(buffer, total_channels, voice_count);
+        }
+
+        /// Read with AEC processing
+        /// 
+        /// ES7210 TDM output order (per datasheet Fig.2e): Ch1, Ch3, Ch2, Ch4 (interleaved)
+        /// With I2S STD 32-bit stereo mode:
+        ///   L (32-bit) = [MIC1 (HI 16-bit)] + [MIC3/REF (LO 16-bit)]
+        ///   R (32-bit) = [MIC2 (HI 16-bit)] + [MIC4 (LO 16-bit)]
+        /// 
+        /// AEC uses "MR" format: interleaved [Mic, Ref, Mic, Ref, ...]
+        fn readWithAec(self: *Self, aec_handle: *AecHandle, buffer: []i16, total_channels: usize) !usize {
+            _ = total_channels; // Not used in STD mode
+
+            const chunk_size = self.aec_chunk;
+            if (chunk_size == 0) return error.AecNotInitialized;
+
+            const out_buffer = self.aec_out_buffer orelse return error.AecNotInitialized;
+
+            // In STD 32-bit stereo mode, each "frame" = 2 x 32-bit samples (L + R)
+            // We need chunk_size frames to process one AEC chunk
+            const stereo_frames_needed = chunk_size;
+            const raw_samples_needed = stereo_frames_needed * 2; // L + R per frame
+
+            var out_idx: usize = 0;
+
+            // Process in chunks
+            while (out_idx < buffer.len) {
+                const raw_to_read = @min(raw_samples_needed, self.raw_buffer_32.len);
+
+                // Read I2S data as 32-bit samples (stereo: L, R, L, R, ...)
+                const raw_bytes = std.mem.sliceAsBytes(self.raw_buffer_32[0..raw_to_read]);
+                const bytes_read = try self.i2s.read(raw_bytes);
+                const raw_samples = bytes_read / 4; // 32-bit samples
+                if (raw_samples == 0) break;
+
+                const frames_read = raw_samples / 2; // Stereo frames
+
+                // Extract MIC1 and REF from ES7210 TDM data packed in STD stereo
+                // L (32-bit) = [MIC1 (HI)] + [REF (LO)]
+                // Build "MR" format for AEC: [Mic, Ref, Mic, Ref, ...]
+                for (0..frames_read) |i| {
+                    const L: i32 = self.raw_buffer_32[i * 2 + 0];
+                    const mic1: i16 = @truncate(L >> 16); // MIC1 = L_HI
+                    const ref: i16 = @truncate(L & 0xFFFF); // REF = L_LO (MIC3)
+
+                    // "MR" format: [Mic, Ref] interleaved
+                    self.raw_buffer[i * 2 + 0] = mic1;
+                    self.raw_buffer[i * 2 + 1] = ref;
+                }
+
+                // Process through AEC
+                const aec_out_samples = aec_helper_process(
+                    aec_handle,
+                    &self.raw_buffer,
+                    out_buffer,
+                );
+
+                if (aec_out_samples <= 0) {
+                    log.warn("Mic: AEC process returned {}", .{aec_out_samples});
+                    break;
+                }
+
+                // Copy AEC output to user buffer
+                const samples_to_copy = @min(@as(usize, @intCast(aec_out_samples)), buffer.len - out_idx);
+                @memcpy(buffer[out_idx..][0..samples_to_copy], out_buffer[0..samples_to_copy]);
+                out_idx += samples_to_copy;
+            }
+
+            return out_idx;
+        }
+
+        /// Read without AEC - extract voice channels from STD stereo data
+        /// 
+        /// ES7210 TDM output order (per datasheet): Ch1, Ch3, Ch2, Ch4
+        /// With I2S STD 32-bit stereo:
+        ///   L (32-bit) = [MIC1 (HI)] + [MIC3/REF (LO)]
+        ///   R (32-bit) = [MIC2 (HI)] + [MIC4 (LO)]
+        fn readWithoutAec(self: *Self, buffer: []i16, total_channels: usize, voice_count: u8) !usize {
+            _ = total_channels;
+            _ = voice_count;
+
+            const output_samples = buffer.len;
+            // Each stereo frame gives us potentially multiple voice samples
+            // For STD mode: 1 stereo frame = 2 x 32-bit = 4 x 16-bit channels
+            const frames_needed = output_samples; // One voice sample per frame
+            const raw_samples_needed = frames_needed * 2; // 2 x 32-bit per stereo frame
+            const raw_to_read = @min(raw_samples_needed, self.raw_buffer_32.len);
+
+            // Read I2S data as 32-bit samples
+            const raw_bytes = std.mem.sliceAsBytes(self.raw_buffer_32[0..raw_to_read]);
+            const bytes_read = try self.i2s.read(raw_bytes);
+            const raw_samples = bytes_read / 4; // 32-bit samples
             if (raw_samples == 0) return 0;
 
-            // Extract voice channel(s) from interleaved data
+            const frames_read = raw_samples / 2; // Stereo frames
+
+            // Extract voice channel(s) from ES7210 TDM data in STD stereo format
             var out_idx: usize = 0;
-            const frames = raw_samples / total_channels;
 
-            for (0..frames) |frame| {
-                const base = frame * total_channels;
+            for (0..frames_read) |frame| {
+                const L: i32 = self.raw_buffer_32[frame * 2 + 0];
+                const R: i32 = self.raw_buffer_32[frame * 2 + 1];
 
-                // Extract each voice channel
-                for (0..max_channels) |ch| {
-                    if (ch >= total_channels) break;
-                    if ((self.voice_channel_mask & (@as(u8, 1) << @intCast(ch))) != 0) {
-                        if (out_idx < buffer.len) {
-                            buffer[out_idx] = self.raw_buffer[base + ch];
-                            out_idx += 1;
-                        }
-                    }
+                // Extract channels based on voice_channel_mask
+                // Channel mapping (ES7210 TDM in STD 32-bit stereo):
+                //   Channel 0 (MIC1) = L_HI
+                //   Channel 1 (REF/MIC3) = L_LO
+                //   Channel 2 (MIC2) = R_HI
+                //   Channel 3 (MIC4) = R_LO
+
+                // Extract MIC1 if voice channel 0 is enabled
+                if ((self.voice_channel_mask & 0x01) != 0 and out_idx < buffer.len) {
+                    buffer[out_idx] = @truncate(L >> 16); // MIC1 = L_HI
+                    out_idx += 1;
+                }
+                // Extract MIC2 if voice channel 2 is enabled
+                if ((self.voice_channel_mask & 0x04) != 0 and out_idx < buffer.len) {
+                    buffer[out_idx] = @truncate(R >> 16); // MIC2 = R_HI
+                    out_idx += 1;
                 }
             }
 
@@ -305,15 +495,51 @@ pub fn Mic(comptime Adc: type) type {
         // AEC control
         // ================================================================
 
-        /// Enable or disable AEC processing
-        pub fn setAecEnabled(self: *Self, enabled: bool) void {
-            self.aec_enabled = enabled;
-            log.info("Mic: AEC {s}", .{if (enabled) "enabled" else "disabled"});
+        /// Enable AEC processing at runtime
+        /// Note: This requires AEC to be configured at init time
+        pub fn enableAec(self: *Self) !void {
+            if (self.ref_channel == null) {
+                return error.NoRefChannel;
+            }
+
+            if (self.aec_handle != null) {
+                // Already enabled
+                return;
+            }
+
+            // Create AEC instance
+            self.aec_handle = aec_helper_create(
+                &self.aec_input_format,
+                @intCast(self.config.aec.filter_length),
+                @intFromEnum(self.config.aec.mode),
+                @intFromEnum(self.config.aec.perf_mode),
+            );
+
+            if (self.aec_handle) |handle| {
+                self.aec_chunk = @intCast(aec_helper_get_chunksize(handle));
+                log.info("Mic: AEC enabled at runtime, chunk size: {}", .{self.aec_chunk});
+            } else {
+                return error.AecCreateFailed;
+            }
         }
 
-        /// Check if AEC is enabled
+        /// Disable AEC processing at runtime
+        pub fn disableAec(self: *Self) void {
+            if (self.aec_handle) |handle| {
+                aec_helper_destroy(handle);
+                self.aec_handle = null;
+                log.info("Mic: AEC disabled", .{});
+            }
+        }
+
+        /// Check if AEC is currently active
         pub fn isAecEnabled(self: *const Self) bool {
-            return self.aec_enabled and self.ref_channel != null;
+            return self.aec_handle != null;
+        }
+
+        /// Check if AEC can be enabled (has ref channel configured)
+        pub fn canEnableAec(self: *const Self) bool {
+            return self.ref_channel != null;
         }
 
         // ================================================================
@@ -356,6 +582,9 @@ pub const MicError = error{
     NotInitialized,
     NoVoiceChannels,
     InvalidChannel,
+    NoRefChannel,
+    AecCreateFailed,
+    AecNotInitialized,
 };
 
 // ============================================================================

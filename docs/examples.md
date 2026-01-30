@@ -127,6 +127,16 @@ Microphone audio capture with ES7210 codec.
   bazel run //examples/apps/mic_test:flash --//bazel/esp:port=/dev/ttyUSB1
   ```
 
+## speaker_test
+
+Speaker audio output with ES8311 DAC. Plays a 440Hz sine wave tone.
+
+- **Zig / Korvo-2 V3**
+  ```bash
+  bazel build //examples/apps/speaker_test:esp
+  bazel run //examples/apps/speaker_test:flash --//bazel/esp:port=/dev/cu.usbserial-120
+  ```
+
 ## wifi_dns_lookup
 
 WiFi connection + DNS resolution.

@@ -11,6 +11,7 @@ load("//bazel/esp/sdkconfig:psram.bzl", "esp_psram")
 load("//bazel/esp/sdkconfig:spiffs.bzl", "esp_spiffs")
 load("//bazel/esp/sdkconfig:validate.bzl", "esp_validate")
 load("//bazel/esp/sdkconfig:wifi.bzl", "esp_wifi")
+load("//bazel/esp/sdkconfig:sr.bzl", "esp_sr")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -150,6 +151,30 @@ esp_sdkconfig(
     psram = ":psram",
     wifi = ":wifi",
     lwip = ":lwip",
+)
+
+# =============================================================================
+# ESP-SR
+# =============================================================================
+
+esp_sr(
+    name = "sr",
+    afe_interface = "v1",
+)
+
+# =============================================================================
+# ESP32-S3 with ESP-SR sdkconfig
+# =============================================================================
+
+esp_sdkconfig(
+    name = "esp32s3_sr",
+    core = ":core",
+    freertos = ":freertos_large",
+    log = ":log",
+    psram = ":psram",
+    wifi = ":wifi",
+    lwip = ":lwip",
+    sr = ":sr",
 )
 
 esp_validate(

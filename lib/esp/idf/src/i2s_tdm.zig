@@ -28,7 +28,7 @@ const c = @cImport({
     @cInclude("driver/i2s_common.h");
 });
 
-// C helper functions (defined in mic/i2s_tdm_helper.c)
+// C helper functions (defined in i2s/tdm_helper.c)
 extern fn i2s_tdm_helper_init_rx(
     port: c_int,
     sample_rate: u32,

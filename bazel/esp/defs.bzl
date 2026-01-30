@@ -1223,6 +1223,8 @@ def _esp_sdkconfig_impl(ctx):
         module_files.append(ctx.file.spiffs)
     if ctx.attr.littlefs:
         module_files.append(ctx.file.littlefs)
+    if ctx.attr.sr:
+        module_files.append(ctx.file.sr)
     
     # Concatenate all fragments
     cmd = "echo '# Auto-generated sdkconfig' > {out} && cat {files} >> {out}".format(
@@ -1276,6 +1278,10 @@ esp_sdkconfig = rule(
         "littlefs": attr.label(
             allow_single_file = True,
             doc = "esp_littlefs rule output",
+        ),
+        "sr": attr.label(
+            allow_single_file = True,
+            doc = "esp_sr rule output (ESP-SR speech recognition)",
         ),
     },
     doc = """Concatenate sdkconfig fragments from module rules.

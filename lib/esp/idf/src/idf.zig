@@ -108,6 +108,12 @@ pub const MicConfig = mic.Config;
 pub const ChannelRole = mic.ChannelRole;
 pub const i2s_tdm = @import("i2s_tdm.zig");
 pub const I2sTdm = i2s_tdm.I2sTdm;
+pub const i2s = @import("i2s.zig");
+pub const I2s = i2s.I2s;
+pub const speaker = @import("speaker.zig");
+pub const Speaker = speaker.Speaker;
+pub const sr = @import("sr/aec.zig");
+pub const Aec = sr.Aec;
 
 // ============================================================================
 // LED Strip
