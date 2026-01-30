@@ -50,6 +50,7 @@ fn addIdfComponentIncludes(b: *std.Build, module: *std.Build.Module, idf_path: [
     defer dir.close();
 
     // Use a hash map to track added directories and avoid duplicates
+    // Note: We must use owned strings because walker reuses its internal buffer
     var added_dirs = std.StringHashMap(void).init(b.allocator);
     defer added_dirs.deinit();
 
@@ -60,7 +61,9 @@ fn addIdfComponentIncludes(b: *std.Build, module: *std.Build.Module, idf_path: [
         if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".h")) {
             if (std.fs.path.dirname(entry.path)) |parent| {
                 // Only add each directory once
-                const gop = try added_dirs.getOrPut(parent);
+                // Must dupe the key since walker reuses its buffer
+                const key = b.dupe(parent);
+                const gop = try added_dirs.getOrPut(key);
                 if (!gop.found_existing) {
                     module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ comp, parent }) });
                 }

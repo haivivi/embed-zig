@@ -37,7 +37,7 @@ pub const Log = struct {
     fn logImpl(level: c_int, comptime fmt: []const u8, args: anytype) void {
         // Use 255 bytes for content + 1 for null terminator to avoid buffer over-read
         var buf: [256]u8 = undefined;
-        const msg = std.fmt.bufPrint(buf[0..255], fmt, args) catch |err| switch (err) {
+        const msg = std.fmt.bufPrint(buf[0..255], fmt, args) catch |e| switch (e) {
             error.NoSpaceLeft => blk: {
                 // Truncate message, ensure null terminator
                 buf[255] = 0;
@@ -73,7 +73,7 @@ pub fn scoped(comptime scope: []const u8) type {
 
         fn logImpl(level: c_int, comptime fmt: []const u8, args: anytype) void {
             var buf: [256]u8 = undefined;
-            const msg = std.fmt.bufPrint(buf[0..255], fmt, args) catch |err| switch (err) {
+            const msg = std.fmt.bufPrint(buf[0..255], fmt, args) catch |e| switch (e) {
                 error.NoSpaceLeft => blk: {
                     buf[255] = 0;
                     break :blk buf[0..255];
