@@ -1,6 +1,6 @@
 //! ESP DNS Resolver
 //!
-//! Pre-configured DNS resolver using ESP SAL socket implementation.
+//! Pre-configured DNS resolver using LWIP socket implementation.
 //! Supports UDP, TCP, and HTTPS (DoH via esp_http_client).
 //!
 //! Example:
@@ -30,10 +30,10 @@ pub const buildQuery = dns_lib.buildQuery;
 pub const parseResponse = dns_lib.parseResponse;
 
 const http = @import("../http.zig");
-const sal_socket = @import("../sal/socket.zig");
+const socket_mod = @import("../socket.zig");
 
-/// Base DNS resolver using SAL socket (for UDP/TCP)
-const BaseDnsResolver = dns_lib.Resolver(sal_socket.Socket);
+/// Base DNS resolver using LWIP socket (for UDP/TCP)
+const BaseDnsResolver = dns_lib.Resolver(socket_mod.Socket);
 
 /// ESP DNS Resolver with HTTPS support via esp_http_client
 pub const DnsResolver = struct {

@@ -12,20 +12,22 @@
 //! - MIC4 (Channel 3): Not used
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const hal = @import("hal");
 const drivers = @import("drivers");
+
+const idf = esp.idf;
 
 // Platform primitives
 pub const log = std.log.scoped(.app);
 
 pub const time = struct {
     pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
+        idf.time.sleepMs(ms);
     }
 
     pub fn getTimeMs() u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 };
 
@@ -34,7 +36,7 @@ pub fn isRunning() bool {
 }
 
 // Hardware parameters from lib/esp/boards
-const hw_params = idf.boards.korvo2_v3;
+const hw_params = esp.boards.korvo2_v3;
 
 // ============================================================================
 // Hardware Info
@@ -74,7 +76,7 @@ pub const RtcDriver = struct {
     pub fn deinit(_: *Self) void {}
 
     pub fn uptime(_: *Self) u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 
     pub fn nowMs(_: *Self) ?i64 {
@@ -87,7 +89,7 @@ pub const RtcDriver = struct {
 // ============================================================================
 
 /// I2C bus type
-const I2c = idf.sal.I2c;
+const I2c = idf.I2c;
 
 /// ES7210 ADC driver type
 const Es7210 = drivers.Es7210(*I2c);
@@ -124,7 +126,7 @@ pub const MicDriver = struct {
         self.i2c = try I2c.init(.{
             .sda = Hardware.i2c_sda,
             .scl = Hardware.i2c_scl,
-            .freq_hz = 400_000,
+            .freq_hz = 100_000, // Use 100kHz like ESP-ADF
         });
         errdefer self.i2c.deinit();
 

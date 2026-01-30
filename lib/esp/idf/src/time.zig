@@ -1,6 +1,6 @@
-//! SAL Time Implementation - FreeRTOS / ESP-IDF
+//! ESP-IDF Time Utilities
 //!
-//! Implements sal.time interface using FreeRTOS ticks and ESP timer.
+//! Provides sleep, timestamps using FreeRTOS ticks and esp_timer.
 
 const std = @import("std");
 

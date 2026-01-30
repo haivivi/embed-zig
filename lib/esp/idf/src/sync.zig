@@ -1,6 +1,6 @@
-//! SAL Sync Implementation - FreeRTOS
+//! FreeRTOS Synchronization Primitives
 //!
-//! Implements sal.sync interface using FreeRTOS semaphores and event groups.
+//! Provides Mutex, Semaphore, and Event wrappers for FreeRTOS.
 
 const std = @import("std");
 

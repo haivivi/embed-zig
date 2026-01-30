@@ -346,6 +346,11 @@ def _esp_zig_app_impl(ctx):
         else:
             idf_deps_yml += '  {}: "*"\n'.format(dep)
     
+    # Board types for generated build.zig (from boards attribute)
+    boards_list = ctx.attr.boards if ctx.attr.boards else ["esp32s3_devkit"]
+    boards_enum_fields = ", ".join(boards_list)
+    default_board = boards_list[0]
+    
     # Extra lib dependencies for build.zig.zon
     extra_deps_zon = ""
     extra_deps_zig_imports = ""
@@ -397,6 +402,12 @@ cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
         }},
         .drivers = .{{
             .path = "{app_to_lib_prefix}/drivers",
+        }},
+        .trait = .{{
+            .path = "{app_to_lib_prefix}/trait",
+        }},
+        .dns = .{{
+            .path = "{app_to_lib_prefix}/dns",
         }},
     }},
     .paths = .{{
@@ -468,15 +479,25 @@ MAINCMAKEOF
 # Generate main/build.zig
 cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig" << 'BUILDZIGEOF'
 const std = @import("std");
-const esp = @import("esp");
 
 pub fn build(b: *std.Build) void {{
     const target = b.standardTargetOptions(.{{}});
     const optimize = b.standardOptimizeOption(.{{}});
+    
+    // Board selection - passed from CMake via -Dboard=<board_name>
+    const board = b.option([]const u8, "board", "Target board") orelse "{default_board}";
 
+    // Convert board string to enum for app dependency
+    const BoardType = enum {{ {boards_enum_fields} }};
+    const board_enum = std.meta.stringToEnum(BoardType, board) orelse {{
+        std.log.err("Unknown board '{{s}}'. Supported boards: {boards_enum_fields}", .{{board}});
+        @panic("Invalid board specified");
+    }};
+    
     const app_dep = b.dependency("app", .{{
         .target = target,
         .optimize = optimize,
+        .board = board_enum,
     }});
 
     const esp_dep = b.dependency("esp", .{{
@@ -501,12 +522,92 @@ pub fn build(b: *std.Build) void {{
         .root_module = root_module,
     }});
 
-    esp.addEspDeps(b, root_module) catch {{
-        @panic("Failed to add ESP dependencies");
-    }};
+    // Add ESP-IDF include paths from INCLUDE_DIRS env var (set by CMake)
+    addEspIncludes(b, root_module);
 
     root_module.addIncludePath(b.path("include"));
     b.installArtifact(lib);
+}}
+
+fn addEspIncludes(b: *std.Build, module: *std.Build.Module) void {{
+    // 1. From INCLUDE_DIRS env var (set by CMake)
+    const include_dirs = std.process.getEnvVarOwned(b.allocator, "INCLUDE_DIRS") catch "";
+    if (include_dirs.len > 0) {{
+        defer b.allocator.free(include_dirs);
+        var it = std.mem.tokenizeAny(u8, include_dirs, ";");
+        while (it.next()) |dir| {{
+            module.addIncludePath(.{{ .cwd_relative = dir }});
+        }}
+    }}
+
+    // 2. From IDF_PATH env var - add component includes
+    const idf_path = std.process.getEnvVarOwned(b.allocator, "IDF_PATH") catch "";
+    if (idf_path.len > 0) {{
+        defer b.allocator.free(idf_path);
+        addIdfComponentIncludes(b, module, idf_path);
+    }}
+
+    // 3. Toolchain includes (auto-detect version)
+    const home_dir = std.process.getEnvVarOwned(b.allocator, "HOME") catch "";
+    if (home_dir.len > 0) {{
+        defer b.allocator.free(home_dir);
+        addToolchainIncludes(b, module, home_dir);
+    }}
+}}
+
+fn addIdfComponentIncludes(b: *std.Build, module: *std.Build.Module, idf_path: []const u8) void {{
+    const comp = b.pathJoin(&.{{ idf_path, "components" }});
+    var dir = std.fs.cwd().openDir(comp, .{{ .iterate = true }}) catch return;
+    defer dir.close();
+
+    var added_dirs = std.StringHashMap(void).init(b.allocator);
+    defer added_dirs.deinit();
+
+    var walker = dir.walk(b.allocator) catch return;
+    defer walker.deinit();
+
+    while (walker.next() catch null) |entry| {{
+        if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".h")) {{
+            if (std.fs.path.dirname(entry.path)) |parent| {{
+                // Must dupe the key since walker reuses its buffer
+                const key = b.dupe(parent);
+                const gop = added_dirs.getOrPut(key) catch continue;
+                if (!gop.found_existing) {{
+                    module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ comp, parent }}) }});
+                }}
+            }}
+        }}
+    }}
+}}
+
+fn addToolchainIncludes(b: *std.Build, module: *std.Build.Module, home_dir: []const u8) void {{
+    const arch = module.resolved_target.?.result.cpu.arch;
+    const archtools = b.fmt("{{s}}-esp-elf", .{{@tagName(arch)}});
+    const tools_base = b.pathJoin(&.{{ home_dir, ".espressif", "tools", archtools }});
+
+    var tools_dir = std.fs.cwd().openDir(tools_base, .{{ .iterate = true }}) catch return;
+    defer tools_dir.close();
+
+    var version: ?[]const u8 = null;
+    var it = tools_dir.iterate();
+    while (it.next() catch null) |entry| {{
+        if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, "esp-")) {{
+            version = b.dupe(entry.name);
+            break;
+        }}
+    }}
+
+    const ver = version orelse return;
+
+    module.addIncludePath(.{{
+        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, "include" }}),
+    }});
+    module.addSystemIncludePath(.{{
+        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, archtools, "sys-include" }}),
+    }});
+    module.addIncludePath(.{{
+        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, archtools, "include" }}),
+    }});
 }}
 BUILDZIGEOF
 
@@ -610,7 +711,7 @@ if [ "$RUN_APP_IN_PSRAM" = "y" ]; then
 //! ESP Platform Entry Point (PSRAM Task Mode)
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const app = @import("app");
 pub const env_module = @import("env.zig");
 
@@ -633,7 +734,7 @@ else
 
 pub const std_options = std.Options{{
     .log_level = log_level,
-    .logFn = idf.log.stdLogFn,
+    .logFn = esp.idf.log.stdLogFn,
 }};
 
 /// PSRAM task stack size (32KB, can be larger since it's in PSRAM)
@@ -701,7 +802,7 @@ else
 //! ESP Platform Entry Point
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const app = @import("app");
 pub const env_module = @import("env.zig");
 
@@ -721,7 +822,7 @@ else
 
 pub const std_options = std.Options{{
     .log_level = log_level,
-    .logFn = idf.log.stdLogFn,
+    .logFn = esp.idf.log.stdLogFn,
 }};
 
 export fn app_main() void {{
@@ -774,6 +875,8 @@ exec bash "{build_sh}"
         extra_deps_zig_decls = extra_deps_zig_decls,
         idf_deps_yml = idf_deps_yml,
         sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
+        boards_enum_fields = boards_enum_fields,
+        default_board = default_board,
     )
     
     ctx.actions.write(
@@ -822,6 +925,10 @@ esp_zig_app = rule(
         ),
         "project_name": attr.string(
             doc = "Project name (defaults to target name)",
+        ),
+        "boards": attr.string_list(
+            default = ["esp32s3_devkit"],
+            doc = "Supported board types for this app (first one is default)",
         ),
         "requires": attr.string_list(
             default = ["driver"],

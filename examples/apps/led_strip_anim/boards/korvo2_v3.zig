@@ -4,20 +4,22 @@
 //! - TCA9554 I2C GPIO expander with red/blue LEDs
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 const hal = @import("hal");
 const drivers = @import("drivers");
+
+const idf = esp.idf;
 
 // Platform primitives
 pub const log = std.log.scoped(.app);
 
 pub const time = struct {
     pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
+        idf.time.sleepMs(ms);
     }
 
     pub fn getTimeMs() u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 };
 
@@ -26,7 +28,7 @@ pub fn isRunning() bool {
 }
 
 // Hardware parameters from lib/esp/boards
-const hw_params = idf.boards.korvo2_v3;
+const hw_params = esp.boards.korvo2_v3;
 
 // ============================================================================
 // Hardware Info
@@ -63,7 +65,7 @@ pub const RtcDriver = struct {
     pub fn deinit(_: *Self) void {}
 
     pub fn uptime(_: *Self) u64 {
-        return idf.nowMs();
+        return idf.time.nowMs();
     }
 
     pub fn nowMs(_: *Self) ?i64 {
@@ -75,7 +77,7 @@ pub const RtcDriver = struct {
 // LED Driver (implements HAL LedStrip.Driver interface)
 // ============================================================================
 
-const I2c = idf.sal.I2c;
+const I2c = idf.I2c;
 const Tca9554 = drivers.Tca9554(*I2c);
 const Pin = drivers.tca9554.Pin;
 const RED_PIN = Pin.pin6;

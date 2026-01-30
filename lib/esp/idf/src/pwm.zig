@@ -3,7 +3,7 @@
 //! Uses ESP-IDF's LEDC peripheral for PWM output.
 
 const std = @import("std");
-const ledc_mod = @import("../ledc/ledc.zig");
+const ledc_mod = @import("ledc/ledc.zig");
 
 pub const Config = struct {
     /// GPIO pin number

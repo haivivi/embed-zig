@@ -1,0 +1,30 @@
+# ESP-IDF low-level bindings
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "idf_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)
+
+filegroup(
+    name = "idf_c_sources",
+    srcs = glob(
+        ["**/*.c", "**/*.h"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)
+
+filegroup(
+    name = "idf_cmake",
+    srcs = glob(
+        ["**/*.cmake"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)

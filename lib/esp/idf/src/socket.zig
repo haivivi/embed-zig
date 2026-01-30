@@ -1,6 +1,6 @@
-//! SAL Socket Implementation - LWIP
+//! LWIP BSD Socket Wrapper
 //!
-//! Implements sal.socket interface using LWIP BSD sockets.
+//! Provides idiomatic Zig wrapper for LWIP BSD sockets.
 
 const std = @import("std");
 
@@ -11,7 +11,7 @@ const c = @cImport({
 });
 
 // ============================================================================
-// Types (matching sal.socket interface)
+// Types
 // ============================================================================
 
 /// IPv4 address (4 bytes)

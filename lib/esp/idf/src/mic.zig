@@ -8,7 +8,7 @@
 //!   const drivers = @import("drivers");
 //!
 //!   // Create with ES7210 ADC driver
-//!   const Es7210 = drivers.Es7210(idf.sal.I2c);
+//!   const Es7210 = drivers.Es7210(idf.I2c);
 //!   const Mic = idf.Mic(Es7210);
 //!
 //!   var adc = try Es7210.init(&i2c, .{});

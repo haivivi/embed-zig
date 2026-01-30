@@ -12,12 +12,13 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash"],
     force_link = [
         "${WIFI_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES"],
     extra_deps = ["hal", "trait"],

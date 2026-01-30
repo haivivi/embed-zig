@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["driver", "esp_adc", "esp_driver_tsens"],
     force_link = [
         "temperature_sensor_install",

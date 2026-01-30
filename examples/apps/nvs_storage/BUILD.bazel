@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["nvs_flash"],
     extra_deps = ["hal"],
     sdkconfig = "//examples/esp:esp32s3",

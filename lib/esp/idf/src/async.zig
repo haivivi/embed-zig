@@ -1,6 +1,6 @@
-//! SAL Async Implementation - FreeRTOS
+//! FreeRTOS Async Task Utilities
 //!
-//! Implements sal.async interface using FreeRTOS tasks and semaphores.
+//! Provides go() fire-and-forget tasks and WaitGroup using FreeRTOS.
 
 const std = @import("std");
 const thread = @import("thread.zig");

@@ -12,6 +12,7 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit", "korvo2_v3"],
     requires = ["driver", "led_strip", "esp_driver_i2c"],
     force_link = [
         "led_strip_refresh",
@@ -19,7 +20,7 @@ esp_zig_app(
         "${I2C_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/sal/i2c.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["I2C_C_SOURCES"],
     extra_deps = ["hal", "drivers"],

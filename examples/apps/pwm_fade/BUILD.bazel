@@ -12,12 +12,13 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["esp32s3_devkit"],
     requires = ["driver"],
     force_link = [
         "${LEDC_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/ledc/ledc.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/ledc/ledc.cmake)",
     ],
     extra_c_sources = ["LEDC_C_SOURCES"],
     extra_deps = ["hal"],

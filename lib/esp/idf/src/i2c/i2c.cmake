@@ -15,4 +15,5 @@ set(I2C_FORCE_LINK
     i2c_helper_write_read
     i2c_helper_write
     i2c_helper_read
+    i2c_helper_probe
 )

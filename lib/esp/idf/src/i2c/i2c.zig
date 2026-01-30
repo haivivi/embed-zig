@@ -1,12 +1,11 @@
-//! ESP-IDF I2C Implementation
+//! ESP-IDF I2C Master Driver Wrapper
 //!
 //! Uses ESP-IDF I2C master driver via C helper (to handle opaque types).
 //!
 //! Usage:
-//!   const idf = @import("esp");
-//!   const I2c = idf.sal.I2c;
+//!   const idf = @import("idf");
 //!
-//!   var bus = try I2c.init(.{ .sda = 17, .scl = 18 });
+//!   var bus = try idf.I2c.init(.{ .sda = 17, .scl = 18 });
 //!   defer bus.deinit();
 //!
 //!   try bus.writeRead(0x20, &.{0x00}, &read_buf);
@@ -46,6 +45,7 @@ extern fn i2c_helper_deinit() void;
 extern fn i2c_helper_write_read(addr: u8, write_buf: [*]const u8, write_len: usize, read_buf: [*]u8, read_len: usize, timeout_ms: u32) c_int;
 extern fn i2c_helper_write(addr: u8, buf: [*]const u8, len: usize, timeout_ms: u32) c_int;
 extern fn i2c_helper_read(addr: u8, buf: [*]u8, len: usize, timeout_ms: u32) c_int;
+extern fn i2c_helper_probe(addr: u8, timeout_ms: u32) c_int;
 
 /// ESP-IDF I2C Master Bus
 pub const I2c = struct {
@@ -129,5 +129,11 @@ pub const I2c = struct {
         if (ret != 0) {
             return Error.I2cError;
         }
+    }
+
+    /// Probe device at address (check if device responds)
+    pub fn probe(self: *Self, addr: u7) bool {
+        if (!self.initialized) return false;
+        return i2c_helper_probe(addr, self.config.timeout_ms) == 0;
     }
 };

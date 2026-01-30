@@ -12,14 +12,15 @@ filegroup(
 esp_zig_app(
     name = "esp",
     app = ":srcs",
+    boards = ["korvo2_v3"],
     requires = ["driver", "esp_driver_i2s", "esp_driver_gpio", "esp_driver_i2c"],
     force_link = [
         "${MIC_FORCE_LINK}",
         "${I2C_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/mic/mic.cmake)",
-        "include(${_ESP_LIB}/esp/src/sal/i2c.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/mic/mic.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["MIC_C_SOURCES", "I2C_C_SOURCES"],
     extra_deps = ["hal", "drivers", "trait"],
