@@ -505,8 +505,12 @@ pub fn from(comptime spec: type) type {
             .pointer => |p| p.child,
             else => spec.Driver,
         };
-        // Verify Driver methods
-        _ = @as(*const fn (*BaseDriver, u32, Color) void, &BaseDriver.setPixel);
+        // Verify Driver.setPixel exists and has correct arity
+        // We use duck typing for Color - any struct with r, g, b fields works
+        if (!@hasDecl(BaseDriver, "setPixel")) {
+            @compileError("Driver must have setPixel method");
+        }
+        // Verify Driver.getPixelCount signature
         _ = @as(*const fn (*BaseDriver) u32, &BaseDriver.getPixelCount);
         // Verify meta.id
         _ = @as([]const u8, spec.meta.id);
@@ -561,7 +565,9 @@ pub fn from(comptime spec: type) type {
                 color.withBrightness(self.brightness)
             else
                 color;
-            self.driver.setPixel(index, adjusted);
+            // Convert to driver's color type (may be different from hal.Color)
+            const DriverColorType = @typeInfo(@TypeOf(Driver.setPixel)).@"fn".params[2].type.?;
+            self.driver.setPixel(index, DriverColorType{ .r = adjusted.r, .g = adjusted.g, .b = adjusted.b });
         }
 
         /// Set all pixels to the same color

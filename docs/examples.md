@@ -117,16 +117,6 @@ Persistent key-value storage.
   bazel run //examples/apps/nvs_storage:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-## mic_test
-
-Microphone audio capture with ES7210 codec.
-
-- **Zig / Korvo-2 V3**
-  ```bash
-  bazel build //examples/apps/mic_test:esp --//bazel/esp:board=korvo2_v3
-  bazel run //examples/apps/mic_test:flash --//bazel/esp:port=/dev/ttyUSB1
-  ```
-
 ## speaker_test
 
 Speaker audio output with ES8311 DAC. Plays a 440Hz sine wave tone.

@@ -117,16 +117,6 @@ LED 亮度渐变。
   bazel run //examples/apps/nvs_storage:flash --//bazel/esp:port=/dev/ttyUSB0
   ```
 
-## mic_test
-
-ES7210 编解码器麦克风录音。
-
-- **Zig / Korvo-2 V3**
-  ```bash
-  bazel build //examples/apps/mic_test:esp --//bazel/esp:board=korvo2_v3
-  bazel run //examples/apps/mic_test:flash --//bazel/esp:port=/dev/ttyUSB1
-  ```
-
 ## speaker_test
 
 ES8311 DAC 扬声器音频输出。播放 440Hz 正弦波测试音。
