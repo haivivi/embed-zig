@@ -123,8 +123,6 @@ static const char *TAG = "AEC_TEST";
 #define ES7210_MIC2_PWR     0x48
 #define ES7210_MIC3_PWR     0x49
 #define ES7210_MIC4_PWR     0x4A
-#define ES7210_MIC3_PWR     0x49
-#define ES7210_MIC4_PWR     0x4A
 #define ES7210_MIC12_PWR    0x4B
 #define ES7210_MIC34_PWR    0x4C
 

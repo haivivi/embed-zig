@@ -5,11 +5,16 @@
 //!
 //! Usage:
 //!   const board = @import("esp").boards.korvo2_v3;
-//!   pub const MicDriver = board.MicDriver;
-//!   pub const SpeakerDriver = board.SpeakerDriver;
+//!
+//!   // Audio (mic + speaker with AEC)
+//!   var audio = try board.AudioSystem.init();
+//!   defer audio.deinit();
+//!   const samples = try audio.readMic(&buffer);
+//!   try audio.writeSpeaker(&output);
 
 const std = @import("std");
 const idf = @import("idf");
+const hal = @import("hal");
 
 // ============================================================================
 // Board Identification
@@ -441,109 +446,218 @@ fn es7210Start() void {
 }
 
 // ============================================================================
-// Audio System (Global State)
+// Audio System (Unified Mic + Speaker with AEC)
 // ============================================================================
 
-var g_initialized: bool = false;
-var g_aec_handle: ?*AecHandle = null;
-var g_aec_frame_size: usize = 256;
-var g_raw_buffer_32: ?[]i32 = null;
-var g_aec_input: ?[]i16 = null;
-var g_aec_output: ?[]i16 = null;
-var g_tx_buffer_32: ?[]i32 = null;
+/// AudioSystem manages the complete audio subsystem for Korvo-2 V3:
+/// - ES7210 ADC (4-channel microphone)
+/// - ES8311 DAC (mono speaker)
+/// - I2S duplex for audio data
+/// - AEC (Acoustic Echo Cancellation)
+///
+/// Usage:
+///   var audio = try AudioSystem.init();
+///   defer audio.deinit();
+///
+///   const samples = try audio.readMic(&buffer);
+///   try audio.writeSpeaker(&output);
+pub const AudioSystem = struct {
+    const Self = @This();
 
-fn initAudioSystem() !void {
-    if (g_initialized) return;
+    initialized: bool = false,
+    aec_handle: ?*AecHandle = null,
+    aec_frame_size: usize = 256,
 
-    log.info("AudioSystem: Init I2C", .{});
-    if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
-        return error.I2cInitFailed;
+    // Buffers allocated in PSRAM
+    raw_buffer_32: ?[]i32 = null,
+    aec_input: ?[]i16 = null,
+    aec_output: ?[]i16 = null,
+    tx_buffer_32: ?[]i32 = null,
+
+    /// Initialize the audio system: I2C, I2S, codecs, and AEC
+    pub fn init() !Self {
+        var self = Self{};
+
+        log.info("AudioSystem: Init I2C", .{});
+        if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
+            return error.I2cInitFailed;
+        }
+        errdefer i2c_helper_deinit();
+
+        log.info("AudioSystem: Init ES8311 (DAC)", .{});
+        es8311Init();
+
+        log.info("AudioSystem: Init ES7210 (ADC)", .{});
+        es7210Init();
+
+        log.info("AudioSystem: Init I2S duplex", .{});
+        if (i2s_helper_init_std_duplex(i2s_port, sample_rate, 32, i2s_bclk, i2s_ws, i2s_din, i2s_dout, i2s_mclk) != 0) {
+            return error.I2sInitFailed;
+        }
+        errdefer _ = i2s_helper_deinit(i2s_port);
+
+        _ = i2s_helper_enable_rx(i2s_port);
+        _ = i2s_helper_enable_tx(i2s_port);
+
+        log.info("AudioSystem: Start ES8311", .{});
+        es8311Start();
+        es8311SetVolume(150);
+
+        idf.time.sleepMs(10);
+
+        log.info("AudioSystem: Start ES7210", .{});
+        es7210Start();
+
+        log.info("AudioSystem: Init AEC", .{});
+        // "RM" = Reference first, Mic second (same as h2xx)
+        // type=1 (AFE_TYPE_VC), mode=0 (AFE_MODE_LOW_COST)
+        // filter_length=2 (smaller = less artifacts but weaker echo cancellation)
+        self.aec_handle = aec_helper_create("RM", 2, 1, 0);
+        if (self.aec_handle == null) {
+            return error.AecInitFailed;
+        }
+        errdefer if (self.aec_handle) |h| aec_helper_destroy(h);
+
+        self.aec_frame_size = @intCast(aec_helper_get_chunksize(self.aec_handle.?));
+        const total_ch: usize = @intCast(aec_helper_get_total_channels(self.aec_handle.?));
+        log.info("AudioSystem: AEC frame={}, ch={}", .{ self.aec_frame_size, total_ch });
+
+        // Allocate buffers in PSRAM
+        const allocator = idf.heap.psram;
+
+        self.raw_buffer_32 = allocator.alloc(i32, self.aec_frame_size * 2) catch {
+            log.err("Failed to alloc raw_buffer", .{});
+            return error.OutOfMemory;
+        };
+        errdefer if (self.raw_buffer_32) |b| allocator.free(b);
+
+        self.aec_input = allocator.alloc(i16, self.aec_frame_size * total_ch) catch {
+            log.err("Failed to alloc aec_input", .{});
+            return error.OutOfMemory;
+        };
+        errdefer if (self.aec_input) |b| allocator.free(b);
+
+        // AEC output needs 16-byte alignment
+        self.aec_output = allocator.alignedAlloc(i16, .@"16", self.aec_frame_size) catch {
+            log.err("Failed to alloc aec_output", .{});
+            return error.OutOfMemory;
+        };
+        errdefer if (self.aec_output) |b| allocator.free(b);
+
+        self.tx_buffer_32 = allocator.alloc(i32, self.aec_frame_size * 2) catch {
+            log.err("Failed to alloc tx_buffer", .{});
+            return error.OutOfMemory;
+        };
+
+        self.initialized = true;
+        log.info("AudioSystem: Ready!", .{});
+        return self;
     }
 
-    log.info("AudioSystem: Init ES8311", .{});
-    es8311Init();
+    /// Deinitialize the audio system and free all resources
+    pub fn deinit(self: *Self) void {
+        if (!self.initialized) return;
 
-    log.info("AudioSystem: Init ES7210", .{});
-    es7210Init();
-
-    log.info("AudioSystem: Init I2S", .{});
-    if (i2s_helper_init_std_duplex(i2s_port, sample_rate, 32, i2s_bclk, i2s_ws, i2s_din, i2s_dout, i2s_mclk) != 0) {
-        return error.I2sInitFailed;
-    }
-    _ = i2s_helper_enable_rx(i2s_port);
-    _ = i2s_helper_enable_tx(i2s_port);
-
-    log.info("AudioSystem: Start ES8311", .{});
-    es8311Start();
-    es8311SetVolume(150);
-
-    idf.time.sleepMs(10);
-
-    log.info("AudioSystem: Start ES7210", .{});
-    es7210Start();
-
-    log.info("AudioSystem: Init AEC", .{});
-    // "RM" = Reference first, Mic second (same as h2xx)
-    // type=1 (AFE_TYPE_VC), mode=0 (AFE_MODE_LOW_COST)
-    // filter_length=2 (smaller = less artifacts but weaker echo cancellation)
-    g_aec_handle = aec_helper_create("RM", 2, 1, 0);
-    if (g_aec_handle == null) {
-        return error.AecInitFailed;
+        const allocator = idf.heap.psram;
+        if (self.aec_handle) |h| {
+            aec_helper_destroy(h);
+            self.aec_handle = null;
+        }
+        if (self.raw_buffer_32) |b| allocator.free(b);
+        if (self.aec_input) |b| allocator.free(b);
+        if (self.aec_output) |b| allocator.free(b);
+        if (self.tx_buffer_32) |b| allocator.free(b);
+        self.raw_buffer_32 = null;
+        self.aec_input = null;
+        self.aec_output = null;
+        self.tx_buffer_32 = null;
+        _ = i2s_helper_deinit(i2s_port);
+        i2c_helper_deinit();
+        self.initialized = false;
+        log.info("AudioSystem: Deinitialized", .{});
     }
 
-    g_aec_frame_size = @intCast(aec_helper_get_chunksize(g_aec_handle.?));
-    const total_ch: usize = @intCast(aec_helper_get_total_channels(g_aec_handle.?));
-    log.info("AudioSystem: AEC frame={}, ch={}", .{ g_aec_frame_size, total_ch });
+    // ========================================================================
+    // Microphone Operations (with AEC)
+    // ========================================================================
 
-    // Allocate buffers in PSRAM
-    const allocator = idf.heap.psram;
+    /// Read AEC-processed audio from microphone
+    /// Returns number of samples read
+    pub fn readMic(self: *Self, buffer: []i16) !usize {
+        if (!self.initialized) return error.NotInitialized;
 
-    g_raw_buffer_32 = allocator.alloc(i32, g_aec_frame_size * 2) catch {
-        log.err("Failed to alloc raw_buffer", .{});
-        return error.OutOfMemory;
-    };
-    errdefer if (g_raw_buffer_32) |b| allocator.free(b);
+        const aec_handle = self.aec_handle orelse return error.NoAec;
+        const raw_buf = self.raw_buffer_32 orelse return error.NoBuffer;
+        const aec_in = self.aec_input orelse return error.NoBuffer;
+        const aec_out = self.aec_output orelse return error.NoBuffer;
+        const frame_size = self.aec_frame_size;
 
-    g_aec_input = allocator.alloc(i16, g_aec_frame_size * total_ch) catch {
-        log.err("Failed to alloc aec_input", .{});
-        return error.OutOfMemory;
-    };
-    errdefer if (g_aec_input) |b| allocator.free(b);
+        const to_read = frame_size * 2 * @sizeOf(i32);
+        var bytes_read: usize = 0;
+        const raw_bytes = std.mem.sliceAsBytes(raw_buf[0 .. frame_size * 2]);
+        const ret = i2s_helper_read(i2s_port, raw_bytes.ptr, to_read, &bytes_read, 1000);
 
-    // AEC output needs 16-byte alignment
-    g_aec_output = allocator.alignedAlloc(i16, .@"16", g_aec_frame_size) catch {
-        log.err("Failed to alloc aec_output", .{});
-        return error.OutOfMemory;
-    };
-    errdefer if (g_aec_output) |b| allocator.free(b);
+        if (ret != 0 or bytes_read == 0) {
+            return 0;
+        }
 
-    g_tx_buffer_32 = allocator.alloc(i32, g_aec_frame_size * 2) catch {
-        log.err("Failed to alloc tx_buffer", .{});
-        return error.OutOfMemory;
-    };
+        const frames_read = bytes_read / @sizeOf(i32) / 2;
 
-    g_initialized = true;
-    log.info("AudioSystem: Ready!", .{});
-}
+        // Extract MIC1 and REF - pack as "RM" (ref first, mic second)
+        for (0..frames_read) |i| {
+            const L = raw_buf[i * 2];
+            const mic1: i16 = @truncate(L >> 16);
+            const ref: i16 = @truncate(L & 0xFFFF);
+            aec_in[i * 2 + 0] = ref; // Reference first
+            aec_in[i * 2 + 1] = mic1; // Mic second
+        }
 
-fn deinitAudioSystem() void {
-    const allocator = idf.heap.psram;
-    if (g_aec_handle) |h| {
-        aec_helper_destroy(h);
-        g_aec_handle = null;
+        // Run AEC
+        _ = aec_helper_process(aec_handle, aec_in.ptr, aec_out.ptr);
+
+        const copy_len = @min(buffer.len, frames_read);
+        @memcpy(buffer[0..copy_len], aec_out[0..copy_len]);
+
+        return copy_len;
     }
-    if (g_raw_buffer_32) |b| allocator.free(b);
-    if (g_aec_input) |b| allocator.free(b);
-    if (g_aec_output) |b| allocator.free(b);
-    if (g_tx_buffer_32) |b| allocator.free(b);
-    g_raw_buffer_32 = null;
-    g_aec_input = null;
-    g_aec_output = null;
-    g_tx_buffer_32 = null;
-    _ = i2s_helper_deinit(i2s_port);
-    i2c_helper_deinit();
-    g_initialized = false;
-}
+
+    /// Get the AEC frame size (optimal read buffer size)
+    pub fn getFrameSize(self: *const Self) usize {
+        return self.aec_frame_size;
+    }
+
+    // ========================================================================
+    // Speaker Operations
+    // ========================================================================
+
+    /// Write audio to speaker
+    /// Returns number of samples written
+    pub fn writeSpeaker(self: *Self, buffer: []const i16) !usize {
+        if (!self.initialized) return error.NotInitialized;
+
+        const tx_buf = self.tx_buffer_32 orelse return error.NoBuffer;
+        const frame_size = self.aec_frame_size;
+        const mono_samples = @min(buffer.len, frame_size);
+
+        // Convert mono i16 to stereo i32 (shift to upper 16 bits)
+        for (0..mono_samples) |i| {
+            const sample32: i32 = @as(i32, buffer[i]) << 16;
+            tx_buf[i * 2] = sample32;
+            tx_buf[i * 2 + 1] = sample32;
+        }
+
+        var bytes_written: usize = 0;
+        const tx_bytes = std.mem.sliceAsBytes(tx_buf[0 .. mono_samples * 2]);
+        _ = i2s_helper_write(i2s_port, tx_bytes.ptr, tx_bytes.len, &bytes_written, 1000);
+
+        return bytes_written / 8;
+    }
+
+    /// Set speaker volume (0-255)
+    pub fn setVolume(_: *Self, volume: u8) void {
+        es8311SetVolume(volume);
+    }
+};
 
 // ============================================================================
 // RTC Driver
@@ -605,115 +719,6 @@ pub const PaSwitchDriver = struct {
 };
 
 // ============================================================================
-// Speaker Driver (ES8311 DAC)
-// ============================================================================
-
-pub const SpeakerDriver = struct {
-    const Self = @This();
-
-    initialized: bool = false,
-
-    pub fn init() !Self {
-        return Self{ .initialized = true };
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn write(_: *Self, buffer: []const i16) !usize {
-        if (!g_initialized) return error.NotInitialized;
-
-        const tx_buf = g_tx_buffer_32 orelse return error.NoBuffer;
-        const frame_size = g_aec_frame_size;
-        const mono_samples = @min(buffer.len, frame_size);
-
-        // Convert mono i16 to stereo i32 (shift to upper 16 bits)
-        for (0..mono_samples) |i| {
-            const sample32: i32 = @as(i32, buffer[i]) << 16;
-            tx_buf[i * 2] = sample32;
-            tx_buf[i * 2 + 1] = sample32;
-        }
-
-        var bytes_written: usize = 0;
-        const tx_bytes = std.mem.sliceAsBytes(tx_buf[0 .. mono_samples * 2]);
-        _ = i2s_helper_write(i2s_port, tx_bytes.ptr, tx_bytes.len, &bytes_written, 1000);
-
-        return bytes_written / 8;
-    }
-
-    pub fn setVolume(_: *Self, volume: u8) !void {
-        es8311SetVolume(volume);
-    }
-};
-
-// ============================================================================
-// Microphone Driver with AEC (ES7210 ADC)
-// ============================================================================
-
-pub const MicDriver = struct {
-    const Self = @This();
-
-    initialized: bool = false,
-
-    pub fn init() !Self {
-        try initAudioSystem();
-        return Self{ .initialized = true };
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.initialized) {
-            deinitAudioSystem();
-            self.initialized = false;
-        }
-    }
-
-    pub fn read(_: *Self, buffer: []i16) !usize {
-        if (!g_initialized) return error.NotInitialized;
-
-        const aec_handle = g_aec_handle orelse return error.NoAec;
-        const raw_buf = g_raw_buffer_32 orelse return error.NoBuffer;
-        const aec_in = g_aec_input orelse return error.NoBuffer;
-        const aec_out = g_aec_output orelse return error.NoBuffer;
-        const frame_size = g_aec_frame_size;
-
-        const to_read = frame_size * 2 * @sizeOf(i32);
-        var bytes_read: usize = 0;
-        const raw_bytes = std.mem.sliceAsBytes(raw_buf[0 .. frame_size * 2]);
-        const ret = i2s_helper_read(i2s_port, raw_bytes.ptr, to_read, &bytes_read, 1000);
-
-        if (ret != 0 or bytes_read == 0) {
-            return 0;
-        }
-
-        const frames_read = bytes_read / @sizeOf(i32) / 2;
-
-        // Extract MIC1 and REF - pack as "RM" (ref first, mic second)
-        for (0..frames_read) |i| {
-            const L = raw_buf[i * 2];
-            const mic1: i16 = @truncate(L >> 16);
-            const ref: i16 = @truncate(L & 0xFFFF);
-            aec_in[i * 2 + 0] = ref; // Reference first
-            aec_in[i * 2 + 1] = mic1; // Mic second
-        }
-
-        // Run AEC
-        _ = aec_helper_process(aec_handle, aec_in.ptr, aec_out.ptr);
-
-        const copy_len = @min(buffer.len, frames_read);
-        @memcpy(buffer[0..copy_len], aec_out[0..copy_len]);
-
-        return copy_len;
-    }
-
-    pub fn setGain(_: *Self, _: i8) !void {}
-    pub fn start(_: *Self) !void {}
-    pub fn stop(_: *Self) !void {}
-
-    pub fn getFrameSize(_: *const Self) usize {
-        return g_aec_frame_size;
-    }
-};
-
-// ============================================================================
 // Boot Button Driver (GPIO0)
 // ============================================================================
 
@@ -771,6 +776,7 @@ pub const AdcButtonDriver = struct {
 
 pub const LedDriver = struct {
     const Self = @This();
+    pub const Color = hal.Color;
 
     // TCA9554 register addresses
     const REG_OUTPUT: u8 = 0x01;
@@ -786,10 +792,16 @@ pub const LedDriver = struct {
     i2c_initialized_here: bool = false,
 
     pub fn init() !Self {
+        return initWithI2c(null);
+    }
+
+    /// Initialize with optional external I2C (pass null to auto-init)
+    pub fn initWithI2c(external_i2c: ?bool) !Self {
         var self = Self{};
 
-        // Initialize I2C if not already done by audio system
-        if (!g_initialized) {
+        // Initialize I2C if not provided externally
+        const i2c_external = external_i2c orelse false;
+        if (!i2c_external) {
             if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
                 return error.I2cInitFailed;
             }
@@ -898,17 +910,149 @@ pub const LedDriver = struct {
     }
 };
 
-/// RGB color (packed struct compatible with hal.Color)
-pub const Color = packed struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
+// ============================================================================
+// Temperature Sensor Driver (Internal)
+// ============================================================================
 
-    pub const black = Color{};
-    pub const red = Color{ .r = 255 };
-    pub const green = Color{ .g = 255 };
-    pub const blue = Color{ .b = 255 };
-    pub const white = Color{ .r = 255, .g = 255, .b = 255 };
+pub const TempSensorDriver = struct {
+    const Self = @This();
+
+    sensor: idf.adc.TempSensor,
+    enabled: bool = false,
+
+    pub fn init() !Self {
+        var sensor = try idf.adc.TempSensor.init(.{
+            .range = .{ .min = -10, .max = 80 },
+        });
+        try sensor.enable();
+        log.info("TempSensorDriver: Internal sensor initialized", .{});
+        return Self{ .sensor = sensor, .enabled = true };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.enabled) {
+            self.sensor.disable() catch {};
+        }
+        self.sensor.deinit();
+    }
+
+    pub fn enable(self: *Self) !void {
+        if (!self.enabled) {
+            try self.sensor.enable();
+            self.enabled = true;
+        }
+    }
+
+    pub fn disable(self: *Self) !void {
+        if (self.enabled) {
+            try self.sensor.disable();
+            self.enabled = false;
+        }
+    }
+
+    pub fn readCelsius(self: *Self) !f32 {
+        if (!self.enabled) {
+            try self.enable();
+        }
+        return self.sensor.readCelsius();
+    }
+};
+
+// ============================================================================
+// WiFi Driver
+// ============================================================================
+
+pub const WifiDriver = struct {
+    const Self = @This();
+
+    wifi: ?idf.Wifi = null,
+    connected: bool = false,
+    ip_address: ?[4]u8 = null,
+
+    pub fn init() !Self {
+        return Self{};
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.wifi) |*w| {
+            w.disconnect();
+            w.deinit();
+        }
+        self.wifi = null;
+        self.connected = false;
+        self.ip_address = null;
+    }
+
+    pub fn connect(self: *Self, ssid: []const u8, password: []const u8) !void {
+        // Initialize WiFi if not already done
+        if (self.wifi == null) {
+            self.wifi = idf.Wifi.init() catch |err| {
+                log.err("WiFi init failed: {}", .{err});
+                return error.InitFailed;
+            };
+        }
+
+        // Connect with sentinel-terminated strings
+        var ssid_buf: [33:0]u8 = undefined;
+        var pass_buf: [65:0]u8 = undefined;
+
+        const ssid_len = @min(ssid.len, 32);
+        const pass_len = @min(password.len, 64);
+
+        @memcpy(ssid_buf[0..ssid_len], ssid[0..ssid_len]);
+        ssid_buf[ssid_len] = 0;
+
+        @memcpy(pass_buf[0..pass_len], password[0..pass_len]);
+        pass_buf[pass_len] = 0;
+
+        self.wifi.?.connect(.{
+            .ssid = ssid_buf[0..ssid_len :0],
+            .password = pass_buf[0..pass_len :0],
+            .timeout_ms = 30000,
+        }) catch |err| {
+            log.err("WiFi connect failed: {}", .{err});
+            return error.ConnectFailed;
+        };
+
+        self.connected = true;
+        self.ip_address = self.wifi.?.getIpAddress();
+        log.info("WiFi connected, IP: {}.{}.{}.{}", .{
+            self.ip_address.?[0],
+            self.ip_address.?[1],
+            self.ip_address.?[2],
+            self.ip_address.?[3],
+        });
+    }
+
+    pub fn disconnect(self: *Self) void {
+        if (self.wifi) |*w| {
+            w.disconnect();
+        }
+        self.connected = false;
+        self.ip_address = null;
+    }
+
+    pub fn isConnected(self: *const Self) bool {
+        return self.connected;
+    }
+
+    pub fn getIpAddress(self: *const Self) ?[4]u8 {
+        return self.ip_address;
+    }
+
+    pub fn getRssi(self: *const Self) ?i8 {
+        if (self.wifi) |*w| {
+            return w.getRssi();
+        }
+        return null;
+    }
+
+    pub fn getMac(self: *const Self) ?[6]u8 {
+        if (self.wifi) |*w| {
+            return w.getMac();
+        }
+        return null;
+    }
 };
 
 // TCA9554 I2C helpers

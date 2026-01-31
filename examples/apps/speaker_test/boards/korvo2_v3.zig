@@ -1,9 +1,7 @@
-//! Korvo-2 V3 Board Implementation for Speaker Test
+//! Korvo-2 V3 Board Configuration for Speaker Test
 //!
-//! Hardware:
-//! - ES8311 Mono DAC (I2C address 0x18)
-//! - I2S for audio data transfer
-//! - PA enable via GPIO 48
+//! Uses pre-configured drivers from esp.boards.korvo2_v3
+//! Note: Speaker-only test uses standalone I2S (no AEC/mic)
 
 const std = @import("std");
 const esp = @import("esp");
@@ -11,56 +9,45 @@ const hal = @import("hal");
 const drivers = @import("drivers");
 
 const idf = esp.idf;
+const board = esp.boards.korvo2_v3;
 
-// Platform primitives
+// Re-export platform primitives
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true;
+    return board.isRunning();
 }
 
-// Hardware parameters
-const hw_params = esp.boards.korvo2_v3;
-
 // ============================================================================
-// Hardware Info
+// Hardware Info (re-export from central board)
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = "/dev/cu.usbserial-120";
-    pub const sample_rate: u32 = 16000;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
+    pub const sample_rate: u32 = board.sample_rate;
 
     // I2C pins
-    pub const i2c_sda: u8 = 17;
-    pub const i2c_scl: u8 = 18;
+    pub const i2c_sda: u8 = board.i2c_sda;
+    pub const i2c_scl: u8 = board.i2c_scl;
 
     // I2S pins for speaker
-    pub const i2s_port: u8 = 0;
-    pub const i2s_bclk: u8 = 9;
-    pub const i2s_ws: u8 = 45;
-    pub const i2s_dout: u8 = 8;
-    pub const i2s_mclk: u8 = 16;
+    pub const i2s_port: u8 = board.i2s_port;
+    pub const i2s_bclk: u8 = board.i2s_bclk;
+    pub const i2s_ws: u8 = board.i2s_ws;
+    pub const i2s_dout: u8 = board.i2s_dout;
+    pub const i2s_mclk: u8 = board.i2s_mclk;
 
     // PA enable
-    pub const pa_enable_gpio: u8 = 48;
+    pub const pa_enable_gpio: u8 = board.pa_gpio;
 
     // ES8311 I2C address
-    pub const es8311_addr: u7 = 0x18;
+    pub const es8311_addr: u7 = board.es8311_addr;
 };
 
 // ============================================================================
-// Type aliases
+// Type aliases for standalone speaker (no AEC)
 // ============================================================================
 
 const I2c = idf.I2c;
@@ -69,70 +56,19 @@ const Es8311 = drivers.Es8311(*I2c);
 const EspSpeaker = idf.Speaker(Es8311);
 
 // ============================================================================
-// RTC Driver
+// RTC Driver (re-export)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub const RtcDriver = board.RtcDriver;
 
 // ============================================================================
-// PA Switch Driver
+// PA Switch Driver (re-export)
 // ============================================================================
 
-pub const PaSwitchDriver = struct {
-    const Self = @This();
-    const gpio = idf.gpio;
-
-    is_on: bool = false,
-
-    pub fn init() !Self {
-        try gpio.configOutput(Hardware.pa_enable_gpio);
-        try gpio.setLevel(Hardware.pa_enable_gpio, 0);
-        std.log.info("PaSwitchDriver: Initialized on GPIO {}", .{Hardware.pa_enable_gpio});
-        return Self{ .is_on = false };
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.is_on) {
-            self.off() catch {};
-        }
-        gpio.reset(Hardware.pa_enable_gpio) catch {};
-    }
-
-    pub fn on(self: *Self) !void {
-        try gpio.setLevel(Hardware.pa_enable_gpio, 1);
-        self.is_on = true;
-        std.log.info("PaSwitchDriver: PA enabled", .{});
-    }
-
-    pub fn off(self: *Self) !void {
-        try gpio.setLevel(Hardware.pa_enable_gpio, 0);
-        self.is_on = false;
-        std.log.info("PaSwitchDriver: PA disabled", .{});
-    }
-
-    pub fn isOn(self: *Self) bool {
-        return self.is_on;
-    }
-};
+pub const PaSwitchDriver = board.PaSwitchDriver;
 
 // ============================================================================
-// Speaker Driver (ES8311 + shared I2S TX)
+// Speaker Driver (standalone, uses idf.Speaker for speaker-only test)
 // ============================================================================
 
 pub const SpeakerDriver = struct {

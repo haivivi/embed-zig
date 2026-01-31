@@ -1,6 +1,6 @@
 //! Korvo-2 V3 Board Configuration for AEC Test
 //!
-//! Uses pre-configured drivers from esp.boards.korvo2_v3
+//! Uses AudioSystem from esp.boards.korvo2_v3
 
 const std = @import("std");
 const esp = @import("esp");
@@ -33,8 +33,7 @@ pub const Hardware = struct {
 // Drivers (from board)
 // ============================================================================
 
-pub const MicDriver = board.MicDriver;
-pub const SpeakerDriver = board.SpeakerDriver;
+pub const AudioSystem = board.AudioSystem;
 pub const PaSwitchDriver = board.PaSwitchDriver;
 pub const RtcDriver = board.RtcDriver;
 
@@ -50,20 +49,4 @@ pub const rtc_spec = struct {
 pub const pa_switch_spec = struct {
     pub const Driver = PaSwitchDriver;
     pub const meta = .{ .id = "switch.pa" };
-};
-
-pub const speaker_spec = struct {
-    pub const Driver = SpeakerDriver;
-    pub const meta = .{ .id = "speaker.es8311" };
-    pub const config = hal.MonoSpeakerConfig{
-        .sample_rate = Hardware.sample_rate,
-    };
-};
-
-pub const mic_spec = struct {
-    pub const Driver = MicDriver;
-    pub const meta = .{ .id = "mic.es7210" };
-    pub const config = hal.mic.Config{
-        .sample_rate = Hardware.sample_rate,
-    };
 };

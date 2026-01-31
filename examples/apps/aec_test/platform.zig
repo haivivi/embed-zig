@@ -2,36 +2,46 @@
 //!
 //! Supports: Korvo-2 V3 (ES7210 ADC + ES8311 DAC + AEC)
 //!
-//! Uses HAL Board abstraction for proper driver lifecycle management.
+//! Uses AudioSystem for unified mic+speaker with AEC.
 
 const hal = @import("hal");
 const hw = @import("boards/korvo2_v3.zig");
 
 pub const Hardware = hw.Hardware;
 
-// Re-export platform primitives (for direct access outside Board)
+// Re-export platform primitives
 pub const log = hw.log;
 pub const time = hw.time;
+pub fn isRunning() bool {
+    return hw.isRunning();
+}
 
-/// Platform spec for hal.Board
-const spec = struct {
-    pub const meta = .{ .id = Hardware.name };
+// Re-export AudioSystem and PaSwitchDriver
+pub const AudioSystem = hw.AudioSystem;
+pub const PaSwitchDriver = hw.PaSwitchDriver;
 
-    // Required: time source
-    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+/// Board struct for AEC test (simplified, no HAL wrappers)
+pub const Board = struct {
+    const Self = @This();
 
-    // Audio peripherals
-    pub const mic = hal.mic.from(hw.mic_spec);
-    pub const speaker = hal.mono_speaker.from(hw.speaker_spec);
-
-    // PA (Power Amplifier) switch
-    pub const pa_switch = hal.switch_.from(hw.pa_switch_spec);
-
-    // Platform primitives
+    // Re-export for app.zig compatibility
     pub const log = hw.log;
     pub const time = hw.time;
-    pub const isRunning = hw.isRunning;
-};
 
-/// Board type using HAL abstraction
-pub const Board = hal.Board(spec);
+    audio: AudioSystem,
+    pa_switch: PaSwitchDriver,
+
+    pub fn init(self: *Self) !void {
+        // Initialize audio system (mic + speaker + AEC)
+        self.audio = try AudioSystem.init();
+        errdefer self.audio.deinit();
+
+        // Initialize PA switch
+        self.pa_switch = try PaSwitchDriver.init();
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.pa_switch.deinit();
+        self.audio.deinit();
+    }
+};

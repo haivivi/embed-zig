@@ -134,14 +134,14 @@ fn runTcpMode(board: *Board) void {
 
     while (true) {
         // Read from microphone
-        const samples_read = board.mic.read(&audio_buffer) catch |err| {
+        const samples_read = board.audio.readMic(&audio_buffer) catch |err| {
             log.err("Mic read error: {}", .{err});
-            Board.time.sleepMs(10);
+            platform.time.sleepMs(10);
             continue;
         };
 
         if (samples_read == 0) {
-            Board.time.sleepMs(1);
+            platform.time.sleepMs(1);
             continue;
         }
 
@@ -167,9 +167,9 @@ fn runTcpMode(board: *Board) void {
     log.info("TCP streaming ended. Total bytes sent: {}", .{total_bytes_sent});
 }
 
-/// Speaker loopback mode - tests AEC locally with sine wave
+/// Speaker loopback mode - tests AEC with mic -> speaker
 fn runLoopbackMode(board: *Board) void {
-    log.info("=== Loopback Mode with Sine Wave ===", .{});
+    log.info("=== Loopback Mode (Mic -> Speaker with AEC) ===", .{});
 
     // Enable PA (Power Amplifier)
     board.pa_switch.on() catch |err| {
@@ -180,27 +180,10 @@ fn runLoopbackMode(board: *Board) void {
     log.info("PA enabled", .{});
 
     // Set speaker volume
-    board.speaker.setVolume(150) catch |err| {
-        log.warn("Failed to set speaker volume: {}", .{err});
-    };
+    board.audio.setVolume(150);
 
-    // Sine wave parameters - Middle C (C4) = 261.63 Hz
-    const SINE_FREQ: u32 = 262;
-    const SINE_AMP: i16 = 16000; // Increased amplitude
-
-    // Pre-calculate sine wave table
-    const sine_period: usize = SAMPLE_RATE / SINE_FREQ; // ~61 samples for 262Hz @ 16kHz
-    var sine_table: [128]i16 = undefined; // Enough for any reasonable period
-    const actual_period = @min(sine_period, sine_table.len);
-
-    for (0..actual_period) |i| {
-        const angle: f32 = 2.0 * std.math.pi * @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(actual_period));
-        sine_table[i] = @intFromFloat(@as(f32, @floatFromInt(SINE_AMP)) * @sin(angle));
-    }
-
-    log.info("Sine wave: {}Hz (period={} samples), amp={}", .{ SINE_FREQ, actual_period, SINE_AMP });
-    log.info("Starting mic -> speaker loopback with sine...", .{});
-    log.info("You should hear Middle C (262Hz) + your voice.", .{});
+    log.info("Starting mic -> speaker loopback...", .{});
+    log.info("AEC should cancel speaker feedback from microphone.", .{});
 
     // Audio buffer
     var audio_buffer: [BUFFER_SIZE]i16 = undefined;
@@ -208,41 +191,35 @@ fn runLoopbackMode(board: *Board) void {
 
     var total_samples: u64 = 0;
     var error_count: u32 = 0;
-    var sine_idx: usize = 0;
 
     while (true) {
         // Read from microphone (AEC-processed audio)
-        const samples_read = board.mic.read(&audio_buffer) catch |err| {
+        const samples_read = board.audio.readMic(&audio_buffer) catch |err| {
             error_count += 1;
             if (error_count <= 5 or error_count % 100 == 0) {
                 log.err("Mic read error #{}: {}", .{ error_count, err });
             }
-            Board.time.sleepMs(10);
+            platform.time.sleepMs(10);
             continue;
         };
 
         if (samples_read == 0) {
-            Board.time.sleepMs(1);
+            platform.time.sleepMs(1);
             continue;
         }
 
-        // Mix sine wave with AEC output
+        // Apply gain to mic audio
         for (0..samples_read) |i| {
-            const sine_sample = sine_table[sine_idx];
-            sine_idx = (sine_idx + 1) % actual_period;
-
-            // Mic with AEC, higher gain to test echo cancellation
-            _ = sine_sample;
-            var mixed: i32 = @as(i32, audio_buffer[i]) * 16;
-            if (mixed > 32767) mixed = 32767;
-            if (mixed < -32768) mixed = -32768;
-            output_buffer[i] = @truncate(mixed);
+            var amplified: i32 = @as(i32, audio_buffer[i]) * 16;
+            if (amplified > 32767) amplified = 32767;
+            if (amplified < -32768) amplified = -32768;
+            output_buffer[i] = @truncate(amplified);
         }
 
-        // Play mixed audio through speaker
-        _ = board.speaker.write(output_buffer[0..samples_read]) catch |err| {
+        // Play through speaker
+        _ = board.audio.writeSpeaker(output_buffer[0..samples_read]) catch |err| {
             log.err("Speaker write error: {}", .{err});
-            Board.time.sleepMs(10);
+            platform.time.sleepMs(10);
             continue;
         };
 
