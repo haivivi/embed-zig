@@ -1,20 +1,33 @@
-# Microphone (I2S TDM) module CMake configuration
-# Defines required ESP-IDF components and force-link symbols for mic/I2S TDM
+# Microphone (AEC) module CMake configuration
+# Defines required ESP-IDF components and force-link symbols for mic + AEC
+#
+# Note: I2S helpers are now in the i2s module (i2s/i2s.cmake)
 
-# C helper sources for I2S TDM
-file(GLOB MIC_C_SOURCES "${CMAKE_CURRENT_LIST_DIR}/i2s_tdm_helper.c")
+# Include I2S module (provides TDM/STD helpers)
+include(${CMAKE_CURRENT_LIST_DIR}/../i2s/i2s.cmake)
 
-# ESP-IDF components required for I2S TDM microphone
-set(MIC_REQUIRES
-    esp_driver_i2s
-    driver
+# Include SR module (provides AEC)
+include(${CMAKE_CURRENT_LIST_DIR}/../sr/sr.cmake)
+
+# Include runtime support (128-bit division etc.)
+include(${CMAKE_CURRENT_LIST_DIR}/../runtime/runtime.cmake)
+
+# C helper sources (I2S + SR + runtime)
+set(MIC_C_SOURCES
+    ${I2S_C_SOURCES}
+    ${SR_C_SOURCES}
+    ${RUNTIME_C_SOURCES}
 )
 
-# Symbols to force-link for I2S TDM functionality
+# ESP-IDF components required
+set(MIC_REQUIRES
+    ${I2S_REQUIRES}
+    ${SR_REQUIRES}
+)
+
+# Symbols to force-link
 set(MIC_FORCE_LINK
-    i2s_tdm_helper_init_rx
-    i2s_tdm_helper_deinit
-    i2s_tdm_helper_enable
-    i2s_tdm_helper_disable
-    i2s_tdm_helper_read
+    ${I2S_FORCE_LINK}
+    ${SR_FORCE_LINK}
+    ${RUNTIME_FORCE_LINK}
 )

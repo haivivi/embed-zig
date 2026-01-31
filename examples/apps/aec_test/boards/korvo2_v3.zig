@@ -1,6 +1,6 @@
-//! Korvo-2 V3 Board Configuration for GPIO Button Test
+//! Korvo-2 V3 Board Configuration for AEC Test
 //!
-//! Uses pre-configured drivers from esp.boards.korvo2_v3
+//! Uses AudioSystem from esp.boards.korvo2_v3
 
 const std = @import("std");
 const esp = @import("esp");
@@ -19,24 +19,22 @@ pub fn isRunning() bool {
 }
 
 // ============================================================================
-// Hardware Info
+// Hardware Info (for app.zig compatibility)
 // ============================================================================
 
 pub const Hardware = struct {
     pub const name = board.name;
     pub const serial_port = board.serial_port;
-    pub const boot_button_gpio = board.boot_button_gpio;
-    pub const has_led = true;
-    pub const led_type = "tca9554";
-    pub const led_count: u32 = 1;
+    pub const sample_rate = board.sample_rate;
+    pub const pa_enable_gpio = board.pa_gpio;
 };
 
 // ============================================================================
 // Drivers (from board)
 // ============================================================================
 
-pub const ButtonDriver = board.BootButtonDriver;
-pub const LedDriver = board.LedDriver;
+pub const AudioSystem = board.AudioSystem;
+pub const PaSwitchDriver = board.PaSwitchDriver;
 pub const RtcDriver = board.RtcDriver;
 
 // ============================================================================
@@ -48,12 +46,7 @@ pub const rtc_spec = struct {
     pub const meta = .{ .id = "rtc" };
 };
 
-pub const button_spec = struct {
-    pub const Driver = ButtonDriver;
-    pub const meta = .{ .id = "button.boot" };
-};
-
-pub const led_spec = struct {
-    pub const Driver = LedDriver;
-    pub const meta = .{ .id = "led.main" };
+pub const pa_switch_spec = struct {
+    pub const Driver = PaSwitchDriver;
+    pub const meta = .{ .id = "switch.pa" };
 };

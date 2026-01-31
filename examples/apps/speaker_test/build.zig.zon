@@ -1,7 +1,6 @@
 .{
-    .name = .mic_test_app,
+    .name = .speaker_test_app,
     .version = "0.1.0",
-    .fingerprint = 0xa4bb4181689b341c,
     .dependencies = .{
         .esp = .{
             .path = "../../../lib/esp",
@@ -11,9 +10,6 @@
         },
         .drivers = .{
             .path = "../../../lib/drivers",
-        },
-        .trait = .{
-            .path = "../../../lib/trait",
         },
     },
     .paths = .{

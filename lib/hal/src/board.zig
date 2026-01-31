@@ -78,6 +78,8 @@ const wifi_mod = @import("wifi.zig");
 const temp_sensor_mod = @import("temp_sensor.zig");
 const kvs_mod = @import("kvs.zig");
 const mic_mod = @import("mic.zig");
+const mono_speaker_mod = @import("mono_speaker.zig");
+const switch_mod = @import("switch.zig");
 
 // ============================================================================
 // Simple Queue (Default implementation)
@@ -134,7 +136,7 @@ pub fn SimpleQueue(comptime T: type, comptime capacity: usize) type {
 // Spec Analysis
 // ============================================================================
 
-const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, temp_sensor, kvs, mic, unknown };
+const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, temp_sensor, kvs, mic, mono_speaker, switch_, unknown };
 
 fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (@typeInfo(T) != .@"struct") return .unknown;
@@ -147,6 +149,8 @@ fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (temp_sensor_mod.is(T)) return .temp_sensor;
     if (kvs_mod.is(T)) return .kvs;
     if (mic_mod.is(T)) return .mic;
+    if (mono_speaker_mod.is(T)) return .mono_speaker;
+    if (switch_mod.is(T)) return .switch_;
     return .unknown;
 }
 
@@ -160,6 +164,8 @@ fn SpecAnalysis(comptime spec: type) type {
         pub const temp_sensor_count = countType(spec, .temp_sensor);
         pub const kvs_count = countType(spec, .kvs);
         pub const mic_count = countType(spec, .mic);
+        pub const mono_speaker_count = countType(spec, .mono_speaker);
+        pub const switch_count = countType(spec, .switch_);
         pub const has_buttons = button_group_count > 0 or button_count > 0;
         pub const ButtonId = extractButtonId(spec);
 
@@ -260,6 +266,10 @@ pub fn Board(comptime spec: type) type {
     const KvsDriverType = if (analysis.kvs_count > 0) KvsType.DriverType else void;
     const MicType = if (analysis.mic_count > 0) getMicType(spec) else void;
     const MicDriverType = if (analysis.mic_count > 0) MicType.DriverType else void;
+    const MonoSpeakerType = if (analysis.mono_speaker_count > 0) getMonoSpeakerType(spec) else void;
+    const MonoSpeakerDriverType = if (analysis.mono_speaker_count > 0) MonoSpeakerType.DriverType else void;
+    const SwitchType = if (analysis.switch_count > 0) getSwitchType(spec) else void;
+    const SwitchDriverType = if (analysis.switch_count > 0) SwitchType.DriverType else void;
 
     // Generate Event type
     const Event = union(enum) {
@@ -288,6 +298,8 @@ pub fn Board(comptime spec: type) type {
         pub const Kvs = KvsType;
         pub const RtcReader = RtcReaderType;
         pub const Microphone = MicType;
+        pub const MonoSpeaker = MonoSpeakerType;
+        pub const Switch = SwitchType;
 
         // ================================================================
         // Board Metadata
@@ -350,6 +362,14 @@ pub fn Board(comptime spec: type) type {
         // Microphone (if present)
         mic_driver: if (analysis.mic_count > 0) MicDriverType else void,
         mic: if (analysis.mic_count > 0) MicType else void,
+
+        // Mono Speaker (if present)
+        speaker_driver: if (analysis.mono_speaker_count > 0) MonoSpeakerDriverType else void,
+        speaker: if (analysis.mono_speaker_count > 0) MonoSpeakerType else void,
+
+        // PA Switch (if present)
+        pa_switch_driver: if (analysis.switch_count > 0) SwitchDriverType else void,
+        pa_switch: if (analysis.switch_count > 0) SwitchType else void,
 
         // ================================================================
         // Lifecycle
@@ -447,6 +467,45 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.button_group_count > 0) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
+                // Call initInPlace if driver supports it (for pointer-based init)
+                if (@hasDecl(MicDriverType, "initInPlace")) {
+                    try self.mic_driver.initInPlace();
+                }
+            }
+
+            // Initialize Mono Speaker driver
+            if (analysis.mono_speaker_count > 0) {
+                self.speaker_driver = try MonoSpeakerDriverType.init();
+                errdefer {
+                    if (analysis.mic_count > 0) self.mic_driver.deinit();
+                    if (analysis.kvs_count > 0) self.kvs_driver.deinit();
+                    if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
+                // Call initInPlace if driver supports it (for pointer-based init)
+                if (@hasDecl(MonoSpeakerDriverType, "initInPlace")) {
+                    try self.speaker_driver.initInPlace();
+                }
+            }
+
+            // Initialize PA Switch driver
+            if (analysis.switch_count > 0) {
+                self.pa_switch_driver = try SwitchDriverType.init();
+                errdefer {
+                    if (analysis.mono_speaker_count > 0) self.speaker_driver.deinit();
+                    if (analysis.mic_count > 0) self.mic_driver.deinit();
+                    if (analysis.kvs_count > 0) self.kvs_driver.deinit();
+                    if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
             }
 
             // Initialize HAL wrappers with driver pointers (now pointing to correct locations)
@@ -475,6 +534,12 @@ pub fn Board(comptime spec: type) type {
             if (analysis.mic_count > 0) {
                 self.mic = MicType.init(&self.mic_driver);
             }
+            if (analysis.mono_speaker_count > 0) {
+                self.speaker = MonoSpeakerType.init(&self.speaker_driver);
+            }
+            if (analysis.switch_count > 0) {
+                self.pa_switch = SwitchType.init(&self.pa_switch_driver);
+            }
         }
 
         // Static wrapper for uptime (used by ButtonGroup)
@@ -489,6 +554,13 @@ pub fn Board(comptime spec: type) type {
 
         /// Deinitialize board
         pub fn deinit(self: *Self) void {
+            // Deinit in reverse order
+            if (analysis.switch_count > 0) {
+                self.pa_switch_driver.deinit();
+            }
+            if (analysis.mono_speaker_count > 0) {
+                self.speaker_driver.deinit();
+            }
             if (analysis.mic_count > 0) {
                 self.mic_driver.deinit();
             }
@@ -696,6 +768,32 @@ fn getMicType(comptime spec: type) type {
         }
     }
     @compileError("No Microphone found in spec");
+}
+
+fn getMonoSpeakerType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (mono_speaker_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No MonoSpeaker found in spec");
+}
+
+fn getSwitchType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (switch_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No Switch found in spec");
 }
 
 fn ButtonEventPayload(comptime ButtonId: type) type {

@@ -88,6 +88,10 @@ pub const temp_sensor = @import("temp_sensor.zig");
 pub const kvs = @import("kvs.zig");
 /// Microphone module (hal.mic.from, hal.mic.is)
 pub const mic = @import("mic.zig");
+/// Mono Speaker module (hal.mono_speaker.from, hal.mono_speaker.is)
+pub const mono_speaker = @import("mono_speaker.zig");
+/// Switch module (hal.switch_.from, hal.switch_.is)
+pub const switch_ = @import("switch.zig");
 
 // ============================================================================
 // Common Types
@@ -170,6 +174,13 @@ pub const MicConfig = mic.Config;
 /// Microphone sample format
 pub const MicSampleFormat = mic.SampleFormat;
 
+// ============================================================================
+// MonoSpeaker Types
+// ============================================================================
+
+/// MonoSpeaker configuration
+pub const MonoSpeakerConfig = mono_speaker.Config;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -181,4 +192,6 @@ test {
     _ = @import("temp_sensor.zig");
     _ = @import("kvs.zig");
     _ = @import("mic.zig");
+    _ = @import("mono_speaker.zig");
+    _ = @import("switch.zig");
 }

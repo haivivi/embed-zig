@@ -130,10 +130,9 @@ pub const Gain = enum(u8) {
 
 /// I2S data format
 pub const I2sFormat = enum(u2) {
-    i2s = 0b00,
+    i2s = 0b00, // I2S Philips
     left_justified = 0b01,
-    dsp_a = 0b11,
-    dsp_b = 0b11,
+    dsp = 0b11, // DSP-A or DSP-B (determined by time control)
 };
 
 /// Bits per sample
@@ -250,9 +249,12 @@ pub fn Es7210(comptime I2cImpl: type) type {
         // ====================================================================
 
         /// Open and initialize the ADC
+        /// Note: Caller should add ~10ms delay after reset if needed
         pub fn open(self: *Self) !void {
             // Reset
             try self.writeRegister(.reset, 0xFF);
+            // Note: C version has 10ms delay here, but we can't do that in generic driver
+            // The ESP board code adds delay if needed
             try self.writeRegister(.reset, 0x41);
 
             // Clock setup
@@ -260,11 +262,15 @@ pub fn Es7210(comptime I2cImpl: type) type {
             try self.writeRegister(.time_control0, 0x30);
             try self.writeRegister(.time_control1, 0x30);
 
-            // HPF setup
-            try self.writeRegister(.adc12_hpf2, 0x2A);
-            try self.writeRegister(.adc12_hpf1, 0x0A);
-            try self.writeRegister(.adc34_hpf2, 0x0A);
-            try self.writeRegister(.adc34_hpf1, 0x2A);
+            // HPF setup (matching C version exactly)
+            try self.writeRegister(.adc12_hpf2, 0x2A); // 0x23
+            try self.writeRegister(.adc12_hpf1, 0x0A); // 0x22
+            try self.writeRegister(.adc34_hpf2, 0x0A); // 0x20
+            try self.writeRegister(.adc34_hpf1, 0x2A); // 0x21
+
+            // Unmute all ADCs (critical! missing in original)
+            try self.writeRegister(.adc12_muterange, 0x00); // 0x15
+            try self.writeRegister(.adc34_muterange, 0x00); // 0x14
 
             // Master/slave mode
             if (self.config.master_mode) {
@@ -287,11 +293,26 @@ pub fn Es7210(comptime I2cImpl: type) type {
             // Clock divider with DLL
             try self.writeRegister(.main_clk, 0xC1);
 
-            // Select microphones
+            // Select microphones (also enables TDM mode if 3+ mics)
             try self.selectMics(self.config.mic_select);
+
+            // Force SDP_IF1 = 0x60 (16-bit I2S format)
+            // This matches the C version exactly:
+            //   bit 7:5 = 011 (16-bit word length)
+            //   bit 4:2 = 000
+            //   bit 1:0 = 00 (I2S Philips format)
+            try self.writeRegister(.sdp_interface1, 0x60);
 
             // Set default gain
             try self.setGainAll(self.gain);
+
+            // Final analog power setting (same as ESP-ADF)
+            try self.writeRegister(.analog, 0x43);
+
+            // Start the chip by writing to reset register (critical!)
+            // This sequence from ESP-ADF is required to actually start the ADC
+            try self.writeRegister(.reset, 0x71);
+            try self.writeRegister(.reset, 0x41);
 
             // Save clock off register value
             self.clock_off_reg = try self.readRegister(.clock_off);
@@ -449,6 +470,7 @@ pub fn Es7210(comptime I2cImpl: type) type {
         // ====================================================================
 
         fn start(self: *Self) !void {
+            // Following ESP-ADF audio_hal/driver/es7210/es7210.c es7210_start
             try self.writeRegister(.clock_off, self.clock_off_reg);
             try self.writeRegister(.power_down, 0x00);
             try self.writeRegister(.analog, 0x43);
@@ -457,9 +479,8 @@ pub fn Es7210(comptime I2cImpl: type) type {
             try self.writeRegister(.mic3_power, 0x08);
             try self.writeRegister(.mic4_power, 0x08);
             try self.selectMics(self.config.mic_select);
-            try self.writeRegister(.analog, 0x43);
-            try self.writeRegister(.reset, 0x71);
-            try self.writeRegister(.reset, 0x41);
+            // Note: ESP-ADF audio_hal driver does NOT write reset registers here
+            // The reset registers are only written in open()
         }
 
         fn stop(self: *Self) !void {
