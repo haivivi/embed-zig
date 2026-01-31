@@ -211,10 +211,8 @@ fn runLoopbackMode(board: *Board) void {
 
         // Apply gain to mic audio
         for (0..samples_read) |i| {
-            var amplified: i32 = @as(i32, audio_buffer[i]) * MIC_GAIN;
-            if (amplified > 32767) amplified = 32767;
-            if (amplified < -32768) amplified = -32768;
-            output_buffer[i] = @truncate(amplified);
+            const amplified: i32 = @as(i32, audio_buffer[i]) * MIC_GAIN;
+            output_buffer[i] = @intCast(std.math.clamp(amplified, std.math.minInt(i16), std.math.maxInt(i16)));
         }
 
         // Play through speaker

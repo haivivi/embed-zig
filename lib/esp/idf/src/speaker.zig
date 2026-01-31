@@ -138,9 +138,9 @@ pub fn Speaker(comptime Dac: type) type {
         /// Write audio samples (blocking)
         ///
         /// Writes mono audio samples to the speaker.
-        /// For stereo I2S 32-bit mode, mono 16-bit data is:
-        /// 1. Left-shifted by 16 to fit in 32-bit slot
-        /// 2. Duplicated to both L and R channels
+        /// Handles both 16-bit and 32-bit I2S modes:
+        /// - 32-bit: Left-shift by 16 and duplicate to stereo
+        /// - 16-bit: Duplicate mono to stereo directly
         pub fn write(self: *Self, buffer: []const i16) !usize {
             if (!self.initialized) return error.NotInitialized;
             if (!self.enabled) {
@@ -148,23 +148,36 @@ pub fn Speaker(comptime Dac: type) type {
                 try self.enable();
             }
 
-            // Convert mono 16-bit to stereo 32-bit
-            // I2S is configured for 32-bit samples, so we shift left by 16
-            var stereo_buffer_32: [512]i32 = undefined;
-            const max_mono_samples = stereo_buffer_32.len / 2;
-            const mono_samples = @min(buffer.len, max_mono_samples);
+            if (self.i2s.config.bits_per_sample == 32) {
+                // Convert mono 16-bit to stereo 32-bit (left-justified)
+                var stereo_buffer_32: [512]i32 = undefined;
+                const max_mono_samples = stereo_buffer_32.len / 2;
+                const mono_samples = @min(buffer.len, max_mono_samples);
 
-            for (0..mono_samples) |i| {
-                const sample32: i32 = @as(i32, buffer[i]) << 16;
-                stereo_buffer_32[i * 2] = sample32; // Left channel
-                stereo_buffer_32[i * 2 + 1] = sample32; // Right channel (duplicate)
+                for (0..mono_samples) |i| {
+                    const sample32: i32 = @as(i32, buffer[i]) << 16;
+                    stereo_buffer_32[i * 2] = sample32; // Left channel
+                    stereo_buffer_32[i * 2 + 1] = sample32; // Right channel
+                }
+
+                const stereo_bytes = std.mem.sliceAsBytes(stereo_buffer_32[0 .. mono_samples * 2]);
+                const bytes_written = try self.i2s.write(stereo_bytes);
+                return bytes_written / 8; // 4 bytes per sample * 2 channels
+            } else {
+                // 16-bit mode: duplicate mono to stereo directly
+                var stereo_buffer_16: [1024]i16 = undefined;
+                const max_mono_samples = stereo_buffer_16.len / 2;
+                const mono_samples = @min(buffer.len, max_mono_samples);
+
+                for (0..mono_samples) |i| {
+                    stereo_buffer_16[i * 2] = buffer[i]; // Left channel
+                    stereo_buffer_16[i * 2 + 1] = buffer[i]; // Right channel
+                }
+
+                const stereo_bytes = std.mem.sliceAsBytes(stereo_buffer_16[0 .. mono_samples * 2]);
+                const bytes_written = try self.i2s.write(stereo_bytes);
+                return bytes_written / 4; // 2 bytes per sample * 2 channels
             }
-
-            const stereo_bytes = std.mem.sliceAsBytes(stereo_buffer_32[0 .. mono_samples * 2]);
-            const bytes_written = try self.i2s.write(stereo_bytes);
-
-            // Return number of mono samples written (not stereo)
-            return bytes_written / 8; // 4 bytes per sample * 2 channels
         }
 
         // ================================================================
