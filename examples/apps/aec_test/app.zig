@@ -38,6 +38,7 @@ const USE_TCP_MODE = false; // TCP mode disabled - waiting for WiFi PR
 
 const SAMPLE_RATE: u32 = Hardware.sample_rate;
 const BUFFER_SIZE: usize = 256; // Matches AEC chunk size
+const MIC_GAIN: i32 = 16; // Amplification factor for mic audio
 
 fn printBoardInfo() void {
     log.info("==========================================", .{});
@@ -210,7 +211,7 @@ fn runLoopbackMode(board: *Board) void {
 
         // Apply gain to mic audio
         for (0..samples_read) |i| {
-            var amplified: i32 = @as(i32, audio_buffer[i]) * 16;
+            var amplified: i32 = @as(i32, audio_buffer[i]) * MIC_GAIN;
             if (amplified > 32767) amplified = 32767;
             if (amplified < -32768) amplified = -32768;
             output_buffer[i] = @truncate(amplified);

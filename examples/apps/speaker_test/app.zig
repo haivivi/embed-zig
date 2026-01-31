@@ -28,6 +28,9 @@ const NOTE_REST: u32 = 0;
 const NOTE_DURATION_MS: u32 = 400;
 const REST_DURATION_MS: u32 = 50;
 
+// Sine wave amplitude (reduced from max i16 to avoid clipping)
+const SINE_AMPLITUDE: f32 = 12000.0;
+
 // Twinkle Twinkle Little Star melody
 const melody = [_]u32{
     // Twinkle twinkle little star
@@ -69,7 +72,7 @@ fn generateSineWave(buffer: []i16, sample_rate: u32, frequency: u32, phase: *f32
     for (buffer) |*sample| {
         const sine_value = @sin(phase.*);
         // Scale to i16 range with reduced amplitude
-        sample.* = @intFromFloat(sine_value * 12000.0);
+        sample.* = @intFromFloat(sine_value * SINE_AMPLITUDE);
 
         // Advance phase
         phase.* += phase_increment;
