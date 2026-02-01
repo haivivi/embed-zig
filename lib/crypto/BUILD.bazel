@@ -1,0 +1,18 @@
+# Crypto library - Pure Zig cryptographic primitives
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "crypto_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)
+
+# Re-export root CA certificates
+alias(
+    name = "root_cas",
+    actual = "//lib/crypto/certs:root_cas",
+)

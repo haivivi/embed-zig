@@ -1,13 +1,13 @@
 .{
-    .name = .http,
+    .name = .tls,
     .version = "0.1.0",
-    .fingerprint = 0x97780db2659c81ec,
+    .fingerprint = 0xacfd1db3c5e6d45d,
     .dependencies = .{
         .trait = .{
             .path = "../trait",
         },
-        .tls = .{
-            .path = "../tls",
+        .crypto = .{
+            .path = "../crypto",
         },
     },
     .paths = .{

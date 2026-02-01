@@ -4,36 +4,29 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Get dependencies
+    // Get trait dependency
     const trait_dep = b.dependency("trait", .{
         .target = target,
         .optimize = optimize,
     });
-    const tls_dep = b.dependency("tls", .{
-        .target = target,
-        .optimize = optimize,
-    });
 
-    // Create the http module
-    const http_mod = b.addModule("http", .{
-        .root_source_file = b.path("src/http.zig"),
+    const crypto_mod = b.addModule("crypto", .{
+        .root_source_file = b.path("src/crypto.zig"),
         .target = target,
         .optimize = optimize,
     });
-    http_mod.addImport("trait", trait_dep.module("trait"));
-    http_mod.addImport("tls", tls_dep.module("tls"));
+    crypto_mod.addImport("trait", trait_dep.module("trait"));
 
     // Tests
     const test_step = b.step("test", "Run unit tests");
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/http.zig"),
+            .root_source_file = b.path("src/crypto.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
     tests.root_module.addImport("trait", trait_dep.module("trait"));
-    tests.root_module.addImport("tls", tls_dep.module("tls"));
     const run_tests = b.addRunArtifact(tests);
     test_step.dependOn(&run_tests.step);
 }
