@@ -457,9 +457,11 @@ fn readTimestamp(buf: *const [8]u8) NtpTimestamp {
 }
 
 /// Write NTP timestamp to buffer (big-endian)
-/// Truncates to u32 for wire format (valid for dates 1900-2036)
+/// Truncates to u32 for wire format (handles nonce values safely)
 fn writeTimestamp(buf: *[8]u8, ts: NtpTimestamp) void {
-    std.mem.writeInt(u32, buf[0..4], @intCast(ts.seconds), .big);
+    // Use @truncate to safely handle large values from generateNonce()
+    // This preserves the lower 32 bits which is all that matters for NTP wire format
+    std.mem.writeInt(u32, buf[0..4], @truncate(@as(u64, @bitCast(ts.seconds))), .big);
     std.mem.writeInt(u32, buf[4..8], ts.fraction, .big);
 }
 
@@ -489,47 +491,28 @@ fn unixMsToNtp(unix_ms: i64) NtpTimestamp {
 }
 
 /// Format Unix epoch milliseconds as ISO 8601 string
+/// Uses std.time.epoch for robust date/time calculation
 pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
     const secs = @divFloor(epoch_ms, 1000);
-    var days = @divFloor(secs, 86400);
-    const day_secs = @mod(secs, 86400);
 
-    const hour: u8 = @intCast(@divFloor(day_secs, 3600));
-    const minute: u8 = @intCast(@divFloor(@mod(day_secs, 3600), 60));
-    const second: u8 = @intCast(@mod(day_secs, 60));
+    // Guard against negative timestamps (pre-1970) which std.time.epoch doesn't handle
+    if (secs < 0) return "????-??-??T??:??:??Z";
 
-    // Calculate year, month, day from days since 1970
-    var year: i32 = 1970;
-    while (true) {
-        const days_in_year: i64 = if (isLeapYear(year)) 366 else 365;
-        if (days < days_in_year) break;
-        days -= days_in_year;
-        year += 1;
-    }
+    const es = std.time.epoch.EpochSeconds{ .secs = @intCast(secs) };
+    const day_seconds = es.getDaySeconds();
+    const year_day = es.getEpochDay().calculateYearDay();
 
-    const leap = isLeapYear(year);
-    const normal_month_days = comptime [12]i64{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    const leap_month_days = comptime [12]i64{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    const month_days = if (leap) leap_month_days else normal_month_days;
-
-    var month: u8 = 1;
-    while (month <= 12) : (month += 1) {
-        if (days < month_days[month - 1]) break;
-        days -= month_days[month - 1];
-    }
-
-    // Guard against pre-1970 timestamps that could cause overflow
-    if (days < 0 or days > 30) return "????-??-??T??:??:??Z";
-    const day: u8 = @intCast(days + 1);
-    const year_u: u16 = @intCast(year);
+    // Get month and day from year_day
+    const month_day = year_day.calculateMonthDay();
 
     return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
-        year_u, month, day, hour, minute, second,
+        year_day.year,
+        @intFromEnum(month_day.month),
+        month_day.day_index + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
     }) catch "????-??-??T??:??:??Z";
-}
-
-fn isLeapYear(year: i32) bool {
-    return (@mod(year, 4) == 0 and @mod(year, 100) != 0) or @mod(year, 400) == 0;
 }
 
 // ============================================================================
