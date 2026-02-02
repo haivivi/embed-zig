@@ -36,6 +36,8 @@ pub const NtpError = error{
     Timeout,
     InvalidResponse,
     KissOfDeath,
+    /// Origin Timestamp mismatch - possible spoofing attack (RFC 5905)
+    OriginMismatch,
 };
 
 /// NTP query response containing server timestamps
@@ -138,6 +140,12 @@ pub fn Client(comptime Socket: type) type {
             var request: [48]u8 = undefined;
             buildRequest(&request, t1_local_ms);
 
+            // Store origin timestamp for validation (RFC 5905 security)
+            const expected_origin: ?NtpTimestamp = if (t1_local_ms != 0)
+                unixMsToNtp(t1_local_ms)
+            else
+                null;
+
             // Send request
             _ = sock.sendTo(self.server, NTP_PORT, &request) catch return error.SendFailed;
 
@@ -152,8 +160,8 @@ pub fn Client(comptime Socket: type) type {
 
             if (recv_len < 48) return error.InvalidResponse;
 
-            // Parse response
-            return parseResponse(&response);
+            // Parse and validate response
+            return parseResponse(&response, expected_origin);
         }
 
         /// Simple time query - returns current Unix epoch milliseconds
@@ -191,6 +199,12 @@ pub fn Client(comptime Socket: type) type {
             var request: [48]u8 = undefined;
             buildRequest(&request, t1_local_ms);
 
+            // Store origin timestamp for validation (RFC 5905 security)
+            const expected_origin: ?NtpTimestamp = if (t1_local_ms != 0)
+                unixMsToNtp(t1_local_ms)
+            else
+                null;
+
             // Send to all servers simultaneously
             var sent_count: usize = 0;
             for (servers) |server| {
@@ -214,8 +228,8 @@ pub fn Client(comptime Socket: type) type {
 
             if (recv_len < 48) return error.InvalidResponse;
 
-            // Parse response
-            return parseResponse(&response);
+            // Parse and validate response
+            return parseResponse(&response, expected_origin);
         }
 
         /// Simple race query - returns time using global server list
@@ -262,7 +276,9 @@ fn buildRequest(buf: *[48]u8, origin_time_ms: i64) void {
 }
 
 /// Parse NTP response packet
-fn parseResponse(buf: *const [48]u8) NtpError!Response {
+/// If expected_origin is provided, validates that the response's Origin Timestamp
+/// matches what we sent (RFC 5905 security - prevents NTP spoofing attacks)
+fn parseResponse(buf: *const [48]u8, expected_origin: ?NtpTimestamp) NtpError!Response {
     // Check LI (Leap Indicator) - if 3, server is not synchronized
     const li = (buf[0] >> 6) & 0x03;
     if (li == 3) return error.InvalidResponse;
@@ -276,6 +292,16 @@ fn parseResponse(buf: *const [48]u8) NtpError!Response {
     if (stratum == 0) {
         // Kiss-o'-Death packet - server is telling us to go away
         return error.KissOfDeath;
+    }
+
+    // Validate Origin Timestamp (RFC 5905 security)
+    // Server must echo back the exact timestamp we sent in the request
+    // This prevents off-path attackers from spoofing NTP responses
+    if (expected_origin) |expected| {
+        const origin = readTimestamp(buf[24..32]);
+        if (origin.seconds != expected.seconds or origin.fraction != expected.fraction) {
+            return error.OriginMismatch;
+        }
     }
 
     // Parse receive timestamp (T2) - bytes 32-39
@@ -302,23 +328,15 @@ const NtpTimestamp = struct {
 /// Read NTP timestamp from buffer (big-endian)
 fn readTimestamp(buf: *const [8]u8) NtpTimestamp {
     return .{
-        .seconds = (@as(u32, buf[0]) << 24) | (@as(u32, buf[1]) << 16) |
-            (@as(u32, buf[2]) << 8) | buf[3],
-        .fraction = (@as(u32, buf[4]) << 24) | (@as(u32, buf[5]) << 16) |
-            (@as(u32, buf[6]) << 8) | buf[7],
+        .seconds = std.mem.readInt(u32, buf[0..4], .big),
+        .fraction = std.mem.readInt(u32, buf[4..8], .big),
     };
 }
 
 /// Write NTP timestamp to buffer (big-endian)
 fn writeTimestamp(buf: *[8]u8, ts: NtpTimestamp) void {
-    buf[0] = @intCast((ts.seconds >> 24) & 0xFF);
-    buf[1] = @intCast((ts.seconds >> 16) & 0xFF);
-    buf[2] = @intCast((ts.seconds >> 8) & 0xFF);
-    buf[3] = @intCast(ts.seconds & 0xFF);
-    buf[4] = @intCast((ts.fraction >> 24) & 0xFF);
-    buf[5] = @intCast((ts.fraction >> 16) & 0xFF);
-    buf[6] = @intCast((ts.fraction >> 8) & 0xFF);
-    buf[7] = @intCast(ts.fraction & 0xFF);
+    std.mem.writeInt(u32, buf[0..4], ts.seconds, .big);
+    std.mem.writeInt(u32, buf[4..8], ts.fraction, .big);
 }
 
 /// Convert NTP timestamp to Unix milliseconds
@@ -378,6 +396,8 @@ pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
         days -= month_days[month - 1];
     }
 
+    // Guard against pre-1970 timestamps that could cause overflow
+    if (days < 0 or days > 30) return "????-??-??T??:??:??Z";
     const day: u8 = @intCast(days + 1);
     const year_u: u16 = @intCast(year);
 
