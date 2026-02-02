@@ -71,13 +71,22 @@ pub const log = @import("log.zig");
 pub const Log = log.Log;
 pub const stdLogFn = log.stdLogFn;
 
+/// Crypto implementation (trait.crypto) - mbedTLS hardware accelerated
+pub const crypto = @import("crypto/suite.zig");
+
+/// Net implementation (hal.net) - network interface
+pub const net = @import("net.zig");
+pub const NetDriver = net.NetDriver;
+
 // ============================================================================
 // hal implementations (Drivers)
 // ============================================================================
 
-/// WiFi driver (hal.wifi)
+/// WiFi drivers (hal.wifi)
 pub const wifi = @import("wifi.zig");
-pub const WifiDriver = wifi.WifiDriver;
+pub const WifiDriver = wifi.WifiDriver; // Legacy alias for StaDriver
+pub const WifiStaDriver = wifi.StaDriver;
+pub const WifiApDriver = wifi.ApDriver;
 
 /// KVS driver (hal.kvs)
 pub const kvs = @import("kvs.zig");

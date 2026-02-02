@@ -12,6 +12,7 @@
 //! | i2c      | i2c.zig   | write, writeRead                     | drivers         |
 //! | time     | time.zig  | sleepMs, getTimeMs                   | apps, SDK       |
 //! | log      | log.zig   | info, err, warn, debug               | apps, SDK       |
+//! | rng      | rng.zig   | fill                                 | tls, crypto     |
 //!
 //! ## Usage Pattern
 //!
@@ -40,6 +41,9 @@ pub const tls = @import("tls.zig");
 pub const i2c = @import("i2c.zig");
 pub const time = @import("time.zig");
 pub const log = @import("log.zig");
+pub const rng = @import("rng.zig");
+pub const crypto = @import("crypto.zig");
+pub const net = @import("net.zig");
 
 // Socket helpers
 pub const Ipv4Address = socket.Ipv4Address;
@@ -48,6 +52,9 @@ pub const parseIpv4 = socket.parseIpv4;
 // Default implementations
 pub const StdLogger = log.StdLogger;
 
+// Default implementations
+pub const StdRng = rng.StdRng;
+
 // Run all interface tests
 test {
     _ = socket;
@@ -55,4 +62,7 @@ test {
     _ = i2c;
     _ = time;
     _ = log;
+    _ = rng;
+    _ = crypto;
+    _ = net;
 }

@@ -16,7 +16,9 @@ def _esp_wifi_impl(ctx):
     lines.append("CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y")
     lines.append("CONFIG_ESP_WIFI_NVS_ENABLED=n")
     lines.append("CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y")
-    lines.append("CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y")
+    
+    # Disable WPA3 SAE to avoid mbedTLS dependency
+    lines.append("CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n")
     
     ctx.actions.write(out, "\n".join(lines) + "\n")
     return [DefaultInfo(files = depset([out]))]

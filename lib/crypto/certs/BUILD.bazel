@@ -1,0 +1,37 @@
+# Root CA Certificates for TLS verification
+#
+# Usage:
+#   data = ["//lib/crypto/certs:root_cas"],
+
+package(default_visibility = ["//visibility:public"])
+
+# Default root CA bundle (placeholder - add actual certificates)
+filegroup(
+    name = "root_cas",
+    srcs = glob(
+        ["*.der"],
+        allow_empty = True,
+    ),
+)
+
+# Mozilla root CA bundle (when generated)
+filegroup(
+    name = "mozilla_roots",
+    srcs = ["mozilla_roots.der"] if glob(["mozilla_roots.der"]) else [],
+)
+
+# Minimal root CA bundle for common sites
+# (Let's Encrypt, DigiCert, GlobalSign, etc.)
+filegroup(
+    name = "minimal_roots",
+    srcs = ["minimal_roots.der"] if glob(["minimal_roots.der"]) else [],
+)
+
+# Custom CA certificates (for testing or internal PKI)
+filegroup(
+    name = "custom_cas",
+    srcs = glob(
+        ["custom/*.der"],
+        allow_empty = True,
+    ),
+)

@@ -253,7 +253,9 @@ pub fn getCurrentTaskStackStats() StackStats {
 
 /// Get stack stats for a specific task handle
 pub fn getTaskStackStats(handle: ?*anyopaque, total_size: usize) StackStats {
-    const high_water = c.uxTaskGetStackHighWaterMark(handle);
+    // Cast to TaskHandle_t (opaque pointer type expected by FreeRTOS)
+    const task_handle: c.TaskHandle_t = @ptrCast(handle);
+    const high_water = c.uxTaskGetStackHighWaterMark(task_handle);
     return .{
         .total = total_size,
         .high_water = high_water,

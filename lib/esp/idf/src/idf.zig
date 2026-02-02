@@ -11,6 +11,7 @@
 //! | Core | heap | Memory allocators (psram, iram, dma) |
 //! | Core | rtos | FreeRTOS task delay |
 //! | Core | task | Task management |
+//! | Core | event | Default event loop |
 //! | GPIO | gpio | General Purpose I/O |
 //! | ADC | adc | ADC and temperature sensor |
 //! | PWM | ledc | LED Control (PWM) |
@@ -45,6 +46,8 @@ pub const heap = @import("heap.zig");
 pub const rtos = @import("rtos.zig");
 pub const delayMs = rtos.delayMs;
 pub const task = @import("task.zig");
+pub const random = @import("random.zig");
+pub const event = @import("event/event.zig");
 
 // ============================================================================
 // GPIO & Peripherals
@@ -90,13 +93,17 @@ pub const socket = @import("socket.zig");
 pub const Socket = socket.Socket;
 pub const tls = @import("tls.zig");
 pub const TlsStream = tls.TlsStream;
+pub const mbed_tls = @import("mbed_tls.zig");
 
 // ============================================================================
 // WiFi
 // ============================================================================
 
 pub const wifi = @import("wifi/wifi.zig");
-pub const Wifi = wifi.Wifi;
+pub const Wifi = wifi.Wifi; // Legacy API
+pub const WifiMode = wifi.Mode;
+pub const WifiStaConfig = wifi.StaConfig;
+pub const WifiApConfig = wifi.ApConfig;
 
 // ============================================================================
 // Audio

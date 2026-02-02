@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "all_libs",
     srcs = [
+        "//lib/crypto:crypto_sources",
         "//lib/dns:dns_sources",
         "//lib/drivers:drivers_sources",
         "//lib/esp:esp_sources",
@@ -20,6 +21,7 @@ filegroup(
         "//lib/esp/impl:impl_sources",
         "//lib/hal:hal_sources",
         "//lib/http:http_sources",
+        "//lib/tls:tls_sources",
         "//lib/trait:trait_sources",
         "//lib/std:std_sources",
     ],

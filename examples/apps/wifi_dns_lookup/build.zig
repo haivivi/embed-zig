@@ -16,6 +16,8 @@ pub fn build(b: *std.Build) void {
     const hal_dep = b.dependency("hal", .{ .target = target, .optimize = optimize });
     const esp_dep = b.dependency("esp", .{ .target = target, .optimize = optimize });
     const dns_dep = b.dependency("dns", .{ .target = target, .optimize = optimize });
+    const tls_dep = b.dependency("tls", .{ .target = target, .optimize = optimize });
+    const http_dep = b.dependency("http", .{ .target = target, .optimize = optimize });
 
     // Build options
     const board_options = b.addOptions();
@@ -32,5 +34,7 @@ pub fn build(b: *std.Build) void {
     app_module.addImport("hal", hal_dep.module("hal"));
     app_module.addImport("esp", esp_dep.module("esp"));
     app_module.addImport("dns", dns_dep.module("dns"));
+    app_module.addImport("tls", tls_dep.module("tls"));
+    app_module.addImport("http", http_dep.module("http"));
     app_module.addOptions("build_options", board_options);
 }

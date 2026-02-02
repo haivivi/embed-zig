@@ -165,7 +165,7 @@ function(esp_zig_build)
         message(FATAL_ERROR "Unsupported target ${CONFIG_IDF_TARGET}")
     endif()
     
-    # Build type
+    # Build type - respect CMAKE_BUILD_TYPE, default to ReleaseSafe
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(ZIG_BUILD_TYPE "Debug")
     else()
@@ -194,12 +194,36 @@ function(esp_zig_build)
         VERBATIM
     )
     
-    # Link Zig library
+    # Link Zig library with mbedcrypto after it
+    # The linker processes libraries left to right, so we need mbedcrypto AFTER libmain_zig.a
+    # to resolve symbols from Zig that depend on mbedTLS crypto functions.
     add_prebuilt_library(zig ${CMAKE_BINARY_DIR}/lib/libmain_zig.a)
     add_dependencies(zig zig_build)
-    target_link_libraries(${COMPONENT_LIB} PRIVATE ${CMAKE_BINARY_DIR}/lib/libmain_zig.a)
     
-    # Force link symbols
+    # mbedcrypto library path in ESP-IDF build
+    set(MBEDCRYPTO_LIB "${CMAKE_BINARY_DIR}/esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a")
+    
+    # Add link options directly to ensure proper ordering
+    # Use INTERFACE_LINK_LIBRARIES to append at the end of the link command
+    target_link_libraries(${COMPONENT_LIB} PRIVATE 
+        ${CMAKE_BINARY_DIR}/lib/libmain_zig.a
+        ${MBEDCRYPTO_LIB}
+    )
+    
+    # Force link symbols from C helpers (needed for static library order resolution)
+    set(C_HELPER_SYMBOLS
+        x25519_keypair x25519_scalarmult x25519_base_scalarmult
+        p256_keypair p256_ecdh p256_compute_public
+        p384_keypair p384_ecdh p384_compute_public
+        aes_gcm_encrypt aes_gcm_decrypt
+        hkdf_extract hkdf_expand
+    )
+    foreach(sym ${C_HELPER_SYMBOLS})
+        set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY 
+            INTERFACE_LINK_OPTIONS "-Wl,-u,${sym}")
+    endforeach()
+    
+    # Force link user-specified symbols
     foreach(sym ${ARG_FORCE_LINK})
         set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY 
             INTERFACE_LINK_OPTIONS "-Wl,-u,${sym}")

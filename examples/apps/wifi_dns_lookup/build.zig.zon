@@ -6,6 +6,8 @@
         .esp = .{ .path = "../../../lib/esp" },
         .hal = .{ .path = "../../../lib/hal" },
         .dns = .{ .path = "../../../lib/dns" },
+        .tls = .{ .path = "../../../lib/tls" },
+        .http = .{ .path = "../../../lib/http" },
     },
     .paths = .{
         "build.zig",

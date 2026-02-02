@@ -6,6 +6,15 @@
         .trait = .{
             .path = "../trait",
         },
+        .tls = .{
+            .path = "../tls",
+        },
+        .dns = .{
+            .path = "../dns",
+        },
+        .std_sal = .{
+            .path = "../std",
+        },
     },
     .paths = .{
         "build.zig",

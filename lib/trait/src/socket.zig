@@ -39,6 +39,9 @@ pub const Error = error{
     Timeout,
     InvalidAddress,
     Closed,
+    // Server-side errors
+    ListenFailed,
+    AcceptFailed,
 };
 
 /// Socket Interface - comptime validates and returns Impl

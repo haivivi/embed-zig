@@ -1,6 +1,7 @@
 # ESP32 build settings
 
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("//bazel/esp:defs.bzl", "esp_monitor")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -27,4 +28,9 @@ string_flag(
 filegroup(
     name = "scripts",
     srcs = glob(["scripts/*.sh"]),
+)
+
+# Serial monitor
+esp_monitor(
+    name = "monitor",
 )

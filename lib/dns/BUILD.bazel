@@ -1,5 +1,7 @@
 # DNS library
 
+load("//bazel/zig:defs.bzl", "zig_run")
+
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
@@ -9,4 +11,19 @@ filegroup(
         allow_empty = True,
         exclude = [".zig-cache/**", "zig-out/**"],
     ),
+)
+
+# DNS integration test (network required)
+# Run: bazel run //lib/dns:test
+zig_run(
+    name = "test",
+    srcs = [
+        ":dns_sources",
+        "//lib/trait:trait_sources",
+        "//lib/tls:tls_sources",
+        "//lib/crypto:crypto_sources",
+        "//lib/std:std_sources",
+    ],
+    project_dir = "lib/dns",
+    build_step = "run-test",
 )

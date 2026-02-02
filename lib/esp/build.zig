@@ -26,6 +26,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Get crypto dependency
+    const crypto_dep = b.dependency("crypto", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create the esp module (re-exports idf and impl)
     const esp_module = b.addModule("esp", .{
         .root_source_file = b.path("src/esp.zig"),
@@ -37,6 +43,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "impl", .module = impl_dep.module("impl") },
             .{ .name = "trait", .module = trait_dep.module("trait") },
             .{ .name = "hal", .module = hal_dep.module("hal") },
+            .{ .name = "crypto", .module = crypto_dep.module("crypto") },
         },
     });
 

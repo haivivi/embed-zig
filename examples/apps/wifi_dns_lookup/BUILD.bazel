@@ -17,27 +17,30 @@ filegroup(
 #   WIFI_PASSWORD=secret bazel build ... --define WIFI_SSID=xxx --action_env=WIFI_PASSWORD
 make_env_file(
     name = "env",
-    defines = ["WIFI_SSID"],
-    env_vars = ["WIFI_PASSWORD"],
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
 )
 
 esp_zig_app(
     name = "esp",
     app = ":srcs",
     boards = ["esp32s3_devkit"],
-    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "esp_http_client"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "mbedtls"],
     force_link = [
+        "${EVENT_FORCE_LINK}",
         "${WIFI_FORCE_LINK}",
-        "esp_http_client_init",
-        "esp_http_client_cleanup",
+        "${NET_FORCE_LINK}",
+        "verify_with_esp_bundle",
     ],
     extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/event/event.cmake)",
         "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/mbed_tls/mbed_tls.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/net/net.cmake)",
     ],
-    extra_c_sources = ["WIFI_C_SOURCES"],
-    extra_deps = ["hal", "dns"],
-    sdkconfig = "//examples/esp:esp32s3_wifi",
-    app_config = "//examples/esp:app_internal",
+    extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES"],
+    extra_deps = ["hal", "dns", "tls", "http"],
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls",  # mbedTLS crypto + XIP
+    app_config = "//examples/esp:app",  # 128KB stack in PSRAM
     env = ":env",
 )
 
