@@ -96,6 +96,15 @@ pub const mono_speaker = @import("mono_speaker.zig");
 pub const switch_ = @import("switch.zig");
 
 // ============================================================================
+// Device Adapters
+// ============================================================================
+
+/// I2C Device adapter - wraps I2C bus + device address into addr_io interface
+pub const I2cDevice = @import("i2c_device.zig").I2cDevice;
+/// SPI Device adapter - wraps SPI bus + CS GPIO into addr_io interface
+pub const SpiDevice = @import("spi_device.zig").SpiDevice;
+
+// ============================================================================
 // Common Types
 // ============================================================================
 
@@ -209,4 +218,6 @@ test {
     _ = @import("mic.zig");
     _ = @import("mono_speaker.zig");
     _ = @import("switch.zig");
+    _ = @import("i2c_device.zig");
+    _ = @import("spi_device.zig");
 }

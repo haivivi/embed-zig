@@ -210,3 +210,86 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
     return out;
 }
 ```
+
+---
+
+## NFC / FM175XX Driver
+
+### Status: In Progress (Pending Hardware Test)
+
+FM175XX NFC reader driver migrated from C to Zig. Core functionality complete, awaiting hardware testing.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│ Application                                 │
+│   nfc.poll() -> CardInfo                    │
+├─────────────────────────────────────────────┤
+│ lib/nfc/drivers/fm175xx                     │
+│   Fm175xx(Transport, Time)                  │
+│   - driver.zig (core, FIFO, RF, transceive) │
+│   - type_a.zig (ISO14443A, NTAG)            │
+│   - type_b.zig (ISO14443B)                  │
+│   - regs.zig   (register definitions)       │
+├─────────────────────────────────────────────┤
+│ lib/nfc (common NFC definitions)            │
+│   - card.zig     (TypeACard, TypeBCard)     │
+│   - protocol.zig (ISO14443 constants)       │
+│   - ndef.zig     (NDEF parsing/encoding)    │
+├─────────────────────────────────────────────┤
+│ lib/hal (adapters)                          │
+│   - I2cDevice(I2c) -> addr_io               │
+│   - SpiDevice(Spi, Gpio) -> addr_io         │
+├─────────────────────────────────────────────┤
+│ lib/trait/addr_io                           │
+│   Unified register R/W interface            │
+│   - readByte(reg) / writeByte(reg, val)     │
+│   - read(reg, buf) / write(reg, data)       │
+└─────────────────────────────────────────────┘
+```
+
+### Usage Example
+
+```zig
+const hal = @import("hal");
+const fm175xx = @import("fm175xx");
+
+// I2C mode
+const I2cDev = hal.I2cDevice(hw.I2c);
+var transport = I2cDev.init(&i2c_bus, 0x28);
+var nfc = fm175xx.Fm175xx(@TypeOf(&transport), Time).init(&transport);
+
+try nfc.softReset();
+try nfc.setRf(.both);
+
+if (try nfc.poll()) |card| {
+    switch (card) {
+        .type_a => |a| {
+            // ISO14443A card detected
+            const uid = a.getUid();
+        },
+        .type_b => |b| {
+            // ISO14443B card detected
+        },
+    }
+}
+```
+
+### Files
+
+| Path | Description |
+|------|-------------|
+| `lib/trait/src/addr_io.zig` | Unified I2C/SPI register interface trait |
+| `lib/hal/src/i2c_device.zig` | I2C bus + device addr -> addr_io adapter |
+| `lib/hal/src/spi_device.zig` | SPI bus + CS GPIO -> addr_io adapter |
+| `lib/nfc/src/` | Common NFC definitions (card, protocol, ndef) |
+| `lib/nfc/drivers/fm175xx/src/` | FM175XX driver implementation |
+| `lib/nfc/drivers/fm175xx/docs/` | FM175XX register reference documentation |
+
+### Next Steps
+
+1. **Hardware Testing** - Test with actual FM175XX module (I2C or SPI)
+2. **Mifare Classic** - Add authentication and sector read/write
+3. **Example App** - Create `examples/apps/nfc_reader/` demo
+4. **NDEF Write** - Implement writing NDEF records to tags

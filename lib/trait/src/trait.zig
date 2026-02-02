@@ -39,6 +39,7 @@
 pub const socket = @import("socket.zig");
 pub const tls = @import("tls.zig");
 pub const i2c = @import("i2c.zig");
+pub const addr_io = @import("addr_io.zig");
 pub const time = @import("time.zig");
 pub const log = @import("log.zig");
 pub const rng = @import("rng.zig");
@@ -60,6 +61,7 @@ test {
     _ = socket;
     _ = tls;
     _ = i2c;
+    _ = addr_io;
     _ = time;
     _ = log;
     _ = rng;
