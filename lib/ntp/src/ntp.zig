@@ -386,11 +386,7 @@ fn unixMsToNtp(unix_ms: i64) NtpTimestamp {
 pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
     const secs = @divFloor(epoch_ms, 1000);
     var days = @divFloor(secs, 86400);
-    var day_secs = @mod(secs, 86400);
-    if (day_secs < 0) {
-        day_secs += 86400;
-        days -= 1;
-    }
+    const day_secs = @mod(secs, 86400);
 
     const hour: u8 = @intCast(@divFloor(day_secs, 3600));
     const minute: u8 = @intCast(@divFloor(@mod(day_secs, 3600), 60));

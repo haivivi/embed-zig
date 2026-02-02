@@ -147,7 +147,7 @@ fn testNtpSync() void {
 }
 
 /// Helper to test race query with a server list
-fn testRaceQuery(servers: []const [4]u8) void {
+fn testRaceQuery(servers: []const ntp.Ipv4Address) void {
     var client = NtpClient{ .timeout_ms = 5000 };
 
     // Record T1 (local monotonic time before query)
