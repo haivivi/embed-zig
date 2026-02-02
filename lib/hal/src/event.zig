@@ -33,6 +33,7 @@ const std = @import("std");
 
 const button_group_mod = @import("button_group.zig");
 const button_mod = @import("button.zig");
+const wifi_mod = @import("wifi.zig");
 
 // ============================================================================
 // Unified Event System (New Architecture)
@@ -46,6 +47,9 @@ pub fn UnifiedEvent(comptime ButtonId: type) type {
 
         /// Button event (from Button or ButtonGroup)
         button: ButtonEventData(ButtonId),
+
+        /// WiFi event (connection state changes, IP assignment, etc.)
+        wifi: WifiEventData,
 
         /// Timer event
         timer: TimerEvent,
@@ -68,6 +72,12 @@ pub fn UnifiedEvent(comptime ButtonId: type) type {
                         btn.source,
                         @tagName(btn.id),
                         @tagName(btn.action),
+                    });
+                },
+                .wifi => |w| {
+                    try writer.print("WiFi({s}: {s})", .{
+                        w.source,
+                        @tagName(w.event),
                     });
                 },
                 .timer => |t| try writer.print("Timer(id={d})", .{t.id}),
@@ -125,6 +135,18 @@ pub fn ButtonEventData(comptime ButtonId: type) type {
     };
 }
 
+/// WiFi event data with source identification
+pub const WifiEventData = struct {
+    /// Source component ID (from spec.meta.id)
+    source: []const u8,
+
+    /// WiFi event that occurred
+    event: wifi_mod.WifiEvent,
+
+    /// Event timestamp in milliseconds
+    timestamp_ms: u64 = 0,
+};
+
 // ============================================================================
 // Legacy Event System (Backward Compatibility)
 // ============================================================================
@@ -149,16 +171,14 @@ pub fn Event(comptime Config: type) type {
         /// Button event
         button: ButtonEvent(Config),
 
+        /// WiFi event
+        wifi: WifiEventData,
+
         /// Timer event
         timer: TimerEvent,
 
         /// System event
         system: SystemEvent,
-
-        // Future event types can be added:
-        // audio: AudioEvent,
-        // sensor: SensorEvent(Config),
-        // network: NetworkEvent,
 
         /// Format event for debugging
         pub fn format(
@@ -173,6 +193,10 @@ pub fn Event(comptime Config: type) type {
                 .button => |btn| try writer.print("Button({s}, {s})", .{
                     @tagName(btn.id),
                     @tagName(btn.action),
+                }),
+                .wifi => |w| try writer.print("WiFi({s}: {s})", .{
+                    w.source,
+                    @tagName(w.event),
                 }),
                 .timer => |t| try writer.print("Timer(id={d})", .{t.id}),
                 .system => |s| try writer.print("System({s})", .{@tagName(s)}),
@@ -332,23 +356,27 @@ test "Event switch" {
 
     const events = [_]TestEvent{
         .{ .button = ButtonEvt.press(.a, 100) },
+        .{ .wifi = .{ .source = "wifi.main", .event = .connected } },
         .{ .timer = .{ .id = 1 } },
         .{ .system = .ready },
     };
 
     var button_count: usize = 0;
+    var wifi_count: usize = 0;
     var timer_count: usize = 0;
     var system_count: usize = 0;
 
     for (events) |event| {
         switch (event) {
             .button => button_count += 1,
+            .wifi => wifi_count += 1,
             .timer => timer_count += 1,
             .system => system_count += 1,
         }
     }
 
     try std.testing.expectEqual(@as(usize, 1), button_count);
+    try std.testing.expectEqual(@as(usize, 1), wifi_count);
     try std.testing.expectEqual(@as(usize, 1), timer_count);
     try std.testing.expectEqual(@as(usize, 1), system_count);
 }
@@ -426,4 +454,49 @@ test "UnifiedEvent from ButtonGroupEvent" {
     try std.testing.expectEqual(TestButtonId.a, btn_data.id);
     try std.testing.expectEqual(button_mod.ButtonAction.click, btn_data.action);
     try std.testing.expectEqual(@as(u8, 2), btn_data.click_count);
+}
+
+test "UnifiedEvent WiFi events" {
+    const TestButtonId = enum { play };
+    const TestEvent = UnifiedEvent(TestButtonId);
+
+    // Test WiFi connected event
+    const connected_event = TestEvent{
+        .wifi = .{
+            .source = "wifi.main",
+            .event = .connected,
+            .timestamp_ms = 1000,
+        },
+    };
+    try std.testing.expectEqualStrings("wifi.main", connected_event.wifi.source);
+
+    // Test WiFi got_ip event
+    const ip_event = TestEvent{
+        .wifi = .{
+            .source = "wifi.main",
+            .event = .{ .got_ip = .{ 192, 168, 1, 100 } },
+            .timestamp_ms = 2000,
+        },
+    };
+    switch (ip_event.wifi.event) {
+        .got_ip => |ip| {
+            try std.testing.expectEqual(wifi_mod.IpAddress{ 192, 168, 1, 100 }, ip);
+        },
+        else => try std.testing.expect(false),
+    }
+
+    // Test WiFi disconnected event
+    const disconnected_event = TestEvent{
+        .wifi = .{
+            .source = "wifi.main",
+            .event = .{ .disconnected = .connection_lost },
+            .timestamp_ms = 3000,
+        },
+    };
+    switch (disconnected_event.wifi.event) {
+        .disconnected => |reason| {
+            try std.testing.expectEqual(wifi_mod.DisconnectReason.connection_lost, reason);
+        },
+        else => try std.testing.expect(false),
+    }
 }

@@ -6,6 +6,7 @@ Usage:
     zig_run(
         name = "run",
         srcs = glob(["**/*"]),
+        project_dir = "lib/myproject",
     )
 
 Run:
@@ -13,7 +14,11 @@ Run:
 """
 
 def _zig_run_impl(ctx):
-    """Run a standalone Zig project."""
+    """Run a standalone Zig project.
+    
+    This rule copies source files maintaining the workspace directory structure,
+    which is required for Zig's relative path dependencies (../trait, ../tls, etc.)
+    """
     
     # Collect source files
     src_files = []
@@ -31,15 +36,19 @@ def _zig_run_impl(ctx):
     # Create run script
     run_script = ctx.actions.declare_file("{}_run.sh".format(ctx.label.name))
     
-    # Generate copy commands
+    # Generate copy commands - preserve full workspace path structure
     src_copy_commands = []
     for f in src_files:
         rel_path = f.short_path
-        if ctx.attr.project_dir and rel_path.startswith(ctx.attr.project_dir + "/"):
-            rel_path = rel_path[len(ctx.attr.project_dir) + 1:]
         src_copy_commands.append('mkdir -p "$WORK/$(dirname {})" && cp "{}" "$WORK/{}"'.format(
             rel_path, f.path, rel_path
         ))
+    
+    # Determine working directory
+    work_dir = ctx.attr.project_dir if ctx.attr.project_dir else "."
+    
+    # Determine build step
+    build_step = ctx.attr.build_step if ctx.attr.build_step else "run"
     
     script_content = """#!/bin/bash
 set -e
@@ -47,19 +56,21 @@ set -e
 WORK=$(mktemp -d)
 trap "rm -rf $WORK" EXIT
 
-# Copy source files
+# Copy source files (preserving directory structure for relative imports)
 {src_copy_commands}
 
 # Set up Zig path
 export PATH="{zig_dir}:$PATH"
 
-# Run zig build
-cd "$WORK"
-echo "[zig_run] Building and running..."
-zig build run
+# Run zig build from project directory
+cd "$WORK/{work_dir}"
+echo "[zig_run] Building and running in {work_dir}..."
+zig build {build_step}
 """.format(
         zig_dir = zig_bin.dirname if zig_bin else "",
         src_copy_commands = "\n".join(src_copy_commands),
+        work_dir = work_dir,
+        build_step = build_step,
     )
     
     ctx.actions.write(
@@ -85,7 +96,11 @@ zig_run = rule(
             doc = "Source files for the Zig project",
         ),
         "project_dir": attr.string(
-            doc = "Project directory path to strip from source paths",
+            doc = "Project directory to run zig build from (e.g., 'lib/dns')",
+        ),
+        "build_step": attr.string(
+            default = "run",
+            doc = "Zig build step to run (default: 'run')",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

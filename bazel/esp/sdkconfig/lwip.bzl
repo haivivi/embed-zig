@@ -20,6 +20,7 @@ def _esp_lwip_impl(ctx):
     lines.append("CONFIG_LWIP_TCP_SND_BUF_DEFAULT={}".format(ctx.attr.tcp_snd_buf_default))
     lines.append("CONFIG_LWIP_TCP_WND_DEFAULT={}".format(ctx.attr.tcp_wnd_default))
     lines.append("CONFIG_LWIP_TCP_RECVMBOX_SIZE={}".format(ctx.attr.tcp_recvmbox_size))
+    lines.append("CONFIG_LWIP_TCP_ACCEPTMBOX_SIZE={}".format(ctx.attr.tcp_acceptmbox_size))
     lines.append("CONFIG_LWIP_TCP_SACK_OUT=y")
     lines.append("CONFIG_LWIP_TCP_QUEUE_OOSEQ=y")
     lines.append("CONFIG_LWIP_TCP_OVERSIZE_MSS=y")
@@ -71,6 +72,12 @@ esp_lwip = rule(
             doc = """CONFIG_LWIP_TCP_RECVMBOX_SIZE
             TCP 接收邮箱队列深度
             Typical: 6 (minimal), 64 (high throughput)""",
+        ),
+        "tcp_acceptmbox_size": attr.int(
+            default = 6,
+            doc = """CONFIG_LWIP_TCP_ACCEPTMBOX_SIZE
+            TCP 接受连接邮箱队列深度 (for servers)
+            Typical: 6""",
         ),
     },
     doc = """LWIP 网络栈配置""",

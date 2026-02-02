@@ -47,6 +47,8 @@ load("//bazel/esp/sdkconfig:wifi.bzl", "esp_wifi")
 load("//bazel/esp/sdkconfig:lwip.bzl", "esp_lwip")
 load("//bazel/esp/sdkconfig:spiffs.bzl", "esp_spiffs")
 load("//bazel/esp/sdkconfig:littlefs.bzl", "esp_littlefs")
+load("//bazel/esp/sdkconfig:crypto.bzl", "esp_crypto")
+load("//bazel/esp/sdkconfig:newlib.bzl", "esp_newlib")
 # Non-IDF configs
 load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/esp/sdkconfig:validate.bzl", "esp_validate")
@@ -355,9 +357,12 @@ def _esp_zig_app_impl(ctx):
     extra_deps_zon = ""
     extra_deps_zig_imports = ""
     extra_deps_zig_decls = ""
+    # For app's build.zig.zon (relative to app directory)
+    app_extra_deps_zon = ""
     for dep in ctx.attr.extra_deps:
         dep_name = dep.lstrip(".")
         extra_deps_zon += '        .{name} = .{{ .path = "../../{lib_prefix}/{name}" }},\n'.format(name = dep_name, lib_prefix = lib_prefix)
+        app_extra_deps_zon += '        .{name} = .{{ .path = "{app_to_lib_prefix}/{name}" }},\n'.format(name = dep_name, app_to_lib_prefix = app_to_lib_prefix)
         extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
         extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
         .target = target,
@@ -409,7 +414,7 @@ cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
         .dns = .{{
             .path = "{app_to_lib_prefix}/dns",
         }},
-    }},
+{app_extra_deps_zon}    }},
     .paths = .{{
         "build.zig",
         "build.zig.zon",
@@ -469,6 +474,18 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES {requires}
 )
+
+# Call setup functions from included cmake modules (if they exist)
+# This is needed for modules that need to add include directories after registration
+if(COMMAND event_setup_includes)
+    event_setup_includes()
+endif()
+if(COMMAND mbed_tls_setup_includes)
+    mbed_tls_setup_includes()
+endif()
+if(COMMAND net_setup_includes)
+    net_setup_includes()
+endif()
 
 esp_zig_build(
     FORCE_LINK
@@ -737,8 +754,8 @@ pub const std_options = std.Options{{
     .logFn = esp.idf.log.stdLogFn,
 }};
 
-/// PSRAM task stack size (32KB, can be larger since it's in PSRAM)
-const PSRAM_TASK_STACK_SIZE = 32 * 1024;
+/// PSRAM task stack size (configured via app_config)
+const PSRAM_TASK_STACK_SIZE = __PSRAM_STACK_SIZE_PLACEHOLDER__;
 const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
 
 /// Static task control block (in internal RAM for performance)
@@ -796,6 +813,9 @@ export fn app_main() void {{
     // app_main returns, the app task continues running
 }}
 MAINZIGEOF
+    # Replace placeholder with actual stack size (portable sed)
+    sed "s/__PSRAM_STACK_SIZE_PLACEHOLDER__/$PSRAM_STACK_SIZE/" "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig.tmp"
+    mv "$WORK/$ESP_PROJECT_PATH/main/src/main.zig.tmp" "$WORK/$ESP_PROJECT_PATH/main/src/main.zig"
 else
     # Direct call version - runs in main task
     cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
@@ -871,6 +891,7 @@ exec bash "{build_sh}"
         extra_cmake = extra_cmake,
         extra_c_sources = extra_c_sources,
         extra_deps_zon = extra_deps_zon,
+        app_extra_deps_zon = app_extra_deps_zon,
         extra_deps_zig_imports = extra_deps_zig_imports,
         extra_deps_zig_decls = extra_deps_zig_decls,
         idf_deps_yml = idf_deps_yml,
@@ -1044,14 +1065,46 @@ if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_flash"; then
     exit 1
 fi
 
+# Kill any process using the port
+if lsof "$PORT" >/dev/null 2>&1; then
+    echo "[esp_flash] Killing process using $PORT..."
+    lsof -t "$PORT" | xargs kill 2>/dev/null || true
+    sleep 0.5
+fi
+
 echo "[esp_flash] Board: $ESP_BOARD"
 echo "[esp_flash] Flashing to $PORT at $ESP_BAUD baud..."
 echo "[esp_flash] Binary: $ESP_BIN"
 
+# Detect reset mode based on port type
+# USB-JTAG ports (usbmodem) need usb_reset for entering bootloader
+# USB-JTAG DTR/RTS are CDC virtual signals - use watchdog reset instead
+if [[ "$PORT" == *"usbmodem"* ]]; then
+    BEFORE_RESET="usb_reset"
+    AFTER_RESET="no_reset"
+    USB_JTAG_MODE=1
+    echo "[esp_flash] Using USB-JTAG mode (watchdog reset after flash)"
+else
+    BEFORE_RESET="default_reset"
+    AFTER_RESET="hard_reset"
+    USB_JTAG_MODE=0
+fi
+
 # esptool auto-detects chip type
 "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-    --before default_reset --after hard_reset \\
+    --before "$BEFORE_RESET" --after "$AFTER_RESET" \\
     write_flash -z 0x10000 "$ESP_BIN"
+
+# For USB-JTAG, use watchdog reset (DTR/RTS don't work)
+if [[ "$USB_JTAG_MODE" == "1" ]]; then
+    echo "[esp_flash] Executing watchdog reset..."
+    "$IDF_PYTHON" -c "
+import esptool
+esp = esptool.detect_chip('$PORT', 115200, 'usb_reset', False, 3)
+esp = esp.run_stub()
+esp.watchdog_reset()
+" 2>/dev/null || echo "[esp_flash] Watchdog reset failed, manual RST may be needed"
+fi
 
 echo "[esp_flash] Flash complete!"
 """.format(
@@ -1138,6 +1191,13 @@ if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_monitor"; then
     exit 1
 fi
 
+# Kill any process using the port
+if lsof "$PORT" >/dev/null 2>&1; then
+    echo "[esp_monitor] Killing process using $PORT..."
+    lsof -t "$PORT" | xargs kill 2>/dev/null || true
+    sleep 0.5
+fi
+
 echo "[esp_monitor] Board: $ESP_BOARD"
 echo "[esp_monitor] Monitoring $PORT at $ESP_MONITOR_BAUD baud..."
 echo "[esp_monitor] Press Ctrl+C to exit"
@@ -1147,15 +1207,20 @@ import serial
 import sys
 
 try:
-    ser = serial.Serial('$PORT', $ESP_MONITOR_BAUD, timeout=0.1)
-    print('Connected to $PORT')
+    ser = serial.Serial('$PORT', $ESP_MONITOR_BAUD, timeout=0.5)
+    ser.setDTR(False)  # Don't trigger reset
+    ser.setRTS(False)
+    print('Connected to $PORT at $ESP_MONITOR_BAUD baud')
+    print('Waiting for data... (press RST on device if needed)')
+    print('---')
     while True:
-        if ser.in_waiting:
-            line = ser.readline().decode('utf-8', errors='replace')
-            sys.stdout.write(line)
+        data = ser.read(ser.in_waiting or 1)
+        if data:
+            text = data.decode('utf-8', errors='replace')
+            sys.stdout.write(text)
             sys.stdout.flush()
 except KeyboardInterrupt:
-    print('\\nMonitor stopped.')
+    print('\\n--- Monitor stopped ---')
 except Exception as e:
     print(f'Error: {{e}}')
     sys.exit(1)
@@ -1225,6 +1290,10 @@ def _esp_sdkconfig_impl(ctx):
         module_files.append(ctx.file.littlefs)
     if ctx.attr.sr:
         module_files.append(ctx.file.sr)
+    if ctx.attr.crypto:
+        module_files.append(ctx.file.crypto)
+    if ctx.attr.newlib:
+        module_files.append(ctx.file.newlib)
     
     # Concatenate all fragments
     cmd = "echo '# Auto-generated sdkconfig' > {out} && cat {files} >> {out}".format(
@@ -1283,6 +1352,14 @@ esp_sdkconfig = rule(
             allow_single_file = True,
             doc = "esp_sr rule output (ESP-SR speech recognition)",
         ),
+        "crypto": attr.label(
+            allow_single_file = True,
+            doc = "esp_crypto rule output (disable mbedTLS)",
+        ),
+        "newlib": attr.label(
+            allow_single_file = True,
+            doc = "esp_newlib rule output (nano printf, etc.)",
+        ),
     },
     doc = """Concatenate sdkconfig fragments from module rules.
 
@@ -1297,5 +1374,7 @@ Optional:
     - lwip     : esp_lwip
     - spiffs   : esp_spiffs
     - littlefs : esp_littlefs
+    - crypto   : esp_crypto
+    - newlib   : esp_newlib
 """,
 )

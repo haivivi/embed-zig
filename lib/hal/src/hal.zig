@@ -78,6 +78,8 @@ pub const button = @import("button.zig");
 pub const button_group = @import("button_group.zig");
 /// WiFi module (hal.wifi.from, hal.wifi.is)
 pub const wifi = @import("wifi.zig");
+/// Net module (hal.net.from, hal.net.is)
+pub const net = @import("net.zig");
 /// RTC module (hal.rtc.reader.from, hal.rtc.writer.from)
 pub const rtc = @import("rtc.zig");
 /// Single LED module (hal.led.from, hal.led.is)
@@ -158,6 +160,18 @@ pub const WifiFailReason = wifi_mod.FailReason;
 pub const WifiConnectConfig = wifi_mod.ConnectConfig;
 pub const WifiStatus = wifi_mod.Status;
 
+// ============================================================================
+// Net Types
+// ============================================================================
+
+const net_mod = @import("net.zig");
+pub const Ipv4 = net_mod.Ipv4;
+pub const NetIfState = net_mod.NetIfState;
+pub const NetIfInfo = net_mod.NetIfInfo;
+pub const NetEvent = net_mod.NetEvent;
+pub const DhcpBoundData = net_mod.DhcpBoundData;
+pub const DhcpMode = net_mod.DhcpMode;
+
 /// Event module
 pub const event = @import("event.zig");
 
@@ -187,6 +201,7 @@ test {
     _ = @import("board.zig");
     _ = @import("button_group.zig");
     _ = @import("wifi.zig");
+    _ = @import("net.zig");
     _ = @import("rtc.zig");
     _ = @import("led.zig");
     _ = @import("temp_sensor.zig");

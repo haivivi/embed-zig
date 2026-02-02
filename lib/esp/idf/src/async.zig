@@ -57,7 +57,6 @@ pub const CancellationToken = struct {
 const GoContext = struct {
     func: TaskFn,
     ctx: ?*anyopaque,
-    stack: []u8,
     allocator: std.mem.Allocator,
 };
 
@@ -68,11 +67,8 @@ fn goWrapperFireAndForget(raw_ctx: ?*anyopaque) callconv(.c) void {
     // Call user function
     go_ctx.func(go_ctx.ctx);
 
-    // Free resources
-    const allocator = go_ctx.allocator;
-    const stack = go_ctx.stack;
-    allocator.destroy(go_ctx);
-    allocator.free(stack);
+    // Free context (stack is freed by FreeRTOS via xTaskCreateRestrictedPinnedToCore)
+    go_ctx.allocator.destroy(go_ctx);
 
     // Delete self
     c.vTaskDelete(null);
@@ -100,7 +96,6 @@ pub fn go(
     go_ctx.* = .{
         .func = func,
         .ctx = ctx,
-        .stack = stack,
         .allocator = allocator,
     };
 
@@ -179,7 +174,6 @@ pub const WaitGroup = struct {
         wg: *WaitGroup,
         func: TaskFn,
         ctx: ?*anyopaque,
-        stack: []u8,
         allocator: std.mem.Allocator,
         stack_size: u32,
         name: [:0]const u8,
@@ -207,11 +201,8 @@ pub const WaitGroup = struct {
         // Signal completion to WaitGroup
         go_ctx.wg.done();
 
-        // Free resources
-        const allocator = go_ctx.allocator;
-        const stack = go_ctx.stack;
-        allocator.destroy(go_ctx);
-        allocator.free(stack);
+        // Free context (stack is freed by FreeRTOS via xTaskCreateRestrictedPinnedToCore)
+        go_ctx.allocator.destroy(go_ctx);
 
         // Delete self
         c.vTaskDelete(null);
@@ -238,7 +229,6 @@ pub const WaitGroup = struct {
             .wg = self,
             .func = func,
             .ctx = ctx,
-            .stack = stack,
             .allocator = allocator,
             .stack_size = options.stack_size,
             .name = name,
@@ -247,15 +237,9 @@ pub const WaitGroup = struct {
         // Increment counter before spawning
         self.add(1);
 
-        // Create FreeRTOS task using ESP-IDF's xTaskCreateRestrictedPinnedToCore
-        // This allows us to use custom stack memory (e.g., from PSRAM via allocator).
-        //
-        // Note on xTaskCreateRestrictedPinnedToCore (ESP-IDF extension):
-        // Unlike standard FreeRTOS xTaskCreateRestricted, this function takes
-        // OWNERSHIP of the provided stack by setting ucStaticallyAllocated =
-        // tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB. Therefore, the kernel WILL
-        // free this stack when the task is deleted. DO NOT manually free this
-        // stack, or a double-free crash will occur.
+        // Create FreeRTOS task using xTaskCreateRestrictedPinnedToCore
+        // This ESP-IDF extension takes ownership of the stack and will free it
+        // when the task is deleted via vTaskDelete().
         var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
         task_params.pvTaskCode = wgGoWrapper;
         task_params.pcName = name.ptr;
@@ -275,6 +259,7 @@ pub const WaitGroup = struct {
             return error.TaskCreateFailed;
         }
 
-        // Note: Stack is now owned by FreeRTOS, will be freed when task deletes
+        // Note: Stack is now owned by FreeRTOS and will be freed when task is deleted.
+        // Context (go_ctx) will be freed in wgGoWrapper before vTaskDelete.
     }
 };

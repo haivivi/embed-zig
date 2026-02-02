@@ -1,6 +1,7 @@
-//! HTTP Speed Test - Platform Independent
+//! HTTP Speed Test - Platform Independent (Event-Driven)
 //!
 //! Tests HTTP download speed using socket abstraction.
+//! Uses event-driven WiFi connection.
 
 const std = @import("std");
 const trait = @import("trait");
@@ -10,16 +11,27 @@ const Board = platform.Board;
 const log = Board.log;
 const Socket = trait.socket.from(Board.socket);
 
-const BUILD_TAG = "http_speed_test_hal_v1";
+const BUILD_TAG = "http_speed_test_hal_v2_event";
+
+/// Application state machine
+const AppState = enum {
+    connecting,
+    connected,
+    running_tests,
+    done,
+};
 
 /// Run HTTP speed test with env from platform
 pub fn run(env: anytype) void {
+    // Parse port from string
+    const port = std.fmt.parseInt(u16, env.test_server_port, 10) catch 8080;
+
     log.info("==========================================", .{});
-    log.info("  HTTP Speed Test - HAL Version", .{});
+    log.info("  HTTP Speed Test - HAL Version (Event)", .{});
     log.info("  Build Tag: {s}", .{BUILD_TAG});
     log.info("==========================================", .{});
 
-    log.info("Server: {s}:{}", .{ env.test_server_ip, env.test_server_port });
+    log.info("Server: {s}:{}", .{ env.test_server_ip, port });
 
     // Initialize board
     var b: Board = undefined;
@@ -29,35 +41,70 @@ pub fn run(env: anytype) void {
     };
     defer b.deinit();
 
-    // Connect to WiFi
+    // Start WiFi connection (non-blocking)
     log.info("", .{});
     log.info("Connecting to WiFi...", .{});
     log.info("SSID: {s}", .{env.wifi_ssid});
+    b.wifi.connect(env.wifi_ssid, env.wifi_password);
 
-    b.wifi.connect(env.wifi_ssid, env.wifi_password) catch |err| {
-        log.err("WiFi connect failed: {}", .{err});
-        return;
-    };
+    var state: AppState = .connecting;
 
-    // Print IP address
-    if (b.wifi.getIpAddress()) |ip| {
-        log.info("Connected! IP: {}.{}.{}.{}", .{ ip[0], ip[1], ip[2], ip[3] });
-    } else {
-        log.info("Connected!", .{});
-    }
+    // Event loop
+    while (Board.isRunning()) {
+        // Poll for events
+        b.poll();
 
-    // Run tests
-    Board.time.sleepMs(1000);
-    runHttpTest(env.test_server_ip, env.test_server_port, "/test/10m", "HTTP Download 10MB");
-    Board.time.sleepMs(1000);
-    runHttpTest(env.test_server_ip, env.test_server_port, "/test/52428800", "HTTP Download 50MB");
+        // Process events
+        while (b.nextEvent()) |event| {
+            switch (event) {
+                .wifi => |wifi_event| {
+                    switch (wifi_event) {
+                        .connected => {
+                            log.info("WiFi connected to AP", .{});
+                        },
+                        .got_ip => |ip| {
+                            log.info("Got IP: {}.{}.{}.{}", .{ ip[0], ip[1], ip[2], ip[3] });
+                            state = .connected;
+                        },
+                        .disconnected => |reason| {
+                            log.warn("WiFi disconnected: {}", .{reason});
+                            state = .connecting;
+                        },
+                        .connection_failed => |reason| {
+                            log.err("WiFi connection failed: {}", .{reason});
+                            return;
+                        },
+                        .rssi_changed => {},
+                    }
+                },
+                else => {},
+            }
+        }
 
-    log.info("", .{});
-    log.info("=== Test Complete ===", .{});
+        // State machine
+        switch (state) {
+            .connecting => {
+                // Wait for connection
+            },
+            .connected => {
+                // Run tests once connected
+                Board.time.sleepMs(1000);
+                runHttpTest(env.test_server_ip, port, "/test/10m", "HTTP Download 10MB");
+                Board.time.sleepMs(1000);
+                runHttpTest(env.test_server_ip, port, "/test/52428800", "HTTP Download 50MB");
+                state = .running_tests;
+            },
+            .running_tests => {
+                log.info("", .{});
+                log.info("=== Test Complete ===", .{});
+                state = .done;
+            },
+            .done => {
+                // Idle
+            },
+        }
 
-    while (true) {
-        Board.time.sleepMs(10000);
-        log.info("Still running...", .{});
+        Board.time.sleepMs(10);
     }
 }
 

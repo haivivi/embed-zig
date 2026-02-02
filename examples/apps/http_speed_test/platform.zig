@@ -1,4 +1,4 @@
-//! Board Configuration - HTTP Speed Test
+//! Board Configuration - HTTP Speed Test (Event-Driven)
 
 const hal = @import("hal");
 const build_options = @import("build_options");
@@ -14,6 +14,7 @@ const spec = struct {
     pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
     pub const log = hw.log;
     pub const time = hw.time;
+    pub const isRunning = hw.isRunning;
 
     // WiFi HAL peripheral
     pub const wifi = hal.wifi.from(hw.wifi_spec);

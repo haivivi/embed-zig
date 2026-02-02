@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const idf = @import("idf");
+const impl = @import("impl");
 const hal = @import("hal");
 
 // ============================================================================
@@ -22,6 +23,35 @@ pub const name = "ESP32-S3-DevKitC";
 
 /// Serial port for flashing
 pub const serial_port = "/dev/cu.usbmodem1301";
+
+// ============================================================================
+// WiFi Configuration
+// ============================================================================
+
+/// WiFi driver implementation
+pub const wifi = impl.wifi;
+pub const WifiDriver = wifi.WifiDriver;
+
+/// WiFi spec for HAL
+pub const wifi_spec = wifi.wifi_spec;
+
+// ============================================================================
+// Net Configuration
+// ============================================================================
+
+/// Network interface driver implementation
+pub const net = impl.net;
+pub const NetDriver = net.NetDriver;
+
+/// Net spec for HAL
+pub const net_spec = net.net_spec;
+
+// ============================================================================
+// Crypto Configuration
+// ============================================================================
+
+/// Crypto implementation (mbedTLS-based)
+pub const crypto = impl.crypto.Suite;
 
 // ============================================================================
 // GPIO Definitions
@@ -208,99 +238,4 @@ pub const TempSensorDriver = struct {
     }
 };
 
-// ============================================================================
-// WiFi Driver
-// ============================================================================
-
-pub const WifiDriver = struct {
-    const Self = @This();
-
-    wifi: ?idf.Wifi = null,
-    connected: bool = false,
-    ip_address: ?[4]u8 = null,
-
-    pub fn init() !Self {
-        return Self{};
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.wifi) |*w| {
-            w.disconnect();
-            w.deinit();
-        }
-        self.wifi = null;
-        self.connected = false;
-        self.ip_address = null;
-    }
-
-    pub fn connect(self: *Self, ssid: []const u8, password: []const u8) !void {
-        // Initialize WiFi if not already done
-        if (self.wifi == null) {
-            self.wifi = idf.Wifi.init() catch |err| {
-                log.err("WiFi init failed: {}", .{err});
-                return error.InitFailed;
-            };
-        }
-
-        // Connect with sentinel-terminated strings
-        var ssid_buf: [33:0]u8 = undefined;
-        var pass_buf: [65:0]u8 = undefined;
-
-        const ssid_len = @min(ssid.len, 32);
-        const pass_len = @min(password.len, 64);
-
-        @memcpy(ssid_buf[0..ssid_len], ssid[0..ssid_len]);
-        ssid_buf[ssid_len] = 0;
-
-        @memcpy(pass_buf[0..pass_len], password[0..pass_len]);
-        pass_buf[pass_len] = 0;
-
-        self.wifi.?.connect(.{
-            .ssid = ssid_buf[0..ssid_len :0],
-            .password = pass_buf[0..pass_len :0],
-            .timeout_ms = 30000,
-        }) catch |err| {
-            log.err("WiFi connect failed: {}", .{err});
-            return error.ConnectFailed;
-        };
-
-        self.connected = true;
-        self.ip_address = self.wifi.?.getIpAddress();
-        log.info("WiFi connected, IP: {}.{}.{}.{}", .{
-            self.ip_address.?[0],
-            self.ip_address.?[1],
-            self.ip_address.?[2],
-            self.ip_address.?[3],
-        });
-    }
-
-    pub fn disconnect(self: *Self) void {
-        if (self.wifi) |*w| {
-            w.disconnect();
-        }
-        self.connected = false;
-        self.ip_address = null;
-    }
-
-    pub fn isConnected(self: *const Self) bool {
-        return self.connected;
-    }
-
-    pub fn getIpAddress(self: *const Self) ?[4]u8 {
-        return self.ip_address;
-    }
-
-    pub fn getRssi(self: *const Self) ?i8 {
-        if (self.wifi) |*w| {
-            return w.getRssi();
-        }
-        return null;
-    }
-
-    pub fn getMac(self: *const Self) ?[6]u8 {
-        if (self.wifi) |*w| {
-            return w.getMac();
-        }
-        return null;
-    }
-};
+// WiFi Driver is provided by impl.wifi.WifiDriver (line 33)

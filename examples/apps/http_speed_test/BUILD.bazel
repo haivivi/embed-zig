@@ -1,12 +1,26 @@
 # HTTP Speed Test App
 
 load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+load("//bazel:env.bzl", "make_env_file")
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
     srcs = glob(["**/*"]),
+)
+
+# Environment from command line
+# Usage:
+#   bazel build //examples/apps/http_speed_test:esp \
+#     --define WIFI_SSID=xxx \
+#     --define TEST_SERVER_IP=192.168.1.100 \
+#     --define TEST_SERVER_PORT=8080 \
+#     --action_env=WIFI_PASSWORD
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
+    env_vars = ["WIFI_PASSWORD"],
 )
 
 esp_zig_app(
@@ -23,7 +37,8 @@ esp_zig_app(
     extra_c_sources = ["WIFI_C_SOURCES"],
     extra_deps = ["hal", "trait"],
     sdkconfig = "//examples/esp:esp32s3_wifi",
-    app_config = "//examples/esp:app_internal",
+    app_config = "//examples/esp:app_internal",  # WiFi requires internal RAM stack
+    env = ":env",
 )
 
 esp_flash(

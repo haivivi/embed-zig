@@ -70,6 +70,8 @@ pub const Address = union(enum) {
 pub const SocketError = error{
     CreateFailed,
     BindFailed,
+    ListenFailed,
+    AcceptFailed,
     ConnectFailed,
     SendFailed,
     RecvFailed,
@@ -148,6 +150,64 @@ pub const Socket = struct {
     pub fn close(self: *Self) void {
         _ = c.close(self.fd);
     }
+
+    // ============================================================================
+    // Server Socket Functions
+    // ============================================================================
+
+    /// Bind socket to port (for server)
+    pub fn bind(self: *Self, port: u16) SocketError!void {
+        var sa: c.sockaddr_in = .{
+            .sin_family = c.AF_INET,
+            .sin_port = htons(port),
+            .sin_addr = .{ .s_addr = 0 }, // INADDR_ANY
+            .sin_zero = [_]u8{0} ** 8,
+        };
+        if (c.bind(self.fd, @ptrCast(&sa), @sizeOf(c.sockaddr_in)) < 0)
+            return error.BindFailed;
+    }
+
+    /// Listen for incoming connections
+    pub fn listen(self: *Self, backlog: u32) SocketError!void {
+        if (c.listen(self.fd, @intCast(backlog)) < 0)
+            return error.ListenFailed;
+    }
+
+    /// Accept incoming connection, returns new socket and client info
+    pub fn accept(self: *Self) SocketError!struct { socket: Socket, addr: Ipv4Address, port: u16 } {
+        var client_addr: c.sockaddr_in = undefined;
+        var addr_len: c.socklen_t = @sizeOf(c.sockaddr_in);
+        const client_fd = c.accept(self.fd, @ptrCast(&client_addr), &addr_len);
+        if (client_fd < 0) {
+            // Check if it's a timeout (non-blocking or timeout set)
+            if (c.__errno().* == c.EAGAIN or c.__errno().* == c.EWOULDBLOCK) {
+                return error.Timeout;
+            }
+            return error.AcceptFailed;
+        }
+
+        const s_addr = client_addr.sin_addr.s_addr;
+        return .{
+            .socket = .{ .fd = client_fd },
+            .addr = .{
+                @truncate(s_addr & 0xFF),
+                @truncate((s_addr >> 8) & 0xFF),
+                @truncate((s_addr >> 16) & 0xFF),
+                @truncate((s_addr >> 24) & 0xFF),
+            },
+            .port = ntohs(client_addr.sin_port),
+        };
+    }
+
+    /// Set socket to reuse address (useful for server)
+    pub fn setReuseAddr(self: *Self, enable: bool) void {
+        var val: c_int = if (enable) 1 else 0;
+        _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_REUSEADDR, &val, @sizeOf(c_int));
+    }
+
+    // ============================================================================
+    // Client Socket Functions
+    // ============================================================================
 
     /// Connect to IPv4 address (simplified for DNS/HTTP)
     pub fn connect(self: *Self, addr: Ipv4Address, port: u16) SocketError!void {

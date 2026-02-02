@@ -1,6 +1,7 @@
-# HTTPS Speed Test App
+# HTTPS Speed Test App (using pure Zig TLS + DNS)
 
 load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+load("//bazel:env.bzl", "make_env_file")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,21 +10,39 @@ filegroup(
     srcs = glob(["**/*"]),
 )
 
+# Environment from command line
+# Usage:
+#   bazel build //examples/apps/https_speed_test:esp \
+#     --define WIFI_SSID=xxx \
+#     --define WIFI_PASSWORD=xxx \
+#     --define TEST_SERVER=192.168.x.x
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER"],
+)
+
 esp_zig_app(
     name = "esp",
     app = ":srcs",
     boards = ["esp32s3_devkit"],
-    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "mbedtls"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "mbedtls"],
     force_link = [
         "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
+        "${EVENT_FORCE_LINK}",
+        "verify_with_esp_bundle",
     ],
     extra_cmake = [
         "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/mbed_tls/mbed_tls.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/net/net.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/event/event.cmake)",
     ],
-    extra_c_sources = ["WIFI_C_SOURCES"],
-    extra_deps = ["hal", "trait"],
-    sdkconfig = "//examples/esp:esp32s3_wifi",
-    app_config = "//examples/esp:app_internal",
+    extra_c_sources = ["WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
+    extra_deps = ["hal", "trait", "tls", "dns", "http"],
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",  # mbedTLS + high throughput
+    app_config = "//examples/esp:app",  # Run in PSRAM task
+    env = ":env",
 )
 
 esp_flash(

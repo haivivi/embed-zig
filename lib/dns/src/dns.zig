@@ -1,26 +1,34 @@
 //! Cross-Platform DNS Resolver
 //!
-//! Supports UDP and TCP DNS protocols.
-//! DNS over HTTPS (DoH) requires platform-specific implementation
-//! (e.g., esp.net.DnsResolver uses esp_http_client).
+//! Supports UDP, TCP, and DNS over HTTPS (DoH, RFC 8484).
 //!
 //! Example:
 //!   const dns = @import("dns");
-//!   const esp = @import("esp");
+//!   const crypto = @import("crypto");
 //!
-//!   // Create resolver with platform socket
-//!   const Resolver = dns.Resolver(esp.trait.socket.from);
+//!   // Create resolver with platform socket (UDP/TCP only)
+//!   const Resolver = dns.Resolver(Socket);
 //!   var resolver = Resolver{
 //!       .server = .{ 223, 5, 5, 5 },  // AliDNS
 //!       .protocol = .udp,
 //!   };
 //!
-//!   // Resolve
+//!   // Create resolver with TLS support (UDP/TCP/HTTPS)
+//!   // Socket: platform socket type, Crypto: crypto suite (includes Rng)
+//!   const ResolverTls = dns.ResolverWithTls(Socket, crypto.Suite);
+//!   var resolver_tls = ResolverTls{
+//!       .server = .{ 223, 5, 5, 5 },
+//!       .protocol = .https,
+//!       .doh_host = "dns.alidns.com",
+//!       .allocator = allocator,
+//!   };
+//!
 //!   const ip = try resolver.resolve("www.google.com");
 
 const std = @import("std");
 
 const trait = @import("trait");
+const tls = @import("tls");
 
 pub const Ipv4Address = [4]u8;
 
@@ -41,11 +49,35 @@ pub const Protocol = enum {
     https,
 };
 
-/// DNS Resolver - generic over socket type
+/// DNS Resolver - generic over socket type (UDP/TCP only)
 ///
-/// `Socket` must implement the Socket interface (tcp/udp/send/recv/etc).
+/// For DoH support, use `ResolverWithTls` instead.
 pub fn Resolver(comptime Socket: type) type {
+    return ResolverImplWithCrypto(Socket, void, void);
+}
+
+/// DNS Resolver with TLS support (UDP/TCP/HTTPS)
+///
+/// Uses pure Zig TLS library internally.
+/// - `Socket`: platform socket type (must implement socket trait)
+/// - `Crypto`: crypto suite (must include Rng, e.g., crypto.Suite or esp.impl.crypto.Suite)
+///
+/// If Crypto has x509.CaStore, the resolver will support certificate verification
+/// via the ca_store field.
+pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type) type {
+    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto), Crypto);
+}
+
+/// Internal resolver implementation (with optional Crypto type for CaStore)
+fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type) type {
     const socket = trait.socket.from(Socket);
+    const has_tls = TlsClient != void;
+
+    // Get CaStore type from Crypto if available (same logic as tls.Client)
+    const CaStore = if (Crypto != void and @hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
+        Crypto.x509.CaStore
+    else
+        void;
 
     return struct {
         /// DNS server address (for UDP/TCP)
@@ -58,7 +90,20 @@ pub fn Resolver(comptime Socket: type) type {
         timeout_ms: u32 = 5000,
 
         /// DoH server host (for HTTPS protocol)
-        doh_host: []const u8 = "223.5.5.5",
+        doh_host: []const u8 = "dns.alidns.com",
+
+        /// Allocator for TLS (required for DoH)
+        allocator: ?std.mem.Allocator = null,
+
+        /// DoH server port (usually 443)
+        doh_port: u16 = 443,
+
+        /// Skip TLS certificate verification (for testing)
+        skip_cert_verify: bool = false,
+
+        /// CA store for certificate verification (optional)
+        /// If null and skip_cert_verify is false, verification may fail
+        ca_store: if (CaStore != void) ?CaStore else void = if (CaStore != void) null else {},
 
         const Self = @This();
 
@@ -149,14 +194,187 @@ pub fn Resolver(comptime Socket: type) type {
         }
 
         fn resolveHttps(self: *const Self, hostname: []const u8) DnsError!Ipv4Address {
+            if (!has_tls) {
+                // DoH requires TLS - use ResolverWithTls instead
+                return error.TlsError;
+            }
+
+            const allocator = self.allocator orelse return error.TlsError;
+
             // DNS over HTTPS (DoH) - RFC 8484
-            // TLS on freestanding requires platform-specific implementation.
-            // For ESP32, use esp.net.DnsResolver which wraps esp_http_client.
-            _ = self;
-            _ = hostname;
-            return error.TlsError; // DoH not supported in generic resolver
+            // POST /dns-query HTTP/1.1
+            // Content-Type: application/dns-message
+            // Accept: application/dns-message
+
+            // Build DNS query
+            var query_buf: [512]u8 = undefined;
+            const query_len = buildQuery(&query_buf, hostname, generateTxId()) catch return error.QueryBuildFailed;
+            const query_data = query_buf[0..query_len];
+
+            // Resolve DoH server IP first (using UDP to avoid recursion)
+            const doh_ip = self.resolveDohServer() catch return error.HttpError;
+
+            // Create TCP socket and connect
+            var sock = socket.tcp() catch return error.SocketError;
+            errdefer sock.close();
+
+            sock.setRecvTimeout(self.timeout_ms);
+            sock.setSendTimeout(self.timeout_ms);
+
+            sock.connect(doh_ip, self.doh_port) catch return error.SocketError;
+
+            // Initialize TLS client (pure Zig TLS)
+            var tls_client = TlsClient.init(&sock, if (CaStore != void) .{
+                .allocator = allocator,
+                .hostname = self.doh_host,
+                .skip_verify = self.skip_cert_verify,
+                .ca_store = self.ca_store,
+                .timeout_ms = self.timeout_ms,
+            } else .{
+                .allocator = allocator,
+                .hostname = self.doh_host,
+                .skip_verify = self.skip_cert_verify,
+                .timeout_ms = self.timeout_ms,
+            }) catch |err| {
+                std.log.err("[DoH] TLS init failed: {}", .{err});
+                return error.TlsError;
+            };
+            defer tls_client.deinit();
+
+            // TLS handshake
+            tls_client.connect() catch |err| {
+                std.log.err("[DoH] TLS handshake failed: {}", .{err});
+                return error.TlsError;
+            };
+
+            // Build HTTP POST request
+            var request_buf: [1024]u8 = undefined;
+            const request = buildHttpRequest(&request_buf, self.doh_host, query_data) catch return error.HttpError;
+
+            // Send HTTP request
+            _ = tls_client.send(request) catch return error.TlsError;
+
+            // Receive HTTP response
+            var response_buf: [2048]u8 = undefined;
+            var total_received: usize = 0;
+
+            while (total_received < response_buf.len) {
+                const n = tls_client.recv(response_buf[total_received..]) catch |err| {
+                    if (total_received > 0) break;
+                    return switch (err) {
+                        error.Timeout => error.Timeout,
+                        else => error.TlsError,
+                    };
+                };
+                if (n == 0) break;
+                total_received += n;
+
+                // Check if we have complete response
+                if (findHttpBody(response_buf[0..total_received])) |_| break;
+            }
+
+            // Parse HTTP response and extract DNS answer
+            const body = findHttpBody(response_buf[0..total_received]) orelse return error.HttpError;
+
+            // Check HTTP status
+            if (!std.mem.startsWith(u8, response_buf[0..total_received], "HTTP/1.1 200")) {
+                return error.HttpError;
+            }
+
+            // Parse DNS response from body
+            return parseResponse(body) catch return error.ResponseParseFailed;
+        }
+
+        /// Resolve DoH server hostname to IP (using UDP DNS)
+        fn resolveDohServer(self: *const Self) DnsError!Ipv4Address {
+            // Check if doh_host is already an IP address
+            if (parseIpv4String(self.doh_host)) |ip| {
+                return ip;
+            }
+
+            // Use public DNS to resolve DoH server
+            var sock = socket.udp() catch return error.SocketError;
+            defer sock.close();
+
+            sock.setRecvTimeout(self.timeout_ms);
+
+            var query_buf: [512]u8 = undefined;
+            const query_len = buildQuery(&query_buf, self.doh_host, generateTxId()) catch return error.QueryBuildFailed;
+
+            // Try primary DNS server first
+            _ = sock.sendTo(self.server, 53, query_buf[0..query_len]) catch return error.SocketError;
+
+            var response_buf: [512]u8 = undefined;
+            const response_len = sock.recvFrom(&response_buf) catch |err| {
+                return switch (err) {
+                    error.Timeout => error.Timeout,
+                    else => error.SocketError,
+                };
+            };
+
+            return parseResponse(response_buf[0..response_len]) catch return error.ResponseParseFailed;
         }
     };
+}
+
+// ============================================================================
+// HTTP Helpers for DoH
+// ============================================================================
+
+/// Build HTTP POST request for DoH
+pub fn buildHttpRequest(buf: []u8, host: []const u8, dns_query: []const u8) ![]const u8 {
+    // HTTP/1.1 POST request with DNS wireformat body
+    const header_fmt =
+        "POST /dns-query HTTP/1.1\r\n" ++
+        "Host: {s}\r\n" ++
+        "Content-Type: application/dns-message\r\n" ++
+        "Accept: application/dns-message\r\n" ++
+        "Content-Length: {d}\r\n" ++
+        "Connection: close\r\n" ++
+        "\r\n";
+
+    const header_len = std.fmt.bufPrint(buf, header_fmt, .{ host, dns_query.len }) catch return error.QueryBuildFailed;
+
+    // Append DNS query body
+    if (header_len.len + dns_query.len > buf.len) return error.QueryBuildFailed;
+
+    @memcpy(buf[header_len.len..][0..dns_query.len], dns_query);
+
+    return buf[0 .. header_len.len + dns_query.len];
+}
+
+/// Find HTTP body (after \r\n\r\n)
+fn findHttpBody(data: []const u8) ?[]const u8 {
+    const separator = "\r\n\r\n";
+    if (std.mem.indexOf(u8, data, separator)) |pos| {
+        return data[pos + separator.len ..];
+    }
+    return null;
+}
+
+/// Parse IPv4 string to address
+fn parseIpv4String(s: []const u8) ?Ipv4Address {
+    var result: Ipv4Address = undefined;
+    var octet_idx: usize = 0;
+    var current: u16 = 0;
+
+    for (s) |c| {
+        if (c == '.') {
+            if (current > 255 or octet_idx >= 3) return null;
+            result[octet_idx] = @intCast(current);
+            octet_idx += 1;
+            current = 0;
+        } else if (c >= '0' and c <= '9') {
+            current = current * 10 + (c - '0');
+        } else {
+            return null; // Not a pure IP address
+        }
+    }
+
+    if (current > 255 or octet_idx != 3) return null;
+    result[3] = @intCast(current);
+
+    return result;
 }
 
 // ============================================================================
@@ -323,4 +541,34 @@ test "buildQuery" {
     // Check query is reasonable length
     try std.testing.expect(len > 12);
     try std.testing.expect(len < 100);
+}
+
+test "parseIpv4String" {
+    const ip = parseIpv4String("192.168.1.1").?;
+    try std.testing.expectEqual(@as(u8, 192), ip[0]);
+    try std.testing.expectEqual(@as(u8, 168), ip[1]);
+    try std.testing.expectEqual(@as(u8, 1), ip[2]);
+    try std.testing.expectEqual(@as(u8, 1), ip[3]);
+
+    // Not an IP
+    try std.testing.expect(parseIpv4String("dns.google.com") == null);
+}
+
+test "buildHttpRequest" {
+    var buf: [1024]u8 = undefined;
+    const dns_query = [_]u8{ 0x00, 0x01, 0x02 };
+    const request = try buildHttpRequest(&buf, "dns.google.com", &dns_query);
+
+    try std.testing.expect(std.mem.indexOf(u8, request, "POST /dns-query") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request, "Host: dns.google.com") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request, "Content-Length: 3") != null);
+}
+
+test "findHttpBody" {
+    const response = "HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\n\r\nBODY";
+    const body = findHttpBody(response).?;
+    try std.testing.expectEqualStrings("BODY", body);
+
+    // No body separator
+    try std.testing.expect(findHttpBody("incomplete") == null);
 }

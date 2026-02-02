@@ -1,5 +1,7 @@
 # HTTP library
 
+load("//bazel/zig:defs.bzl", "zig_run")
+
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
@@ -9,4 +11,22 @@ filegroup(
         allow_empty = True,
         exclude = [".zig-cache/**", "zig-out/**"],
     ),
+)
+
+# HTTP integration test (network required)
+# Run: bazel run //lib/http:test
+# For local HTTPS tests, start Go server first:
+#   cd tools/https_server && go run main.go
+zig_run(
+    name = "test",
+    srcs = [
+        ":http_sources",
+        "//lib/trait:trait_sources",
+        "//lib/tls:tls_sources",
+        "//lib/dns:dns_sources",
+        "//lib/crypto:crypto_sources",
+        "//lib/std:std_sources",
+    ],
+    project_dir = "lib/http",
+    build_step = "run-test",
 )

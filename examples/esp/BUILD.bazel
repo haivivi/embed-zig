@@ -12,6 +12,8 @@ load("//bazel/esp/sdkconfig:spiffs.bzl", "esp_spiffs")
 load("//bazel/esp/sdkconfig:validate.bzl", "esp_validate")
 load("//bazel/esp/sdkconfig:wifi.bzl", "esp_wifi")
 load("//bazel/esp/sdkconfig:sr.bzl", "esp_sr")
+load("//bazel/esp/sdkconfig:crypto.bzl", "esp_crypto")
+load("//bazel/esp/sdkconfig:newlib.bzl", "esp_newlib")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -28,6 +30,16 @@ esp_core(
     flash_freq = "80m",
 )
 
+# Core config for UART console (for Korvo and other boards with UART)
+esp_core(
+    name = "core_uart",
+    idf_target = "esp32s3",
+    cpu_freq_mhz = 240,
+    flash_size_mb = 8,
+    flash_mode = "qio",
+    flash_freq = "80m",
+)
+
 # =============================================================================
 # PSRAM
 # =============================================================================
@@ -37,6 +49,16 @@ esp_psram(
     chip = "esp32s3",
     mode = "oct",
     speed = "80m",
+)
+
+# PSRAM with XIP - allows PSRAM access during flash operations
+# Required for WiFi apps using PSRAM task stack
+esp_psram(
+    name = "psram_xip",
+    chip = "esp32s3",
+    mode = "oct",
+    speed = "80m",
+    xip_from_psram = True,
 )
 
 # =============================================================================
@@ -73,6 +95,51 @@ esp_wifi(
     tx_ba_win = 6,
 )
 
+# High throughput WiFi - for speed tests
+esp_wifi(
+    name = "wifi_fast",
+    static_rx_buffer_num = 24,      # More static buffers
+    dynamic_rx_buffer_num = 128,    # Double dynamic buffers
+    rx_ba_win = 32,
+    tx_ba_win = 16,                 # Larger TX window
+)
+
+# =============================================================================
+# Crypto
+# =============================================================================
+
+# Disable mbedTLS (use pure Zig crypto)
+esp_crypto(
+    name = "no_mbedtls",
+    disable_mbedtls = True,
+)
+
+# Enable mbedTLS with full features for Zig crypto trait
+# Required: HKDF, GCM, ChaCha20-Poly1305
+esp_crypto(
+    name = "mbedtls_full",
+    disable_mbedtls = False,
+    enable_hkdf = True,
+    enable_gcm = True,
+    enable_chachapoly = True,
+)
+
+# =============================================================================
+# Newlib (C library configuration)
+# =============================================================================
+
+# Nano printf - saves ~20KB but no 64-bit int / C99 support
+esp_newlib(
+    name = "newlib_nano",
+    nano_format = True,
+)
+
+# Full printf - supports all formats
+esp_newlib(
+    name = "newlib_full",
+    nano_format = False,
+)
+
 # =============================================================================
 # LWIP
 # =============================================================================
@@ -85,6 +152,17 @@ esp_lwip(
     tcp_snd_buf_default = 65535,
     tcp_wnd_default = 65535,
     tcp_recvmbox_size = 64,
+)
+
+# High throughput LWIP - for speed tests (same as lwip, kept for future tuning)
+esp_lwip(
+    name = "lwip_fast",
+    tcpip_task_stack_size = 8192,
+    max_sockets = 10,
+    max_active_tcp = 16,
+    tcp_snd_buf_default = 65535,
+    tcp_wnd_default = 65535,
+    tcp_recvmbox_size = 64,  # Keep 64, higher values break tcp mbox
 )
 
 # =============================================================================
@@ -105,24 +183,30 @@ esp_littlefs(
 # App Configs
 # =============================================================================
 
-# For apps that can run in PSRAM (no flash operations during runtime)
+# For TLS/crypto apps - 128KB stack in PSRAM (DoH needs more)
 esp_app(
     name = "app",
-    run_in_psram = True,
+    run_in_psram = 131072,  # 128KB for TLS/DoH apps
 )
 
-# For apps that need flash access (WiFi, NVS, etc.)
-# Uses larger main task stack in internal RAM
+# For simple apps - 32KB stack in PSRAM
+esp_app(
+    name = "app_32k",
+    run_in_psram = 32768,  # 32KB for normal apps
+)
+
+# For apps that need flash access during runtime
+# Runs directly in app_main (stack in internal RAM)
 esp_app(
     name = "app_internal",
-    run_in_psram = False,
+    # run_in_psram = 0 (default) - no PSRAM task
 )
 
 # FreeRTOS with larger stack for internal RAM apps
 esp_freertos(
     name = "freertos_large",
     hz = 1000,
-    main_task_stack_size = 16384,  # 16KB for WiFi apps
+    main_task_stack_size = 65536,  # 64KB for TLS (has 16KB stack arrays)
     task_wdt_timeout_s = 30,
     task_wdt_check_idle_cpu0 = True,
     task_wdt_check_idle_cpu1 = False,
@@ -146,11 +230,106 @@ esp_sdkconfig(
 esp_sdkconfig(
     name = "esp32s3_wifi",
     core = ":core",
-    freertos = ":freertos_large",
+    freertos = ":freertos",  # 4KB main task - app runs in PSRAM task
     log = ":log",
     psram = ":psram",
     wifi = ":wifi",
     lwip = ":lwip",
+    crypto = ":no_mbedtls",  # Use pure Zig crypto
+    newlib = ":newlib_nano",  # Nano printf saves ~20KB
+)
+
+# WiFi with XIP PSRAM - allows using PSRAM task stack
+esp_sdkconfig(
+    name = "esp32s3_wifi_xip",
+    core = ":core",
+    freertos = ":freertos",  # Normal stack size, task runs in PSRAM
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":no_mbedtls",  # Use pure Zig crypto
+    newlib = ":newlib_nano",  # Nano printf saves ~20KB
+)
+
+# WiFi with XIP PSRAM - UART console (for Krovo)
+esp_sdkconfig(
+    name = "esp32s3_wifi_xip_uart",
+    core = ":core_uart",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":no_mbedtls",
+    newlib = ":newlib_nano",
+)
+
+# WiFi with XIP PSRAM + mbedTLS crypto (hardware accelerated)
+esp_sdkconfig(
+    name = "esp32s3_wifi_xip_mbedtls",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":mbedtls_full",  # Use mbedTLS for crypto
+    newlib = ":newlib_nano",
+)
+
+# High throughput WiFi with XIP PSRAM - for HTTPS speed tests
+esp_sdkconfig(
+    name = "esp32s3_wifi_xip_fast",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi_fast",     # High throughput WiFi
+    lwip = ":lwip_fast",     # High throughput LWIP
+    crypto = ":no_mbedtls",
+    newlib = ":newlib_nano",
+)
+
+# High throughput WiFi with XIP PSRAM + mbedTLS - for HTTPS speed tests with HW accel
+esp_sdkconfig(
+    name = "esp32s3_wifi_xip_mbedtls_fast",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi_fast",     # High throughput WiFi
+    lwip = ":lwip_fast",     # High throughput LWIP
+    crypto = ":mbedtls_full",  # mbedTLS with HW acceleration
+    newlib = ":newlib_nano",
+)
+
+# WiFi without XIP - for testing flash/PSRAM conflict
+# Uses large internal RAM stack (64KB)
+esp_sdkconfig(
+    name = "esp32s3_wifi_internal",
+    core = ":core",
+    freertos = ":freertos_large",  # 64KB main task stack in internal RAM
+    log = ":log",
+    psram = ":psram",  # PSRAM enabled but no XIP
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":no_mbedtls",  # Use pure Zig crypto
+    newlib = ":newlib_nano",  # Nano printf saves ~20KB
+)
+
+# WiFi without XIP + mbedTLS - for apps that need flash access during runtime
+# Uses large internal RAM stack (64KB) + mbedTLS for hardware crypto
+esp_sdkconfig(
+    name = "esp32s3_wifi_internal_mbedtls",
+    core = ":core",
+    freertos = ":freertos_large",  # 64KB main task stack in internal RAM
+    log = ":log",
+    psram = ":psram",  # PSRAM enabled but no XIP
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":mbedtls_full",  # mbedTLS with HW acceleration
+    newlib = ":newlib_nano",  # Nano printf saves ~20KB
 )
 
 # =============================================================================
