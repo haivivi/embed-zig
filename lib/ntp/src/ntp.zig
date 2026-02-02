@@ -414,7 +414,10 @@ fn parseResponse(buf: *const [48]u8, expected_origin: NtpTimestamp) NtpError!Res
     // This prevents off-path attackers from sending spoofed KoD packets
     // Server must echo back our Transmit Timestamp in the Origin field
     const origin = readTimestamp(buf[24..32]);
-    if (origin.seconds != expected_origin.seconds or origin.fraction != expected_origin.fraction) {
+    // Compare against truncated value since wire format is u32
+    // This handles generateNonce() returning large i64 values correctly
+    const expected_secs_truncated: i64 = @as(i64, @as(u32, @truncate(@as(u64, @bitCast(expected_origin.seconds)))));
+    if (origin.seconds != expected_secs_truncated or origin.fraction != expected_origin.fraction) {
         return error.OriginMismatch;
     }
 
