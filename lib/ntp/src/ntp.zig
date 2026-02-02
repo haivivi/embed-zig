@@ -363,7 +363,7 @@ fn readTimestamp(buf: *const [8]u8) NtpTimestamp {
 /// Write NTP timestamp to buffer (big-endian)
 /// Truncates to u32 for wire format (valid for dates 1900-2036)
 fn writeTimestamp(buf: *[8]u8, ts: NtpTimestamp) void {
-    std.mem.writeInt(u32, buf[0..4], @intCast(ts.seconds & 0xFFFFFFFF), .big);
+    std.mem.writeInt(u32, buf[0..4], @intCast(ts.seconds), .big);
     std.mem.writeInt(u32, buf[4..8], ts.fraction, .big);
 }
 
