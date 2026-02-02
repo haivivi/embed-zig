@@ -1,0 +1,10 @@
+.{
+    .name = .nfc,
+    .version = "0.1.0",
+    .fingerprint = 0x5a14c3fb9ea13c10,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,19 @@
+.{
+    .name = .fm175xx,
+    .version = "0.1.0",
+    .fingerprint = 0xab45c6801c890a4c,
+    .dependencies = .{
+        .trait = .{
+            .path = "../../../trait",
+        },
+        .nfc = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "docs",
+    },
+}
