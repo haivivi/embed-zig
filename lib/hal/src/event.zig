@@ -470,20 +470,7 @@ test "UnifiedEvent WiFi events" {
     };
     try std.testing.expectEqualStrings("wifi.main", connected_event.wifi.source);
 
-    // Test WiFi got_ip event
-    const ip_event = TestEvent{
-        .wifi = .{
-            .source = "wifi.main",
-            .event = .{ .got_ip = .{ 192, 168, 1, 100 } },
-            .timestamp_ms = 2000,
-        },
-    };
-    switch (ip_event.wifi.event) {
-        .got_ip => |ip| {
-            try std.testing.expectEqual(wifi_mod.IpAddress{ 192, 168, 1, 100 }, ip);
-        },
-        else => try std.testing.expect(false),
-    }
+    // NOTE: got_ip event has been moved to NetEvent in lib/hal/src/net.zig
 
     // Test WiFi disconnected event
     const disconnected_event = TestEvent{
