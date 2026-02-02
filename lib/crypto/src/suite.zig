@@ -130,10 +130,9 @@ pub const P256 = struct {
             return error.InvalidPublicKey;
         };
         
-        const shared = std.crypto.ecc.P256.scalarmult(
-            std.crypto.ecc.P256.basePoint.mulPublic(secret_key) catch return error.InvalidSecretKey,
-            pk,
-        ) catch {
+        // ECDH: shared_secret = secret_key * peer_public_key
+        // Use constant-time multiplication for secret scalar
+        const shared = pk.p.mul(secret_key) catch {
             return error.InvalidPublicKey;
         };
         
