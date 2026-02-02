@@ -3,7 +3,12 @@
 //! Simple NTP (Network Time Protocol) client using UDP.
 //! Returns server timestamps for user to calculate time offset.
 //!
-//! Example:
+//! Security features (RFC 5905):
+//! - Origin Timestamp validation (prevents response spoofing)
+//! - Source IP validation (if socket supports recvFromWithAddr)
+//! - High-entropy nonce support (use generateNonce with RNG)
+//!
+//! Example (basic):
 //!   const ntp = @import("ntp");
 //!
 //!   const Client = ntp.Client(Socket);
@@ -17,6 +22,10 @@
 //!   const offset = @divFloor((resp.receive_time_ms - @as(i64, @intCast(t1))) +
 //!                            (resp.transmit_time_ms - @as(i64, @intCast(t4))), 2);
 //!   const current_epoch_ms = @as(i64, @intCast(t4)) + offset;
+//!
+//! Example (with RNG for enhanced security):
+//!   const nonce = ntp.generateNonce(Rng);  // Use hardware RNG for unpredictable nonce
+//!   const resp = try client.query(nonce);
 
 const std = @import("std");
 const trait = @import("trait");
@@ -29,6 +38,22 @@ pub const NTP_PORT: u16 = 123;
 /// Seconds between NTP epoch (1900-01-01) and Unix epoch (1970-01-01)
 pub const NTP_UNIX_OFFSET: i64 = 2208988800;
 
+/// Generate a high-entropy nonce for NTP queries (RFC 5905 security)
+///
+/// Use this instead of monotonic time when hardware RNG is available.
+/// This makes the Origin Timestamp unpredictable, preventing off-path spoofing.
+///
+/// Example:
+///   const nonce = ntp.generateNonce(Board.crypto.Rng);
+///   const resp = try client.query(nonce);
+pub fn generateNonce(comptime Rng: type) i64 {
+    var buf: [8]u8 = undefined;
+    Rng.fill(&buf);
+    // Convert to i64, ensure non-zero (0 is reserved)
+    const raw = std.mem.readInt(i64, &buf, .little);
+    return if (raw == 0) 1 else raw;
+}
+
 pub const NtpError = error{
     SocketError,
     SendFailed,
@@ -38,6 +63,8 @@ pub const NtpError = error{
     KissOfDeath,
     /// Origin Timestamp mismatch - possible spoofing attack (RFC 5905)
     OriginMismatch,
+    /// Source IP/port mismatch - response from unexpected server (RFC 5905)
+    SourceMismatch,
 };
 
 /// NTP query response containing server timestamps
@@ -112,6 +139,8 @@ pub const ServerLists = struct {
 /// NTP Client - generic over socket type
 pub fn Client(comptime Socket: type) type {
     const socket = trait.socket.from(Socket);
+    // Check if socket supports source address retrieval for enhanced security
+    const has_addr_recv = trait.socket.hasRecvFromWithAddr(Socket);
 
     return struct {
         const Self = @This();
@@ -127,6 +156,10 @@ pub fn Client(comptime Socket: type) type {
         /// User should record local time before calling (T1) and after receiving (T4)
         /// to calculate precise time offset.
         ///
+        /// Security features (RFC 5905):
+        /// - Origin Timestamp validation (always enabled)
+        /// - Source IP validation (enabled if socket supports recvFromWithAddr)
+        ///
         /// Args:
         ///   t1_local_ms: Local monotonic time when starting query (for origin timestamp)
         ///
@@ -138,28 +171,43 @@ pub fn Client(comptime Socket: type) type {
 
             sock.setRecvTimeout(self.timeout_ms);
 
-            // Build NTP request packet
-            var request: [48]u8 = undefined;
-            buildRequest(&request, t1_local_ms);
-
-            // Store origin timestamp for validation (RFC 5905 security)
-            // Always validate, even if local_time is 0 (e.g., early boot)
+            // Use non-zero origin time for validation (RFC 5905 security)
+            // Even if local_time is 0 (e.g., early boot), use 1 to enable validation
             const origin_time = if (t1_local_ms != 0) t1_local_ms else 1;
-            const expected_origin: ?NtpTimestamp = unixMsToNtp(origin_time);
+            const expected_origin = unixMsToNtp(origin_time);
+
+            // Build NTP request packet with origin_time
+            var request: [48]u8 = undefined;
+            buildRequest(&request, origin_time);
 
             // Send request
             _ = sock.sendTo(self.server, NTP_PORT, &request) catch return error.SendFailed;
 
-            // Receive response
+            // Receive response with source address validation if supported
             var response: [48]u8 = undefined;
-            const recv_len = sock.recvFrom(&response) catch |err| {
-                return switch (err) {
-                    error.Timeout => error.Timeout,
-                    else => error.RecvFailed,
+            if (has_addr_recv) {
+                // Enhanced security: validate source IP matches expected server
+                const result = sock.recvFromWithAddr(&response) catch |err| {
+                    return switch (err) {
+                        error.Timeout => error.Timeout,
+                        else => error.RecvFailed,
+                    };
                 };
-            };
-
-            if (recv_len < 48) return error.InvalidResponse;
+                if (result.len < 48) return error.InvalidResponse;
+                // Validate source address (RFC 5905 security)
+                if (!std.mem.eql(u8, &result.src_addr, &self.server) or result.src_port != NTP_PORT) {
+                    return error.SourceMismatch;
+                }
+            } else {
+                // Fallback: no source address validation
+                const recv_len = sock.recvFrom(&response) catch |err| {
+                    return switch (err) {
+                        error.Timeout => error.Timeout,
+                        else => error.RecvFailed,
+                    };
+                };
+                if (recv_len < 48) return error.InvalidResponse;
+            }
 
             // Parse and validate response
             return parseResponse(&response, expected_origin);
@@ -187,6 +235,12 @@ pub fn Client(comptime Socket: type) type {
         ///
         /// The fastest responding server wins - no location detection needed.
         ///
+        /// Security features (RFC 5905):
+        /// - Origin Timestamp validation (always enabled)
+        /// - Source IP validation (enabled if socket supports recvFromWithAddr)
+        ///   With source IP validation, only counts retries for unknown sources,
+        ///   making DoS attacks much harder.
+        ///
         /// Args:
         ///   t1_local_ms: Local monotonic time when starting query
         ///   servers: Array of server addresses to query
@@ -201,14 +255,14 @@ pub fn Client(comptime Socket: type) type {
 
             sock.setRecvTimeout(self.timeout_ms);
 
-            // Build request packet once
-            var request: [48]u8 = undefined;
-            buildRequest(&request, t1_local_ms);
-
-            // Store origin timestamp for validation (RFC 5905 security)
-            // Always validate, even if local_time is 0 (e.g., early boot)
+            // Use non-zero origin time for validation (RFC 5905 security)
+            // Even if local_time is 0 (e.g., early boot), use 1 to enable validation
             const origin_time = if (t1_local_ms != 0) t1_local_ms else 1;
-            const expected_origin: ?NtpTimestamp = unixMsToNtp(origin_time);
+            const expected_origin = unixMsToNtp(origin_time);
+
+            // Build request packet once with origin_time
+            var request: [48]u8 = undefined;
+            buildRequest(&request, origin_time);
 
             // Send to all servers simultaneously
             var sent_count: usize = 0;
@@ -222,31 +276,70 @@ pub fn Client(comptime Socket: type) type {
 
             if (sent_count == 0) return error.SendFailed;
 
-            // Wait for first valid response, skip invalid/malicious packets
-            // Limit retries to prevent DoS from malicious packet flooding
-            const max_retries = 3;
+            // Wait for first valid response from one of our servers
+            // With source IP validation, we can safely ignore packets from unknown sources
+            // without counting them as retries (DoS protection)
+            const max_retries: u32 = if (has_addr_recv) 10 else 3;
             var response: [48]u8 = undefined;
             var retry_count: u32 = 0;
+
             while (retry_count < max_retries) {
-                const recv_len = sock.recvFrom(&response) catch |err| {
-                    return switch (err) {
-                        error.Timeout => error.Timeout,
-                        else => error.RecvFailed,
+                if (has_addr_recv) {
+                    // Enhanced security: validate source IP is one of our servers
+                    const result = sock.recvFromWithAddr(&response) catch |err| {
+                        return switch (err) {
+                            error.Timeout => error.Timeout,
+                            else => error.RecvFailed,
+                        };
                     };
-                };
 
-                // Skip truncated packets
-                if (recv_len < 48) {
-                    retry_count += 1;
-                    continue;
-                }
+                    // Check if source is one of our expected servers
+                    var from_expected_server = false;
+                    for (servers) |server| {
+                        if (std.mem.eql(u8, &result.src_addr, &server) and result.src_port == NTP_PORT) {
+                            from_expected_server = true;
+                            break;
+                        }
+                    }
 
-                // Try to parse, skip invalid responses (e.g., Kiss-o'-Death)
-                if (parseResponse(&response, expected_origin)) |resp| {
-                    return resp;
-                } else |_| {
-                    retry_count += 1;
-                    continue;
+                    // Silently ignore packets from unknown sources (DoS protection)
+                    if (!from_expected_server) continue;
+
+                    // Skip truncated packets from valid servers
+                    if (result.len < 48) {
+                        retry_count += 1;
+                        continue;
+                    }
+
+                    // Try to parse response
+                    if (parseResponse(&response, expected_origin)) |resp| {
+                        return resp;
+                    } else |_| {
+                        retry_count += 1;
+                        continue;
+                    }
+                } else {
+                    // Fallback: no source address validation
+                    const recv_len = sock.recvFrom(&response) catch |err| {
+                        return switch (err) {
+                            error.Timeout => error.Timeout,
+                            else => error.RecvFailed,
+                        };
+                    };
+
+                    // Skip truncated packets
+                    if (recv_len < 48) {
+                        retry_count += 1;
+                        continue;
+                    }
+
+                    // Try to parse, skip invalid responses (e.g., Kiss-o'-Death)
+                    if (parseResponse(&response, expected_origin)) |resp| {
+                        return resp;
+                    } else |_| {
+                        retry_count += 1;
+                        continue;
+                    }
                 }
             }
 
@@ -289,21 +382,21 @@ fn buildRequest(buf: *[48]u8, origin_time_ms: i64) void {
 
     // Reference timestamp: leave as 0
 
-    // Origin timestamp (T1): our local time converted to NTP format
-    // This helps server calculate network delay
+    // Origin timestamp: leave as 0 (RFC 5905)
+    // Receive timestamp: leave as 0 (RFC 5905)
+
+    // Transmit timestamp (T1): client's departure time (RFC 5905)
+    // Server will copy this to Origin Timestamp in response for validation
     if (origin_time_ms != 0) {
         const ntp_ts = unixMsToNtp(origin_time_ms);
-        writeTimestamp(buf[24..32], ntp_ts);
+        writeTimestamp(buf[40..48], ntp_ts);
     }
-
-    // Receive timestamp: leave as 0
-    // Transmit timestamp: leave as 0 (server will fill T3)
 }
 
 /// Parse NTP response packet
-/// If expected_origin is provided, validates that the response's Origin Timestamp
-/// matches what we sent (RFC 5905 security - prevents NTP spoofing attacks)
-fn parseResponse(buf: *const [48]u8, expected_origin: ?NtpTimestamp) NtpError!Response {
+/// Validates that the response's Origin Timestamp matches what we sent in Transmit Timestamp
+/// (RFC 5905 security - server echoes back our Transmit Timestamp in Origin field)
+fn parseResponse(buf: *const [48]u8, expected_origin: NtpTimestamp) NtpError!Response {
     // Check LI (Leap Indicator) - if 3, server is not synchronized
     const li = (buf[0] >> 6) & 0x03;
     if (li == 3) return error.InvalidResponse;
@@ -320,13 +413,11 @@ fn parseResponse(buf: *const [48]u8, expected_origin: ?NtpTimestamp) NtpError!Re
     }
 
     // Validate Origin Timestamp (RFC 5905 security)
-    // Server must echo back the exact timestamp we sent in the request
+    // Server must echo back our Transmit Timestamp in the Origin field
     // This prevents off-path attackers from spoofing NTP responses
-    if (expected_origin) |expected| {
-        const origin = readTimestamp(buf[24..32]);
-        if (origin.seconds != expected.seconds or origin.fraction != expected.fraction) {
-            return error.OriginMismatch;
-        }
+    const origin = readTimestamp(buf[24..32]);
+    if (origin.seconds != expected_origin.seconds or origin.fraction != expected_origin.fraction) {
+        return error.OriginMismatch;
     }
 
     // Parse receive timestamp (T2) - bytes 32-39
@@ -468,4 +559,30 @@ test "formatTime" {
 
     try std.testing.expect(formatted.len > 0);
     try std.testing.expectEqualStrings("2024-01-23T12:14:56Z", formatted);
+}
+
+test "generateNonce produces non-zero values" {
+    const MockRng = struct {
+        pub fn fill(buf: []u8) void {
+            // Fill with deterministic but varied pattern
+            for (buf, 0..) |*b, i| {
+                b.* = @truncate(i + 42);
+            }
+        }
+    };
+
+    const nonce = generateNonce(MockRng);
+    try std.testing.expect(nonce != 0);
+}
+
+test "generateNonce handles zero RNG output" {
+    const ZeroRng = struct {
+        pub fn fill(buf: []u8) void {
+            for (buf) |*b| b.* = 0;
+        }
+    };
+
+    // When RNG returns all zeros, generateNonce should return 1
+    const nonce = generateNonce(ZeroRng);
+    try std.testing.expectEqual(@as(i64, 1), nonce);
 }
