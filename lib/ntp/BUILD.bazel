@@ -1,0 +1,27 @@
+# NTP library
+
+load("//bazel/zig:defs.bzl", "zig_run")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "ntp_sources",
+    srcs = glob(
+        ["**/*.zig", "**/*.zon"],
+        allow_empty = True,
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)
+
+# NTP integration test (network required)
+# Run: bazel run //lib/ntp:test
+zig_run(
+    name = "test",
+    srcs = [
+        ":ntp_sources",
+        "//lib/trait:trait_sources",
+        "//lib/std:std_sources",
+    ],
+    project_dir = "lib/ntp",
+    build_step = "run-test",
+)

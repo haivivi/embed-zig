@@ -21,6 +21,7 @@ filegroup(
         "//lib/esp/impl:impl_sources",
         "//lib/hal:hal_sources",
         "//lib/http:http_sources",
+        "//lib/ntp:ntp_sources",
         "//lib/tls:tls_sources",
         "//lib/trait:trait_sources",
         "//lib/std:std_sources",

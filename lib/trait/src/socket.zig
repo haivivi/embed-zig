@@ -44,6 +44,13 @@ pub const Error = error{
     AcceptFailed,
 };
 
+/// UDP receive result with source address (for security validation)
+pub const RecvFromResult = struct {
+    len: usize,
+    src_addr: Ipv4Address,
+    src_port: u16,
+};
+
 /// Socket Interface - comptime validates and returns Impl
 pub fn from(comptime Impl: type) type {
     comptime {
@@ -65,8 +72,22 @@ pub fn from(comptime Impl: type) type {
         _ = @as(*const fn (*BaseType, bool) void, &BaseType.setTcpNoDelay);
         _ = @as(*const fn (*BaseType, Ipv4Address, u16, []const u8) Error!usize, &BaseType.sendTo);
         _ = @as(*const fn (*BaseType, []u8) Error!usize, &BaseType.recvFrom);
+        // Optional: recvFromWithAddr for source IP validation (RFC 5905 security)
+        // If not provided, NTP client falls back to recvFrom without source validation
+        if (@hasDecl(BaseType, "recvFromWithAddr")) {
+            _ = @as(*const fn (*BaseType, []u8) Error!RecvFromResult, &BaseType.recvFromWithAddr);
+        }
     }
     return Impl;
+}
+
+/// Check if socket implementation supports source address retrieval
+pub fn hasRecvFromWithAddr(comptime Impl: type) bool {
+    const BaseType = switch (@typeInfo(Impl)) {
+        .pointer => |p| p.child,
+        else => Impl,
+    };
+    return @hasDecl(BaseType, "recvFromWithAddr");
 }
 
 /// Parse IPv4 address string (e.g., "192.168.1.1")
