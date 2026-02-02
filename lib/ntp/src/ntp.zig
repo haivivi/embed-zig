@@ -143,10 +143,9 @@ pub fn Client(comptime Socket: type) type {
             buildRequest(&request, t1_local_ms);
 
             // Store origin timestamp for validation (RFC 5905 security)
-            const expected_origin: ?NtpTimestamp = if (t1_local_ms != 0)
-                unixMsToNtp(t1_local_ms)
-            else
-                null;
+            // Always validate, even if local_time is 0 (e.g., early boot)
+            const origin_time = if (t1_local_ms != 0) t1_local_ms else 1;
+            const expected_origin: ?NtpTimestamp = unixMsToNtp(origin_time);
 
             // Send request
             _ = sock.sendTo(self.server, NTP_PORT, &request) catch return error.SendFailed;
@@ -207,10 +206,9 @@ pub fn Client(comptime Socket: type) type {
             buildRequest(&request, t1_local_ms);
 
             // Store origin timestamp for validation (RFC 5905 security)
-            const expected_origin: ?NtpTimestamp = if (t1_local_ms != 0)
-                unixMsToNtp(t1_local_ms)
-            else
-                null;
+            // Always validate, even if local_time is 0 (e.g., early boot)
+            const origin_time = if (t1_local_ms != 0) t1_local_ms else 1;
+            const expected_origin: ?NtpTimestamp = unixMsToNtp(origin_time);
 
             // Send to all servers simultaneously
             var sent_count: usize = 0;
@@ -414,8 +412,8 @@ pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
     }
 
     const leap = isLeapYear(year);
-    const normal_month_days = [12]i64{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    const leap_month_days = [12]i64{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const normal_month_days = comptime [12]i64{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const leap_month_days = comptime [12]i64{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
     const month_days = if (leap) leap_month_days else normal_month_days;
 
     var month: u8 = 1;
