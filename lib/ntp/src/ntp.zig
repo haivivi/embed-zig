@@ -406,6 +406,8 @@ pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
     }
 
     const leap = isLeapYear(year);
+    const normal_month_days = [12]i64{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const leap_month_days = [12]i64{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
     const month_days = if (leap) leap_month_days else normal_month_days;
 
     var month: u8 = 1;
@@ -427,9 +429,6 @@ pub fn formatTime(epoch_ms: i64, buf: []u8) []const u8 {
 fn isLeapYear(year: i32) bool {
     return (@mod(year, 4) == 0 and @mod(year, 100) != 0) or @mod(year, 400) == 0;
 }
-
-const normal_month_days = [12]i64{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-const leap_month_days = [12]i64{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 // ============================================================================
 // Tests

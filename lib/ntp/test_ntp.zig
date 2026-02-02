@@ -90,7 +90,8 @@ pub fn main() !void {
             .timeout_ms = 5000,
         };
 
-        if (client.getTime()) |time_ms| {
+        const local_time: i64 = @intCast(getTimeMs());
+        if (client.getTime(local_time)) |time_ms| {
             var time_buf: [32]u8 = undefined;
             const formatted = ntp.formatTime(time_ms, &time_buf);
             print("  Server time: {s}\n", .{formatted});
