@@ -10,14 +10,12 @@ filegroup(
     srcs = glob(["**/*"]),
 )
 
-# Environment from command line (with defaults from AGENTS.md)
+# Environment from command line
+# Usage:
+#   bazel build //examples/apps/ntp_test:esp --define WIFI_SSID=xxx --define WIFI_PASSWORD=yyy
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
-    defaults = {
-        "WIFI_SSID": "HAIVIVI-MFG",
-        "WIFI_PASSWORD": "!haivivi",
-    },
 )
 
 esp_zig_app(

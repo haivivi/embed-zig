@@ -126,7 +126,7 @@ fn testNtpSync() void {
     // Test 3: Overseas server list
     log.info("", .{});
     log.info("--- Race: Overseas Servers ---", .{});
-    log.info("Servers: Cloudflare, Google x3, Apple", .{});
+    log.info("Servers: Cloudflare, Google x4, Apple", .{});
     testRaceQuery(&ntp.ServerLists.overseas);
 
     // Test 4: Simple getTimeRace() API
@@ -134,8 +134,9 @@ fn testNtpSync() void {
     log.info("--- Simple getTimeRace() API ---", .{});
     {
         var client = NtpClient{ .timeout_ms = 5000 };
+        const local_time: i64 = @intCast(Board.time.getTimeMs());
 
-        if (client.getTimeRace()) |time_ms| {
+        if (client.getTimeRace(local_time)) |time_ms| {
             var time_buf: [32]u8 = undefined;
             const formatted = ntp.formatTime(time_ms, &time_buf);
             log.info("Time (first responder): {s}", .{formatted});

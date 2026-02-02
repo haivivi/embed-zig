@@ -103,6 +103,8 @@ pub const ServerLists = struct {
         Servers.cloudflare,
         Servers.google,
         Servers.google2,
+        Servers.google3,
+        Servers.google4,
         Servers.apple,
     };
 };
@@ -168,8 +170,13 @@ pub fn Client(comptime Socket: type) type {
         ///
         /// This is a convenience method that uses T3 (transmit time) directly.
         /// For higher precision, use query() and calculate offset manually.
-        pub fn getTime(self: *const Self) NtpError!i64 {
-            const resp = try self.query(0);
+        ///
+        /// Args:
+        ///   local_time_ms: Local time for Origin Timestamp validation (RFC 5905 security).
+        ///                  Pass any monotonic timestamp (e.g., from RTC or millis counter).
+        ///                  This prevents NTP spoofing attacks.
+        pub fn getTime(self: *const Self, local_time_ms: i64) NtpError!i64 {
+            const resp = try self.query(local_time_ms);
             return resp.transmit_time_ms;
         }
 
@@ -217,27 +224,38 @@ pub fn Client(comptime Socket: type) type {
 
             if (sent_count == 0) return error.SendFailed;
 
-            // Wait for first valid response
+            // Wait for first valid response, skip invalid/malicious packets
             var response: [48]u8 = undefined;
-            const recv_len = sock.recvFrom(&response) catch |err| {
-                return switch (err) {
-                    error.Timeout => error.Timeout,
-                    else => error.RecvFailed,
+            while (true) {
+                const recv_len = sock.recvFrom(&response) catch |err| {
+                    return switch (err) {
+                        error.Timeout => error.Timeout,
+                        else => error.RecvFailed,
+                    };
                 };
-            };
 
-            if (recv_len < 48) return error.InvalidResponse;
+                // Skip truncated packets
+                if (recv_len < 48) continue;
 
-            // Parse and validate response
-            return parseResponse(&response, expected_origin);
+                // Try to parse, skip invalid responses (e.g., Kiss-o'-Death)
+                if (parseResponse(&response, expected_origin)) |resp| {
+                    return resp;
+                } else |_| {
+                    continue;
+                }
+            }
         }
 
         /// Simple race query - returns time using global server list
         ///
         /// Convenience method that queries multiple servers and returns
         /// the time from whichever responds first.
-        pub fn getTimeRace(self: *const Self) NtpError!i64 {
-            const resp = try self.queryRace(0, &ServerLists.global);
+        ///
+        /// Args:
+        ///   local_time_ms: Local time for Origin Timestamp validation (RFC 5905 security).
+        ///                  Pass any monotonic timestamp (e.g., from RTC or millis counter).
+        pub fn getTimeRace(self: *const Self, local_time_ms: i64) NtpError!i64 {
+            const resp = try self.queryRace(local_time_ms, &ServerLists.global);
             return resp.transmit_time_ms;
         }
     };
