@@ -277,13 +277,15 @@ pub fn Client(comptime Socket: type) type {
             if (sent_count == 0) return error.SendFailed;
 
             // Wait for first valid response from one of our servers
-            // With source IP validation, we can safely ignore packets from unknown sources
-            // without counting them as retries (DoS protection)
+            // With source IP validation, packets from unknown sources are counted separately
+            // to prevent DoS attacks via packet flooding
             const max_retries: u32 = if (has_addr_recv) 10 else 3;
+            const max_unknown: u32 = 50; // Limit unknown source packets to prevent flooding DoS
             var response: [48]u8 = undefined;
             var retry_count: u32 = 0;
+            var unknown_count: u32 = 0;
 
-            while (retry_count < max_retries) {
+            while (retry_count < max_retries and unknown_count < max_unknown) {
                 if (has_addr_recv) {
                     // Enhanced security: validate source IP is one of our servers
                     const result = sock.recvFromWithAddr(&response) catch |err| {
@@ -302,8 +304,11 @@ pub fn Client(comptime Socket: type) type {
                         }
                     }
 
-                    // Silently ignore packets from unknown sources (DoS protection)
-                    if (!from_expected_server) continue;
+                    // Count packets from unknown sources to prevent flooding DoS
+                    if (!from_expected_server) {
+                        unknown_count += 1;
+                        continue;
+                    }
 
                     // Skip truncated packets from valid servers
                     if (result.len < 48) {
