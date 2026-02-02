@@ -19,6 +19,7 @@ const c = @cImport({
     // ECC / Key Exchange
     @cInclude("mbedtls/ecdh.h");
     @cInclude("mbedtls/ecp.h");
+    @cInclude("mbedtls/ecdsa.h");
     @cInclude("mbedtls/bignum.h");
     @cInclude("mbedtls/ctr_drbg.h");
     @cInclude("mbedtls/entropy.h");
@@ -147,6 +148,26 @@ pub const ecp_point_free = c.mbedtls_ecp_point_free;
 pub const ecp_point_read_binary = c.mbedtls_ecp_point_read_binary;
 pub const ecp_point_write_binary = c.mbedtls_ecp_point_write_binary;
 pub const ecp_mul = c.mbedtls_ecp_mul;
+
+// ECDSA signature verification
+pub const ecdsa_verify = c.mbedtls_ecdsa_verify;
+
+// Type aliases for API compatibility
+pub const mbedtls_ecp_group = c.mbedtls_ecp_group;
+pub const mbedtls_ecp_point = c.mbedtls_ecp_point;
+pub const mbedtls_mpi = c.mbedtls_mpi;
+pub const mbedtls_ecp_group_init = c.mbedtls_ecp_group_init;
+pub const mbedtls_ecp_group_free = c.mbedtls_ecp_group_free;
+pub const mbedtls_ecp_group_load = c.mbedtls_ecp_group_load;
+pub const mbedtls_ecp_point_init = c.mbedtls_ecp_point_init;
+pub const mbedtls_ecp_point_free = c.mbedtls_ecp_point_free;
+pub const mbedtls_ecp_point_read_binary = c.mbedtls_ecp_point_read_binary;
+pub const mbedtls_mpi_init = c.mbedtls_mpi_init;
+pub const mbedtls_mpi_free = c.mbedtls_mpi_free;
+pub const mbedtls_mpi_read_binary = c.mbedtls_mpi_read_binary;
+pub const mbedtls_ecdsa_verify = c.mbedtls_ecdsa_verify;
+pub const MBEDTLS_ECP_DP_SECP256R1 = c.MBEDTLS_ECP_DP_SECP256R1;
+pub const MBEDTLS_ECP_DP_SECP384R1 = c.MBEDTLS_ECP_DP_SECP384R1;
 
 // MPI functions
 pub const mpi_init = c.mbedtls_mpi_init;

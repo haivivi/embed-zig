@@ -174,31 +174,37 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
             if (!self.connected) return error.NotConnected;
             if (self.received_close_notify) return 0;
 
-            var plaintext: [common.MAX_CIPHERTEXT_LEN]u8 = undefined;
-            const result = try self.hs.records.readRecord(self.read_buffer, &plaintext);
+            // Use a loop instead of recursion to avoid stack overflow
+            // from malicious servers sending many handshake messages
+            while (true) {
+                var plaintext: [common.MAX_CIPHERTEXT_LEN]u8 = undefined;
+                const result = try self.hs.records.readRecord(self.read_buffer, &plaintext);
 
-            switch (result.content_type) {
-                .application_data => {
-                    const copy_len = @min(result.length, buffer.len);
-                    @memcpy(buffer[0..copy_len], plaintext[0..copy_len]);
-                    return copy_len;
-                },
-                .alert => {
-                    if (result.length >= 2) {
-                        const desc: AlertDescription = @enumFromInt(plaintext[1]);
-                        if (desc == .close_notify) {
-                            self.received_close_notify = true;
-                            return 0;
+                switch (result.content_type) {
+                    .application_data => {
+                        const copy_len = @min(result.length, buffer.len);
+                        @memcpy(buffer[0..copy_len], plaintext[0..copy_len]);
+                        return copy_len;
+                    },
+                    .alert => {
+                        if (result.length >= 2) {
+                            // Safe conversion - unknown alert types just return error
+                            if (std.meta.intToEnum(AlertDescription, plaintext[1])) |desc| {
+                                if (desc == .close_notify) {
+                                    self.received_close_notify = true;
+                                    return 0;
+                                }
+                            } else |_| {}
                         }
-                    }
-                    return error.AlertReceived;
-                },
-                .handshake => {
-                    // Post-handshake messages (key update, new session ticket)
-                    // For now, just ignore and try to read again
-                    return self.recv(buffer);
-                },
-                else => return error.UnexpectedMessage,
+                        return error.AlertReceived;
+                    },
+                    .handshake => {
+                        // Post-handshake messages (key update, new session ticket)
+                        // Ignore and continue reading
+                        continue;
+                    },
+                    else => return error.UnexpectedMessage,
+                }
             }
         }
 

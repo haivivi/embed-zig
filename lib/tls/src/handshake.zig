@@ -282,6 +282,10 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
         tls12_server_pubkey_len: u8,
         tls12_named_group: NamedGroup,
 
+        // Server certificate (for CertificateVerify validation)
+        server_cert_der: [2048]u8, // Max 2KB for leaf certificate
+        server_cert_der_len: u16,
+
         // Transcript hash
         transcript_hash: TranscriptHash(Crypto),
 
@@ -323,6 +327,8 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                 .tls12_server_pubkey = [_]u8{0} ** 97,
                 .tls12_server_pubkey_len = 0,
                 .tls12_named_group = .x25519,
+                .server_cert_der = [_]u8{0} ** 2048,
+                .server_cert_der_len = 0,
                 .transcript_hash = TranscriptHash(Crypto).init(),
                 .records = record.RecordLayer(Socket, Crypto).init(socket),
                 .hostname = hostname,
@@ -485,13 +491,27 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                 const msg_data = data[pos + 4 ..][0..header.length];
                 const raw_msg = data[pos..][0..total_len];
 
-                // For Finished message in TLS 1.2, we need to verify BEFORE updating transcript
-                // because verify_data is computed over messages NOT including Finished itself.
-                // For TLS 1.3, the transcript is updated before processing (different key schedule).
-                if (header.msg_type == .finished and self.version != .tls_1_3) {
-                    // TLS 1.2: verify first, then update transcript
-                    try self.processFinished(msg_data);
-                    self.transcript_hash.update(raw_msg);
+                // Special handling for messages that need transcript hash BEFORE the message itself:
+                // - Finished (TLS 1.2 and 1.3): verify_data computed over messages NOT including Finished
+                // - CertificateVerify: signature computed over transcript BEFORE CertificateVerify
+                const needs_pre_verify = (header.msg_type == .finished) or
+                    (header.msg_type == .certificate_verify);
+
+                if (needs_pre_verify) {
+                    // Process first (uses current transcript), then update transcript
+                    switch (header.msg_type) {
+                        .certificate_verify => {
+                            try self.processCertificateVerify(msg_data);
+                            self.transcript_hash.update(raw_msg);
+                        },
+                        .finished => {
+                            // For TLS 1.3 Finished: verify first, then update transcript,
+                            // then derive app keys (which need transcript including Finished)
+                            try self.processFinished(msg_data, raw_msg);
+                            // transcript update is done inside processFinished for TLS 1.3
+                        },
+                        else => unreachable,
+                    }
                 } else {
                     // Update transcript before processing
                     self.transcript_hash.update(raw_msg);
@@ -502,8 +522,7 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                         .certificate => try self.processCertificate(msg_data),
                         .server_key_exchange => try self.processServerKeyExchange(msg_data),
                         .server_hello_done => try self.processServerHelloDone(msg_data),
-                        .certificate_verify => try self.processCertificateVerify(msg_data),
-                        .finished => try self.processFinished(msg_data),
+                        .finished => try self.processFinished(msg_data, raw_msg),
                         else => {
                             // Skip unknown messages
                         },
@@ -518,10 +537,11 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
             if (self.state != .wait_server_hello) return error.UnexpectedMessage;
             if (data.len < 34) return error.InvalidHandshake;
 
-            // Parse legacy version
-            const legacy_version: ProtocolVersion = @enumFromInt(
-                std.mem.readInt(u16, data[0..2], .big),
-            );
+            // Parse legacy version (use safe conversion to avoid panic on unknown version)
+            const legacy_version_raw = std.mem.readInt(u16, data[0..2], .big);
+            const legacy_version: ProtocolVersion = std.meta.intToEnum(ProtocolVersion, legacy_version_raw) catch {
+                return error.UnsupportedVersion;
+            };
 
             // Parse server random
             @memcpy(&self.server_random, data[2..34]);
@@ -546,9 +566,12 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
             if (pos + session_id_len > data.len) return error.InvalidHandshake;
             pos += session_id_len;
 
-            // Cipher suite
+            // Cipher suite (use safe conversion)
             if (pos + 2 > data.len) return error.InvalidHandshake;
-            self.cipher_suite = @enumFromInt(std.mem.readInt(u16, data[pos..][0..2], .big));
+            const cipher_raw = std.mem.readInt(u16, data[pos..][0..2], .big);
+            self.cipher_suite = std.meta.intToEnum(CipherSuite, cipher_raw) catch {
+                return error.UnsupportedCipherSuite;
+            };
             pos += 2;
 
             // Compression method
@@ -567,9 +590,7 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                     var ext_pos: usize = 0;
 
                     while (ext_pos + 4 <= ext_data.len) {
-                        const ext_type: common.ExtensionType = @enumFromInt(
-                            std.mem.readInt(u16, ext_data[ext_pos..][0..2], .big),
-                        );
+                        const ext_type_raw = std.mem.readInt(u16, ext_data[ext_pos..][0..2], .big);
                         ext_pos += 2;
                         const ext_size = std.mem.readInt(u16, ext_data[ext_pos..][0..2], .big);
                         ext_pos += 2;
@@ -579,6 +600,9 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                         
                         const ext_content = ext_data[ext_pos..][0..ext_size];
                         ext_pos += ext_size;
+
+                        // Try to parse extension type, skip unknown extensions
+                        const ext_type = std.meta.intToEnum(common.ExtensionType, ext_type_raw) catch continue;
 
                         switch (ext_type) {
                             .supported_versions => {
@@ -658,6 +682,14 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
 
             if (cert_count == 0) return error.InvalidHandshake;
 
+            // Save leaf certificate for CertificateVerify validation
+            const leaf_cert = cert_chain[0];
+            if (leaf_cert.len > self.server_cert_der.len) {
+                return error.CertificateTooLarge;
+            }
+            @memcpy(self.server_cert_der[0..leaf_cert.len], leaf_cert);
+            self.server_cert_der_len = @intCast(leaf_cert.len);
+
             // Verify certificate chain if ca_store is provided
             if (CaStore != void) {
                 if (self.ca_store) |store| {
@@ -702,16 +734,45 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
             const curve_type = data[0];
             if (curve_type != 0x03) return error.UnsupportedGroup; // named_curve
 
-            const named_group: NamedGroup = @enumFromInt(
-                std.mem.readInt(u16, data[1..3], .big),
-            );
+            const group_raw = std.mem.readInt(u16, data[1..3], .big);
+            const named_group: NamedGroup = std.meta.intToEnum(NamedGroup, group_raw) catch {
+                return error.UnsupportedGroup;
+            };
             const pubkey_len = data[3];
 
             if (data.len < 4 + pubkey_len) return error.InvalidHandshake;
             const server_pubkey = data[4..][0..pubkey_len];
 
-            // For TLS 1.2: generate key exchange matching server's chosen curve
-            // (TLS 1.3 uses key_share extension which is different)
+            // Parse signature (after ECDHE params)
+            const sig_offset = 4 + pubkey_len;
+            if (data.len < sig_offset + 4) return error.InvalidHandshake;
+
+            const sig_scheme = std.mem.readInt(u16, data[sig_offset..][0..2], .big);
+            const sig_len = std.mem.readInt(u16, data[sig_offset + 2 ..][0..2], .big);
+
+            if (data.len < sig_offset + 4 + sig_len) return error.InvalidHandshake;
+            const signature = data[sig_offset + 4 ..][0..sig_len];
+
+            // Verify signature over ServerKeyExchange params
+            // Signature covers: client_random + server_random + params
+            // params = curve_type (1) + named_curve (2) + pubkey_len (1) + pubkey
+            const params_len = 4 + pubkey_len;
+            var signed_data: [32 + 32 + 4 + 256]u8 = undefined; // client_random + server_random + max params
+            const total_len = 32 + 32 + params_len;
+            @memcpy(signed_data[0..32], &self.client_random);
+            @memcpy(signed_data[32..64], &self.server_random);
+            @memcpy(signed_data[64..][0..params_len], data[0..params_len]);
+
+            // Parse server certificate to get public key
+            const cert_der = self.server_cert_der[0..self.server_cert_der_len];
+            const Certificate = std.crypto.Certificate;
+            const cert = Certificate{ .buffer = cert_der, .index = 0 };
+            const parsed = cert.parse() catch return error.InvalidCertificate;
+
+            // Verify signature
+            try verifySignature(sig_scheme, signed_data[0..total_len], signature, parsed);
+
+            // Generate key exchange matching server's chosen curve
             self.key_exchange = try KeyExchange(Crypto).generate(named_group, &Crypto.Rng.fill);
 
             // CRITICAL: Bounds check - pubkey must fit in our buffer (97 bytes max for P-384)
@@ -721,9 +782,6 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
             @memcpy(self.tls12_server_pubkey[0..pubkey_len], server_pubkey);
             self.tls12_server_pubkey_len = pubkey_len;
             self.tls12_named_group = named_group;
-
-            // TODO: Verify signature over ServerKeyExchange params
-            // The signature is at data[4 + pubkey_len..]
 
             self.state = .wait_server_hello_done;
         }
@@ -887,20 +945,193 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
 
         fn processCertificateVerify(self: *Self, data: []const u8) !void {
             if (self.state != .wait_certificate_verify) return error.UnexpectedMessage;
-            _ = data; // TODO: Verify signature
+
+            // Parse CertificateVerify message (RFC 8446 Section 4.4.3)
+            // struct {
+            //     SignatureScheme algorithm;
+            //     opaque signature<0..2^16-1>;
+            // }
+            if (data.len < 4) return error.InvalidHandshake;
+
+            const sig_scheme = std.mem.readInt(u16, data[0..2], .big);
+            const sig_len = std.mem.readInt(u16, data[2..4], .big);
+
+            if (data.len < 4 + sig_len) return error.InvalidHandshake;
+            const signature = data[4..][0..sig_len];
+
+            // Build the content to verify (RFC 8446 Section 4.4.3)
+            // The digital signature is computed over:
+            //   64 bytes of 0x20 (space) +
+            //   context string ("TLS 1.3, server CertificateVerify" + 0x00) +
+            //   transcript hash
+            const context_string = "TLS 1.3, server CertificateVerify";
+            const transcript = self.transcript_hash.peek();
+
+            var content: [64 + context_string.len + 1 + 32]u8 = undefined;
+            @memset(content[0..64], 0x20); // 64 spaces
+            @memcpy(content[64..][0..context_string.len], context_string);
+            content[64 + context_string.len] = 0x00;
+            @memcpy(content[64 + context_string.len + 1 ..][0..32], &transcript);
+
+            // Parse server certificate to get public key
+            const cert_der = self.server_cert_der[0..self.server_cert_der_len];
+            const Certificate = std.crypto.Certificate;
+            const cert = Certificate{ .buffer = cert_der, .index = 0 };
+            const parsed = cert.parse() catch return error.InvalidCertificate;
+
+            // Verify signature based on algorithm
+            try verifySignature(sig_scheme, &content, signature, parsed);
+
             self.state = .wait_finished;
         }
 
-        fn processFinished(self: *Self, data: []const u8) !void {
+        /// Verify TLS 1.3 CertificateVerify signature
+        fn verifySignature(
+            sig_scheme: u16,
+            content: []const u8,
+            signature: []const u8,
+            parsed_cert: std.crypto.Certificate.Parsed,
+        ) !void {
+            switch (sig_scheme) {
+                // ECDSA with SHA-256 on P-256
+                0x0403 => {
+                    const pk = Crypto.EcdsaP256Sha256.PublicKey.fromSec1(parsed_cert.pubKey()) catch {
+                        return error.InvalidPublicKey;
+                    };
+                    const sig = Crypto.EcdsaP256Sha256.Signature.fromDer(signature) catch {
+                        return error.InvalidSignature;
+                    };
+                    sig.verify(content, pk) catch return error.SignatureVerificationFailed;
+                },
+
+                // ECDSA with SHA-384 on P-384
+                0x0503 => {
+                    const pk = Crypto.EcdsaP384Sha384.PublicKey.fromSec1(parsed_cert.pubKey()) catch {
+                        return error.InvalidPublicKey;
+                    };
+                    const sig = Crypto.EcdsaP384Sha384.Signature.fromDer(signature) catch {
+                        return error.InvalidSignature;
+                    };
+                    sig.verify(content, pk) catch return error.SignatureVerificationFailed;
+                },
+
+                // RSA-PKCS1-SHA256
+                0x0401 => {
+                    try verifyRsaPkcs1(Crypto, .sha256, content, signature, parsed_cert.pubKey());
+                },
+
+                // RSA-PKCS1-SHA384
+                0x0501 => {
+                    try verifyRsaPkcs1(Crypto, .sha384, content, signature, parsed_cert.pubKey());
+                },
+
+                // RSA-PSS-RSAE-SHA256
+                0x0804 => {
+                    try verifyRsaPss(Crypto, .sha256, content, signature, parsed_cert.pubKey());
+                },
+
+                // RSA-PSS-RSAE-SHA384
+                0x0805 => {
+                    try verifyRsaPss(Crypto, .sha384, content, signature, parsed_cert.pubKey());
+                },
+
+                else => {
+                    std.log.warn("[TLS] Unsupported signature scheme: 0x{x:0>4}", .{sig_scheme});
+                    return error.UnsupportedSignatureAlgorithm;
+                },
+            }
+        }
+
+        /// Verify RSA-PKCS1v1.5 signature using Crypto module
+        fn verifyRsaPkcs1(
+            comptime C: type,
+            comptime hash_type: C.rsa.HashType,
+            msg: []const u8,
+            sig: []const u8,
+            pub_key: []const u8,
+        ) !void {
+            const pk_components = C.rsa.PublicKey.parseDer(pub_key) catch return error.InvalidPublicKey;
+            const modulus = pk_components.modulus;
+            if (sig.len != modulus.len) return error.InvalidSignature;
+
+            // Support 2048-bit (256 bytes) and 4096-bit (512 bytes) RSA keys
+            if (modulus.len == 256) {
+                const public_key = C.rsa.PublicKey.fromBytes(pk_components.exponent, modulus) catch
+                    return error.InvalidPublicKey;
+                C.rsa.PKCS1v1_5Signature.verify(256, sig[0..256].*, msg, public_key, hash_type) catch
+                    return error.SignatureVerificationFailed;
+            } else if (modulus.len == 512) {
+                const public_key = C.rsa.PublicKey.fromBytes(pk_components.exponent, modulus) catch
+                    return error.InvalidPublicKey;
+                C.rsa.PKCS1v1_5Signature.verify(512, sig[0..512].*, msg, public_key, hash_type) catch
+                    return error.SignatureVerificationFailed;
+            } else {
+                return error.UnsupportedSignatureAlgorithm;
+            }
+        }
+
+        /// Verify RSA-PSS signature using Crypto module
+        fn verifyRsaPss(
+            comptime C: type,
+            comptime hash_type: C.rsa.HashType,
+            msg: []const u8,
+            sig: []const u8,
+            pub_key: []const u8,
+        ) !void {
+            const pk_components = C.rsa.PublicKey.parseDer(pub_key) catch return error.InvalidPublicKey;
+            const modulus = pk_components.modulus;
+            if (sig.len != modulus.len) return error.InvalidSignature;
+
+            if (modulus.len == 256) {
+                const public_key = C.rsa.PublicKey.fromBytes(pk_components.exponent, modulus) catch
+                    return error.InvalidPublicKey;
+                C.rsa.PSSSignature.verify(256, sig[0..256].*, msg, public_key, hash_type) catch
+                    return error.SignatureVerificationFailed;
+            } else if (modulus.len == 512) {
+                const public_key = C.rsa.PublicKey.fromBytes(pk_components.exponent, modulus) catch
+                    return error.InvalidPublicKey;
+                C.rsa.PSSSignature.verify(512, sig[0..512].*, msg, public_key, hash_type) catch
+                    return error.SignatureVerificationFailed;
+            } else {
+                return error.UnsupportedSignatureAlgorithm;
+            }
+        }
+
+        fn processFinished(self: *Self, data: []const u8, raw_msg: []const u8) !void {
             if (self.state != .wait_finished) return error.UnexpectedMessage;
 
             if (self.version == .tls_1_3) {
-                // TLS 1.3 Finished verification
-                if (data.len < 32) return error.InvalidHandshake;
-                // TODO: Verify server's Finished message
+                // TLS 1.3 Finished verification (RFC 8446 Section 4.4.4)
+                const Hkdf = Crypto.HkdfSha256;
+                const hash_len = 32;
 
-                // Derive application keys BEFORE sending Client Finished
-                // RFC 8446: application traffic secrets use transcript up to Server Finished
+                if (data.len < hash_len) return error.InvalidHandshake;
+
+                // Compute server's finished_key from server_handshake_traffic_secret
+                const finished_key = kdf.hkdfExpandLabel(
+                    Hkdf,
+                    self.server_handshake_traffic_secret[0..hash_len].*,
+                    "finished",
+                    "",
+                    hash_len,
+                );
+
+                // Compute expected verify_data = HMAC(finished_key, transcript_hash)
+                // Note: transcript_hash is up to (but not including) this Finished message
+                const transcript = self.transcript_hash.peek();
+                var expected: [32]u8 = undefined;
+                Crypto.HmacSha256.create(&expected, &transcript, &finished_key);
+
+                // Compare with received verify_data
+                if (!std.mem.eql(u8, data[0..hash_len], &expected)) {
+                    return error.BadRecordMac;
+                }
+
+                // Update transcript with Server Finished BEFORE deriving application keys
+                // RFC 8446: application traffic secrets use transcript up to AND INCLUDING Server Finished
+                self.transcript_hash.update(raw_msg);
+
+                // Derive application keys
                 try self.deriveApplicationKeys();
 
                 // Send Client Finished (using handshake traffic secret)
@@ -916,6 +1147,9 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                 if (!std.mem.eql(u8, data[0..12], &expected)) {
                     return error.BadRecordMac;
                 }
+
+                // Update transcript after verification (TLS 1.2 needs this for client Finished)
+                self.transcript_hash.update(raw_msg);
 
                 // For TLS 1.2, application keys are already set in sendClientKeyExchange
             }

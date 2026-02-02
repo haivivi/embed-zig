@@ -245,8 +245,28 @@ pub const Ed25519 = struct {
 
 pub const EcdsaP256Sha256 = struct {
     const Ecdsa = std.crypto.sign.ecdsa.Ecdsa(std.crypto.ecc.P256, Sha256);
-    pub const Signature = Ecdsa.Signature;
-    pub const PublicKey = Ecdsa.PublicKey;
+
+    pub const Signature = struct {
+        inner: Ecdsa.Signature,
+
+        pub fn fromDer(der: []const u8) !Signature {
+            const inner = Ecdsa.Signature.fromDer(der) catch return error.InvalidEncoding;
+            return Signature{ .inner = inner };
+        }
+
+        pub fn verify(self: Signature, msg: []const u8, pk: PublicKey) !void {
+            self.inner.verify(msg, pk.inner) catch return error.SignatureVerificationFailed;
+        }
+    };
+
+    pub const PublicKey = struct {
+        inner: Ecdsa.PublicKey,
+
+        pub fn fromSec1(sec1: []const u8) !PublicKey {
+            const inner = Ecdsa.PublicKey.fromSec1(sec1) catch return error.InvalidEncoding;
+            return PublicKey{ .inner = inner };
+        }
+    };
 
     pub fn verify(sig: Signature, msg: []const u8, pk: PublicKey) bool {
         sig.verify(msg, pk) catch return false;
@@ -256,8 +276,28 @@ pub const EcdsaP256Sha256 = struct {
 
 pub const EcdsaP384Sha384 = struct {
     const Ecdsa = std.crypto.sign.ecdsa.Ecdsa(std.crypto.ecc.P384, Sha384);
-    pub const Signature = Ecdsa.Signature;
-    pub const PublicKey = Ecdsa.PublicKey;
+
+    pub const Signature = struct {
+        inner: Ecdsa.Signature,
+
+        pub fn fromDer(der: []const u8) !Signature {
+            const inner = Ecdsa.Signature.fromDer(der) catch return error.InvalidEncoding;
+            return Signature{ .inner = inner };
+        }
+
+        pub fn verify(self: Signature, msg: []const u8, pk: PublicKey) !void {
+            self.inner.verify(msg, pk.inner) catch return error.SignatureVerificationFailed;
+        }
+    };
+
+    pub const PublicKey = struct {
+        inner: Ecdsa.PublicKey,
+
+        pub fn fromSec1(sec1: []const u8) !PublicKey {
+            const inner = Ecdsa.PublicKey.fromSec1(sec1) catch return error.InvalidEncoding;
+            return PublicKey{ .inner = inner };
+        }
+    };
 
     pub fn verify(sig: Signature, msg: []const u8, pk: PublicKey) bool {
         sig.verify(msg, pk) catch return false;
@@ -266,10 +306,69 @@ pub const EcdsaP384Sha384 = struct {
 };
 
 // ============================================================================
-// RSA - Use std.crypto.Certificate.rsa
+// RSA - Wrapper around std.crypto.Certificate.rsa
 // ============================================================================
 
-pub const rsa = std.crypto.Certificate.rsa;
+pub const rsa = struct {
+    const StdRsa = std.crypto.Certificate.rsa;
+
+    pub const PublicKey = struct {
+        n: []const u8,
+        e: []const u8,
+
+        pub const ParseDerError = error{CertificatePublicKeyInvalid};
+
+        pub fn parseDer(pub_key: []const u8) ParseDerError!struct { modulus: []const u8, exponent: []const u8 } {
+            return StdRsa.PublicKey.parseDer(pub_key);
+        }
+
+        pub fn fromBytes(exponent: []const u8, modulus: []const u8) !PublicKey {
+            return PublicKey{ .n = modulus, .e = exponent };
+        }
+    };
+
+    pub const PKCS1v1_5Signature = struct {
+        pub fn verify(
+            comptime modulus_len: usize,
+            sig: [modulus_len]u8,
+            msg: []const u8,
+            pk: PublicKey,
+            comptime hash_type: HashType,
+        ) !void {
+            const Hash = switch (hash_type) {
+                .sha256 => std.crypto.hash.sha2.Sha256,
+                .sha384 => std.crypto.hash.sha2.Sha384,
+                .sha512 => std.crypto.hash.sha2.Sha512,
+            };
+            const std_pk = StdRsa.PublicKey.fromBytes(pk.e, pk.n) catch
+                return error.CertificatePublicKeyInvalid;
+            StdRsa.PKCS1v1_5Signature.verify(modulus_len, sig, msg, std_pk, Hash) catch
+                return error.SignatureVerificationFailed;
+        }
+    };
+
+    pub const PSSSignature = struct {
+        pub fn verify(
+            comptime modulus_len: usize,
+            sig: [modulus_len]u8,
+            msg: []const u8,
+            pk: PublicKey,
+            comptime hash_type: HashType,
+        ) !void {
+            const Hash = switch (hash_type) {
+                .sha256 => std.crypto.hash.sha2.Sha256,
+                .sha384 => std.crypto.hash.sha2.Sha384,
+                .sha512 => std.crypto.hash.sha2.Sha512,
+            };
+            const std_pk = StdRsa.PublicKey.fromBytes(pk.e, pk.n) catch
+                return error.CertificatePublicKeyInvalid;
+            StdRsa.PSSSignature.verify(modulus_len, sig, msg, std_pk, Hash) catch
+                return error.SignatureVerificationFailed;
+        }
+    };
+
+    pub const HashType = enum { sha256, sha384, sha512 };
+};
 
 // ============================================================================
 // Random Number Generator

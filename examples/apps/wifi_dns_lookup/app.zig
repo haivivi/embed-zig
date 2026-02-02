@@ -193,7 +193,7 @@ const AppState = enum {
     done,
 };
 
-/// Run with env from platform
+/// Run with env from main (contains WiFi credentials)
 pub fn run(env: anytype) void {
     log.info("==========================================", .{});
     log.info("  WiFi DNS Lookup - UDP/TCP/DoH Test", .{});
