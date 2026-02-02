@@ -405,19 +405,19 @@ fn parseResponse(buf: *const [48]u8, expected_origin: NtpTimestamp) NtpError!Res
     const mode = buf[0] & 0x07;
     if (mode != 4 and mode != 5) return error.InvalidResponse;
 
-    // Check stratum
+    // IMPORTANT: Validate Origin Timestamp BEFORE checking stratum/KoD (RFC 5905 security)
+    // This prevents off-path attackers from sending spoofed KoD packets
+    // Server must echo back our Transmit Timestamp in the Origin field
+    const origin = readTimestamp(buf[24..32]);
+    if (origin.seconds != expected_origin.seconds or origin.fraction != expected_origin.fraction) {
+        return error.OriginMismatch;
+    }
+
+    // Check stratum (after origin validation to prevent spoofed KoD attacks)
     const stratum = buf[1];
     if (stratum == 0) {
         // Kiss-o'-Death packet - server is telling us to go away
         return error.KissOfDeath;
-    }
-
-    // Validate Origin Timestamp (RFC 5905 security)
-    // Server must echo back our Transmit Timestamp in the Origin field
-    // This prevents off-path attackers from spoofing NTP responses
-    const origin = readTimestamp(buf[24..32]);
-    if (origin.seconds != expected_origin.seconds or origin.fraction != expected_origin.fraction) {
-        return error.OriginMismatch;
     }
 
     // Parse receive timestamp (T2) - bytes 32-39
