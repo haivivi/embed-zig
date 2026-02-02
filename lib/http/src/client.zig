@@ -159,13 +159,9 @@ fn HttpClientImpl(comptime Socket: type, comptime Crypto: type) type {
         /// DNS query timeout in milliseconds
         dns_timeout_ms: u32 = 5000,
 
-        /// Skip TLS certificate verification (default: true for embedded)
-        /// Deprecated: use ca_store instead
-        skip_cert_verify: bool = true,
-
-        /// CA store for certificate verification
-        /// If null, certificate verification is skipped
-        /// If set, certificates are verified against this store
+        /// CA store for certificate verification.
+        /// If null, certificate verification is skipped (INSECURE - for testing only).
+        /// If set, certificates are verified against this store.
         ca_store: ?CaStore = null,
 
         /// TLS/HTTP timeout in milliseconds
@@ -312,7 +308,7 @@ fn HttpClientImpl(comptime Socket: type, comptime Crypto: type) type {
             var tls_client = TlsClient.init(socket, .{
                 .allocator = self.allocator,
                 .hostname = parsed.host,
-                .skip_verify = self.skip_cert_verify,
+                .skip_verify = self.ca_store == null,
                 .ca_store = self.ca_store,
                 .timeout_ms = self.timeout_ms,
             }) catch return error.TlsError;

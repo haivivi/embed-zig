@@ -487,8 +487,10 @@ pub fn from(comptime spec: type) type {
         // Connection Operations (Non-blocking)
         // ================================================================
 
-        /// Request WiFi connection (non-blocking)
-        /// Connection result will be delivered via events
+        /// Request WiFi connection (non-blocking).
+        /// This call returns immediately without waiting for the connection to complete.
+        /// The result of the connection attempt will be delivered asynchronously via
+        /// a `wifi` event (`.connected` on success, `.disconnected` on failure).
         pub fn connect(self: *Self, ssid: []const u8, password: []const u8) void {
             self.state = .connecting;
             self.current_ssid = ssid;
