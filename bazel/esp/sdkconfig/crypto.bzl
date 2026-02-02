@@ -67,18 +67,9 @@ esp_crypto = rule(
             default = True,
             doc = "Disable mbedTLS entirely (use pure Zig crypto)",
         ),
-        "enable_hkdf": attr.bool(
-            default = True,
-            doc = "Enable HKDF (mbedtls_hkdf_extract/expand)",
-        ),
-        "enable_gcm": attr.bool(
-            default = True,
-            doc = "Enable GCM mode (mbedtls_gcm_*)",
-        ),
-        "enable_chachapoly": attr.bool(
-            default = True,
-            doc = "Enable ChaCha20-Poly1305 (mbedtls_chachapoly_*)",
-        ),
+        # Note: Fine-grained mbedTLS feature control (HKDF, GCM, ChaCha) not yet
+        # implemented. When disable_mbedtls=False, all crypto features are enabled.
+        # Add feature flags here when minimal mbedTLS builds are needed.
     },
     doc = """Crypto configuration - controls mbedTLS usage and features""",
 )

@@ -35,32 +35,13 @@ const AppState = enum {
 /// Parse IP address string to bytes (e.g., "192.168.4.1" -> [4]u8)
 fn parseIpAddress(ip_str: []const u8) ?[4]u8 {
     var result: [4]u8 = undefined;
-    var octet_idx: usize = 0;
-    var current_value: u16 = 0;
-    var digit_count: usize = 0;
-
-    for (ip_str) |c| {
-        if (c == '.') {
-            if (digit_count == 0 or current_value > 255) return null;
-            if (octet_idx >= 3) return null;
-            result[octet_idx] = @intCast(current_value);
-            octet_idx += 1;
-            current_value = 0;
-            digit_count = 0;
-        } else if (c >= '0' and c <= '9') {
-            current_value = current_value * 10 + (c - '0');
-            digit_count += 1;
-            if (digit_count > 3) return null;
-        } else {
-            return null;
-        }
+    var it = std.mem.splitScalar(u8, ip_str, '.');
+    for (&result) |*octet| {
+        const octet_str = it.next() orelse return null;
+        octet.* = std.fmt.parseInt(u8, octet_str, 10) catch return null;
     }
-
-    // Last octet
-    if (digit_count == 0 or current_value > 255) return null;
-    if (octet_idx != 3) return null;
-    result[octet_idx] = @intCast(current_value);
-
+    // Ensure no extra parts
+    if (it.next() != null) return null;
     return result;
 }
 

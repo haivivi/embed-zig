@@ -165,8 +165,12 @@ function(esp_zig_build)
         message(FATAL_ERROR "Unsupported target ${CONFIG_IDF_TARGET}")
     endif()
     
-    # Build type - ReleaseSafe for smaller code size on Xtensa
-    set(ZIG_BUILD_TYPE "ReleaseSafe")
+    # Build type - respect CMAKE_BUILD_TYPE, default to ReleaseSafe
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(ZIG_BUILD_TYPE "Debug")
+    else()
+        set(ZIG_BUILD_TYPE "ReleaseSafe")
+    endif()
     
     # Include directories
     set(include_dirs $<TARGET_PROPERTY:${COMPONENT_LIB},INCLUDE_DIRECTORIES> ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES})
