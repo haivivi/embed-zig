@@ -573,7 +573,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
                              int32_t event_id, void* event_data) {
     (void)arg;
     
-    ESP_LOGI(TAG, "ip_event_handler called: event_id=%ld, queue=%p", event_id, (void*)s_event_queue);
+    ESP_LOGD(TAG, "ip_event_handler called: event_id=%ld, queue=%p", event_id, (void*)s_event_queue);
     
     if (event_base != IP_EVENT || s_event_queue == NULL) {
         ESP_LOGW(TAG, "Ignoring event: base=%s, queue=%p", event_base, (void*)s_event_queue);

@@ -726,14 +726,18 @@ pub fn Board(comptime spec: type) type {
             // Poll WiFi events
             if (analysis.wifi_count > 0) {
                 if (self.wifi.pollEvent()) |wifi_event| {
-                    _ = self.events.trySend(.{ .wifi = wifi_event });
+                    if (!self.events.trySend(.{ .wifi = wifi_event })) {
+                        log.warn("Event queue full, WiFi event dropped", .{});
+                    }
                 }
             }
 
             // Poll Net events
             if (analysis.net_count > 0) {
                 if (self.net.pollEvent()) |net_event| {
-                    _ = self.events.trySend(.{ .net = net_event });
+                    if (!self.events.trySend(.{ .net = net_event })) {
+                        log.warn("Event queue full, Net event dropped", .{});
+                    }
                 }
             }
         }
