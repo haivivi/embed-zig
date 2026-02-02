@@ -115,13 +115,10 @@ esp_crypto(
 )
 
 # Enable mbedTLS with full features for Zig crypto trait
-# Required: HKDF, GCM, ChaCha20-Poly1305
+# When disable_mbedtls=False, all features (HKDF, GCM, ChaCha) are enabled
 esp_crypto(
     name = "mbedtls_full",
     disable_mbedtls = False,
-    enable_hkdf = True,
-    enable_gcm = True,
-    enable_chachapoly = True,
 )
 
 # =============================================================================
