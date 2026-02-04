@@ -1,0 +1,50 @@
+# WiFi DNS Lookup - ESP Platform
+
+load("//bazel:env.bzl", "make_env_file")
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/wifi_dns_lookup:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+# Environment from command line
+# Usage:
+#   bazel build //examples/apps/wifi_dns_lookup/esp:app --define WIFI_SSID=xxx --define WIFI_PASSWORD=yyy
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "mbedtls"],
+    force_link = [
+        "${EVENT_FORCE_LINK}",
+        "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
+        "verify_with_esp_bundle",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/event/event.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/mbed_tls/mbed_tls.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/net/net.cmake)",
+    ],
+    extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES"],
+    extra_deps = ["hal", "dns", "tls", "http"],
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls",
+    app_config = "//examples/esp:app",
+    env = ":env",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

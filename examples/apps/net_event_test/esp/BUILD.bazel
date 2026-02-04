@@ -1,0 +1,44 @@
+# Net Event Test - ESP Platform
+# Tests the Net HAL event system through board.poll() and board.nextEvent()
+
+load("//bazel:env.bzl", "make_env_file")
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/net_event_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+# Environment from command line
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/src/idf/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/esp/src/idf/net/net.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES"],
+    extra_deps = ["hal"],
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip_uart",
+    app_config = "//examples/esp:app",
+    env = ":env",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

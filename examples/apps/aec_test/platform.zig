@@ -5,7 +5,7 @@
 //! Uses AudioSystem for unified mic+speaker with AEC.
 
 const hal = @import("hal");
-const hw = @import("boards/korvo2_v3.zig");
+const hw = @import("esp/korvo2_v3.zig");
 
 pub const Hardware = hw.Hardware;
 

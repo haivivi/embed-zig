@@ -1,0 +1,20 @@
+.{
+    .name = .https_speed_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xbb392e3b05ab7814,
+    .dependencies = .{
+        .hal = .{ .path = "../../../../lib/hal" },
+        .esp = .{ .path = "../../../../lib/esp" },
+        .trait = .{ .path = "../../../../lib/trait" },
+        .tls = .{ .path = "../../../../lib/tls" },
+        .dns = .{ .path = "../../../../lib/dns" },
+        .http = .{ .path = "../../../../lib/http" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "esp32s3_devkit.zig",
+    },
+}

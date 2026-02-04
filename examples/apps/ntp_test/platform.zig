@@ -5,8 +5,8 @@ const build_options = @import("build_options");
 
 /// Hardware implementation
 pub const hw = switch (build_options.board) {
-    .esp32s3_devkit => @import("boards/esp32s3_devkit.zig"),
-    .korvo2_v3 => @import("boards/korvo2_v3.zig"),
+    .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
 };
 
 const spec = struct {

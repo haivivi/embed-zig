@@ -1,0 +1,34 @@
+# PWM Fade - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/pwm_fade:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["driver"],
+    force_link = [
+        "${LEDC_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/ledc/ledc.cmake)",
+    ],
+    extra_c_sources = ["LEDC_C_SOURCES"],
+    extra_deps = ["hal"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

@@ -1,0 +1,16 @@
+.{
+    .name = .async_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xa51c3f92e4b728da,
+    .dependencies = .{
+        .esp = .{ .path = "../../../../lib/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "esp32s3_devkit.zig",
+    },
+}

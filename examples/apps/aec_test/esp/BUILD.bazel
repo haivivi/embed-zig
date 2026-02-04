@@ -1,0 +1,54 @@
+# AEC Test - ESP Platform
+# Tests microphone with AEC (Acoustic Echo Cancellation)
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/aec_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["korvo2_v3"],
+    requires = [
+        "driver",
+        "esp_driver_i2s",
+        "esp_driver_gpio",
+        "esp_driver_i2c",
+        "nvs_flash",
+        "esp_wifi",
+        "lwip",
+    ],
+    force_link = [
+        "${I2S_FORCE_LINK}",
+        "${I2C_FORCE_LINK}",
+        "${SR_FORCE_LINK}",
+        "${RUNTIME_FORCE_LINK}",
+        "${WIFI_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/i2s/i2s.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/sr/sr.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/runtime/runtime.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+    ],
+    extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES", "SR_C_SOURCES", "RUNTIME_C_SOURCES", "WIFI_C_SOURCES"],
+    extra_deps = ["hal", "drivers"],
+    idf_deps = [
+        "espressif/esp-sr:^2.1.1",
+    ],
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
