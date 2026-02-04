@@ -104,6 +104,14 @@ main() {
     # Copy outputs back to Bazel execroot
     cp "$PROJECT_DIR/build/$ESP_PROJECT_NAME.bin" "$ESP_EXECROOT/$ESP_BIN_OUT"
     cp "$PROJECT_DIR/build/$ESP_PROJECT_NAME.elf" "$ESP_EXECROOT/$ESP_ELF_OUT"
+    
+    # Copy bootloader and partition table if output paths are set
+    if [ -n "$ESP_BOOTLOADER_OUT" ]; then
+        cp "$PROJECT_DIR/build/bootloader/bootloader.bin" "$ESP_EXECROOT/$ESP_BOOTLOADER_OUT"
+    fi
+    if [ -n "$ESP_PARTITION_OUT" ]; then
+        cp "$PROJECT_DIR/build/partition_table/partition-table.bin" "$ESP_EXECROOT/$ESP_PARTITION_OUT"
+    fi
 
     echo "[esp_build] Build complete!"
 }

@@ -1,0 +1,222 @@
+# ESP32 Partition Table
+# Combines partition entries into a partition table
+
+load(":entry.bzl", "EspPartitionEntryInfo")
+
+# Partition table provider - carries table info to esp_zig_app
+EspPartitionTableInfo = provider(
+    doc = "Information about the complete partition table",
+    fields = {
+        "csv_file": "Generated partition table CSV file",
+        "sdkconfig_file": "Generated sdkconfig fragment",
+        "entries": "List of EspPartitionEntryInfo",
+        "data_bins": "Dict of partition_name -> bin file for partitions with data",
+    },
+)
+
+def _parse_size_to_bytes(size_str):
+    """Parse size string to bytes. Returns -1 for '*' (fill remaining)."""
+    if size_str == "*":
+        return -1
+    
+    size_str = size_str.strip().upper()
+    
+    if size_str.endswith("K"):
+        return int(size_str[:-1]) * 1024
+    elif size_str.endswith("M"):
+        return int(size_str[:-1]) * 1024 * 1024
+    elif size_str.startswith("0X"):
+        return int(size_str, 16)
+    else:
+        return int(size_str)
+
+def _align_up(value, alignment):
+    """Align value up to the nearest multiple of alignment."""
+    return ((value + alignment - 1) // alignment) * alignment
+
+def _format_hex(value):
+    """Format value as hex string."""
+    return "0x%X" % value
+
+def _esp_partition_table_impl(ctx):
+    """Generate partition table CSV and sdkconfig."""
+    
+    # Collect all partition entries
+    entries = []
+    for entry_target in ctx.attr.entries:
+        if EspPartitionEntryInfo in entry_target:
+            entries.append(entry_target[EspPartitionEntryInfo])
+        else:
+            fail("Target {} does not provide EspPartitionEntryInfo".format(entry_target.label))
+    
+    if not entries:
+        fail("Partition table must have at least one entry")
+    
+    # Calculate offsets
+    # Partition table starts at 0x8000, first partition at 0x9000
+    PARTITION_TABLE_OFFSET = 0x8000
+    FIRST_PARTITION_OFFSET = 0x9000
+    ALIGNMENT = 0x1000  # 4KB alignment
+    
+    current_offset = FIRST_PARTITION_OFFSET
+    calculated_entries = []
+    fill_entry_idx = -1
+    
+    for i, entry in enumerate(entries):
+        size_bytes = _parse_size_to_bytes(entry.size)
+        
+        # Use fixed offset if specified, otherwise use current
+        if entry.offset:
+            offset = int(entry.offset, 16) if entry.offset.startswith("0x") or entry.offset.startswith("0X") else int(entry.offset)
+            # Validate offset doesn't overlap
+            if offset < current_offset:
+                fail("Partition '{}' offset {} overlaps with previous partition ending at {}".format(
+                    entry.name, _format_hex(offset), _format_hex(current_offset)))
+            current_offset = offset
+        
+        # Align current offset
+        current_offset = _align_up(current_offset, ALIGNMENT)
+        
+        if size_bytes == -1:
+            # Mark this entry for fill calculation later
+            if fill_entry_idx != -1:
+                fail("Only one partition can use '*' for size")
+            fill_entry_idx = i
+            calculated_entries.append({
+                "name": entry.name,
+                "type": entry.type,
+                "subtype": entry.subtype,
+                "offset": current_offset,
+                "size": -1,  # Will be calculated
+                "entry": entry,
+            })
+        else:
+            calculated_entries.append({
+                "name": entry.name,
+                "type": entry.type,
+                "subtype": entry.subtype,
+                "offset": current_offset,
+                "size": size_bytes,
+                "entry": entry,
+            })
+            current_offset += size_bytes
+    
+    # Calculate fill partition size if needed
+    if fill_entry_idx != -1:
+        # Get flash size from attribute or default to 8MB
+        flash_size = _parse_size_to_bytes(ctx.attr.flash_size) if ctx.attr.flash_size else 8 * 1024 * 1024
+        
+        # Calculate remaining space
+        fill_offset = calculated_entries[fill_entry_idx]["offset"]
+        used_after_fill = 0
+        for i in range(fill_entry_idx + 1, len(calculated_entries)):
+            used_after_fill += calculated_entries[i]["size"]
+        
+        fill_size = flash_size - fill_offset - used_after_fill
+        if fill_size <= 0:
+            fail("No space remaining for '*' partition")
+        
+        calculated_entries[fill_entry_idx]["size"] = fill_size
+        
+        # Recalculate offsets for entries after fill
+        current_offset = fill_offset + fill_size
+        for i in range(fill_entry_idx + 1, len(calculated_entries)):
+            current_offset = _align_up(current_offset, ALIGNMENT)
+            calculated_entries[i]["offset"] = current_offset
+            current_offset += calculated_entries[i]["size"]
+    
+    # Generate CSV content
+    csv_lines = [
+        "# Name,   Type, SubType, Offset,  Size, Flags",
+        "# Auto-generated by esp_partition_table",
+    ]
+    
+    for e in calculated_entries:
+        csv_lines.append("{name},{type},{subtype},{offset},{size},".format(
+            name = e["name"],
+            type = e["type"],
+            subtype = e["subtype"],
+            offset = _format_hex(e["offset"]),
+            size = _format_hex(e["size"]),
+        ))
+    
+    csv_content = "\n".join(csv_lines) + "\n"
+    
+    # Write CSV file
+    csv_file = ctx.actions.declare_file(ctx.attr.name + ".csv")
+    ctx.actions.write(csv_file, csv_content)
+    
+    # Generate sdkconfig fragment
+    sdkconfig_lines = [
+        "# Partition table configuration",
+        "# Auto-generated by esp_partition_table",
+        "",
+        "CONFIG_PARTITION_TABLE_CUSTOM=y",
+        'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="{}"'.format(ctx.attr.name + ".csv"),
+        'CONFIG_PARTITION_TABLE_FILENAME="{}"'.format(ctx.attr.name + ".csv"),
+        "CONFIG_PARTITION_TABLE_OFFSET={}".format(_format_hex(PARTITION_TABLE_OFFSET)),
+    ]
+    
+    sdkconfig_content = "\n".join(sdkconfig_lines) + "\n"
+    
+    # Write sdkconfig file
+    sdkconfig_file = ctx.actions.declare_file(ctx.attr.name + ".sdkconfig")
+    ctx.actions.write(sdkconfig_file, sdkconfig_content)
+    
+    # Collect data bins
+    data_bins = {}
+    for e in calculated_entries:
+        entry = e["entry"]
+        if entry.data_bin:
+            data_bins[entry.name] = {
+                "bin": entry.data_bin,
+                "offset": e["offset"],
+            }
+    
+    return [
+        EspPartitionTableInfo(
+            csv_file = csv_file,
+            sdkconfig_file = sdkconfig_file,
+            entries = entries,
+            data_bins = data_bins,
+        ),
+        DefaultInfo(files = depset([csv_file, sdkconfig_file])),
+    ]
+
+esp_partition_table = rule(
+    implementation = _esp_partition_table_impl,
+    attrs = {
+        "entries": attr.label_list(
+            mandatory = True,
+            providers = [EspPartitionEntryInfo],
+            doc = "List of esp_partition_entry targets",
+        ),
+        "flash_size": attr.string(
+            default = "8M",
+            doc = "Total flash size for calculating '*' partition. Default: 8M",
+        ),
+    },
+    doc = """Combine partition entries into a partition table.
+    
+    Generates:
+    - {name}.csv: Partition table in ESP-IDF CSV format
+    - {name}.sdkconfig: sdkconfig fragment for custom partition table
+    
+    Example:
+    ```
+    esp_partition_table(
+        name = "partitions",
+        entries = [
+            ":nvs",
+            ":phy",
+            ":factory",
+            ":storage",
+        ],
+        flash_size = "8M",
+    )
+    ```
+    
+    Offsets are automatically calculated with 4KB alignment.
+    Use '*' for size in one partition to fill remaining space.
+    """,
+)

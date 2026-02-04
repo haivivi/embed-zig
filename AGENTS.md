@@ -1,198 +1,82 @@
-# Project Architecture
+# Development Guide
 
-## Bazel Flash and Monitor
+## 1. How-to Write
 
-**Important**: Always use Bazel commands for flashing and serial monitoring. Do not use ad-hoc scripts.
+### Cross-Platform Lib
 
-### Flash
+**Location**: `lib/{lib_name}/`
 
-```bash
-# Flash to specified port
-bazel run //examples/apps/{app_name}:flash --//bazel/esp:port=/dev/cu.usbmodem2101
+**Dependency Rules**:
+- Can depend on `lib/trait`
+- Can depend on `lib/hal`
+- Can depend on other cross-platform libs in `lib/`
+- **MUST NOT** depend on `lib/{platform}/` (e.g., `lib/esp/`, `lib/beken/`)
+- **Avoid** `std` (freestanding environment)
 
-# Example: flash async_test
-bazel run //examples/apps/async_test:flash --//bazel/esp:port=/dev/cu.usbmodem2101
-```
-
-### Serial Monitor
-
-```bash
-# Use the global monitor rule
-bazel run //bazel/esp:monitor --//bazel/esp:port=/dev/cu.usbmodem2101
-```
-
-### Port Types
-
-- **USB-JTAG** (built-in): `/dev/cu.usbmodem*` - ESP32-S3 DevKit and similar boards
-- **USB-UART** (external): `/dev/cu.usbserial*` or `/dev/ttyUSB*` - CP2102/CH340 bridges
-
-### USB-JTAG Reset Notes
-
-USB-JTAG port DTR/RTS are virtual CDC signals and cannot directly trigger hardware reset. The `esp_flash` rule automatically uses **watchdog reset**:
-- Reconnects to bootloader after flashing
-- Triggers software reset by writing to RTC watchdog register
-- Device automatically restarts with new firmware
-
-If watchdog reset fails (device stuck, etc.), manually press RST or re-plug USB.
-
----
-
-## Module Relationships
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Application (examples/apps/*)                               │
-│   Uses Board.crypto / Board.socket abstractions             │
-├─────────────────────────────────────────────────────────────┤
-│ lib/hal - Hardware Abstraction Layer                        │
-│   Board(spec) validates and assembles components from spec  │
-│   Exports: wifi, button, led_strip, rtc and other HAL       │
-├─────────────────────────────────────────────────────────────┤
-│ lib/trait - Interface Definitions                           │
-│   Defines low-level interface contracts: socket, rng, etc.  │
-│   Pure validation, no implementation                        │
-├─────────────────────────────────────────────────────────────┤
-│ lib/{platform}/impl - Platform Implementations              │
-│   lib/esp/impl/crypto/suite.zig  (mbedTLS implementation)   │
-│   lib/crypto/src/suite.zig       (pure Zig implementation)  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Data Flow Example
+**Example**: `lib/tls`, `lib/http`, `lib/dns` - they accept generic parameters like `Socket`, `Crypto`
 
 ```zig
-// 1. Platform impl provides concrete implementation
-// lib/esp/src/impl/crypto/suite.zig
-pub const Suite = struct {
-    pub const Sha256 = struct { ... };  // mbedTLS
-    pub const Rng = struct { ... };     // ESP HW RNG
-};
-
-// 2. Board file exports implementation
-// examples/apps/xxx/boards/esp32s3_devkit.zig
-pub const crypto = @import("esp").impl.crypto.Suite;
-
-// 3. platform.zig assembles spec
-const spec = struct {
-    pub const crypto = hw.crypto;
-    pub const socket = hw.socket;
-};
-pub const Board = hal.Board(spec);
-
-// 4. hal.Board validates spec
-// lib/hal/src/board.zig
-pub fn Board(comptime spec: type) type {
-    comptime {
-        if (@hasDecl(spec, "crypto")) {
-            _ = trait.crypto.from(spec.crypto, .{ .rng = true, ... });
-        }
-    }
-}
-
-// 5. Application uses
-const Board = @import("platform.zig").Board;
-const TlsClient = tls.Client(Board.socket, Board.crypto);
-```
-
----
-
-## Comptime Validation Guidelines
-
-### Core Principle: Signature Validation (REQUIRED)
-
-Do not use `@hasDecl` alone - must validate full function signature:
-
-```zig
-// BAD - only checks existence
-if (!@hasDecl(T, "send")) @compileError("missing send");
-
-// GOOD - validates signature, type errors cause compile failure
-_ = @as(*const fn (*T, []const u8) Error!usize, &T.send);
-```
-
-### Recursive Subtype Validation
-
-Nested types use corresponding `from()` for validation:
-
-```zig
-fn validateCrypto(comptime Impl: type) void {
-    if (@hasDecl(Impl, "Rng")) {
-        _ = rng.from(Impl.Rng);  // recursive validation
-    }
-}
-```
-
-### lib/trait Validation Pattern
-
-Validates the type itself, returns original type:
-
-```zig
-// lib/trait/src/socket.zig
-pub fn from(comptime Impl: type) type {
-    comptime {
-        const T = switch (@typeInfo(Impl)) {
-            .pointer => |p| p.child,
-            else => Impl,
-        };
-        _ = @as(*const fn () Error!T, &T.tcp);
-        _ = @as(*const fn (*T, []const u8) Error!usize, &T.send);
-        _ = @as(*const fn (*T, []u8) Error!usize, &T.recv);
-    }
-    return Impl;
-}
-```
-
-### lib/hal Validation Pattern
-
-Validates spec structure (Driver + meta), returns HAL wrapper:
-
-```zig
-// lib/hal/src/wifi.zig
-pub fn from(comptime spec: type) type {
-    comptime {
-        const Driver = spec.Driver;
-        _ = @as(*const fn (*Driver, []const u8, []const u8) void, &Driver.connect);
-        _ = @as(*const fn (*const Driver) bool, &Driver.isConnected);
-        _ = @as([]const u8, spec.meta.id);
-    }
+// lib/tls/src/client.zig
+pub fn Client(comptime Socket: type, comptime Crypto: type) type {
+    // Socket and Crypto are validated via lib/trait
     return struct {
-        driver: *spec.Driver,
-        pub fn connect(self: *@This(), ssid: []const u8, pwd: []const u8) void {
-            self.driver.connect(ssid, pwd);
-        }
+        // implementation using abstract interfaces
     };
 }
 ```
 
 ---
 
-## C Library Integration Pattern
+### Platform
 
-Zig's `@cImport` cannot properly handle certain C constructs:
+**Location**: `lib/{platform}/` + `bazel/{platform}/`
 
-- **Opaque structs** - library hides internal fields, Zig cannot access
-- **Bit-fields** - Zig does not support C bit-field memory layout
+**Steps to introduce a new platform**:
 
-### Solution: C Helper
+1. **Implement native bindings** (as needed)
+   - Location: `lib/{platform}/src/`
+   - Wrap platform SDK APIs
 
-Create C helper files to wrap problematic APIs, exposing simple byte-array interfaces to Zig:
+2. **Implement trait interfaces** (as needed)
+   - Provide implementations for `lib/trait` contracts
+   - e.g., socket, rng, crypto
 
+3. **Implement hal interfaces** (as needed)
+   - Provide implementations for `lib/hal` contracts
+   - e.g., wifi, gpio, adc, led_strip
+
+4. **Provide Bazel rules**
+   - Location: `bazel/{platform}/defs.bzl`
+   - Build rules, flash rules, etc.
+
+---
+
+### Native Platform Bindings
+
+**Principles**:
+- **Preserve native API style** - keep function names and signatures close to official SDK (easier to reference docs)
+- **Prefer c-translate** - use `@cImport` to translate C headers to Zig when possible
+- **Use C Helper when necessary** - for constructs Zig cannot handle
+
+**When C Helper is needed**:
+- Opaque structs (library hides internal fields)
+- Bit-fields (Zig doesn't support C bit-field layout)
+- Complex macros
+
+**File structure**:
 ```
 lib/{platform}/src/idf/{lib_name}/
-├── xxx_helper.c   # C implementation, handles opaque/bit-field
-├── xxx_helper.h   # C header, declares simple interface
-└── xxx.zig        # Zig wrapper, @cImport helper.h
+├── xxx_helper.c   # C wrapper for problematic APIs
+├── xxx_helper.h   # Simple byte-array interface
+└── xxx.zig        # Zig binding via @cImport
 ```
 
-### Interface Design Principles
+**Interface design**:
+- Use byte arrays for parameters (avoid complex structs)
+- Return int error codes (0 = success)
+- Don't expose internal types
 
-1. **Use byte arrays for parameters** - avoid passing complex structs
-2. **Return int error codes** - 0 for success, non-zero for failure
-3. **Don't expose internal types** - C helper handles all mbedTLS/library types internally
-
-### Example
-
-See `lib/esp/src/idf/mbed_tls/` - mbedTLS X25519 wrapper:
+**Example** (`lib/esp/src/idf/mbed_tls/`):
 
 ```c
 // x25519_helper.h
@@ -210,3 +94,220 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
     return out;
 }
 ```
+
+---
+
+### App
+
+#### Platform-Free Code
+
+**Location**: `examples/apps/{app}/app.zig`, `platform.zig`
+
+**Dependency Rules**:
+- Can depend on `lib/trait`
+- Can depend on `lib/hal`
+- Can depend on cross-platform libs in `lib/`
+- **MUST NOT** depend on `lib/{platform}/`
+
+```zig
+// platform.zig - abstracts board selection
+const build_options = @import("build_options");
+const hal = @import("hal");
+
+const hw = switch (build_options.board) {
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+};
+
+pub const Board = hal.Board(.{
+    .wifi = hw.wifi,
+    .button = hw.button,
+    // ...
+});
+```
+
+#### Board Definition
+
+**Location**: `examples/apps/{app}/esp/{board}.zig`
+
+**Purpose**: Assemble trait and hal implementations from platform lib for the app
+
+```zig
+// esp/korvo2_v3.zig
+const esp = @import("esp");
+
+pub const wifi = esp.wifi.Driver;
+pub const button = esp.adc.Button(.{
+    .unit = .adc1,
+    .channel = .channel3,
+    .thresholds = &.{ 500, 1500, 2500 },
+});
+```
+
+---
+
+## 2. How-to Recipes
+
+### Build & Flash
+
+#### How to Build
+
+```bash
+# Build with defaults (first board, first data variant)
+bazel build //examples/apps/{app}/esp:app
+
+# Build with specific board and data
+bazel build //examples/apps/{app}/esp:app \
+  --//bazel:board=esp32s3_devkit \
+  --//bazel:data=zero
+```
+
+#### How to Flash
+
+```bash
+bazel run //examples/apps/{app}/esp:flash \
+  --//bazel:port=/dev/cu.usbmodem2101
+```
+
+#### How to Monitor
+
+```bash
+bazel run //bazel/esp:monitor --//bazel:port=/dev/cu.usbmodem2101
+```
+
+**Port types**:
+- USB-JTAG (built-in): `/dev/cu.usbmodem*` - ESP32-S3 DevKit
+- USB-UART (external): `/dev/cu.usbserial*` - CP2102/CH340
+
+---
+
+### Configuration
+
+#### How to Select Board
+
+First board in `boards` list is default:
+
+```python
+# esp/BUILD.bazel
+esp_zig_app(
+    boards = ["korvo2_v3", "esp32s3_devkit"],  # korvo2_v3 is default
+)
+```
+
+Override: `--//bazel:board=esp32s3_devkit`
+
+#### How to Select Data Variant
+
+First option in `data_select` is default:
+
+```python
+# BUILD.bazel
+load("//bazel:data.bzl", "data_select")
+
+data_select(
+    name = "data_files",
+    options = {
+        "tiga": glob(["data/tiga/**"]),  # default
+        "zero": glob(["data/zero/**"]),
+    },
+)
+```
+
+Override: `--//bazel:data=zero`
+
+#### How to Configure WiFi (env)
+
+Compile-time environment variables (baked into firmware):
+
+```python
+# esp/BUILD.bazel
+load("//bazel:env.bzl", "make_env_file")
+
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
+    defaults = {
+        "WIFI_SSID": "MyWiFi",
+        "WIFI_PASSWORD": "12345678",
+    },
+)
+```
+
+Override: `--define WIFI_SSID=OtherWiFi`
+
+#### How to Add NVS Data
+
+Runtime storage (can update without reflashing app):
+
+```python
+# esp/BUILD.bazel
+load("//bazel/esp/partition:nvs.bzl", "esp_nvs_string", "esp_nvs_u8", "esp_nvs_image")
+
+esp_nvs_string(name = "nvs_sn", namespace = "device", key = "sn")
+esp_nvs_u8(name = "nvs_hw_ver", namespace = "device", key = "hw_ver")
+
+esp_nvs_image(
+    name = "nvs_data",
+    entries = [":nvs_sn", ":nvs_hw_ver"],
+    partition_size = "24K",
+)
+```
+
+Override: `--define nvs_sn=H106-000001`
+
+#### How to Add Data Files (SPIFFS)
+
+```python
+# esp/BUILD.bazel
+load("//bazel/esp/partition:spiffs.bzl", "esp_spiffs_image")
+
+esp_spiffs_image(
+    name = "storage_data",
+    srcs = ["//examples/apps/{app}:data_files"],
+    partition_size = "1M",
+    strip_prefix = "examples/apps/{app}/data",
+)
+```
+
+#### How to Define Partition Table
+
+```python
+# esp/BUILD.bazel
+load("//bazel/esp/partition:entry.bzl", "esp_partition_entry")
+load("//bazel/esp/partition:table.bzl", "esp_partition_table")
+
+esp_partition_entry(name = "part_nvs", partition_name = "nvs", type = "data", subtype = "nvs", partition_size = "24K")
+esp_partition_entry(name = "part_factory", partition_name = "factory", type = "app", subtype = "factory", partition_size = "4M")
+esp_partition_entry(name = "part_storage", partition_name = "storage", type = "data", subtype = "spiffs", partition_size = "1M")
+
+esp_partition_table(
+    name = "partitions",
+    entries = [":part_nvs", ":part_factory", ":part_storage"],
+    flash_size = "8M",
+)
+```
+
+---
+
+### Development
+
+#### How to Add a New Board
+
+1. Create board file: `examples/apps/{app}/esp/{board}.zig`
+2. Define hardware configuration (GPIO, ADC, etc.)
+3. Add to `boards` list in `esp/BUILD.bazel`
+4. Add to `BoardType` enum in `esp/build.zig`
+5. Add switch case in `platform.zig`
+
+#### How to Add a New App
+
+1. Create directory: `examples/apps/{app}/`
+2. Create `app.zig` (application logic)
+3. Create `platform.zig` (board abstraction)
+4. Create `BUILD.bazel` (app_srcs, data_select)
+5. Create `esp/` subdirectory with:
+   - `BUILD.bazel` (sdkconfig, app, flash rules)
+   - `build.zig`, `build.zig.zon`
+   - `{board}.zig` files
+
+Reference: `examples/apps/adc_button/` for complete example.

@@ -1,28 +1,8 @@
 # ESP32 build settings
 
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("//bazel/esp:defs.bzl", "esp_monitor")
 
 package(default_visibility = ["//visibility:public"])
-
-# Board name (passed to Zig as -Dboard=xxx)
-# User defines board configuration in Zig code
-string_flag(
-    name = "board",
-    build_setting_default = "esp32s3_devkit",
-)
-
-# Serial port for flash/monitor (auto-detect if empty)
-string_flag(
-    name = "port",
-    build_setting_default = "",
-)
-
-# Flash baud rate
-string_flag(
-    name = "baud",
-    build_setting_default = "460800",
-)
 
 # Build scripts
 filegroup(

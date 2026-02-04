@@ -4,17 +4,17 @@
     .fingerprint = 0x9f53cb452486582a,
     .dependencies = .{
         .esp = .{
-            .path = "../../../lib/esp",
+            .path = "../../../../lib/esp",
         },
         .hal = .{
-            .path = "../../../lib/hal",
+            .path = "../../../../lib/hal",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "app.zig",
-        "platform.zig",
-        "boards",
+        "../app.zig",
+        "../platform.zig",
+        "korvo2_v3.zig",
     },
 }

@@ -1,0 +1,4 @@
+ADC Button Example Config
+=========================
+button_threshold=500
+led_brightness=128
