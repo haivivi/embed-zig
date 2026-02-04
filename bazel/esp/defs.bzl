@@ -37,6 +37,7 @@ Build:
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
 load("//bazel/esp/partition:table.bzl", "EspPartitionTableInfo")
+load("//bazel/zig:defs.bzl", "ZigLibInfo")
 
 # sdkconfig modules (each corresponds to ESP-IDF components)
 # All modules are independent rules that generate .sdkconfig fragments
@@ -376,16 +377,42 @@ def _esp_zig_app_impl(ctx):
     boards_enum_fields = ", ".join(boards_list)
     default_board = boards_list[0]
     
+    # Collect Zig library dependencies from deps attribute
+    deps_infos = []  # List of (ZigLibInfo, files)
+    deps_files = []  # All dependency source files to copy
+    for dep in ctx.attr.deps:
+        if ZigLibInfo in dep:
+            info = dep[ZigLibInfo]
+            files = dep.files.to_list()
+            deps_infos.append((info, files))
+            deps_files.extend(files)
+    
+    # Generate copy commands for deps
+    deps_copy_commands = _generate_copy_commands_preserve_structure(deps_files)
+    
     # Extra lib dependencies for build.zig.zon
     extra_deps_zon = ""
     extra_deps_zig_imports = ""
     extra_deps_zig_decls = ""
     # For app's build.zig.zon (relative to app directory)
     app_extra_deps_zon = ""
-    for dep in ctx.attr.extra_deps:
-        dep_name = dep.lstrip(".")
-        extra_deps_zon += '        .{name} = .{{ .path = "../../{lib_prefix}/{name}" }},\n'.format(name = dep_name, lib_prefix = lib_prefix)
-        app_extra_deps_zon += '        .{name} = .{{ .path = "{app_to_lib_prefix}/{name}" }},\n'.format(name = dep_name, app_to_lib_prefix = app_to_lib_prefix)
+    
+    for info, _ in deps_infos:
+        dep_name = info.name
+        dep_path = info.path  # e.g., "lib/hal"
+        
+        # For esp_project/main/build.zig.zon: path relative to esp_project/main/
+        # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_path}/
+        # So path is "../../{dep_path}"
+        extra_deps_zon += '        .{name} = .{{ .path = "../../{path}" }},\n'.format(name = dep_name, path = dep_path)
+        
+        # For app's build.zig.zon: path relative to app directory
+        # app is at $WORK/{app_path}/, lib is at $WORK/{dep_path}/
+        # Calculate relative path from app to dep
+        app_depth = len(app_path.split("/"))
+        dep_rel_path = "../" * app_depth + dep_path
+        app_extra_deps_zon += '        .{name} = .{{ .path = "{path}" }},\n'.format(name = dep_name, path = dep_rel_path)
+        
         extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
         extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
         .target = target,
@@ -416,6 +443,7 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 {app_copy_commands}
 {cmake_copy_commands}
 {lib_copy_commands}
+{deps_copy_commands}
 
 # Generate app build.zig.zon with correct relative paths to lib (without fingerprint first)
 cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
@@ -923,6 +951,7 @@ exec bash "{build_sh}"
         app_copy_commands = "\n".join(app_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
+        deps_copy_commands = "\n".join(deps_copy_commands),
         lib_prefix = lib_prefix,
         cmake_prefix = cmake_prefix,
         app_to_lib_prefix = app_to_lib_prefix,
@@ -951,7 +980,7 @@ exec bash "{build_sh}"
     # Collect all inputs
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + deps_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
     
     # Run build
     ctx.actions.run_shell(
@@ -1011,9 +1040,9 @@ esp_zig_app = rule(
             default = [],
             doc = "Extra C source variables (e.g., I2C_C_SOURCES)",
         ),
-        "extra_deps": attr.string_list(
-            default = [],
-            doc = "Extra lib dependencies (e.g., hal, drivers)",
+        "deps": attr.label_list(
+            providers = [ZigLibInfo],
+            doc = "Zig library dependencies (e.g., //lib/hal, //lib/drivers)",
         ),
         "idf_deps": attr.string_list(
             default = [],
@@ -1098,7 +1127,7 @@ def _esp_flash_impl(ctx):
     if ctx.attr.partition_table and EspPartitionTableInfo in ctx.attr.partition_table:
         partition_info = ctx.attr.partition_table[EspPartitionTableInfo]
         for name, info in partition_info.data_bins.items():
-            data_flash_args += " 0x{:X} {}".format(info["offset"], info["bin"].short_path)
+            data_flash_args += " 0x%X %s" % (info["offset"], info["bin"].short_path)
             data_files.append(info["bin"])
     
     # Create wrapper script

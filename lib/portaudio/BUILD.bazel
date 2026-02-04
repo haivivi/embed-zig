@@ -1,10 +1,10 @@
-# Raysim library - Raylib simulator bindings
+# PortAudio library - Audio I/O bindings
 
 load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
 zig_lib(
-    name = "raysim",
+    name = "portaudio",
     srcs = glob(["**/*"]),
 )

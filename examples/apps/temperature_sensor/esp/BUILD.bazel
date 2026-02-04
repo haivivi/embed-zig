@@ -19,7 +19,7 @@ esp_zig_app(
     force_link = [
         "temperature_sensor_install",
     ],
-    extra_deps = ["hal"],
+    deps = ["//lib/hal"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

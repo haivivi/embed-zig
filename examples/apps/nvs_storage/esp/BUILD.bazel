@@ -16,7 +16,7 @@ esp_zig_app(
     app = ":srcs",
     boards = ["esp32s3_devkit"],
     requires = ["nvs_flash"],
-    extra_deps = ["hal"],
+    deps = ["//lib/hal"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

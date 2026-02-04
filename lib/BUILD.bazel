@@ -1,9 +1,36 @@
 # embed-zig libraries
+#
+# Each library has its own BUILD.bazel with zig_lib() rule.
+# See individual lib/*/BUILD.bazel for specific dependencies.
+#
+# Usage in esp_zig_app:
+#   deps = ["//lib/hal", "//lib/drivers", ...]
 
 package(default_visibility = ["//visibility:public"])
 
-# All library source files
+# All source files (used by _libs in esp_zig_app for file copying)
+# Must explicitly reference sub-packages since glob doesn't cross package boundaries
 filegroup(
     name = "all_sources",
-    srcs = glob(["**/*.zig"]),
+    srcs = glob(["*"]) + [  # Files in lib/ root + all libraries
+        "//lib/audio",
+        "//lib/crypto",
+        "//lib/crypto/certs:root_cas",
+        "//lib/dns",
+        "//lib/drivers",
+        "//lib/esp",
+        "//lib/esp/idf",
+        "//lib/esp/impl",
+        "//lib/hal",
+        "//lib/http",
+        "//lib/input",
+        "//lib/ntp",
+        "//lib/portaudio",
+        "//lib/raysim",
+        "//lib/std",
+        "//lib/tls",
+        "//lib/tls/test:test_sources",
+        "//lib/tls/test:server_sources",
+        "//lib/trait",
+    ],
 )
