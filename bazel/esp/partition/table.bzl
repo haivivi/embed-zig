@@ -10,7 +10,8 @@ EspPartitionTableInfo = provider(
         "csv_file": "Generated partition table CSV file",
         "sdkconfig_file": "Generated sdkconfig fragment",
         "entries": "List of EspPartitionEntryInfo",
-        "data_bins": "Dict of partition_name -> bin file for partitions with data",
+        "data_bins": "Dict of partition_name -> {bin, offset} for partitions with data",
+        "partition_info": "Dict of partition_name -> {offset, size, subtype} for all partitions",
     },
 )
 
@@ -163,10 +164,18 @@ def _esp_partition_table_impl(ctx):
     sdkconfig_file = ctx.actions.declare_file(ctx.attr.name + ".sdkconfig")
     ctx.actions.write(sdkconfig_file, sdkconfig_content)
     
-    # Collect data bins
+    # Collect data bins and partition info
     data_bins = {}
+    partition_info = {}
     for e in calculated_entries:
         entry = e["entry"]
+        # Store info for all partitions
+        partition_info[entry.name] = {
+            "offset": e["offset"],
+            "size": e["size"],
+            "subtype": e["subtype"],
+        }
+        # Store data bin info for partitions with data
         if entry.data_bin:
             data_bins[entry.name] = {
                 "bin": entry.data_bin,
@@ -179,6 +188,7 @@ def _esp_partition_table_impl(ctx):
             sdkconfig_file = sdkconfig_file,
             entries = entries,
             data_bins = data_bins,
+            partition_info = partition_info,
         ),
         DefaultInfo(files = depset([csv_file, sdkconfig_file])),
     ]

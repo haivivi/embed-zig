@@ -1121,14 +1121,22 @@ def _esp_flash_impl(ctx):
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
     
-    # Collect data partition bins if partition_table is provided
+    # Collect data partition bins and NVS info if partition_table is provided
     data_flash_args = ""
     data_files = []
+    nvs_offset = ""
+    nvs_size = ""
     if ctx.attr.partition_table and EspPartitionTableInfo in ctx.attr.partition_table:
-        partition_info = ctx.attr.partition_table[EspPartitionTableInfo]
-        for name, info in partition_info.data_bins.items():
+        pt_info = ctx.attr.partition_table[EspPartitionTableInfo]
+        for name, info in pt_info.data_bins.items():
             data_flash_args += " 0x%X %s" % (info["offset"], info["bin"].short_path)
             data_files.append(info["bin"])
+        # Find NVS partition for --erase-nvs feature
+        for name, pinfo in pt_info.partition_info.items():
+            if pinfo["subtype"] == "nvs":
+                nvs_offset = "0x%X" % pinfo["offset"]
+                nvs_size = "0x%X" % pinfo["size"]
+                break
     
     # Create wrapper script
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
@@ -1151,6 +1159,8 @@ export ESP_PARTITION="{partition_path}"
 export ESP_PORT_CONFIG="{port}"
 export ESP_FULL_FLASH="{full_flash}"
 export ESP_DATA_FLASH_ARGS="{data_flash_args}"
+export ESP_NVS_OFFSET="{nvs_offset}"
+export ESP_NVS_SIZE="{nvs_size}"
 
 # Parse command line arguments
 APP_ONLY=0
@@ -1204,10 +1214,18 @@ fi
 
 # Erase NVS if requested
 if [[ "$ERASE_NVS" == "1" ]]; then
-    echo "[esp_flash] Erasing NVS partition (0x9000-0xF000)..."
-    "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-        --before "$BEFORE_RESET" --after "no_reset" \\
-        erase_region 0x9000 0x6000
+    if [[ -n "$ESP_NVS_OFFSET" && -n "$ESP_NVS_SIZE" ]]; then
+        echo "[esp_flash] Erasing NVS partition at $ESP_NVS_OFFSET (size: $ESP_NVS_SIZE)..."
+        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
+            --before "$BEFORE_RESET" --after "no_reset" \\
+            erase_region $ESP_NVS_OFFSET $ESP_NVS_SIZE
+    else
+        # Fallback to default offset for backward compatibility
+        echo "[esp_flash] Warning: NVS partition info not available, using default (0x9000, 0x6000)"
+        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
+            --before "$BEFORE_RESET" --after "no_reset" \\
+            erase_region 0x9000 0x6000
+    fi
 fi
 
 # Build flash arguments
@@ -1254,6 +1272,8 @@ echo "[esp_flash] Flash complete!"
         partition_path = partition_file.short_path if partition_file else "",
         full_flash = "1" if has_full_flash else "0",
         data_flash_args = data_flash_args,
+        nvs_offset = nvs_offset,
+        nvs_size = nvs_size,
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
     )
     
