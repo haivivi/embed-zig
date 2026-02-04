@@ -1,0 +1,37 @@
+# Timer Callback - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/timer_callback:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["driver", "esp_timer", "led_strip"],
+    force_link = [
+        "${TIMER_FORCE_LINK}",
+        "led_strip_refresh",
+        "led_strip_new_rmt_device",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/timer/timer.cmake)",
+    ],
+    extra_c_sources = ["TIMER_C_SOURCES"],
+    deps = ["//lib/hal"],
+    idf_deps = ["espressif/led_strip:^3.0.0"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

@@ -1,44 +1,8 @@
-# Net Event Test App
-# Tests the Net HAL event system through board.poll() and board.nextEvent()
-
-load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
-load("//bazel:env.bzl", "make_env_file")
+# Net Event Test App - Shared sources
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
-    name = "srcs",
-    srcs = glob(["**/*"]),
-)
-
-# Environment from command line
-# Usage:
-#   bazel build //examples/apps/net_event_test:esp --define WIFI_SSID=xxx --define WIFI_PASSWORD=yyy
-make_env_file(
-    name = "env",
-    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
-)
-
-esp_zig_app(
-    name = "esp",
-    app = ":srcs",
-    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip"],
-    force_link = [
-        "${WIFI_FORCE_LINK}",
-        "${NET_FORCE_LINK}",
-    ],
-    extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/idf/wifi/wifi.cmake)",
-        "include(${_ESP_LIB}/esp/src/idf/net/net.cmake)",
-    ],
-    extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES"],
-    extra_deps = ["hal"],
-    sdkconfig = "//examples/esp:esp32s3_wifi_xip_uart",  # WiFi + XIP + UART console (for Krovo)
-    app_config = "//examples/esp:app",  # 64KB stack in PSRAM
-    env = ":env",
-)
-
-esp_flash(
-    name = "flash",
-    app = ":esp",
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
 )

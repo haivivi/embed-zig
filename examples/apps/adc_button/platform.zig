@@ -1,9 +1,11 @@
 //! Platform Configuration - HAL v5
-//!
-//! Note: ADC Button only supports Korvo-2 V3 (has ADC buttons)
 
 const hal = @import("hal");
-const hw = @import("boards/korvo2_v3.zig");
+const build_options = @import("build_options");
+
+const hw = switch (build_options.board) {
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+};
 
 pub const ButtonId = enum(u8) {
     vol_up = 0,

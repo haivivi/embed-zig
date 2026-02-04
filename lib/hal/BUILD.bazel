@@ -1,12 +1,11 @@
-# HAL (Hardware Abstraction Layer)
+# HAL library - Hardware Abstraction Layer
+
+load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "hal_sources",
-    srcs = glob(
-        ["**/*.zig", "**/*.zon"],
-        allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
+zig_lib(
+    name = "hal",
+    srcs = glob(["**/*"]),
+    deps = ["//lib/trait"],
 )

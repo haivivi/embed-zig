@@ -1,12 +1,10 @@
-# Input library
+# Input library - Input handling utilities
+
+load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "input_sources",
-    srcs = glob(
-        ["**/*.zig"],
-        allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
+zig_lib(
+    name = "input",
+    srcs = glob(["**/*"]),
 )

@@ -1,33 +1,8 @@
-# Speaker Test App
-
-load("//bazel/esp:defs.bzl", "esp_zig_app", "esp_flash")
+# Speaker Test App - Shared sources
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
-    name = "srcs",
-    srcs = glob(["**/*"]),
-)
-
-esp_zig_app(
-    name = "esp",
-    app = ":srcs",
-    requires = ["driver", "esp_driver_i2s", "esp_driver_gpio", "esp_driver_i2c"],
-    force_link = [
-        "${I2S_FORCE_LINK}",
-        "${I2C_FORCE_LINK}",
-    ],
-    extra_cmake = [
-        "include(${_ESP_LIB}/esp/idf/src/i2s/i2s.cmake)",
-        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
-    ],
-    extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES"],
-    extra_deps = ["hal", "drivers"],
-    sdkconfig = "//examples/esp:esp32s3",
-    app_config = "//examples/esp:app",
-)
-
-esp_flash(
-    name = "flash",
-    app = ":esp",
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
 )

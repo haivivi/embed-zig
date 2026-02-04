@@ -1,13 +1,13 @@
 """ESP32 build settings.
 
 Usage:
-    bazel build //target:app --//bazel/esp:board=my_board
-    bazel run //target:flash --//bazel/esp:port=/dev/ttyUSB0
+    bazel build //target:app --//bazel:board=my_board
+    bazel run //target:flash --//bazel:port=/dev/ttyUSB0
 
 Options:
-    --//bazel/esp:board         Board name passed to Zig (-Dboard=xxx)
-    --//bazel/esp:port          Serial port (auto-detect if not specified)
-    --//bazel/esp:baud          Flash baud rate (default: 460800)
+    --//bazel:board             Board name passed to Zig (-Dboard=xxx)
+    --//bazel:port              Serial port (auto-detect if not specified)
+    --//bazel:baud              Flash baud rate (default: 460800)
 
 Environment variables (via env file):
     WIFI_SSID, WIFI_PASSWORD, TEST_SERVER_IP, TEST_SERVER_PORT

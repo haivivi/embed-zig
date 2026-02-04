@@ -17,14 +17,14 @@ filegroup(
 # Mozilla root CA bundle (when generated)
 filegroup(
     name = "mozilla_roots",
-    srcs = ["mozilla_roots.der"] if glob(["mozilla_roots.der"]) else [],
+    srcs = glob(["mozilla_roots.der"], allow_empty = True),
 )
 
 # Minimal root CA bundle for common sites
 # (Let's Encrypt, DigiCert, GlobalSign, etc.)
 filegroup(
     name = "minimal_roots",
-    srcs = ["minimal_roots.der"] if glob(["minimal_roots.der"]) else [],
+    srcs = glob(["minimal_roots.der"], allow_empty = True),
 )
 
 # Custom CA certificates (for testing or internal PKI)

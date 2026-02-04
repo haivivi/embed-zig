@@ -5,7 +5,7 @@
 const std = @import("std");
 const hal = @import("hal");
 const esp = @import("esp");
-const hw = @import("boards/korvo2_v3.zig");
+const hw = @import("esp/korvo2_v3.zig");
 
 const idf = esp.idf;
 

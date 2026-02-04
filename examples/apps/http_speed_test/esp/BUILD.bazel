@@ -1,0 +1,43 @@
+# HTTP Speed Test - ESP Platform
+
+load("//bazel:env.bzl", "make_env_file")
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/http_speed_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+# Environment from command line
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
+    env_vars = ["WIFI_PASSWORD"],
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES"],
+    deps = ["//lib/hal", "//lib/trait"],
+    sdkconfig = "//examples/esp:esp32s3_wifi",
+    app_config = "//examples/esp:app_internal",
+    env = ":env",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

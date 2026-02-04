@@ -7,8 +7,8 @@ pub const BoardType = build_options.@"build.BoardType";
 pub const selected_board: BoardType = build_options.board;
 
 const hw = switch (selected_board) {
-    .korvo2_v3 => @import("boards/korvo2_v3.zig"),
-    .esp32s3_devkit => @import("boards/esp32s3_devkit.zig"),
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
 };
 
 const spec = struct {

@@ -22,20 +22,22 @@ Build:
     bazel build //examples/apps/led_strip_flash:esp
     
     # Specify board
-    bazel build //examples/apps/led_strip_flash:esp --//bazel/esp:board=korvo2_v3
+    bazel build //examples/apps/led_strip_flash:esp --//bazel:board=korvo2_v3
     
     # Flash (auto-detect port)
     bazel run //examples/apps/led_strip_flash:flash
     
     # Flash to specific port
-    bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
+    bazel run //examples/apps/led_strip_flash:flash --//bazel:port=/dev/ttyUSB0
     
     # Monitor
-    bazel run //bazel/esp:monitor --//bazel/esp:port=/dev/ttyUSB0
+    bazel run //bazel/esp:monitor --//bazel:port=/dev/ttyUSB0
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
+load("//bazel/esp/partition:table.bzl", "EspPartitionTableInfo")
+load("//bazel/zig:defs.bzl", "ZigLibInfo")
 
 # sdkconfig modules (each corresponds to ESP-IDF components)
 # All modules are independent rules that generate .sdkconfig fragments
@@ -71,6 +73,8 @@ def _esp_idf_app_impl(ctx):
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
     elf_file = ctx.actions.declare_file("{}.elf".format(project_name))
+    bootloader_file = ctx.actions.declare_file("bootloader.bin")
+    partition_file = ctx.actions.declare_file("partition-table.bin")
     
     # Collect source files
     src_files = []
@@ -120,6 +124,7 @@ def _esp_idf_app_impl(ctx):
 set -e
 export ESP_BAZEL_RUN=1 ESP_BOARD="{board}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
+export ESP_BOOTLOADER_OUT="{bootloader_out}" ESP_PARTITION_OUT="{partition_out}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 export ESP_PROJECT_PATH="{project_path}"
 WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
@@ -133,6 +138,8 @@ exec bash "{build_sh}"
         project_name = project_name,
         bin_out = bin_file.path,
         elf_out = elf_file.path,
+        bootloader_out = bootloader_file.path,
+        partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
         build_sh = build_sh.path if build_sh else "",
         project_path = ctx.label.package,  # e.g., "examples/apps/gpio_button"
@@ -155,7 +162,7 @@ exec bash "{build_sh}"
     ctx.actions.run_shell(
         command = build_script.path,
         inputs = inputs,
-        outputs = [bin_file, elf_file],
+        outputs = [bin_file, elf_file, bootloader_file, partition_file],
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
@@ -167,12 +174,14 @@ exec bash "{build_sh}"
     
     return [
         DefaultInfo(
-            files = depset([bin_file, elf_file]),
-            runfiles = ctx.runfiles(files = [bin_file, elf_file]),
+            files = depset([bin_file, elf_file, bootloader_file, partition_file]),
+            runfiles = ctx.runfiles(files = [bin_file, elf_file, bootloader_file, partition_file]),
         ),
         OutputGroupInfo(
             bin = depset([bin_file]),
             elf = depset([elf_file]),
+            bootloader = depset([bootloader_file]),
+            partition = depset([partition_file]),
         ),
     ]
 
@@ -219,7 +228,7 @@ esp_idf_app = rule(
             doc = "App files from embed-zig examples",
         ),
         "_board": attr.label(
-            default = "//bazel/esp:board",
+            default = "//bazel:board",
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -240,6 +249,8 @@ def _esp_zig_app_impl(ctx):
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
     elf_file = ctx.actions.declare_file("{}.elf".format(project_name))
+    bootloader_file = ctx.actions.declare_file("bootloader.bin")
+    partition_file = ctx.actions.declare_file("partition-table.bin")
     
     # Get app files
     app_files = ctx.attr.app.files.to_list()
@@ -291,8 +302,9 @@ def _esp_zig_app_impl(ctx):
         # Actually for internal, lib is at $WORK/lib/
         app_to_lib_prefix = dotdots_to_work + lib_prefix
     
-    # Build settings
-    board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
+    # Build settings - use flag value, or first board in list as default
+    board_flag = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else ""
+    board = board_flag if board_flag else (ctx.attr.boards[0] if ctx.attr.boards else DEFAULT_BOARD)
     
     # Get env file if provided
     env_file = None
@@ -316,6 +328,18 @@ def _esp_zig_app_impl(ctx):
         sdkconfig_files = ctx.attr.sdkconfig.files.to_list()
         if sdkconfig_files:
             sdkconfig_file = sdkconfig_files[0]
+    
+    # Get partition table if provided
+    partition_table_info = None
+    partition_csv_file = None
+    partition_sdkconfig_file = None
+    partition_files = []
+    if ctx.attr.partition_table:
+        if EspPartitionTableInfo in ctx.attr.partition_table:
+            partition_table_info = ctx.attr.partition_table[EspPartitionTableInfo]
+            partition_csv_file = partition_table_info.csv_file
+            partition_sdkconfig_file = partition_table_info.sdkconfig_file
+            partition_files = [partition_csv_file, partition_sdkconfig_file]
     
     # Get app_config file if provided (for run_in_psram setting)
     app_config_file = None
@@ -353,16 +377,42 @@ def _esp_zig_app_impl(ctx):
     boards_enum_fields = ", ".join(boards_list)
     default_board = boards_list[0]
     
+    # Collect Zig library dependencies from deps attribute
+    deps_infos = []  # List of (ZigLibInfo, files)
+    deps_files = []  # All dependency source files to copy
+    for dep in ctx.attr.deps:
+        if ZigLibInfo in dep:
+            info = dep[ZigLibInfo]
+            files = dep.files.to_list()
+            deps_infos.append((info, files))
+            deps_files.extend(files)
+    
+    # Generate copy commands for deps
+    deps_copy_commands = _generate_copy_commands_preserve_structure(deps_files)
+    
     # Extra lib dependencies for build.zig.zon
     extra_deps_zon = ""
     extra_deps_zig_imports = ""
     extra_deps_zig_decls = ""
     # For app's build.zig.zon (relative to app directory)
     app_extra_deps_zon = ""
-    for dep in ctx.attr.extra_deps:
-        dep_name = dep.lstrip(".")
-        extra_deps_zon += '        .{name} = .{{ .path = "../../{lib_prefix}/{name}" }},\n'.format(name = dep_name, lib_prefix = lib_prefix)
-        app_extra_deps_zon += '        .{name} = .{{ .path = "{app_to_lib_prefix}/{name}" }},\n'.format(name = dep_name, app_to_lib_prefix = app_to_lib_prefix)
+    
+    for info, _ in deps_infos:
+        dep_name = info.name
+        dep_path = info.path  # e.g., "lib/hal"
+        
+        # For esp_project/main/build.zig.zon: path relative to esp_project/main/
+        # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_path}/
+        # So path is "../../{dep_path}"
+        extra_deps_zon += '        .{name} = .{{ .path = "../../{path}" }},\n'.format(name = dep_name, path = dep_path)
+        
+        # For app's build.zig.zon: path relative to app directory
+        # app is at $WORK/{app_path}/, lib is at $WORK/{dep_path}/
+        # Calculate relative path from app to dep
+        app_depth = len(app_path.split("/"))
+        dep_rel_path = "../" * app_depth + dep_path
+        app_extra_deps_zon += '        .{name} = .{{ .path = "{path}" }},\n'.format(name = dep_name, path = dep_rel_path)
+        
         extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
         extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
         .target = target,
@@ -377,6 +427,7 @@ def _esp_zig_app_impl(ctx):
 set -e
 export ESP_BAZEL_RUN=1 ESP_BOARD="{board}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
+export ESP_BOOTLOADER_OUT="{bootloader_out}" ESP_PARTITION_OUT="{partition_out}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 export ESP_GENERATE_SHELL=1
 export ESP_APP_NAME="{app_name}"
@@ -392,6 +443,7 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 {app_copy_commands}
 {cmake_copy_commands}
 {lib_copy_commands}
+{deps_copy_commands}
 
 # Generate app build.zig.zon with correct relative paths to lib (without fingerprint first)
 cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
@@ -859,8 +911,18 @@ fi
 cat > "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults" << SDKCONFIGEOF
 # Auto-generated sdkconfig defaults
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 SDKCONFIGEOF
+
+# Append partition table sdkconfig if exists
+{partition_sdkconfig_append}
+
+# If no partition table provided, use default single_app_large
+if ! grep -q "CONFIG_PARTITION_TABLE" "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"; then
+    echo "CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"
+fi
+
+# Copy partition CSV if custom partition table
+{partition_csv_copy}
 
 # Append user-provided sdkconfig if exists
 {sdkconfig_append}
@@ -880,6 +942,8 @@ exec bash "{build_sh}"
         project_name = project_name,
         bin_out = bin_file.path,
         elf_out = elf_file.path,
+        bootloader_out = bootloader_file.path,
+        partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
         build_sh = build_sh.path if build_sh else "",
         app_name = app_name,
@@ -887,6 +951,7 @@ exec bash "{build_sh}"
         app_copy_commands = "\n".join(app_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
+        deps_copy_commands = "\n".join(deps_copy_commands),
         lib_prefix = lib_prefix,
         cmake_prefix = cmake_prefix,
         app_to_lib_prefix = app_to_lib_prefix,
@@ -899,6 +964,8 @@ exec bash "{build_sh}"
         extra_deps_zig_imports = extra_deps_zig_imports,
         extra_deps_zig_decls = extra_deps_zig_decls,
         idf_deps_yml = idf_deps_yml,
+        partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
+        partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
         sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
         boards_enum_fields = boards_enum_fields,
         default_board = default_board,
@@ -913,13 +980,13 @@ exec bash "{build_sh}"
     # Collect all inputs
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + script_files + sdkconfig_files + env_files + app_cfg_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + deps_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
     
     # Run build
     ctx.actions.run_shell(
         command = build_script.path,
         inputs = inputs,
-        outputs = [bin_file, elf_file],
+        outputs = [bin_file, elf_file, bootloader_file, partition_file],
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
@@ -931,12 +998,14 @@ exec bash "{build_sh}"
     
     return [
         DefaultInfo(
-            files = depset([bin_file, elf_file]),
-            runfiles = ctx.runfiles(files = [bin_file, elf_file]),
+            files = depset([bin_file, elf_file, bootloader_file, partition_file]),
+            runfiles = ctx.runfiles(files = [bin_file, elf_file, bootloader_file, partition_file]),
         ),
         OutputGroupInfo(
             bin = depset([bin_file]),
             elf = depset([elf_file]),
+            bootloader = depset([bootloader_file]),
+            partition = depset([partition_file]),
         ),
     ]
 
@@ -971,9 +1040,9 @@ esp_zig_app = rule(
             default = [],
             doc = "Extra C source variables (e.g., I2C_C_SOURCES)",
         ),
-        "extra_deps": attr.string_list(
-            default = [],
-            doc = "Extra lib dependencies (e.g., hal, drivers)",
+        "deps": attr.label_list(
+            providers = [ZigLibInfo],
+            doc = "Zig library dependencies (e.g., //lib/hal, //lib/drivers)",
         ),
         "idf_deps": attr.string_list(
             default = [],
@@ -983,6 +1052,10 @@ esp_zig_app = rule(
             mandatory = True,
             allow_single_file = True,
             doc = "sdkconfig target from esp_sdkconfig rule (e.g., //examples/esp:esp32s3)",
+        ),
+        "partition_table": attr.label(
+            providers = [EspPartitionTableInfo],
+            doc = "Partition table from esp_partition_table rule. If not set, uses default single_app_large.",
         ),
         "app_config": attr.label(
             allow_single_file = True,
@@ -1008,7 +1081,7 @@ esp_zig_app = rule(
             default = _LIBS_LABEL,
         ),
         "_board": attr.label(
-            default = "//bazel/esp:board",
+            default = "//bazel:board",
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -1024,13 +1097,18 @@ esp_zig_app = rule(
 def _esp_flash_impl(ctx):
     """Flash an ESP-IDF binary to a device."""
     
-    # Get the binary to flash
+    # Get the binary files to flash
     app_files = ctx.attr.app.files.to_list()
     bin_file = None
+    bootloader_file = None
+    partition_file = None
     for f in app_files:
-        if f.path.endswith(".bin"):
+        if f.basename == "bootloader.bin":
+            bootloader_file = f
+        elif f.basename == "partition-table.bin":
+            partition_file = f
+        elif f.path.endswith(".bin") and not bin_file:
             bin_file = f
-            break
     
     if not bin_file:
         fail("No .bin file found in app target")
@@ -1043,8 +1121,28 @@ def _esp_flash_impl(ctx):
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
     
+    # Collect data partition bins and NVS info if partition_table is provided
+    data_flash_args = ""
+    data_files = []
+    nvs_offset = ""
+    nvs_size = ""
+    if ctx.attr.partition_table and EspPartitionTableInfo in ctx.attr.partition_table:
+        pt_info = ctx.attr.partition_table[EspPartitionTableInfo]
+        for name, info in pt_info.data_bins.items():
+            data_flash_args += " 0x%X %s" % (info["offset"], info["bin"].short_path)
+            data_files.append(info["bin"])
+        # Find NVS partition for --erase-nvs feature
+        for name, pinfo in pt_info.partition_info.items():
+            if pinfo["subtype"] == "nvs":
+                nvs_offset = "0x%X" % pinfo["offset"]
+                nvs_size = "0x%X" % pinfo["size"]
+                break
+    
     # Create wrapper script
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
+    
+    # Determine if we have full flash files
+    has_full_flash = bootloader_file and partition_file
     
     script_content = """#!/bin/bash
 set -e
@@ -1056,7 +1154,27 @@ export ESP_BAZEL_RUN=1
 export ESP_BOARD="{board}"
 export ESP_BAUD="{baud}"
 export ESP_BIN="{bin_path}"
+export ESP_BOOTLOADER="{bootloader_path}"
+export ESP_PARTITION="{partition_path}"
 export ESP_PORT_CONFIG="{port}"
+export ESP_FULL_FLASH="{full_flash}"
+export ESP_DATA_FLASH_ARGS="{data_flash_args}"
+export ESP_NVS_OFFSET="{nvs_offset}"
+export ESP_NVS_SIZE="{nvs_size}"
+
+# Parse command line arguments
+APP_ONLY=0
+ERASE_NVS=0
+for arg in "$@"; do
+    case $arg in
+        --app-only)
+            APP_ONLY=1
+            ;;
+        --erase-nvs)
+            ERASE_NVS=1
+            ;;
+    esac
+done
 
 # Source common functions
 source "{common_sh}"
@@ -1094,10 +1212,44 @@ else
     USB_JTAG_MODE=0
 fi
 
+# Erase NVS if requested
+if [[ "$ERASE_NVS" == "1" ]]; then
+    if [[ -n "$ESP_NVS_OFFSET" && -n "$ESP_NVS_SIZE" ]]; then
+        echo "[esp_flash] Erasing NVS partition at $ESP_NVS_OFFSET (size: $ESP_NVS_SIZE)..."
+        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
+            --before "$BEFORE_RESET" --after "no_reset" \\
+            erase_region $ESP_NVS_OFFSET $ESP_NVS_SIZE
+    else
+        # Fallback to default offset for backward compatibility
+        echo "[esp_flash] Warning: NVS partition info not available, using default (0x9000, 0x6000)"
+        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
+            --before "$BEFORE_RESET" --after "no_reset" \\
+            erase_region 0x9000 0x6000
+    fi
+fi
+
+# Build flash arguments
+FLASH_ARGS=""
+
+if [[ "$APP_ONLY" == "1" ]]; then
+    echo "[esp_flash] App-only mode"
+    FLASH_ARGS="0x10000 $ESP_BIN"
+elif [[ "$ESP_FULL_FLASH" == "1" ]]; then
+    echo "[esp_flash] Full flash mode (bootloader + partition + app)"
+    FLASH_ARGS="0x0 $ESP_BOOTLOADER 0x8000 $ESP_PARTITION 0x10000 $ESP_BIN"
+    # Add data partitions if any
+    if [[ -n "$ESP_DATA_FLASH_ARGS" ]]; then
+        FLASH_ARGS="$FLASH_ARGS$ESP_DATA_FLASH_ARGS"
+        echo "[esp_flash] Including data partitions"
+    fi
+else
+    FLASH_ARGS="0x10000 $ESP_BIN"
+fi
+
 # esptool auto-detects chip type
 "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
     --before "$BEFORE_RESET" --after "$AFTER_RESET" \\
-    write_flash -z 0x10000 "$ESP_BIN"
+    write_flash -z $FLASH_ARGS
 
 # For USB-JTAG, use watchdog reset (DTR/RTS don't work)
 if [[ "$USB_JTAG_MODE" == "1" ]]; then
@@ -1116,6 +1268,12 @@ echo "[esp_flash] Flash complete!"
         baud = baud,
         port = port,
         bin_path = bin_file.short_path,
+        bootloader_path = bootloader_file.short_path if bootloader_file else "",
+        partition_path = partition_file.short_path if partition_file else "",
+        full_flash = "1" if has_full_flash else "0",
+        data_flash_args = data_flash_args,
+        nvs_offset = nvs_offset,
+        nvs_size = nvs_size,
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
     )
     
@@ -1125,10 +1283,17 @@ echo "[esp_flash] Flash complete!"
         is_executable = True,
     )
     
+    # Collect all flash files
+    flash_files = [bin_file] + data_files
+    if bootloader_file:
+        flash_files.append(bootloader_file)
+    if partition_file:
+        flash_files.append(partition_file)
+    
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = [bin_file] + script_files),
+            runfiles = ctx.runfiles(files = flash_files + script_files),
         ),
     ]
 
@@ -1140,14 +1305,18 @@ esp_flash = rule(
             mandatory = True,
             doc = "ESP-IDF app target to flash",
         ),
+        "partition_table": attr.label(
+            providers = [EspPartitionTableInfo],
+            doc = "Partition table with data bins to flash. Optional.",
+        ),
         "_board": attr.label(
-            default = "//bazel/esp:board",
+            default = "//bazel:board",
         ),
         "_port": attr.label(
-            default = "//bazel/esp:port",
+            default = "//bazel:port",
         ),
         "_baud": attr.label(
-            default = "//bazel/esp:baud",
+            default = "//bazel:baud",
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -1253,10 +1422,10 @@ esp_monitor = rule(
     executable = True,
     attrs = {
         "_board": attr.label(
-            default = "//bazel/esp:board",
+            default = "//bazel:board",
         ),
         "_port": attr.label(
-            default = "//bazel/esp:port",
+            default = "//bazel:port",
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,

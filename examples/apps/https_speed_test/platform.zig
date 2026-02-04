@@ -4,7 +4,7 @@ const hal = @import("hal");
 const build_options = @import("build_options");
 
 const hw = switch (build_options.board) {
-    .esp32s3_devkit => @import("boards/esp32s3_devkit.zig"),
+    .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
 };
 
 const spec = struct {

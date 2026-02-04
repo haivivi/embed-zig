@@ -3,7 +3,7 @@
 //! Note: Timer callback only supports DevKit (WS2812 LED for visual feedback)
 
 const hal = @import("hal");
-const hw = @import("boards/esp32s3_devkit.zig");
+const hw = @import("esp/esp32s3_devkit.zig");
 
 const spec = struct {
     pub const meta = .{ .id = hw.Hardware.name };

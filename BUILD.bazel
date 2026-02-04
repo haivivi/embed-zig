@@ -3,27 +3,11 @@
 package(default_visibility = ["//visibility:public"])
 
 # =============================================================================
-# All libraries (reference subdirectory filegroups)
+# All libraries - used by esp_zig_app for file copying
+# Each library also has zig_lib() rule for dependency resolution (//lib/xxx:xxx)
 # =============================================================================
 
 filegroup(
     name = "all_libs",
-    srcs = [
-        "//lib/crypto:crypto_sources",
-        "//lib/dns:dns_sources",
-        "//lib/drivers:drivers_sources",
-        "//lib/esp:esp_sources",
-        "//lib/esp:esp_c_sources",
-        "//lib/esp:esp_cmake",
-        "//lib/esp/idf:idf_sources",
-        "//lib/esp/idf:idf_c_sources",
-        "//lib/esp/idf:idf_cmake",
-        "//lib/esp/impl:impl_sources",
-        "//lib/hal:hal_sources",
-        "//lib/http:http_sources",
-        "//lib/ntp:ntp_sources",
-        "//lib/tls:tls_sources",
-        "//lib/trait:trait_sources",
-        "//lib/std:std_sources",
-    ],
+    srcs = ["//lib:all_sources"],
 )

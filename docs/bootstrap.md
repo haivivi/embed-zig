@@ -49,7 +49,7 @@ source ~/esp/esp-idf/export.sh
 bazel build //examples/apps/led_strip_flash:esp
 
 # Flash to device
-bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/apps/led_strip_flash:flash --//bazel:port=/dev/ttyUSB0
 ```
 
 That's it. Your LED should be blinking.
@@ -67,7 +67,7 @@ bazel build //examples/apps/<name>:esp
 ### Flash
 
 ```bash
-bazel run //examples/apps/<name>:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/apps/<name>:flash --//bazel:port=/dev/ttyUSB0
 ```
 
 ### Board Selection
@@ -77,7 +77,7 @@ bazel run //examples/apps/<name>:flash --//bazel/esp:port=/dev/ttyUSB0
 bazel build //examples/apps/gpio_button:esp
 
 # ESP32-S3-Korvo-2 V3
-bazel build //examples/apps/gpio_button:esp --//bazel/esp:board=korvo2_v3
+bazel build //examples/apps/gpio_button:esp --//bazel:board=korvo2_v3
 ```
 
 | Board | Parameter | Features |

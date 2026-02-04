@@ -49,7 +49,7 @@ source ~/esp/esp-idf/export.sh
 bazel build //examples/apps/led_strip_flash:esp
 
 # 烧录到设备
-bazel run //examples/apps/led_strip_flash:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/apps/led_strip_flash:flash --//bazel:port=/dev/ttyUSB0
 ```
 
 完成。你的 LED 应该在闪烁了。
@@ -67,7 +67,7 @@ bazel build //examples/apps/<名称>:esp
 ### 烧录
 
 ```bash
-bazel run //examples/apps/<名称>:flash --//bazel/esp:port=/dev/ttyUSB0
+bazel run //examples/apps/<名称>:flash --//bazel:port=/dev/ttyUSB0
 ```
 
 ### 板子选择
@@ -77,7 +77,7 @@ bazel run //examples/apps/<名称>:flash --//bazel/esp:port=/dev/ttyUSB0
 bazel build //examples/apps/gpio_button:esp
 
 # ESP32-S3-Korvo-2 V3
-bazel build //examples/apps/gpio_button:esp --//bazel/esp:board=korvo2_v3
+bazel build //examples/apps/gpio_button:esp --//bazel:board=korvo2_v3
 ```
 
 | 板子 | 参数 | 特性 |

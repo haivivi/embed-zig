@@ -1,26 +1,16 @@
 # App sources for ESP-IDF examples
+#
+# Note: Individual apps have their own BUILD.bazel with esp_zig_app rules
+# under examples/apps/*/esp/
 
 package(default_visibility = ["//visibility:public"])
 
+# All app source files (used by _apps in esp_idf_app for file copying)
 filegroup(
     name = "all_apps",
     srcs = glob(
-        ["**/*.zig", "**/*.zon"],
+        ["**/*"],
+        exclude = ["**/BUILD.bazel"],  # Exclude BUILD files
         allow_empty = True,
-    ) + [
-        # Include files from sub-packages that have their own BUILD files
-        "//examples/apps/adc_button:srcs",
-        "//examples/apps/gpio_button:srcs",
-        "//examples/apps/http_speed_test:srcs",
-        "//examples/apps/https_speed_test:srcs",
-        "//examples/apps/led_strip_anim:srcs",
-        "//examples/apps/led_strip_flash:srcs",
-        "//examples/apps/memory_attr_test:srcs",
-        "//examples/apps/mic_test:srcs",
-        "//examples/apps/nvs_storage:srcs",
-        "//examples/apps/pwm_fade:srcs",
-        "//examples/apps/temperature_sensor:srcs",
-        "//examples/apps/timer_callback:srcs",
-        "//examples/apps/wifi_dns_lookup:srcs",
-    ],
+    ),
 )

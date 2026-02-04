@@ -2,6 +2,16 @@
 
 package(default_visibility = ["//visibility:public"])
 
+# Default target: all files (for zig_lib deps)
+filegroup(
+    name = "idf",
+    srcs = glob(
+        ["**/*"],
+        exclude = [".zig-cache/**", "zig-out/**"],
+    ),
+)
+
+# Legacy targets (for backward compatibility)
 filegroup(
     name = "idf_sources",
     srcs = glob(

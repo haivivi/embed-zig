@@ -1,0 +1,35 @@
+# Speaker Test - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/speaker_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    requires = ["driver", "esp_driver_i2s", "esp_driver_gpio", "esp_driver_i2c"],
+    force_link = [
+        "${I2S_FORCE_LINK}",
+        "${I2C_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/i2s/i2s.cmake)",
+        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
+    ],
+    extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES"],
+    deps = ["//lib/hal", "//lib/drivers"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

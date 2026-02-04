@@ -1,0 +1,16 @@
+.{
+    .name = .speaker_test_app,
+    .version = "0.1.0",
+    .dependencies = .{
+        .esp = .{ .path = "../../../../lib/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .drivers = .{ .path = "../../../../lib/drivers" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "korvo2_v3.zig",
+    },
+}

@@ -1,12 +1,10 @@
-# Trait (Interface definitions)
+# Trait library - Interface definitions
+
+load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "trait_sources",
-    srcs = glob(
-        ["**/*.zig", "**/*.zon"],
-        exclude = [".zig-cache/**", "zig-out/**"],
-        allow_empty = True,
-    ),
+zig_lib(
+    name = "trait",
+    srcs = glob(["**/*"]),
 )

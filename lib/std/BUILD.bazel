@@ -1,12 +1,12 @@
-# Standard library abstraction
+# Std library - Standard library extensions (std_sal)
+
+load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "std_sources",
-    srcs = glob(
-        ["**/*.zig", "**/*.zon"],
-        allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
+zig_lib(
+    name = "std",
+    lib_name = "std_sal",  # Zig module name differs from target name
+    srcs = glob(["**/*"]),
+    deps = ["//lib/trait"],
 )

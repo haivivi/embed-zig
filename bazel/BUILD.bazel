@@ -1,1 +1,35 @@
 # Common Bazel rules
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+# Board selection (platform-independent)
+# Default is first board in app's boards list
+# Usage: --//bazel:board=korvo2_v3
+string_flag(
+    name = "board",
+    build_setting_default = "",
+)
+
+# Data variant selection (platform-independent)
+# Default is first option in app's data_select
+# Usage: --//bazel:data=tiga
+string_flag(
+    name = "data",
+    build_setting_default = "",
+)
+
+# Serial port for flash/monitor (auto-detect if empty)
+# Usage: --//bazel:port=/dev/cu.usbmodem2101
+string_flag(
+    name = "port",
+    build_setting_default = "",
+)
+
+# Flash baud rate
+# Usage: --//bazel:baud=921600
+string_flag(
+    name = "baud",
+    build_setting_default = "460800",
+)
