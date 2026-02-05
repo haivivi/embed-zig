@@ -397,20 +397,34 @@ def _esp_zig_app_impl(ctx):
     # For app's build.zig.zon (relative to app directory)
     app_extra_deps_zon = ""
     
-    for info, _ in deps_infos:
+    for info, files in deps_infos:
         dep_name = info.name
         dep_path = info.path  # e.g., "lib/hal"
         
+        # Detect actual path from files (handles external repository case)
+        # For external repos, short_path is like "../embed_zig+/lib/hal/..."
+        dep_actual_path = dep_path
+        if files:
+            first_file = files[0].short_path
+            lib_name = dep_path.split("/")[-1]  # e.g., "hal" from "lib/hal"
+            marker = "/lib/" + lib_name
+            if marker in first_file:
+                idx = first_file.find(marker)
+                dep_actual_path = first_file[:idx + len(marker)]
+                # Remove leading "./" if present
+                if dep_actual_path.startswith("./"):
+                    dep_actual_path = dep_actual_path[2:]
+        
         # For esp_project/main/build.zig.zon: path relative to esp_project/main/
-        # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_path}/
-        # So path is "../../{dep_path}"
-        extra_deps_zon += '        .{name} = .{{ .path = "../../{path}" }},\n'.format(name = dep_name, path = dep_path)
+        # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_actual_path}/
+        # So path is "../../{dep_actual_path}"
+        extra_deps_zon += '        .{name} = .{{ .path = "../../{path}" }},\n'.format(name = dep_name, path = dep_actual_path)
         
         # For app's build.zig.zon: path relative to app directory
-        # app is at $WORK/{app_path}/, lib is at $WORK/{dep_path}/
+        # app is at $WORK/{app_path}/, lib is at $WORK/{dep_actual_path}/
         # Calculate relative path from app to dep
         app_depth = len(app_path.split("/"))
-        dep_rel_path = "../" * app_depth + dep_path
+        dep_rel_path = "../" * app_depth + dep_actual_path
         app_extra_deps_zon += '        .{name} = .{{ .path = "{path}" }},\n'.format(name = dep_name, path = dep_rel_path)
         
         extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
