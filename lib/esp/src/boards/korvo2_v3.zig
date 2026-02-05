@@ -433,8 +433,8 @@ pub const LedDriver = struct {
     pub fn deinit(self: *Self) void {
         if (self.initialized) {
             // Turn off LEDs (set high = off)
-            self.gpio.setHigh(RED_PIN) catch {};
-            self.gpio.setHigh(BLUE_PIN) catch {};
+            self.gpio.setHigh(RED_PIN) catch |err| log.warn("LedDriver deinit: failed to turn off red LED: {}", .{err});
+            self.gpio.setHigh(BLUE_PIN) catch |err| log.warn("LedDriver deinit: failed to turn off blue LED: {}", .{err});
 
             if (self.i2c_initialized_here) {
                 self.i2c.deinit();
@@ -469,8 +469,8 @@ pub const LedDriver = struct {
         }
 
         // Active low: low = on, high = off
-        self.gpio.write(RED_PIN, if (red_on) .low else .high) catch {};
-        self.gpio.write(BLUE_PIN, if (blue_on) .low else .high) catch {};
+        self.gpio.write(RED_PIN, if (red_on) .low else .high) catch |err| log.warn("LedDriver setPixel: red LED write failed: {}", .{err});
+        self.gpio.write(BLUE_PIN, if (blue_on) .low else .high) catch |err| log.warn("LedDriver setPixel: blue LED write failed: {}", .{err});
     }
 
     pub fn getPixelCount(_: *Self) u32 {
@@ -484,18 +484,18 @@ pub const LedDriver = struct {
     // Convenience methods
     pub fn setRed(self: *Self, on: bool) void {
         // Active low: low = on, high = off
-        self.gpio.write(RED_PIN, if (on) .low else .high) catch {};
+        self.gpio.write(RED_PIN, if (on) .low else .high) catch |err| log.warn("LedDriver setRed: write failed: {}", .{err});
     }
 
     pub fn setBlue(self: *Self, on: bool) void {
         // Active low: low = on, high = off
-        self.gpio.write(BLUE_PIN, if (on) .low else .high) catch {};
+        self.gpio.write(BLUE_PIN, if (on) .low else .high) catch |err| log.warn("LedDriver setBlue: write failed: {}", .{err});
     }
 
     pub fn off(self: *Self) void {
         // Both LEDs off (high = off)
-        self.gpio.setHigh(RED_PIN) catch {};
-        self.gpio.setHigh(BLUE_PIN) catch {};
+        self.gpio.setHigh(RED_PIN) catch |err| log.warn("LedDriver off: red LED failed: {}", .{err});
+        self.gpio.setHigh(BLUE_PIN) catch |err| log.warn("LedDriver off: blue LED failed: {}", .{err});
     }
 };
 

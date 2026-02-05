@@ -197,6 +197,13 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             const total_ch: usize = @intCast(aec_helper_get_total_channels(self.aec_handle.?));
             log.info("AudioSystem: AEC frame={}, ch={}", .{ self.aec_frame_size, total_ch });
 
+            // Verify AEC is configured for at least 2 channels (ref + mic)
+            // readMic assumes total_ch >= 2 when packing data as "RM" format
+            if (total_ch < 2) {
+                log.err("AEC total_ch={} < 2, expected at least ref + mic channels", .{total_ch});
+                return error.AecConfigInvalid;
+            }
+
             // Allocate buffers in PSRAM
             const allocator = idf.heap.psram;
 
