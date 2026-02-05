@@ -120,7 +120,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         // Progress every 256KB
         if (total_sent % (256 * 1024) == 0) {
             const elapsed = Board.time.getTimeMs() - start_ms;
-            const speed = if (elapsed > 0) @as(u32, @intCast((total_sent + total_recv) / 1024 * 1000 / elapsed)) else 0;
+            const speed = if (elapsed > 0) @as(u32, @intCast(@as(u64, total_sent + total_recv) * 1000 / elapsed / 1024)) else 0;
             log.info("Progress: {} KB sent, {} KB recv ({} KB/s)", .{
                 total_sent / 1024,
                 total_recv / 1024,
@@ -134,7 +134,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
 
     // Calculate throughput
     const total_bytes = total_sent + total_recv;
-    const speed_kbps = if (elapsed_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / elapsed_ms)) else 0;
+    const speed_kbps = if (elapsed_ms > 0) @as(u32, @intCast(@as(u64, total_bytes) * 1000 / elapsed_ms / 1024)) else 0;
 
     log.info("", .{});
     log.info("Round {} Results:", .{round + 1});
@@ -267,7 +267,7 @@ pub fn run(env: anytype) void {
                 if (successful_rounds > 0) {
                     const avg_time = total_time / successful_rounds;
                     const total_bytes_per_round = config.total_bytes * 2; // send + recv
-                    const avg_speed = @as(u32, @intCast(total_bytes_per_round / 1024 * 1000 / avg_time));
+                    const avg_speed = @as(u32, @intCast(@as(u64, total_bytes_per_round) * 1000 / avg_time / 1024));
                     log.info("Successful rounds: {}/{}", .{ successful_rounds, config.rounds });
                     log.info("Average time: {} ms", .{avg_time});
                     log.info("Average throughput: {} KB/s ({} Kbps)", .{ avg_speed, avg_speed * 8 });
