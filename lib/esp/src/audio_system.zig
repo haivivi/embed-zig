@@ -277,7 +277,11 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             const raw_bytes = std.mem.sliceAsBytes(raw_buf[0 .. frame_size * 2]);
             const ret = i2s_helper_read(config.i2s_port, raw_bytes.ptr, to_read, &bytes_read, 1000);
 
-            if (ret != 0 or bytes_read == 0) {
+            if (ret != 0) {
+                log.warn("i2s read failed with code: {}", .{ret});
+                return error.ReadFailed;
+            }
+            if (bytes_read == 0) {
                 return 0;
             }
 
@@ -329,7 +333,12 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
 
             var bytes_written: usize = 0;
             const tx_bytes = std.mem.sliceAsBytes(tx_buf[0 .. mono_samples * 2]);
-            _ = i2s_helper_write(config.i2s_port, tx_bytes.ptr, tx_bytes.len, &bytes_written, 1000);
+            const ret = i2s_helper_write(config.i2s_port, tx_bytes.ptr, tx_bytes.len, &bytes_written, 1000);
+
+            if (ret != 0) {
+                log.warn("i2s write failed with code: {}", .{ret});
+                return error.WriteFailed;
+            }
 
             return bytes_written / 8;
         }

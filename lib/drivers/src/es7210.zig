@@ -102,10 +102,10 @@ pub const ModeConfig = struct {
 
 /// SDP Interface 1 register (0x11) bit fields
 pub const SdpInterface1 = struct {
-    /// Word length mask
-    pub const WL_MASK: u8 = 0x1C;
+    /// Word length mask (bits 5-7)
+    pub const WL_MASK: u8 = 0xE0;
     /// Word length shift
-    pub const WL_SHIFT: u4 = 2;
+    pub const WL_SHIFT: u4 = 5;
     /// Data format mask
     pub const FMT_MASK: u8 = 0x03;
     /// MSB first
