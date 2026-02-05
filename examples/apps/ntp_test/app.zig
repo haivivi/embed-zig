@@ -44,8 +44,6 @@ pub fn run(env: anytype) void {
     var state: AppState = .connecting;
 
     while (Board.isRunning()) {
-        b.poll();
-
         while (b.nextEvent()) |event| {
             switch (event) {
                 .wifi => |wifi_event| {

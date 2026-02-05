@@ -313,23 +313,8 @@ pub fn createWifiAp() !void {
 // Event Functions
 // ============================================================================
 
-/// Initialize net event system (registers IP_EVENT handlers)
-/// Must be called after event loop and netif are initialized.
-pub fn eventInit() !void {
-    const ret = c.netif_helper_event_init();
-    if (ret != 0) {
-        return error.InitFailed;
-    }
-}
-
-/// Poll for network events (non-blocking)
-pub fn pollEvent() ?Event {
-    var raw_event: c.net_event_t = undefined;
-
-    if (!c.netif_helper_poll_event(&raw_event)) {
-        return null;
-    }
-
+/// Convert C event to Zig event
+fn convertCEvent(raw_event: *const c.net_event_t) ?Event {
     return switch (raw_event.type) {
         EVT_DHCP_BOUND => Event{
             .dhcp_bound = .{
@@ -371,4 +356,60 @@ pub fn pollEvent() ?Event {
         },
         else => null,
     };
+}
+
+/// Callback type for event notifications
+pub const EventCallback = *const fn (ctx: ?*anyopaque, event: Event) void;
+
+/// Stored callback for C-to-Zig bridging
+var s_event_callback: ?EventCallback = null;
+var s_event_callback_ctx: ?*anyopaque = null;
+
+/// C callback function that bridges to Zig callback
+fn cEventCallback(ctx: ?*anyopaque, raw_event: [*c]const c.net_event_t) callconv(.c) void {
+    _ = ctx; // Use stored context instead
+    if (raw_event == null) return;
+    
+    if (convertCEvent(raw_event)) |event| {
+        if (s_event_callback) |callback| {
+            callback(s_event_callback_ctx, event);
+        }
+    }
+}
+
+/// Initialize net event system with callback (direct push)
+/// Events are delivered directly to the callback from ESP-IDF event handler context.
+/// Must be called after event loop and netif are initialized.
+pub fn eventInitWithCallback(callback: EventCallback, ctx: ?*anyopaque) !void {
+    s_event_callback = callback;
+    s_event_callback_ctx = ctx;
+    
+    const ret = c.netif_helper_event_init_with_callback(cEventCallback, null);
+    if (ret != 0) {
+        s_event_callback = null;
+        s_event_callback_ctx = null;
+        return error.InitFailed;
+    }
+}
+
+/// Initialize net event system (registers IP_EVENT handlers)
+/// Must be called after event loop and netif are initialized.
+/// @deprecated Use eventInitWithCallback() for direct push
+pub fn eventInit() !void {
+    const ret = c.netif_helper_event_init();
+    if (ret != 0) {
+        return error.InitFailed;
+    }
+}
+
+/// Poll for network events (non-blocking)
+/// @deprecated Use eventInitWithCallback() for direct push instead of polling
+pub fn pollEvent() ?Event {
+    var raw_event: c.net_event_t = undefined;
+
+    if (!c.netif_helper_poll_event(&raw_event)) {
+        return null;
+    }
+
+    return convertCEvent(&raw_event);
 }

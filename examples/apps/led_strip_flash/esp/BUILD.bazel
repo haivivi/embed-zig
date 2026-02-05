@@ -27,7 +27,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["I2C_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/drivers"],
+    deps = ["//lib/hal", "//lib/drivers", "//lib/motion"],
     idf_deps = ["espressif/led_strip:^3.0.0"],
 )
 

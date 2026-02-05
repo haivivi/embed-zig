@@ -11,6 +11,13 @@ pub fn build(b: *std.Build) void {
     });
     const trait_module = trait_dep.module("trait");
 
+    // Get motion dependency
+    const motion_dep = b.dependency("motion", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const motion_module = motion_dep.module("motion");
+
     // HAL module
     const hal_module = b.addModule("hal", .{
         .root_source_file = b.path("src/hal.zig"),
@@ -18,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "trait", .module = trait_module },
+            .{ .name = "motion", .module = motion_module },
         },
     });
 
@@ -39,6 +47,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "trait", .module = trait_module },
+                    .{ .name = "motion", .module = motion_module },
                 },
             }),
         });

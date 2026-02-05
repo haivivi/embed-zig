@@ -1,0 +1,10 @@
+.{
+    .name = .motion,
+    .version = "0.1.0",
+    .fingerprint = 0xf5fea1e8b2d11f9e,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

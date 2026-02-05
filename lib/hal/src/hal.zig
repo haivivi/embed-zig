@@ -9,12 +9,12 @@
 //! ┌─────────────────────────────────────────┐
 //! │ Application                             │
 //! │   board.led.setColor(Color.red)         │
-//! │   board.buttons.poll() -> event         │
+//! │   board.nextEvent() -> button, wifi, net, motion         │
 //! ├─────────────────────────────────────────┤
 //! │ hal.Board(spec) - Auto-generated        │
 //! │   - Event queue management              │
 //! │   - Driver lifecycle                    │
-//! │   - Unified polling                     │
+//! │   - Background tasks for buttons/motion                     │
 //! ├─────────────────────────────────────────┤
 //! │ HAL Components                          │
 //! │   LedStrip(spec)                        │
@@ -45,7 +45,10 @@
 //!
 //! // main.zig
 //! var board = try Board.init();
-//! board.poll();
+//! // Poll peripherals (events pushed directly to board queue via callbacks)
+//! board.buttons.poll();  // For button groups
+//! board.motion.poll();   // For motion detection
+//! // Process events from unified queue
 //! while (board.nextEvent()) |event| { ... }
 //! board.led.setColor(hal.Color.red);
 //! ```
@@ -94,6 +97,10 @@ pub const mic = @import("mic.zig");
 pub const mono_speaker = @import("mono_speaker.zig");
 /// Switch module (hal.switch_.from, hal.switch_.is)
 pub const switch_ = @import("switch.zig");
+/// IMU module (hal.imu.from, hal.imu.is)
+pub const imu = @import("imu.zig");
+/// Motion detection module (hal.motion.from, hal.motion.is)
+pub const motion = @import("motion.zig");
 
 // ============================================================================
 // Common Types
@@ -195,6 +202,28 @@ pub const MicSampleFormat = mic.SampleFormat;
 /// MonoSpeaker configuration
 pub const MonoSpeakerConfig = mono_speaker.Config;
 
+// ============================================================================
+// IMU Types
+// ============================================================================
+
+/// IMU accelerometer data
+pub const AccelData = imu.AccelData;
+/// IMU gyroscope data
+pub const GyroData = imu.GyroData;
+/// IMU magnetometer data
+pub const MagData = imu.MagData;
+
+// ============================================================================
+// Motion Types
+// ============================================================================
+
+/// Motion event payload for board.Event
+pub const MotionEventPayload = motion.MotionEventPayload;
+/// Motion axis
+pub const MotionAxis = motion.Axis;
+/// Motion orientation
+pub const MotionOrientation = motion.Orientation;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -209,4 +238,6 @@ test {
     _ = @import("mic.zig");
     _ = @import("mono_speaker.zig");
     _ = @import("switch.zig");
+    _ = @import("imu.zig");
+    _ = @import("motion.zig");
 }

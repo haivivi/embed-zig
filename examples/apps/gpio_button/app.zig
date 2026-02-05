@@ -23,35 +23,30 @@ pub fn run(_: anytype) void {
     log.info("Ready! Press boot button to toggle LED", .{});
 
     while (true) {
-        b.poll();
-
-        while (b.nextEvent()) |event| {
-            switch (event) {
-                .button => |btn| {
-                    switch (btn.action) {
-                        .press => {
-                            led_state = !led_state;
-                            if (led_state) {
-                                // Bright green for better visibility
-                                b.rgb_leds.setColor(hal.Color.rgb(0, 255, 0));
-                            } else {
-                                b.rgb_leds.clear();
-                            }
-                            b.rgb_leds.refresh();
-                            log.info("LED {s}", .{if (led_state) "ON" else "OFF"});
-                        },
-                        .long_press => {
-                            b.rgb_leds.setColor(hal.Color.red);
-                            b.rgb_leds.refresh();
-                            log.info("Long press!", .{});
-                        },
-                        .double_click => {
-                            b.rgb_leds.setColor(hal.Color.blue);
-                            b.rgb_leds.refresh();
-                            log.info("Double click!", .{});
-                        },
-                        else => {},
+        // Poll single GPIO button directly (returns event or null)
+        const current_time = b.uptime();
+        if (b.button.poll(current_time)) |btn| {
+            switch (btn.action) {
+                .press => {
+                    led_state = !led_state;
+                    if (led_state) {
+                        // Bright green for better visibility
+                        b.rgb_leds.setColor(hal.Color.rgb(0, 255, 0));
+                    } else {
+                        b.rgb_leds.clear();
                     }
+                    b.rgb_leds.refresh();
+                    log.info("LED {s}", .{if (led_state) "ON" else "OFF"});
+                },
+                .long_press => {
+                    b.rgb_leds.setColor(hal.Color.red);
+                    b.rgb_leds.refresh();
+                    log.info("Long press!", .{});
+                },
+                .double_click => {
+                    b.rgb_leds.setColor(hal.Color.blue);
+                    b.rgb_leds.refresh();
+                    log.info("Double click!", .{});
                 },
                 else => {},
             }

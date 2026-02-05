@@ -10,7 +10,7 @@
 //! - Phase 5: Reconnect with correct password -> expect wifi.connected + net.dhcp_bound
 //! - Phase 6: Interface up/down test (optional)
 //!
-//! All events MUST come through board.poll() -> board.nextEvent()
+//! All events MUST come through board.nextEvent()
 
 const std = @import("std");
 const platform = @import("platform.zig");
@@ -168,8 +168,6 @@ pub fn run(env: anytype) void {
 
     // Event loop
     while (Board.isRunning() and phase != .done) {
-        b.poll();
-
         // Process all pending events
         while (b.nextEvent()) |event| {
             switch (event) {
@@ -643,7 +641,6 @@ pub fn run(env: anytype) void {
     log.info("[TEST]", .{});
     log.info("[TEST] Test complete. Keeping connection alive...", .{});
     while (Board.isRunning()) {
-        b.poll();
         Board.time.sleepMs(1000);
     }
 }

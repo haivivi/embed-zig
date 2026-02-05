@@ -121,8 +121,6 @@ pub fn run(_: anytype) void {
 
     // Event loop
     while (Board.isRunning()) {
-        b.poll();
-
         const now = Board.time.getTimeMs();
 
         // Process all pending events

@@ -99,7 +99,6 @@
 
 const std = @import("std");
 
-
 // ============================================================================
 // Private Type Marker (for hal.Board identification)
 // ============================================================================
@@ -532,7 +531,7 @@ pub fn from(comptime spec: type) type {
         // Event Polling
         // ================================================================
 
-        /// Poll for WiFi events (called by board.poll())
+        /// Poll for WiFi events (legacy - not typically used)
         /// Returns the next pending event, or null if none
         pub fn pollEvent(self: *Self) ?WifiEvent {
             const driver_event = self.driver.pollEvent() orelse return null;

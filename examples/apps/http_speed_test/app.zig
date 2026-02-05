@@ -51,9 +51,6 @@ pub fn run(env: anytype) void {
 
     // Event loop
     while (Board.isRunning()) {
-        // Poll for events
-        b.poll();
-
         // Process events
         while (b.nextEvent()) |event| {
             switch (event) {

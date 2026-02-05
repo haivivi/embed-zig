@@ -1,0 +1,42 @@
+# Motion Test - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/motion_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["lichuang_szp"],
+    requires = [
+        "driver",
+        "esp_hw_support",
+        "esp_driver_i2c",
+    ],
+    force_link = [
+        "${I2C_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
+    ],
+    extra_c_sources = ["I2C_C_SOURCES"],
+    deps = [
+        "//lib/hal",
+        "//lib/drivers",
+        "//lib/motion",
+    ],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

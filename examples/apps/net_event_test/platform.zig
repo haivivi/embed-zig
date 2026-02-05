@@ -1,6 +1,6 @@
 //! Board Configuration - Net Event Test
 //!
-//! This app tests the Net HAL event system through board.poll() and board.nextEvent().
+//! This app tests the Net HAL event system through board.nextEvent().
 //!
 //! Test targets:
 //! - lib/esp/src/idf/net/netif_helper.c (IP_EVENT handling, event queue)

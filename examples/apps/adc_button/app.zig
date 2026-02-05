@@ -35,8 +35,8 @@ pub fn run(_: anytype) void {
     const LOG_INTERVAL = 500;
 
     while (true) {
-        // Poll - HAL handles everything
-        board.poll();
+        // Poll button group - events are pushed directly to board queue via callback
+        board.buttons.poll();
 
         // Process events
         while (board.nextEvent()) |event| {
@@ -71,6 +71,7 @@ pub fn run(_: anytype) void {
                 },
                 .wifi => {},
                 .net => {},
+                .motion => {},
             }
         }
 

@@ -8,7 +8,7 @@
 //! ```
 //! ┌─────────────────────────────────────────┐
 //! │ Application                             │
-//! │   board.buttons.poll() -> event        │
+//! │   board.nextEvent() -> button events        │
 //! ├─────────────────────────────────────────┤
 //! │ ButtonGroup(spec, ButtonId)  ← HAL     │
 //! │   - ADC value → button mapping          │
@@ -117,6 +117,17 @@ pub fn ButtonGroupEvent(comptime ButtonId: type) type {
 /// - `meta`: spec.Meta with component id
 ///
 /// ButtonId must be an enum(u8) type defined by the application.
+///
+/// ## Architecture
+///
+/// ButtonGroup supports two operation modes:
+///
+/// 1. **Polling mode** (legacy): Call `poll()` from main loop, then `nextEvent()`
+/// 2. **Task mode** (recommended): Call `run()` in a background task, events are
+///    pushed to board's queue via callback
+///
+/// Task mode is preferred because it provides consistent sampling rate regardless
+/// of main loop timing.
 pub fn from(comptime spec: type, comptime ButtonId: type) type {
     comptime {
         const BaseDriver = switch (@typeInfo(spec.Driver)) {
@@ -161,6 +172,9 @@ pub fn from(comptime spec: type, comptime ButtonId: type) type {
         /// Event type
         pub const Event = ButtonGroupEvent(ButtonId);
 
+        /// Event callback type for direct push to Board queue
+        pub const EventCallback = *const fn (?*anyopaque, Event) void;
+
         /// Per-button tracking state
         const ButtonTracking = struct {
             /// Event ring buffer (simplified)
@@ -194,6 +208,13 @@ pub fn from(comptime spec: type, comptime ButtonId: type) type {
         event_count: u8 = 0,
         event_index: u8 = 0,
 
+        /// Running flag for task mode
+        running: bool = false,
+
+        /// Event callback for direct push (set by Board)
+        event_callback: ?EventCallback = null,
+        event_ctx: ?*anyopaque = null,
+
         /// Initialize with a driver instance
         pub fn init(driver: *Driver, time_fn: *const fn () u64) Self {
             return Self.initWithConfig(driver, time_fn, .{});
@@ -206,6 +227,12 @@ pub fn from(comptime spec: type, comptime ButtonId: type) type {
                 .time_fn = time_fn,
                 .config = config,
             };
+        }
+
+        /// Set event callback for direct push to Board queue
+        pub fn setCallback(self: *Self, callback: EventCallback, ctx: ?*anyopaque) void {
+            self.event_callback = callback;
+            self.event_ctx = ctx;
         }
 
         /// Poll ADC and process button state changes
@@ -386,8 +413,50 @@ pub fn from(comptime spec: type, comptime ButtonId: type) type {
             self.event_index = 0;
         }
 
+        /// Stop the run loop (for task mode)
+        pub fn stop(self: *Self) void {
+            self.running = false;
+        }
+
+        /// Run in background task mode
+        /// This function runs an infinite loop that:
+        /// 1. Reads ADC at consistent intervals
+        /// 2. Detects button events
+        /// 3. Sends events via event_sender callback
+        ///
+        /// Call this from a dedicated FreeRTOS task.
+        /// Use `stop()` to exit the loop.
+        ///
+        /// Parameters:
+        /// - sleep_fn: Function to sleep for given milliseconds
+        /// - poll_interval_ms: How often to poll ADC (default: 10ms)
+        pub fn run(self: *Self, sleep_fn: *const fn (u32) void, poll_interval_ms: u32) void {
+            self.running = true;
+
+            while (self.running) {
+                // Poll ADC and detect events
+                self.poll();
+
+                // In task mode with sender, events are sent immediately in queueEvent
+                // In legacy mode, events stay in internal queue
+
+                sleep_fn(poll_interval_ms);
+            }
+        }
+
+        /// Run with default 10ms poll interval
+        pub fn runDefault(self: *Self, sleep_fn: *const fn (u32) void) void {
+            self.run(sleep_fn, 10);
+        }
+
         // Internal: queue an event
         fn queueEvent(self: *Self, event: Event) void {
+            // If callback is set, push directly to Board queue
+            if (self.event_callback) |callback| {
+                callback(self.event_ctx, event);
+                return;
+            }
+            // Fallback to internal queue
             if (self.event_count < self.event_queue.len) {
                 self.event_queue[self.event_count] = event;
                 self.event_count += 1;
