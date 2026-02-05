@@ -1,11 +1,18 @@
 //! Platform Configuration - AEC Test
 //!
-//! Supports: Korvo-2 V3 (ES7210 ADC + ES8311 DAC + AEC)
+//! Supports:
+//! - Korvo-2 V3 (ES7210 ADC + ES8311 DAC + AEC)
+//! - LiChuang SZP (ES7210 ADC + ES8311 DAC + AEC)
 //!
 //! Uses AudioSystem for unified mic+speaker with AEC.
 
+const build_options = @import("build_options");
 const hal = @import("hal");
-const hw = @import("esp/korvo2_v3.zig");
+
+const hw = switch (build_options.board) {
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .lichuang_szp => @import("esp/lichuang_szp.zig"),
+};
 
 pub const Hardware = hw.Hardware;
 
@@ -36,7 +43,7 @@ pub const Board = struct {
         self.audio = try AudioSystem.init();
         errdefer self.audio.deinit();
 
-        // Initialize PA switch
+        // Initialize PA switch (each board's driver handles I2C state internally)
         self.pa_switch = try PaSwitchDriver.init();
     }
 
