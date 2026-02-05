@@ -20,6 +20,7 @@
 
 const std = @import("std");
 const trait = @import("trait");
+const math = @import("math");
 const qmi8658 = @This();
 
 // ============================================================================
@@ -395,37 +396,16 @@ pub fn Qmi8658(comptime I2cImpl: type, comptime TimeImpl: type) type {
 
             // Calculate roll (rotation around X)
             // roll = atan2(ay, az)
-            const roll = approxAtan2(ay, az) * (180.0 / std.math.pi);
+            const roll = math.approxAtan2(ay, az) * (180.0 / std.math.pi);
 
             // Calculate pitch (rotation around Y)
             // pitch = atan2(-ax, sqrt(ay^2 + az^2))
-            const pitch = approxAtan2(-ax, @sqrt(ay * ay + az * az)) * (180.0 / std.math.pi);
+            const pitch = math.approxAtan2(-ax, @sqrt(ay * ay + az * az)) * (180.0 / std.math.pi);
 
             return qmi8658.Angles{
                 .roll = roll,
                 .pitch = pitch,
             };
-        }
-
-        /// Simple atan2 approximation (avoids std.math.atan2 which may use 128-bit ops)
-        fn approxAtan2(y: f32, x: f32) f32 {
-            const abs_x = @abs(x);
-            const abs_y = @abs(y);
-
-            // Handle edge cases
-            if (abs_x < 0.0001 and abs_y < 0.0001) return 0;
-            if (abs_x < 0.0001) return if (y > 0) std.math.pi / 2.0 else -std.math.pi / 2.0;
-
-            // Fast polynomial approximation
-            const a = @min(abs_x, abs_y) / @max(abs_x, abs_y);
-            const s = a * a;
-            var r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
-
-            if (abs_y > abs_x) r = std.math.pi / 2.0 - r;
-            if (x < 0) r = std.math.pi - r;
-            if (y < 0) r = -r;
-
-            return r;
         }
 
         /// Read temperature in Celsius

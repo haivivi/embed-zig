@@ -31,6 +31,7 @@ esp_zig_app(
         "//lib/hal",
         "//lib/drivers",
         "//lib/motion",
+        "//lib/math",
     ],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",

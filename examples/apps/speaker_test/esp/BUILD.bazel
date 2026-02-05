@@ -25,7 +25,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/drivers", "//lib/motion"],
+    deps = ["//lib/hal", "//lib/drivers", "//lib/motion", "//lib/math"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

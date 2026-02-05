@@ -9,6 +9,7 @@
 //!   if (detector.update(sample)) |event| { ... }
 
 const std = @import("std");
+const math = @import("math");
 const types = @import("types.zig");
 
 const AccelData = types.AccelData;
@@ -371,9 +372,9 @@ pub fn Detector(comptime Sensor: type) type {
             const az = sample.accel.z;
 
             // Roll: rotation around X axis (using approximation to avoid 128-bit ops)
-            const roll = approxAtan2(ay, az) * (180.0 / std.math.pi);
+            const roll = math.approxAtan2(ay, az) * (180.0 / std.math.pi);
             // Pitch: rotation around Y axis
-            const pitch = approxAtan2(-ax, @sqrt(ay * ay + az * az)) * (180.0 / std.math.pi);
+            const pitch = math.approxAtan2(-ax, @sqrt(ay * ay + az * az)) * (180.0 / std.math.pi);
 
             if (!self.tilt_state.initialized) {
                 self.tilt_state.last_roll = roll;
@@ -461,27 +462,6 @@ pub fn Detector(comptime Sensor: type) type {
         // ================================================================
         // Helper Functions
         // ================================================================
-
-        /// Simple atan2 approximation (avoids std.math.atan2 which may use 128-bit ops)
-        fn approxAtan2(y: f32, x: f32) f32 {
-            const abs_x = @abs(x);
-            const abs_y = @abs(y);
-
-            // Handle edge cases
-            if (abs_x < 0.0001 and abs_y < 0.0001) return 0;
-            if (abs_x < 0.0001) return if (y > 0) std.math.pi / 2.0 else -std.math.pi / 2.0;
-
-            // Fast polynomial approximation
-            const a = @min(abs_x, abs_y) / @max(abs_x, abs_y);
-            const s = a * a;
-            var r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
-
-            if (abs_y > abs_x) r = std.math.pi / 2.0 - r;
-            if (x < 0) r = std.math.pi - r;
-            if (y < 0) r = -r;
-
-            return r;
-        }
 
         fn determineOrientation(accel: AccelData) Orientation {
             const ax = accel.x;

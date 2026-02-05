@@ -4,8 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Get trait dependency
+    // Get dependencies
     const trait_dep = b.dependency("trait", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const math_dep = b.dependency("math", .{
         .target = target,
         .optimize = optimize,
     });
@@ -16,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     drivers_mod.addImport("trait", trait_dep.module("trait"));
+    drivers_mod.addImport("math", math_dep.module("math"));
 
     // Unit tests
     const unit_tests = b.addTest(.{
@@ -26,6 +31,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     unit_tests.root_module.addImport("trait", trait_dep.module("trait"));
+    unit_tests.root_module.addImport("math", math_dep.module("math"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
