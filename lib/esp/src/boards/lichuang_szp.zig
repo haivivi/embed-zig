@@ -73,6 +73,9 @@ pub const i2c_scl: u8 = 2;
 /// I2C frequency (Hz)
 pub const i2c_freq_hz: u32 = 100_000;
 
+/// Module-level I2C initialization state (shared between AudioSystem and PaSwitchDriver)
+var i2c_initialized: bool = false;
+
 // ============================================================================
 // I2S Audio Configuration
 // ============================================================================
@@ -269,21 +272,26 @@ pub const PaSwitchDriver = struct {
     i2c_initialized_here: bool = false,
     output_cache: u8 = 0x05, // Default: DVP_PWDN=1, PA_EN=0, LCD_CS=1
 
+    /// Initialize PA switch driver
+    /// Automatically detects if I2C is already initialized (by AudioSystem or idf.I2c)
     pub fn init() !Self {
-        return initWithI2c(null);
-    }
-
-    /// Initialize with optional external I2C (pass true if I2C already initialized)
-    pub fn initWithI2c(i2c_external: ?bool) !Self {
         var self = Self{};
 
-        const external = i2c_external orelse false;
-        if (!external) {
-            // Initialize I2C
-            if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
-                return error.I2cInitFailed;
+        // Check module-level I2C state - skip init if already done by our code
+        if (!i2c_initialized) {
+            // Try to communicate with PCA9557 first to detect if I2C is already working
+            // (e.g., initialized by idf.I2c in speaker_test)
+            var test_val: [1]u8 = undefined;
+            const probe_result = i2c_helper_write_read(pca9557_addr, &[_]u8{PCA9557_CONFIG_PORT}, 1, &test_val, 1, 100);
+
+            if (probe_result != 0) {
+                // I2C not working, initialize it ourselves
+                if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
+                    return error.I2cInitFailed;
+                }
+                self.i2c_initialized_here = true;
             }
-            self.i2c_initialized_here = true;
+            i2c_initialized = true;
         }
 
         // Configure PCA9557: IO0-2 as outputs (0 = output)
@@ -297,9 +305,10 @@ pub const PaSwitchDriver = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.is_on) self.off() catch {};
+        if (self.is_on) self.off() catch |err| log.warn("PA off failed in deinit: {}", .{err});
         if (self.i2c_initialized_here) {
             i2c_helper_deinit();
+            i2c_initialized = false;
         }
     }
 
@@ -343,7 +352,7 @@ pub const LedDriver = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.initialized) {
-            gpio.setLevel(lcd_backlight, 0) catch {};
+            gpio.setLevel(lcd_backlight, 0) catch |err| log.warn("LCD backlight off failed: {}", .{err});
             self.initialized = false;
         }
     }
@@ -730,7 +739,11 @@ pub const AudioSystem = struct {
         if (i2c_helper_init(i2c_sda, i2c_scl, i2c_freq_hz, 0) != 0) {
             return error.I2cInitFailed;
         }
-        errdefer i2c_helper_deinit();
+        i2c_initialized = true;
+        errdefer {
+            i2c_helper_deinit();
+            i2c_initialized = false;
+        }
 
         log.info("AudioSystem: Init ES8311 (DAC @ 0x{x})", .{es8311_addr});
         es8311Init();
@@ -760,10 +773,9 @@ pub const AudioSystem = struct {
         es7210Start();
 
         log.info("AudioSystem: Init AEC", .{});
-        // "MR" = Mic first, Reference second (立创实战派的 I2S 数据格式)
-        // "RM" = Reference first, Mic second (same as korvo)
-        // type=1 (AFE_TYPE_VC), mode=0 (AFE_MODE_LOW_COST)
-        // filter_length=2
+        // AEC format: "RM" = Reference first, Mic second
+        // We extract data from I2S and repack as RM format in readMic()
+        // type=1 (AFE_TYPE_VC), mode=0 (AFE_MODE_LOW_COST), filter_length=2
         self.aec_handle = aec_helper_create("RM", 2, 1, 0);
         if (self.aec_handle == null) {
             return error.AecInitFailed;
@@ -825,6 +837,7 @@ pub const AudioSystem = struct {
         self.tx_buffer_32 = null;
         _ = i2s_helper_deinit(i2s_port);
         i2c_helper_deinit();
+        i2c_initialized = false;
         self.initialized = false;
         log.info("AudioSystem: Deinitialized", .{});
     }
@@ -937,99 +950,3 @@ pub const AudioSystem = struct {
     }
 };
 
-// ============================================================================
-// WiFi Driver
-// ============================================================================
-
-pub const WifiDriver2 = struct {
-    const Self = @This();
-
-    wifi_handle: ?idf.Wifi = null,
-    connected: bool = false,
-    ip_address: ?[4]u8 = null,
-
-    pub fn init() !Self {
-        return Self{};
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.wifi_handle) |*w| {
-            w.disconnect();
-            w.deinit();
-        }
-        self.wifi_handle = null;
-        self.connected = false;
-        self.ip_address = null;
-    }
-
-    pub fn connect(self: *Self, ssid: []const u8, password: []const u8) !void {
-        // Initialize WiFi if not already done
-        if (self.wifi_handle == null) {
-            self.wifi_handle = idf.Wifi.init() catch |err| {
-                log.err("WiFi init failed: {}", .{err});
-                return error.InitFailed;
-            };
-        }
-
-        // Connect with sentinel-terminated strings
-        var ssid_buf: [33:0]u8 = undefined;
-        var pass_buf: [65:0]u8 = undefined;
-
-        const ssid_len = @min(ssid.len, 32);
-        const pass_len = @min(password.len, 64);
-
-        @memcpy(ssid_buf[0..ssid_len], ssid[0..ssid_len]);
-        ssid_buf[ssid_len] = 0;
-
-        @memcpy(pass_buf[0..pass_len], password[0..pass_len]);
-        pass_buf[pass_len] = 0;
-
-        self.wifi_handle.?.connect(.{
-            .ssid = ssid_buf[0..ssid_len :0],
-            .password = pass_buf[0..pass_len :0],
-            .timeout_ms = 30000,
-        }) catch |err| {
-            log.err("WiFi connect failed: {}", .{err});
-            return error.ConnectFailed;
-        };
-
-        self.connected = true;
-        self.ip_address = self.wifi_handle.?.getIpAddress();
-        log.info("WiFi connected, IP: {}.{}.{}.{}", .{
-            self.ip_address.?[0],
-            self.ip_address.?[1],
-            self.ip_address.?[2],
-            self.ip_address.?[3],
-        });
-    }
-
-    pub fn disconnect(self: *Self) void {
-        if (self.wifi_handle) |*w| {
-            w.disconnect();
-        }
-        self.connected = false;
-        self.ip_address = null;
-    }
-
-    pub fn isConnected(self: *const Self) bool {
-        return self.connected;
-    }
-
-    pub fn getIpAddress(self: *const Self) ?[4]u8 {
-        return self.ip_address;
-    }
-
-    pub fn getRssi(self: *const Self) ?i8 {
-        if (self.wifi_handle) |*w| {
-            return w.getRssi();
-        }
-        return null;
-    }
-
-    pub fn getMac(self: *const Self) ?[6]u8 {
-        if (self.wifi_handle) |*w| {
-            return w.getMac();
-        }
-        return null;
-    }
-};

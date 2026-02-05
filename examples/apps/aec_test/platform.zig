@@ -43,14 +43,8 @@ pub const Board = struct {
         self.audio = try AudioSystem.init();
         errdefer self.audio.deinit();
 
-        // Initialize PA switch
-        // For lichuang_szp: I2C already initialized by AudioSystem
-        // For korvo2_v3: Direct GPIO control
-        if (@hasDecl(PaSwitchDriver, "initWithI2c")) {
-            self.pa_switch = try PaSwitchDriver.initWithI2c(true);
-        } else {
-            self.pa_switch = try PaSwitchDriver.init();
-        }
+        // Initialize PA switch (each board's driver handles I2C state internally)
+        self.pa_switch = try PaSwitchDriver.init();
     }
 
     pub fn deinit(self: *Self) void {

@@ -72,13 +72,8 @@ pub const Board = struct {
         try self.speaker.initWithShared(&self.i2c, &self.i2s);
         errdefer self.speaker.deinit();
 
-        // Initialize PA switch (different init method per board)
-        if (@hasDecl(hw.PaSwitchDriver, "initWithI2c")) {
-            // LiChuang SZP uses I2C GPIO expander, I2C already initialized
-            self.pa_switch = try hw.PaSwitchDriver.initWithI2c(false);
-        } else {
-            self.pa_switch = try hw.PaSwitchDriver.init();
-        }
+        // Initialize PA switch (each board's driver handles I2C state internally)
+        self.pa_switch = try hw.PaSwitchDriver.init();
         errdefer self.pa_switch.deinit();
 
         self.initialized = true;
