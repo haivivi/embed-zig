@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
 
     // Create app module
     const app_module = b.addModule("app", .{
-        .root_source_file = b.path("app.zig"),
+        .root_source_file = b.path("../app.zig"),
         .target = target,
         .optimize = optimize,
     });

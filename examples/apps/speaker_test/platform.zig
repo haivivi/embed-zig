@@ -72,8 +72,8 @@ pub const Board = struct {
         try self.speaker.initWithShared(&self.i2c, &self.i2s);
         errdefer self.speaker.deinit();
 
-        // Initialize PA switch (each board's driver handles I2C state internally)
-        self.pa_switch = try hw.PaSwitchDriver.init();
+        // Initialize PA switch using shared I2C bus
+        self.pa_switch = try hw.PaSwitchDriver.init(&self.i2c);
         errdefer self.pa_switch.deinit();
 
         self.initialized = true;

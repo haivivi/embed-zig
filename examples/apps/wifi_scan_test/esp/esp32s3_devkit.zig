@@ -1,52 +1,26 @@
 //! ESP32-S3 DevKit Board Implementation for WiFi Scan Test
 
 const std = @import("std");
-const idf = @import("esp");
+const esp = @import("esp");
 
-const hw_params = idf.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
 };
 
 // ============================================================================
-// RTC Driver (minimal - just provides uptime)
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
-
-// ============================================================================
-// WiFi Driver - from impl/wifi.zig
-// ============================================================================
-
-pub const WifiDriver = idf.impl.wifi.WifiDriver;
-
-// ============================================================================
-// Net Driver - from impl/net.zig
-// ============================================================================
-
-pub const NetDriver = idf.impl.net.NetDriver;
+pub const RtcDriver = board.RtcDriver;
+pub const WifiDriver = board.WifiDriver;
+pub const NetDriver = board.NetDriver;
 
 // ============================================================================
 // HAL Specs
@@ -57,28 +31,16 @@ pub const rtc_spec = struct {
     pub const meta = .{ .id = "rtc" };
 };
 
-/// WiFi spec - uses impl/wifi.zig
-pub const wifi_spec = idf.impl.wifi.wifi_spec;
-
-/// Net spec - uses impl/net.zig
-pub const net_spec = idf.impl.net.net_spec;
+pub const wifi_spec = board.wifi_spec;
+pub const net_spec = board.net_spec;
 
 // ============================================================================
-// Platform Primitives
+// Platform Primitives (re-export from central board)
 // ============================================================================
 
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.sal.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true;
+    return board.isRunning();
 }

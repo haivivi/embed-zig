@@ -30,6 +30,38 @@ pub const Register = enum(u8) {
     config = 0x03,
 };
 
+// ============================================================================
+// Register Bit Field Constants
+// ============================================================================
+
+/// Default register values after power-on reset
+pub const Defaults = struct {
+    /// Input register default (depends on pins)
+    pub const INPUT: u8 = 0xFF;
+    /// Output register default (all high)
+    pub const OUTPUT: u8 = 0xFF;
+    /// Polarity register default (no inversion)
+    pub const POLARITY: u8 = 0x00;
+    /// Config register default (all inputs)
+    pub const CONFIG: u8 = 0xFF;
+};
+
+/// Common I2C addresses
+pub const Address = struct {
+    /// TCA9554 base address (A2=0, A1=0, A0=0)
+    pub const TCA9554_BASE: u7 = 0x20;
+    /// TCA9554A base address (A2=0, A1=0, A0=0)
+    pub const TCA9554A_BASE: u7 = 0x38;
+};
+
+/// Pin masks for common use cases
+pub const PinMask = struct {
+    pub const NONE: u8 = 0x00;
+    pub const ALL: u8 = 0xFF;
+    pub const LOW_NIBBLE: u8 = 0x0F;
+    pub const HIGH_NIBBLE: u8 = 0xF0;
+};
+
 /// GPIO pin identifiers
 pub const Pin = enum(u3) {
     pin0 = 0,
@@ -184,11 +216,120 @@ pub fn Tca9554(comptime I2cImpl: type) type {
 
         /// Reset all registers to default values
         pub fn reset(self: *Self) !void {
-            self.output_cache = 0xFF;
-            self.config_cache = 0xFF;
-            try self.writeRegister(.output, 0xFF);
-            try self.writeRegister(.polarity, 0x00);
-            try self.writeRegister(.config, 0xFF);
+            self.output_cache = Defaults.OUTPUT;
+            self.config_cache = Defaults.CONFIG;
+            try self.writeRegister(.output, Defaults.OUTPUT);
+            try self.writeRegister(.polarity, Defaults.POLARITY);
+            try self.writeRegister(.config, Defaults.CONFIG);
+        }
+
+        /// Sync cache from device (read actual register values)
+        pub fn syncFromDevice(self: *Self) !void {
+            self.config_cache = try self.readRegister(.config);
+            self.output_cache = try self.readRegister(.output);
+        }
+
+        /// Get current direction of a pin (from cache)
+        pub fn getDirection(self: *Self, pin: Pin) Direction {
+            const mask = pin.mask();
+            return if ((self.config_cache & mask) != 0) .input else .output;
+        }
+
+        /// Get current output level of a pin (from cache)
+        pub fn getOutput(self: *Self, pin: Pin) Level {
+            const mask = pin.mask();
+            return if ((self.output_cache & mask) != 0) .high else .low;
+        }
+
+        /// Get all output values (from cache)
+        pub fn getOutputAll(self: *Self) u8 {
+            return self.output_cache;
+        }
+
+        /// Get all direction config (from cache)
+        pub fn getConfigAll(self: *Self) u8 {
+            return self.config_cache;
+        }
+
+        /// Check if pin is configured as output
+        pub fn isOutput(self: *Self, pin: Pin) bool {
+            return self.getDirection(pin) == .output;
+        }
+
+        /// Check if pin is configured as input
+        pub fn isInput(self: *Self, pin: Pin) bool {
+            return self.getDirection(pin) == .input;
+        }
+
+        /// Set all pins as outputs
+        pub fn setAllOutputs(self: *Self) !void {
+            self.config_cache = PinMask.NONE;
+            try self.writeRegister(.config, self.config_cache);
+        }
+
+        /// Set all pins as inputs
+        pub fn setAllInputs(self: *Self) !void {
+            self.config_cache = PinMask.ALL;
+            try self.writeRegister(.config, self.config_cache);
+        }
+
+        /// Set all outputs high
+        pub fn setAllHigh(self: *Self) !void {
+            self.output_cache = PinMask.ALL;
+            try self.writeRegister(.output, self.output_cache);
+        }
+
+        /// Set all outputs low
+        pub fn setAllLow(self: *Self) !void {
+            self.output_cache = PinMask.NONE;
+            try self.writeRegister(.output, self.output_cache);
+        }
+
+        /// Set polarity inversion for multiple pins
+        pub fn setPolarityMask(self: *Self, invert_mask: u8) !void {
+            try self.writeRegister(.polarity, invert_mask);
+        }
+
+        /// Get current polarity inversion settings
+        pub fn getPolarity(self: *Self) !u8 {
+            return try self.readRegister(.polarity);
+        }
+
+        /// Configure multiple pins at once
+        /// output_pins: bitmask of pins to configure as output (others as input)
+        /// initial_levels: initial output levels for output pins
+        pub fn configureMultiple(self: *Self, output_pins: u8, initial_levels: u8) !void {
+            self.output_cache = initial_levels;
+            self.config_cache = ~output_pins;
+            try self.writeRegister(.output, self.output_cache);
+            try self.writeRegister(.config, self.config_cache);
+        }
+
+        /// Pulse a pin (set high, then low, or vice versa)
+        /// Returns to original state
+        pub fn pulse(self: *Self, pin: Pin) !void {
+            try self.toggle(pin);
+            try self.toggle(pin);
+        }
+
+        /// Set pin high
+        pub fn setHigh(self: *Self, pin: Pin) !void {
+            try self.write(pin, .high);
+        }
+
+        /// Set pin low
+        pub fn setLow(self: *Self, pin: Pin) !void {
+            try self.write(pin, .low);
+        }
+
+        /// Check if input pin is high
+        pub fn isHigh(self: *Self, pin: Pin) !bool {
+            return (try self.read(pin)) == .high;
+        }
+
+        /// Check if input pin is low
+        pub fn isLow(self: *Self, pin: Pin) !bool {
+            return (try self.read(pin)) == .low;
         }
     };
 }

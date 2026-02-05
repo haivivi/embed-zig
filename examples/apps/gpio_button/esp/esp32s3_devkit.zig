@@ -9,43 +9,27 @@ const esp = @import("esp");
 const hal = @import("hal");
 
 const idf = esp.idf;
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
-    pub const boot_button_gpio: idf.gpio.Pin = hw_params.boot_button_gpio;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
+    pub const boot_button_gpio: idf.gpio.Pin = board.boot_button_gpio;
     pub const has_led = true;
     pub const led_type = "ws2812";
     pub const led_count: u32 = 1;
-    pub const led_gpio: c_int = hw_params.led_strip_gpio;
+    pub const led_gpio: c_int = board.led_strip_gpio;
 };
 
 // ============================================================================
-// RTC Driver
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub const RtcDriver = board.RtcDriver;
 
 // ============================================================================
 // Button Driver
@@ -134,19 +118,10 @@ pub const led_spec = struct {
     pub const meta = .{ .id = "led.main" };
 };
 
-// Platform primitives
+// Platform primitives (re-export from central board)
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true; // ESP: always running
+    return board.isRunning();
 }

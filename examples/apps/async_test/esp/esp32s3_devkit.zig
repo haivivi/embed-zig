@@ -5,58 +5,22 @@
 const std = @import("std");
 const esp = @import("esp");
 
-const idf = esp.idf;
-
-// Platform primitives
-pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
-
-pub fn isRunning() bool {
-    return true;
-}
-
-// Hardware parameters from lib/esp/boards
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
 };
 
 // ============================================================================
-// RTC Driver (required by hal.Board)
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub const RtcDriver = board.RtcDriver;
 
 // ============================================================================
 // HAL Specs
@@ -66,3 +30,14 @@ pub const rtc_spec = struct {
     pub const Driver = RtcDriver;
     pub const meta = .{ .id = "rtc" };
 };
+
+// ============================================================================
+// Platform Primitives (re-export from central board)
+// ============================================================================
+
+pub const log = std.log.scoped(.app);
+pub const time = board.time;
+
+pub fn isRunning() bool {
+    return board.isRunning();
+}

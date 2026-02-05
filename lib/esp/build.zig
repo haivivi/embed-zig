@@ -9,6 +9,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const drivers_dep = b.dependency("drivers", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const idf_dep = b.dependency("idf", .{
         .target = target,
         .optimize = optimize,
@@ -39,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "dns", .module = dns_dep.module("dns") },
+            .{ .name = "drivers", .module = drivers_dep.module("drivers") },
             .{ .name = "idf", .module = idf_dep.module("idf") },
             .{ .name = "impl", .module = impl_dep.module("impl") },
             .{ .name = "trait", .module = trait_dep.module("trait") },

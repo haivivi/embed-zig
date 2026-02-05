@@ -6,6 +6,9 @@
         .dns = .{
             .path = "../dns",
         },
+        .drivers = .{
+            .path = "../drivers",
+        },
         .idf = .{
             .path = "idf",
         },

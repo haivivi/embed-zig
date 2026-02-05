@@ -96,10 +96,6 @@ esp_app(
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
-    defaults = {
-        "WIFI_SSID": "MyWiFi",
-        "WIFI_PASSWORD": "12345678",
-    },
 )
 
 # =============================================================================

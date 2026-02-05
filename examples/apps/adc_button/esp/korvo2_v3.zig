@@ -9,57 +9,34 @@ const hal = @import("hal");
 const esp = @import("esp");
 
 const idf = esp.idf;
-const hw_params = esp.boards.korvo2_v3;
+const board = esp.boards.korvo2_v3;
 
-// Platform primitives
-pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
-
-pub fn isRunning() bool {
-    return true;
-}
-
-// Hardware parameters from lib/esp/boards
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
-    pub const adc_channel: idf.adc.AdcChannel = @enumFromInt(hw_params.adc_channel);
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
+    pub const adc_channel: idf.adc.AdcChannel = @enumFromInt(board.adc_channel);
 };
 
 // ============================================================================
-// RTC Driver (required by hal.Board)
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
+pub const RtcDriver = board.RtcDriver;
 
-    pub fn init() !Self {
-        return .{};
-    }
+// ============================================================================
+// Platform Primitives (re-export from central board)
+// ============================================================================
 
-    pub fn deinit(_: *Self) void {}
+pub const log = std.log.scoped(.app);
+pub const time = board.time;
 
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub fn isRunning() bool {
+    return board.isRunning();
+}
 
 // ============================================================================
 // ButtonGroup Driver (ADC reader)
