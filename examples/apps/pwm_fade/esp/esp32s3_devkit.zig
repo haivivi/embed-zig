@@ -8,41 +8,25 @@ const esp = @import("esp");
 const hal = @import("hal");
 
 const idf = esp.idf;
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
-    pub const led_gpio: u8 = @intCast(hw_params.led_strip_gpio);
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
+    pub const led_gpio: u8 = @intCast(board.led_strip_gpio);
     pub const pwm_freq_hz: u32 = 5000;
     pub const pwm_resolution_bits: u8 = 10; // 0-1023
 };
 
 // ============================================================================
-// RTC Driver
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub const RtcDriver = board.RtcDriver;
 
 // ============================================================================
 // Led Driver (using ESP IDF PWM)
@@ -98,19 +82,10 @@ pub const led_spec = struct {
     pub const meta = .{ .id = "led.main" };
 };
 
-// Platform primitives
+// Platform primitives (re-export from central board)
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true;
+    return board.isRunning();
 }

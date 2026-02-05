@@ -9,15 +9,15 @@ const esp = @import("esp");
 const hal = @import("hal");
 
 const idf = esp.idf;
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
 };
 
 // ============================================================================
@@ -27,32 +27,11 @@ pub const Hardware = struct {
 pub const socket = idf.socket.Socket;
 
 // ============================================================================
-// RTC Driver
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
-
-// ============================================================================
-// WiFi Driver (Event-Driven - uses ESP wifi module)
-// ============================================================================
-
-pub const WifiDriver = idf.wifi.WifiDriver;
+pub const RtcDriver = board.RtcDriver;
+pub const WifiDriver = board.WifiDriver;
 
 // ============================================================================
 // HAL Specs
@@ -63,24 +42,15 @@ pub const rtc_spec = struct {
     pub const meta = .{ .id = "rtc" };
 };
 
-pub const wifi_spec = idf.wifi.wifi_spec;
+pub const wifi_spec = board.wifi_spec;
 
 // ============================================================================
-// Platform Primitives
+// Platform Primitives (re-export from central board)
 // ============================================================================
 
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true; // ESP: always running
+    return board.isRunning();
 }

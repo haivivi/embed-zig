@@ -8,60 +8,36 @@ const esp = @import("esp");
 const hal = @import("hal");
 
 const idf = esp.idf;
-
-// Platform primitives
-pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
-
-pub fn isRunning() bool {
-    return true;
-}
-
-// Hardware parameters from lib/esp/boards
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
     pub const led_type = "ws2812";
     pub const led_count: u32 = 1;
-    pub const led_gpio: c_int = hw_params.led_strip_gpio;
+    pub const led_gpio: c_int = board.led_strip_gpio;
 };
 
 // ============================================================================
-// RTC Driver (required by hal.Board)
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
+pub const RtcDriver = board.RtcDriver;
 
-    pub fn init() !Self {
-        return .{};
-    }
+// ============================================================================
+// Platform Primitives (re-export from central board)
+// ============================================================================
 
-    pub fn deinit(_: *Self) void {}
+pub const log = std.log.scoped(.app);
+pub const time = board.time;
 
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
+pub fn isRunning() bool {
+    return board.isRunning();
+}
 
 // ============================================================================
 // LED Driver (implements HAL LedStrip.Driver interface)

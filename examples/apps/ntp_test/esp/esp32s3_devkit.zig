@@ -9,16 +9,15 @@ const esp = @import("esp");
 const hal = @import("hal");
 
 const idf = esp.idf;
-const impl = esp.impl;
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
-    pub const serial_port = hw_params.serial_port;
+    pub const name = board.name;
+    pub const serial_port = board.serial_port;
 };
 
 // ============================================================================
@@ -28,38 +27,12 @@ pub const Hardware = struct {
 pub const socket = idf.socket.Socket;
 
 // ============================================================================
-// RTC Driver
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null;
-    }
-};
-
-// ============================================================================
-// WiFi Driver (Event-Driven)
-// ============================================================================
-
-pub const WifiDriver = impl.wifi.WifiDriver;
-
-// ============================================================================
-// Net Driver (for IP events)
-// ============================================================================
-
-pub const NetDriver = impl.net.NetDriver;
+pub const RtcDriver = board.RtcDriver;
+pub const WifiDriver = board.WifiDriver;
+pub const NetDriver = board.NetDriver;
 
 // ============================================================================
 // HAL Specs
@@ -70,25 +43,16 @@ pub const rtc_spec = struct {
     pub const meta = .{ .id = "rtc" };
 };
 
-pub const wifi_spec = impl.wifi.wifi_spec;
-pub const net_spec = impl.net.net_spec;
+pub const wifi_spec = board.wifi_spec;
+pub const net_spec = board.net_spec;
 
 // ============================================================================
-// Platform Primitives
+// Platform Primitives (re-export from central board)
 // ============================================================================
 
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true;
+    return board.isRunning();
 }

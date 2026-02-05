@@ -38,6 +38,9 @@ pub const idf = @import("idf");
 /// trait + hal implementations
 pub const impl = @import("impl");
 
+/// Generic audio system with AEC
+pub const audio_system = @import("audio_system.zig");
+
 /// Board hardware definitions
 pub const boards = struct {
     pub const korvo2_v3 = @import("boards/korvo2_v3.zig");

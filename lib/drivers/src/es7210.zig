@@ -597,8 +597,8 @@ pub fn Es7210(comptime I2cImpl: type) type {
         }
 
         /// Enable or disable TDM mode
-        pub fn setTdmMode(self: *Self, enable: bool) !void {
-            const val: u8 = if (enable) SdpInterface2.TDM_EN else SdpInterface2.TDM_DIS;
+        pub fn setTdmMode(self: *Self, en: bool) !void {
+            const val: u8 = if (en) SdpInterface2.TDM_EN else SdpInterface2.TDM_DIS;
             try self.writeRegister(.sdp_interface2, val);
         }
 

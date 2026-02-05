@@ -569,8 +569,8 @@ pub fn Es8311(comptime I2cImpl: type) type {
 
         /// Enable/disable DAC reference signal for AEC
         /// When enabled, ADC right channel contains DAC output for echo cancellation
-        pub fn setDacReference(self: *Self, enable: bool) !void {
-            const val: u8 = if (enable) Gpio44.DAC_REF_ENABLED else Gpio44.DAC_REF_DISABLED;
+        pub fn setDacReference(self: *Self, en: bool) !void {
+            const val: u8 = if (en) Gpio44.DAC_REF_ENABLED else Gpio44.DAC_REF_DISABLED;
             try self.writeRegister(.gpio_44, val);
         }
 

@@ -13,6 +13,7 @@
 // GPIO Expander
 pub const tca9554 = @import("tca9554.zig");
 pub const Tca9554 = tca9554.Tca9554;
+pub const Tca9554Pin = tca9554.Pin;
 
 // Audio Codecs
 pub const es8311 = @import("es8311.zig");

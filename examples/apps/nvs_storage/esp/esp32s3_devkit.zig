@@ -7,60 +7,37 @@ const hal = @import("hal");
 const esp = @import("esp");
 
 const idf = esp.idf;
-const hw_params = esp.boards.esp32s3_devkit;
+const board = esp.boards.esp32s3_devkit;
 
 // ============================================================================
 // Hardware Info
 // ============================================================================
 
 pub const Hardware = struct {
-    pub const name = hw_params.name;
+    pub const name = board.name;
 };
 
 // ============================================================================
-// Platform primitives
+// Drivers (re-export from central board)
 // ============================================================================
 
-pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
-
-pub fn isRunning() bool {
-    return true;
-}
-
-// ============================================================================
-// RTC Driver (required by hal.Board)
-// ============================================================================
-
-pub const RtcDriver = struct {
-    pub fn init() !RtcDriver {
-        return .{};
-    }
-
-    pub fn deinit(_: *RtcDriver) void {}
-
-    pub fn uptime(_: *RtcDriver) u64 {
-        return idf.time.nowMs();
-    }
-
-    pub fn nowMs(_: *RtcDriver) ?i64 {
-        return null; // No RTC hardware, return null
-    }
-};
+pub const RtcDriver = board.RtcDriver;
 
 pub const rtc_spec = struct {
     pub const Driver = RtcDriver;
     pub const meta = .{ .id = "rtc.esp32s3" };
 };
+
+// ============================================================================
+// Platform Primitives (re-export from central board)
+// ============================================================================
+
+pub const log = std.log.scoped(.app);
+pub const time = board.time;
+
+pub fn isRunning() bool {
+    return board.isRunning();
+}
 
 // ============================================================================
 // KVS Driver (NVS-based)

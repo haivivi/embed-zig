@@ -4,20 +4,15 @@
 //! Note: Speaker-only test uses standalone I2S (no AEC/mic)
 
 const std = @import("std");
-
-const drivers = @import("drivers");
 const esp = @import("esp");
-const idf = esp.idf;
-const board = esp.boards.lichuang_szp;
-pub const time = board.time;
-const I2c = idf.I2c;
-const I2s = idf.I2s;
-pub const RtcDriver = board.RtcDriver;
-pub const PaSwitchDriver = board.PaSwitchDriver;
 const hal = @import("hal");
+
+const board = esp.boards.lichuang_szp;
 
 // Re-export platform primitives
 pub const log = std.log.scoped(.app);
+pub const time = board.time;
+
 pub fn isRunning() bool {
     return board.isRunning();
 }
@@ -50,74 +45,12 @@ pub const Hardware = struct {
 };
 
 // ============================================================================
-// Type aliases for standalone speaker (no AEC)
+// Drivers (re-export from central board)
 // ============================================================================
 
-const Es8311 = drivers.Es8311(*I2c);
-const EspSpeaker = idf.Speaker(Es8311);
-
-// ============================================================================
-// Speaker Driver (standalone, uses idf.Speaker for speaker-only test)
-// ============================================================================
-
-pub const SpeakerDriver = struct {
-    const Self = @This();
-
-    dac: Es8311,
-    speaker: EspSpeaker,
-    initialized: bool = false,
-
-    pub fn init() !Self {
-        return Self{
-            .dac = undefined,
-            .speaker = undefined,
-            .initialized = false,
-        };
-    }
-
-    /// Initialize speaker using shared I2S and I2C
-    pub fn initWithShared(self: *Self, i2c: *I2c, i2s: *I2s) !void {
-        if (self.initialized) return;
-
-        // Initialize ES8311 DAC via shared I2C
-        self.dac = Es8311.init(i2c, .{
-            .address = Hardware.es8311_addr,
-            .codec_mode = .dac_only,
-        });
-
-        try self.dac.open();
-        errdefer self.dac.close() catch {};
-
-        try self.dac.setSampleRate(Hardware.sample_rate);
-
-        // Initialize speaker using shared I2S
-        self.speaker = try EspSpeaker.init(&self.dac, i2s, .{
-            .initial_volume = 200, // Higher volume for this board
-        });
-        errdefer self.speaker.deinit();
-
-        std.log.info("SpeakerDriver: ES8311 + shared I2S initialized", .{});
-        self.initialized = true;
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.initialized) {
-            self.speaker.deinit();
-            self.dac.close() catch {};
-            self.initialized = false;
-        }
-    }
-
-    pub fn write(self: *Self, buffer: []const i16) !usize {
-        if (!self.initialized) return error.NotInitialized;
-        return self.speaker.write(buffer);
-    }
-
-    pub fn setVolume(self: *Self, volume: u8) !void {
-        if (!self.initialized) return error.NotInitialized;
-        try self.speaker.setVolume(volume);
-    }
-};
+pub const RtcDriver = board.RtcDriver;
+pub const PaSwitchDriver = board.PaSwitchDriver;
+pub const SpeakerDriver = board.SpeakerDriver;
 
 // ============================================================================
 // HAL Specs

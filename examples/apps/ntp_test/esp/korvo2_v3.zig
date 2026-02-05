@@ -58,21 +58,12 @@ pub const wifi_spec = impl.wifi.wifi_spec;
 pub const net_spec = impl.net.net_spec;
 
 // ============================================================================
-// Platform Primitives
+// Platform Primitives (re-export from central board)
 // ============================================================================
 
 pub const log = std.log.scoped(.app);
-
-pub const time = struct {
-    pub fn sleepMs(ms: u32) void {
-        idf.time.sleepMs(ms);
-    }
-
-    pub fn getTimeMs() u64 {
-        return idf.time.nowMs();
-    }
-};
+pub const time = board.time;
 
 pub fn isRunning() bool {
-    return true;
+    return board.isRunning();
 }

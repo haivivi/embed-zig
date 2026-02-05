@@ -70,6 +70,7 @@ pub fn run(_: anytype) void {
                     log.info("[Timer] id={}", .{t.id});
                 },
                 .wifi => {},
+                .net => {},
             }
         }
 
