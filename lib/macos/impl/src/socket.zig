@@ -75,7 +75,9 @@ pub const Socket = struct {
             .sec = @intCast(timeout_ms / 1000),
             .usec = @intCast((timeout_ms % 1000) * 1000),
         };
-        _ = posix.setsockopt(self.fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+        posix.setsockopt(self.fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err| {
+            std.debug.print("Warning: failed to set socket recv timeout: {}\n", .{err});
+        };
     }
 
     /// Set send timeout in milliseconds
@@ -84,6 +86,8 @@ pub const Socket = struct {
             .sec = @intCast(timeout_ms / 1000),
             .usec = @intCast((timeout_ms % 1000) * 1000),
         };
-        _ = posix.setsockopt(self.fd, posix.SOL.SOCKET, posix.SO.SNDTIMEO, std.mem.asBytes(&tv)) catch {};
+        posix.setsockopt(self.fd, posix.SOL.SOCKET, posix.SO.SNDTIMEO, std.mem.asBytes(&tv)) catch |err| {
+            std.debug.print("Warning: failed to set socket send timeout: {}\n", .{err});
+        };
     }
 };

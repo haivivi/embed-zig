@@ -443,10 +443,7 @@ pub fn RecordLayer(comptime Socket: type, comptime Crypto: type) type {
             var header_buf: [RecordHeader.SIZE]u8 = undefined;
             var bytes_read: usize = 0;
             while (bytes_read < RecordHeader.SIZE) {
-                const n = self.socket.recv(header_buf[bytes_read..]) catch |err| {
-                    // Propagate timeout and other errors directly
-                    return err;
-                };
+                const n = try self.socket.recv(header_buf[bytes_read..]);
                 if (n == 0) return error.UnexpectedRecord;
                 bytes_read += n;
             }
@@ -460,10 +457,7 @@ pub fn RecordLayer(comptime Socket: type, comptime Crypto: type) type {
             if (buffer.len < header.length) return error.BufferTooSmall;
             bytes_read = 0;
             while (bytes_read < header.length) {
-                const n = self.socket.recv(buffer[bytes_read..header.length]) catch |err| {
-                    // Propagate timeout and other errors directly
-                    return err;
-                };
+                const n = try self.socket.recv(buffer[bytes_read..header.length]);
                 if (n == 0) return error.UnexpectedRecord;
                 bytes_read += n;
             }

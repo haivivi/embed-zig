@@ -12,13 +12,20 @@ Run:
     bazel run //examples/apps/tls_speed_test/macos:run
 """
 
+def _shell_quote(s):
+    """Quote a string for safe use in shell commands."""
+    # Replace single quotes with '\'' and wrap in single quotes
+    return "'" + s.replace("'", "'\\''") + "'"
+
 def _generate_copy_commands_preserve_structure(files):
     """Generate copy commands that preserve the original directory structure."""
     commands = []
     for f in files:
         rel_path = f.short_path
-        commands.append('mkdir -p "$WORK/$(dirname \"{}\")" && cp "{}" "$WORK/{}"'.format(
-            rel_path, f.path, rel_path
+        quoted_rel = _shell_quote(rel_path)
+        quoted_src = _shell_quote(f.path)
+        commands.append('mkdir -p "$WORK/$(dirname {})" && cp {} "$WORK/"{}'.format(
+            quoted_rel, quoted_src, quoted_rel
         ))
     return commands
 
@@ -65,13 +72,13 @@ trap "rm -rf $WORK" EXIT
 export PATH="{zig_dir}:$PATH"
 
 # Run zig build run from the project directory
-cd "$WORK/{project_dir}"
+cd "$WORK/"{project_dir}
 
 echo "[macos] Building and running..."
 zig build run
 """.format(
         zig_dir = zig_bin.dirname if zig_bin else "",
-        project_dir = ctx.attr.project_dir,
+        project_dir = _shell_quote(ctx.attr.project_dir),
         src_copy_commands = "\n".join(src_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
         apps_copy_commands = "\n".join(apps_copy_commands),
