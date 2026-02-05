@@ -91,8 +91,6 @@ pub const http = @import("http.zig");
 pub const HttpClient = http.HttpClient;
 pub const socket = @import("socket.zig");
 pub const Socket = socket.Socket;
-pub const tls = @import("tls.zig");
-pub const TlsStream = tls.TlsStream;
 pub const mbed_tls = @import("mbed_tls.zig");
 
 // ============================================================================

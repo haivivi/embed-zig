@@ -14,13 +14,39 @@
 const std = @import("std");
 
 // ============================================================================
-// Hash Functions - Direct re-export (API compatible)
+// Hash Functions - Wrapper for init() compatibility
 // ============================================================================
 
-pub const Sha256 = std.crypto.hash.sha2.Sha256;
-pub const Sha384 = std.crypto.hash.sha2.Sha384;
-pub const Sha512 = std.crypto.hash.sha2.Sha512;
-pub const Sha1 = std.crypto.hash.Sha1;
+fn HashWrapper(comptime StdHash: type) type {
+    return struct {
+        pub const digest_length = StdHash.digest_length;
+        pub const block_length = StdHash.block_length;
+
+        inner: StdHash,
+
+        pub fn init() @This() {
+            return .{ .inner = StdHash.init(.{}) };
+        }
+
+        pub fn update(self: *@This(), data: []const u8) void {
+            self.inner.update(data);
+        }
+
+        pub fn final(self: *@This()) [digest_length]u8 {
+            return self.inner.finalResult();
+        }
+
+        pub fn hash(data: []const u8, out: *[digest_length]u8, opts: anytype) void {
+            _ = opts;
+            StdHash.hash(data, out, .{});
+        }
+    };
+}
+
+pub const Sha256 = HashWrapper(std.crypto.hash.sha2.Sha256);
+pub const Sha384 = HashWrapper(std.crypto.hash.sha2.Sha384);
+pub const Sha512 = HashWrapper(std.crypto.hash.sha2.Sha512);
+pub const Sha1 = HashWrapper(std.crypto.hash.Sha1);
 
 // ============================================================================
 // AEAD - Wrapper for encryptStatic/decryptStatic interface
@@ -76,7 +102,9 @@ pub const X25519 = struct {
         public_key: [32]u8,
 
         pub fn generateDeterministic(seed: [32]u8) !KeyPair {
-            const kp = std.crypto.dh.X25519.KeyPair.fromSeed(seed);
+            const kp = std.crypto.dh.X25519.KeyPair.generateDeterministic(seed) catch {
+                return error.IdentityElement;
+            };
             return KeyPair{
                 .secret_key = kp.secret_key,
                 .public_key = kp.public_key,
@@ -97,46 +125,45 @@ pub const X25519 = struct {
 
 pub const P256 = struct {
     pub const scalar_length = 32;
+    const Curve = std.crypto.ecc.P256;
+    const Scalar = std.crypto.ecc.P256.scalar.Scalar;
 
     pub const KeyPair = struct {
         secret_key: [32]u8,
         public_key: [65]u8, // Uncompressed point
 
-        pub fn fromSecretKey(secret_key: [32]u8) !KeyPair {
-            const kp = std.crypto.ecc.P256.KeyPair.fromSecretKey(secret_key) catch {
-                return error.InvalidSecretKey;
-            };
-            var public_key: [65]u8 = undefined;
-            public_key[0] = 0x04; // Uncompressed point marker
-            @memcpy(public_key[1..33], &kp.public_key.toUncompressedSec1()[1..33].*);
-            @memcpy(public_key[33..65], &kp.public_key.toUncompressedSec1()[33..65].*);
+        pub fn generateDeterministic(seed: [32]u8) !KeyPair {
             return KeyPair{
-                .secret_key = secret_key,
-                .public_key = public_key,
+                .secret_key = seed,
+                .public_key = try computePublicKey(seed),
             };
         }
     };
 
     pub fn computePublicKey(secret_key: [32]u8) ![65]u8 {
-        const kp = try KeyPair.fromSecretKey(secret_key);
-        return kp.public_key;
+        const sk = Scalar.fromBytes(secret_key, .big) catch {
+            return error.InvalidSecretKey;
+        };
+        const pk = Curve.basePoint.mul(sk.toBytes(.big), .big) catch {
+            return error.InvalidOperation;
+        };
+        return pk.toUncompressedSec1();
     }
 
     pub fn ecdh(secret_key: [32]u8, peer_public_key: [65]u8) ![32]u8 {
         // Parse peer public key (uncompressed format: 04 || x || y)
         if (peer_public_key[0] != 0x04) return error.InvalidPublicKey;
-        
-        const pk = std.crypto.ecc.P256.PublicKey.fromSec1(&peer_public_key) catch {
+
+        const sk = Scalar.fromBytes(secret_key, .big) catch {
+            return error.InvalidSecretKey;
+        };
+        const pk = Curve.fromSec1(&peer_public_key) catch {
             return error.InvalidPublicKey;
         };
-        
-        // ECDH: shared_secret = secret_key * peer_public_key
-        // Use constant-time multiplication for secret scalar
-        const shared = pk.p.mul(secret_key) catch {
-            return error.InvalidPublicKey;
+        const shared = pk.mulPublic(sk.toBytes(.big), .big) catch {
+            return error.InvalidOperation;
         };
-        
-        return shared.affineCoordinates().x;
+        return shared.affineCoordinates().x.toBytes(.big);
     }
 };
 
@@ -146,52 +173,92 @@ pub const P256 = struct {
 
 pub const P384 = struct {
     pub const scalar_length = 48;
+    const Curve = std.crypto.ecc.P384;
+    const Scalar = std.crypto.ecc.P384.scalar.Scalar;
 
     pub const KeyPair = struct {
         secret_key: [48]u8,
         public_key: [97]u8, // Uncompressed point
 
-        pub fn fromSecretKey(secret_key: [48]u8) !KeyPair {
-            const kp = std.crypto.ecc.P384.KeyPair.fromSecretKey(secret_key) catch {
-                return error.InvalidSecretKey;
-            };
-            var public_key: [97]u8 = undefined;
-            public_key[0] = 0x04;
-            @memcpy(public_key[1..49], &kp.public_key.toUncompressedSec1()[1..49].*);
-            @memcpy(public_key[49..97], &kp.public_key.toUncompressedSec1()[49..97].*);
+        pub fn generateDeterministic(seed: [48]u8) !KeyPair {
             return KeyPair{
-                .secret_key = secret_key,
-                .public_key = public_key,
+                .secret_key = seed,
+                .public_key = try computePublicKey(seed),
             };
         }
     };
+
+    pub fn computePublicKey(secret_key: [48]u8) ![97]u8 {
+        const sk = Scalar.fromBytes(secret_key, .big) catch {
+            return error.InvalidSecretKey;
+        };
+        const pk = Curve.basePoint.mul(sk.toBytes(.big), .big) catch {
+            return error.InvalidOperation;
+        };
+        return pk.toUncompressedSec1();
+    }
+
+    pub fn ecdh(secret_key: [48]u8, peer_public_key: [97]u8) ![48]u8 {
+        if (peer_public_key[0] != 0x04) return error.InvalidPublicKey;
+
+        const sk = Scalar.fromBytes(secret_key, .big) catch {
+            return error.InvalidSecretKey;
+        };
+        const pk = Curve.fromSec1(&peer_public_key) catch {
+            return error.InvalidPublicKey;
+        };
+        const shared = pk.mulPublic(sk.toBytes(.big), .big) catch {
+            return error.InvalidOperation;
+        };
+        return shared.affineCoordinates().x.toBytes(.big);
+    }
 };
 
 // ============================================================================
-// KDF - HKDF Wrapper
+// KDF - HKDF (use std library directly with HMAC types)
 // ============================================================================
 
-fn HkdfWrapper(comptime Hash: type) type {
-    const StdHkdf = std.crypto.kdf.hkdf.Hkdf(Hash);
-    
-    return struct {
-        pub const prk_length = Hash.digest_length;
+pub const HkdfSha256 = struct {
+    pub const prk_length = 32;
 
-        pub fn extract(salt: ?[]const u8, ikm: []const u8) [prk_length]u8 {
-            return StdHkdf.extract(salt orelse &[_]u8{}, ikm);
-        }
+    pub fn extract(salt: ?[]const u8, ikm: []const u8) [prk_length]u8 {
+        return std.crypto.kdf.hkdf.HkdfSha256.extract(salt orelse &[_]u8{}, ikm);
+    }
 
-        pub fn expand(prk: *const [prk_length]u8, ctx: []const u8, comptime len: usize) [len]u8 {
-            var out: [len]u8 = undefined;
-            StdHkdf.expand(&out, ctx, prk.*);
-            return out;
-        }
-    };
-}
+    pub fn expand(prk: *const [prk_length]u8, ctx: []const u8, comptime len: usize) [len]u8 {
+        var out: [len]u8 = undefined;
+        std.crypto.kdf.hkdf.HkdfSha256.expand(&out, ctx, prk.*);
+        return out;
+    }
+};
 
-pub const HkdfSha256 = HkdfWrapper(Sha256);
-pub const HkdfSha384 = HkdfWrapper(Sha384);
-pub const HkdfSha512 = HkdfWrapper(Sha512);
+pub const HkdfSha384 = struct {
+    pub const prk_length = 48;
+
+    pub fn extract(salt: ?[]const u8, ikm: []const u8) [prk_length]u8 {
+        return std.crypto.kdf.hkdf.HkdfSha384.extract(salt orelse &[_]u8{}, ikm);
+    }
+
+    pub fn expand(prk: *const [prk_length]u8, ctx: []const u8, comptime len: usize) [len]u8 {
+        var out: [len]u8 = undefined;
+        std.crypto.kdf.hkdf.HkdfSha384.expand(&out, ctx, prk.*);
+        return out;
+    }
+};
+
+pub const HkdfSha512 = struct {
+    pub const prk_length = 64;
+
+    pub fn extract(salt: ?[]const u8, ikm: []const u8) [prk_length]u8 {
+        return std.crypto.kdf.hkdf.HkdfSha512.extract(salt orelse &[_]u8{}, ikm);
+    }
+
+    pub fn expand(prk: *const [prk_length]u8, ctx: []const u8, comptime len: usize) [len]u8 {
+        var out: [len]u8 = undefined;
+        std.crypto.kdf.hkdf.HkdfSha512.expand(&out, ctx, prk.*);
+        return out;
+    }
+};
 
 // ============================================================================
 // MAC - HMAC Wrapper
@@ -217,7 +284,9 @@ fn HmacWrapper(comptime StdHmac: type) type {
         }
 
         pub fn final(self: *@This()) [mac_length]u8 {
-            return self.inner.finalResult();
+            var out: [mac_length]u8 = undefined;
+            self.inner.final(&out);
+            return out;
         }
     };
 }
@@ -243,13 +312,14 @@ pub const Ed25519 = struct {
 };
 
 pub const EcdsaP256Sha256 = struct {
-    const Ecdsa = std.crypto.sign.ecdsa.Ecdsa(std.crypto.ecc.P256, Sha256);
+    const EcdsaSig = std.crypto.sign.ecdsa.EcdsaP256Sha256.Signature;
+    const EcdsaPk = std.crypto.sign.ecdsa.EcdsaP256Sha256.PublicKey;
 
     pub const Signature = struct {
-        inner: Ecdsa.Signature,
+        inner: EcdsaSig,
 
         pub fn fromDer(der: []const u8) !Signature {
-            const inner = Ecdsa.Signature.fromDer(der) catch return error.InvalidEncoding;
+            const inner = EcdsaSig.fromDer(der) catch return error.InvalidEncoding;
             return Signature{ .inner = inner };
         }
 
@@ -259,10 +329,10 @@ pub const EcdsaP256Sha256 = struct {
     };
 
     pub const PublicKey = struct {
-        inner: Ecdsa.PublicKey,
+        inner: EcdsaPk,
 
         pub fn fromSec1(sec1: []const u8) !PublicKey {
-            const inner = Ecdsa.PublicKey.fromSec1(sec1) catch return error.InvalidEncoding;
+            const inner = EcdsaPk.fromSec1(sec1) catch return error.InvalidEncoding;
             return PublicKey{ .inner = inner };
         }
     };
@@ -274,13 +344,14 @@ pub const EcdsaP256Sha256 = struct {
 };
 
 pub const EcdsaP384Sha384 = struct {
-    const Ecdsa = std.crypto.sign.ecdsa.Ecdsa(std.crypto.ecc.P384, Sha384);
+    const EcdsaSig = std.crypto.sign.ecdsa.EcdsaP384Sha384.Signature;
+    const EcdsaPk = std.crypto.sign.ecdsa.EcdsaP384Sha384.PublicKey;
 
     pub const Signature = struct {
-        inner: Ecdsa.Signature,
+        inner: EcdsaSig,
 
         pub fn fromDer(der: []const u8) !Signature {
-            const inner = Ecdsa.Signature.fromDer(der) catch return error.InvalidEncoding;
+            const inner = EcdsaSig.fromDer(der) catch return error.InvalidEncoding;
             return Signature{ .inner = inner };
         }
 
@@ -290,10 +361,10 @@ pub const EcdsaP384Sha384 = struct {
     };
 
     pub const PublicKey = struct {
-        inner: Ecdsa.PublicKey,
+        inner: EcdsaPk,
 
         pub fn fromSec1(sec1: []const u8) !PublicKey {
-            const inner = Ecdsa.PublicKey.fromSec1(sec1) catch return error.InvalidEncoding;
+            const inner = EcdsaPk.fromSec1(sec1) catch return error.InvalidEncoding;
             return PublicKey{ .inner = inner };
         }
     };
@@ -318,7 +389,8 @@ pub const rsa = struct {
         pub const ParseDerError = error{CertificatePublicKeyInvalid};
 
         pub fn parseDer(pub_key: []const u8) ParseDerError!struct { modulus: []const u8, exponent: []const u8 } {
-            return StdRsa.PublicKey.parseDer(pub_key);
+            const result = StdRsa.PublicKey.parseDer(pub_key) catch return error.CertificatePublicKeyInvalid;
+            return .{ .modulus = result.modulus, .exponent = result.exponent };
         }
 
         pub fn fromBytes(exponent: []const u8, modulus: []const u8) !PublicKey {

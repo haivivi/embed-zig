@@ -1,0 +1,11 @@
+# TCP Speed Test - Echo Mode Throughput Measurement
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)

@@ -6,6 +6,7 @@ const c = @cImport({
     @cInclude("lwip/sockets.h");
     @cInclude("lwip/netdb.h");
     @cInclude("errno.h");
+    @cInclude("socket_helper.h");
 });
 
 pub const Ipv4Address = [4]u8;
@@ -40,6 +41,7 @@ pub const SocketError = error{
     Timeout,
     InvalidAddress,
     BindToDeviceFailed,
+    Closed,
 };
 
 pub const Socket = struct {
@@ -104,22 +106,14 @@ pub const Socket = struct {
         if (result < 0) return error.BindToDeviceFailed;
     }
 
-    /// Set receive timeout
+    /// Set receive timeout (uses C helper to avoid struct timeval size mismatch)
     pub fn setRecvTimeout(self: *Self, timeout_ms: u32) void {
-        const tv = c.timeval{
-            .tv_sec = @intCast(timeout_ms / 1000),
-            .tv_usec = @intCast((timeout_ms % 1000) * 1000),
-        };
-        _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_RCVTIMEO, &tv, @sizeOf(c.timeval));
+        _ = c.socket_set_recv_timeout(self.fd, timeout_ms);
     }
 
-    /// Set send timeout
+    /// Set send timeout (uses C helper to avoid struct timeval size mismatch)
     pub fn setSendTimeout(self: *Self, timeout_ms: u32) void {
-        const tv = c.timeval{
-            .tv_sec = @intCast(timeout_ms / 1000),
-            .tv_usec = @intCast((timeout_ms % 1000) * 1000),
-        };
-        _ = c.setsockopt(self.fd, c.SOL_SOCKET, c.SO_SNDTIMEO, &tv, @sizeOf(c.timeval));
+        _ = c.socket_set_send_timeout(self.fd, timeout_ms);
     }
 
     /// Enable TCP_NODELAY (disable Nagle's algorithm)
@@ -169,19 +163,23 @@ pub const Socket = struct {
         return @intCast(result);
     }
 
-    /// Receive data
+    /// Receive data (timeout set via setRecvTimeout using SO_RCVTIMEO)
     pub fn recv(self: *Self, buf: []u8) SocketError!usize {
         const result = c.recv(self.fd, buf.ptr, buf.len, 0);
         if (result < 0) {
-            if (c.__errno().* == c.EAGAIN or c.__errno().* == c.EWOULDBLOCK) {
+            const errno_val = c.__errno().*;
+            if (errno_val == c.EAGAIN or errno_val == c.EWOULDBLOCK) {
                 return error.Timeout;
             }
             return error.RecvFailed;
         }
+        if (result == 0) {
+            return error.Closed;
+        }
         return @intCast(result);
     }
 
-    /// Receive data from (for UDP)
+    /// Receive data from (for UDP, timeout set via setRecvTimeout using SO_RCVTIMEO)
     pub fn recvFrom(self: *Self, buf: []u8) SocketError!usize {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
@@ -194,10 +192,14 @@ pub const Socket = struct {
             &sa_len,
         );
         if (result < 0) {
-            if (c.__errno().* == c.EAGAIN or c.__errno().* == c.EWOULDBLOCK) {
+            const errno_val = c.__errno().*;
+            if (errno_val == c.EAGAIN or errno_val == c.EWOULDBLOCK) {
                 return error.Timeout;
             }
             return error.RecvFailed;
+        }
+        if (result == 0) {
+            return error.Closed;
         }
         return @intCast(result);
     }
