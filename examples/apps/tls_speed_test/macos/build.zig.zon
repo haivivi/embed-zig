@@ -1,0 +1,15 @@
+.{
+    .name = .tls_speed_test_macos,
+    .version = "0.1.0",
+    .fingerprint = 0x2c303477a4c04fb8,
+    .dependencies = .{
+        .std_sal = .{ .path = "../../../../lib/std" },
+        .tls = .{ .path = "../../../../lib/tls" },
+        .crypto = .{ .path = "../../../../lib/crypto" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}

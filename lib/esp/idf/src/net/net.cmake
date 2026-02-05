@@ -16,6 +16,7 @@
 # C helper sources
 set(NET_C_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/netif_helper.c"
+    "${CMAKE_CURRENT_LIST_DIR}/socket_helper.c"
 )
 
 # Include directories for C headers
@@ -23,6 +24,9 @@ set(NET_C_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}")
 
 # Force link symbols
 set(NET_FORCE_LINK
+    # Socket helpers
+    socket_set_recv_timeout
+    socket_set_send_timeout
     # Info queries
     netif_helper_count
     netif_helper_get_name

@@ -1,0 +1,17 @@
+.{
+    .name = .tcp_speed_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xdec0de0001000001,
+    .dependencies = .{
+        .hal = .{ .path = "../../../../lib/hal" },
+        .esp = .{ .path = "../../../../lib/esp" },
+        .trait = .{ .path = "../../../../lib/trait" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "esp32s3_devkit.zig",
+    },
+}

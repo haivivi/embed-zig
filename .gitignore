@@ -5,6 +5,8 @@
 .downloads
 .cache
 .zig-cache
+zig-cache
+zig-global-cache
 zig-out
 build
 tmp
