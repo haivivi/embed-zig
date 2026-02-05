@@ -261,8 +261,12 @@ pub fn from(comptime spec: type) type {
             };
 
             // Run detector and queue any events
-            while (self.detector.update(sample)) |action| {
+            // Call update() once, then drain remaining events with nextEvent()
+            if (self.detector.update(sample)) |action| {
                 self.queueEvent(self.convertAction(action, timestamp));
+                while (self.detector.nextEvent()) |next_action| {
+                    self.queueEvent(self.convertAction(next_action, timestamp));
+                }
             }
         }
 
