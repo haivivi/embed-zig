@@ -55,20 +55,42 @@ pub const button_spec = struct {
 // ============================================================================
 
 /// Custom IMU driver that initializes I2C and QMI8658
+/// Thread-safe lazy initialization using atomic state
 pub const ImuDriver = struct {
     const Self = @This();
 
+    // Init states: 0=not started, 1=in progress, 2=completed
+    const INIT_NOT_STARTED: u8 = 0;
+    const INIT_IN_PROGRESS: u8 = 1;
+    const INIT_COMPLETED: u8 = 2;
+
     i2c_bus: idf.I2c = undefined,
     inner: board.ImuDriver = undefined,
-    initialized: bool = false,
+    init_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(INIT_NOT_STARTED),
 
     pub fn init() !Self {
         return Self{};
     }
 
-    /// Initialize I2C and IMU sensor
+    /// Initialize I2C and IMU sensor (thread-safe)
     pub fn initI2c(self: *Self) !void {
-        if (self.initialized) return;
+        // Try to transition from NOT_STARTED to IN_PROGRESS
+        if (self.init_state.cmpxchgStrong(
+            INIT_NOT_STARTED,
+            INIT_IN_PROGRESS,
+            .acquire,
+            .monotonic,
+        )) |_| {
+            // Another thread is initializing or has completed
+            // Wait for completion
+            while (self.init_state.load(.acquire) == INIT_IN_PROGRESS) {
+                std.atomic.spinLoopHint();
+            }
+            return;
+        }
+
+        // We won the race, perform initialization
+        errdefer self.init_state.store(INIT_NOT_STARTED, .release);
 
         // Initialize I2C bus
         self.i2c_bus = try idf.I2c.init(.{
@@ -81,23 +103,24 @@ pub const ImuDriver = struct {
         // Initialize IMU driver with I2C
         self.inner = board.ImuDriver{};
         try self.inner.initWithI2c(&self.i2c_bus);
-        self.initialized = true;
 
+        // Mark as completed
+        self.init_state.store(INIT_COMPLETED, .release);
         log.info("ImuDriver: I2C and QMI8658 initialized", .{});
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.initialized) {
+        if (self.init_state.load(.acquire) == INIT_COMPLETED) {
             self.inner.deinit();
             self.i2c_bus.deinit();
-            self.initialized = false;
+            self.init_state.store(INIT_NOT_STARTED, .release);
         }
     }
 
     /// Read accelerometer data (required by hal.imu)
     pub fn readAccel(self: *Self) !hal.AccelData {
-        // Lazy initialize on first read
-        if (!self.initialized) {
+        // Lazy initialize on first read (thread-safe)
+        if (self.init_state.load(.acquire) != INIT_COMPLETED) {
             try self.initI2c();
         }
         return self.inner.readAccel();
@@ -105,28 +128,28 @@ pub const ImuDriver = struct {
 
     /// Read gyroscope data (required by hal.imu for has_gyro)
     pub fn readGyro(self: *Self) !hal.GyroData {
-        if (!self.initialized) {
+        if (self.init_state.load(.acquire) != INIT_COMPLETED) {
             try self.initI2c();
         }
         return self.inner.readGyro();
     }
 
     pub fn readAngles(self: *Self) !struct { roll: f32, pitch: f32 } {
-        if (!self.initialized) {
+        if (self.init_state.load(.acquire) != INIT_COMPLETED) {
             try self.initI2c();
         }
         return self.inner.readAngles();
     }
 
     pub fn readTemperature(self: *Self) !f32 {
-        if (!self.initialized) {
+        if (self.init_state.load(.acquire) != INIT_COMPLETED) {
             try self.initI2c();
         }
         return self.inner.readTemperature();
     }
 
     pub fn isDataReady(self: *Self) !bool {
-        if (!self.initialized) return false;
+        if (self.init_state.load(.acquire) != INIT_COMPLETED) return false;
         return self.inner.isDataReady();
     }
 };

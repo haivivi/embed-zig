@@ -120,8 +120,8 @@ pub const pca9557_dvp_pwdn: u8 = 2; // IO2: Camera power down
 /// QMI8658 I2C address
 pub const qmi8658_addr: u7 = 0x6A;
 
-/// QMI8658 driver type
-const Qmi8658ImuDriver = drivers.Qmi8658(*idf.I2c);
+/// QMI8658 driver type (requires I2C and Time interfaces)
+const Qmi8658ImuDriver = drivers.Qmi8658(*idf.I2c, impl.time.Time);
 
 /// IMU driver for HAL integration
 /// Wraps QMI8658 and provides the interface expected by hal.imu

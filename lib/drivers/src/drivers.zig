@@ -9,7 +9,7 @@
 //!   const Tca9554 = drivers.Tca9554(MyI2cType);
 //!   const Es8311 = drivers.Es8311(MyI2cType);
 //!   const Es7210 = drivers.Es7210(MyI2cType);
-//!   const Qmi8658 = drivers.Qmi8658(MyI2cType);
+//!   const Qmi8658 = drivers.Qmi8658(MyI2cType, MyTimeType);
 
 // GPIO Expander
 pub const tca9554 = @import("tca9554.zig");

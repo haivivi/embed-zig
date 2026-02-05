@@ -11,7 +11,7 @@
 //! - FIFO support
 //!
 //! Usage:
-//!   const Qmi8658 = drivers.Qmi8658(MyI2cBus);
+//!   const Qmi8658 = drivers.Qmi8658(MyI2cBus, MyTime);
 //!   var imu = Qmi8658.init(i2c_bus, .{});
 //!   try imu.open();
 //!   const data = try imu.read();
@@ -243,9 +243,10 @@ pub const Config = struct {
 // ============================================================================
 
 /// QMI8658 6-Axis IMU Driver
-/// Generic over I2C bus type for platform independence
-pub fn Qmi8658(comptime I2cImpl: type) type {
+/// Generic over I2C bus type and Time interface for platform independence
+pub fn Qmi8658(comptime I2cImpl: type, comptime TimeImpl: type) type {
     const I2c = trait.i2c.from(I2cImpl);
+    const Time = trait.time.from(TimeImpl);
 
     return struct {
         const Self = @This();
@@ -301,12 +302,8 @@ pub fn Qmi8658(comptime I2cImpl: type) type {
             // Software reset
             try self.writeRegister(.reset, 0xB0);
 
-            // Wait for reset - busy wait ~10ms (at 240MHz, ~2.4M cycles)
-            // This is necessary for the sensor to complete reset
-            var i: u32 = 0;
-            while (i < 2_400_000) : (i += 1) {
-                asm volatile ("nop");
-            }
+            // Wait for reset (~10ms required by QMI8658 datasheet)
+            Time.sleepMs(10);
 
             // Configure CTRL1: address auto-increment enabled
             try self.writeRegister(.ctrl1, 0x40);
