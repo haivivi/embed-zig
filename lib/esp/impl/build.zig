@@ -17,6 +17,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const drivers_dep = b.dependency("drivers", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // Create the impl module
     _ = b.addModule("impl", .{
@@ -27,6 +31,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "idf", .module = idf_dep.module("idf") },
             .{ .name = "trait", .module = trait_dep.module("trait") },
             .{ .name = "hal", .module = hal_dep.module("hal") },
+            .{ .name = "drivers", .module = drivers_dep.module("drivers") },
         },
     });
 }

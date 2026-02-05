@@ -12,6 +12,9 @@
         .hal = .{
             .path = "../../hal",
         },
+        .drivers = .{
+            .path = "../../drivers",
+        },
     },
     .paths = .{
         "build.zig",

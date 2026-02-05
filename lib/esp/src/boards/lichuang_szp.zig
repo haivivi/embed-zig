@@ -173,7 +173,7 @@ pub fn isRunning() bool {
 // Audio System (via generic audio_system module)
 // ============================================================================
 
-const audio_system = @import("../audio_system.zig");
+const audio_system = @import("impl").audio_system;
 
 /// Base AudioSystem type with board-specific configuration
 /// I2C is managed externally and passed to AudioSystem.init()

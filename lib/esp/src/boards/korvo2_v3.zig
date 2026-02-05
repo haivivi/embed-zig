@@ -169,7 +169,7 @@ pub fn isRunning() bool {
 // Audio System (via generic audio_system module)
 // ============================================================================
 
-const audio_system = @import("../audio_system.zig");
+const audio_system = @import("impl").audio_system;
 
 /// AudioSystem manages the complete audio subsystem for Korvo-2 V3:
 /// - ES7210 ADC (4-channel microphone)

@@ -121,6 +121,10 @@ pub const RtcWriterDriver = rtc.RtcWriterDriver;
 pub const temp_sensor = @import("temp_sensor.zig");
 pub const TempSensorDriver = temp_sensor.TempSensorDriver;
 
+/// Audio system with AEC (ES8311 + ES7210)
+pub const audio_system = @import("audio_system.zig");
+pub const AudioSystem = audio_system.AudioSystem;
+
 // ============================================================================
 // Tests
 // ============================================================================
