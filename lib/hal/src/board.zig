@@ -30,7 +30,7 @@
 //!     pub const log = hw.log;
 //!     pub const time = hw.time;
 //!     pub const isRunning = hw.isRunning;
-//!     
+//!
 //!     // Optional peripherals
 //!     pub const ButtonId = enum(u8) { vol_up, vol_down };
 //!     pub const buttons = hal.ButtonGroup(hw.button_spec, ButtonId);
@@ -53,7 +53,7 @@
 //!     defer board.deinit();
 //!
 //!     while (Board.isRunning()) {
-//!         board.poll();
+//!         // For button apps: board.pollButtons();
 //!         while (board.nextEvent()) |event| {
 //!             switch (event) {
 //!                 .button => |btn| handleButton(btn),
@@ -81,6 +81,8 @@ const kvs_mod = @import("kvs.zig");
 const mic_mod = @import("mic.zig");
 const mono_speaker_mod = @import("mono_speaker.zig");
 const switch_mod = @import("switch.zig");
+const imu_mod = @import("imu.zig");
+const motion_mod = @import("motion.zig");
 
 // ============================================================================
 // Simple Queue (Default implementation)
@@ -137,7 +139,7 @@ pub fn SimpleQueue(comptime T: type, comptime capacity: usize) type {
 // Spec Analysis
 // ============================================================================
 
-const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, unknown };
+const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, imu, motion, unknown };
 
 fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (@typeInfo(T) != .@"struct") return .unknown;
@@ -153,6 +155,8 @@ fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (mic_mod.is(T)) return .mic;
     if (mono_speaker_mod.is(T)) return .mono_speaker;
     if (switch_mod.is(T)) return .switch_;
+    if (imu_mod.is(T)) return .imu;
+    if (motion_mod.is(T)) return .motion;
     return .unknown;
 }
 
@@ -169,6 +173,8 @@ fn SpecAnalysis(comptime spec: type) type {
         pub const mic_count = countType(spec, .mic);
         pub const mono_speaker_count = countType(spec, .mono_speaker);
         pub const switch_count = countType(spec, .switch_);
+        pub const imu_count = countType(spec, .imu);
+        pub const motion_count = countType(spec, .motion);
         pub const has_buttons = button_group_count > 0 or button_count > 0;
         pub const ButtonId = extractButtonId(spec);
 
@@ -302,6 +308,10 @@ pub fn Board(comptime spec: type) type {
     const MonoSpeakerDriverType = if (analysis.mono_speaker_count > 0) MonoSpeakerType.DriverType else void;
     const SwitchType = if (analysis.switch_count > 0) getSwitchType(spec) else void;
     const SwitchDriverType = if (analysis.switch_count > 0) SwitchType.DriverType else void;
+    const ImuType = if (analysis.imu_count > 0) getImuType(spec) else void;
+    const ImuDriverType = if (analysis.imu_count > 0) ImuType.DriverType else void;
+    const MotionType = if (analysis.motion_count > 0) getMotionType(spec) else void;
+    const MotionImuType = if (analysis.motion_count > 0) MotionType.ImuDriverType else void;
 
     // Generate Event type
     const Event = union(enum) {
@@ -310,6 +320,7 @@ pub fn Board(comptime spec: type) type {
         timer: event_mod.TimerEvent,
         wifi: if (analysis.wifi_count > 0) wifi_mod.WifiEvent else void,
         net: if (analysis.net_count > 0) net_mod.NetEvent else void,
+        motion: if (analysis.motion_count > 0) motion_mod.MotionEventPayload else void,
     };
 
     return struct {
@@ -320,6 +331,7 @@ pub fn Board(comptime spec: type) type {
         // ================================================================
 
         pub const EventType = Event;
+        pub const EventQueueType = QueueImpl(Event, 64);
         pub const ButtonId = analysis.ButtonId;
         pub const ButtonAction = button_mod.ButtonAction;
         pub const ButtonGroup = ButtonGroupType;
@@ -333,6 +345,8 @@ pub fn Board(comptime spec: type) type {
         pub const Microphone = MicType;
         pub const MonoSpeaker = MonoSpeakerType;
         pub const Switch = SwitchType;
+        pub const Imu = ImuType;
+        pub const Motion = MotionType;
 
         // ================================================================
         // Board Metadata
@@ -428,6 +442,14 @@ pub fn Board(comptime spec: type) type {
         pa_switch_driver: if (analysis.switch_count > 0) SwitchDriverType else void,
         pa_switch: if (analysis.switch_count > 0) SwitchType else void,
 
+        // IMU sensor (if present)
+        imu_driver: if (analysis.imu_count > 0) ImuDriverType else void,
+        imu: if (analysis.imu_count > 0) ImuType else void,
+
+        // Motion detection (if present)
+        motion_imu: if (analysis.motion_count > 0) MotionImuType else void,
+        motion: if (analysis.motion_count > 0) MotionType else void,
+
         // ================================================================
         // Lifecycle
         // ================================================================
@@ -487,9 +509,18 @@ pub fn Board(comptime spec: type) type {
                 }
             }
 
-            // Initialize Net driver
+            // Initialize Net driver (with direct callback to push events to board queue)
             if (analysis.net_count > 0) {
-                self.net_driver = try NetDriverType.init();
+                // Use callback-based init if available for direct event push
+                if (@hasDecl(NetDriverType, "initWithCallback")) {
+                    self.net_driver = try NetDriverType.initWithCallback(
+                        netEventCallback,
+                        @ptrCast(&self.events),
+                    );
+                } else {
+                    // Fallback to polling mode
+                    self.net_driver = try NetDriverType.init();
+                }
                 errdefer {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
@@ -580,10 +611,47 @@ pub fn Board(comptime spec: type) type {
                 }
             }
 
+            // Initialize IMU driver
+            if (analysis.imu_count > 0) {
+                self.imu_driver = try ImuDriverType.init();
+                errdefer {
+                    if (analysis.switch_count > 0) self.pa_switch_driver.deinit();
+                    if (analysis.mono_speaker_count > 0) self.speaker_driver.deinit();
+                    if (analysis.mic_count > 0) self.mic_driver.deinit();
+                    if (analysis.kvs_count > 0) self.kvs_driver.deinit();
+                    if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
+            }
+
+            // Initialize Motion IMU driver (separate from board.imu for independent sampling)
+            if (analysis.motion_count > 0) {
+                self.motion_imu = try MotionImuType.init();
+                errdefer {
+                    if (analysis.imu_count > 0) self.imu_driver.deinit();
+                    if (analysis.switch_count > 0) self.pa_switch_driver.deinit();
+                    if (analysis.mono_speaker_count > 0) self.speaker_driver.deinit();
+                    if (analysis.mic_count > 0) self.mic_driver.deinit();
+                    if (analysis.kvs_count > 0) self.kvs_driver.deinit();
+                    if (analysis.temp_sensor_count > 0) self.temp_driver.deinit();
+                    if (analysis.wifi_count > 0) self.wifi_driver.deinit();
+                    if (analysis.led_count > 0) self.led_driver.deinit();
+                    if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
+                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (analysis.button_count > 0) self.button_driver.deinit();
+                }
+            }
+
             // Initialize HAL wrappers with driver pointers (now pointing to correct locations)
             self.rtc = RtcReaderType.init(&self.rtc_driver);
             if (analysis.button_group_count > 0) {
                 self.buttons = ButtonGroupType.init(&self.buttons_driver, &uptimeWrapper);
+                // Register callback for direct event push
+                self.buttons.setCallback(buttonEventCallback, @ptrCast(&self.events));
             }
             if (analysis.button_count > 0) {
                 self.button = ButtonType.init(&self.button_driver);
@@ -615,9 +683,20 @@ pub fn Board(comptime spec: type) type {
             if (analysis.switch_count > 0) {
                 self.pa_switch = SwitchType.init(&self.pa_switch_driver);
             }
+            if (analysis.imu_count > 0) {
+                self.imu = ImuType.init(&self.imu_driver);
+            }
+            if (analysis.motion_count > 0) {
+                self.motion = MotionType.init(&self.motion_imu, &uptimeWrapper);
+                // Register callback for direct event push
+                self.motion.setCallback(motionEventCallback, @ptrCast(&self.events));
+            }
+
+            // Set static RTC driver for uptimeWrapper (used by ButtonGroup and Motion)
+            static_rtc_driver = &self.rtc_driver;
         }
 
-        // Static wrapper for uptime (used by ButtonGroup)
+        // Static wrapper for uptime (used by ButtonGroup and Motion)
         var static_rtc_driver: ?*RtcDriverType = null;
 
         fn uptimeWrapper() u64 {
@@ -630,6 +709,12 @@ pub fn Board(comptime spec: type) type {
         /// Deinitialize board
         pub fn deinit(self: *Self) void {
             // Deinit in reverse order
+            if (analysis.motion_count > 0) {
+                self.motion_imu.deinit();
+            }
+            if (analysis.imu_count > 0) {
+                self.imu_driver.deinit();
+            }
             if (analysis.switch_count > 0) {
                 self.pa_switch_driver.deinit();
             }
@@ -674,9 +759,15 @@ pub fn Board(comptime spec: type) type {
         // Event Queue
         // ================================================================
 
-        /// Get next event
+        /// Get next event from the queue
         pub fn nextEvent(self: *Self) ?Event {
             return self.events.tryReceive();
+        }
+
+        /// Send an event to the queue (thread-safe if using FreeRTOS queue)
+        /// This is used by background tasks and callbacks to push events
+        pub fn sendEvent(self: *Self, event: Event) bool {
+            return self.events.trySend(event);
         }
 
         /// Check if there are pending events
@@ -684,61 +775,90 @@ pub fn Board(comptime spec: type) type {
             return !self.events.isEmpty();
         }
 
-        // ================================================================
-        // Polling
-        // ================================================================
+        /// Get pointer to the event queue (for peripherals that need direct access)
+        pub fn getEventQueue(self: *Self) *QueueImpl(Event, 64) {
+            return &self.events;
+        }
 
-        /// Poll all peripherals
-        pub fn poll(self: *Self) void {
-            // Set static pointer for uptime wrapper
-            static_rtc_driver = &self.rtc_driver;
+        /// Net event callback for direct push (called from ESP-IDF event context)
+        /// This converts driver NetEvent to HAL NetEvent and pushes to board queue
+        const NetCallbackType = if (analysis.net_count > 0 and @hasDecl(NetDriverType, "CallbackType"))
+            NetDriverType.CallbackType
+        else
+            *const fn (?*anyopaque, void) void;
 
-            // Poll ButtonGroup
-            if (analysis.button_group_count > 0) {
-                self.buttons.poll();
-                while (self.buttons.nextEvent()) |btn_event| {
-                    _ = self.events.trySend(.{ .button = .{
-                        .source = btn_event.source,
-                        .id = btn_event.id,
-                        .action = btn_event.action,
-                        .timestamp_ms = btn_event.timestamp_ms,
-                        .click_count = btn_event.click_count,
-                        .duration_ms = btn_event.duration_ms,
-                    } });
-                }
+        fn netEventCallback(ctx: ?*anyopaque, driver_event: if (analysis.net_count > 0 and @hasDecl(NetDriverType, "EventType")) NetDriverType.EventType else void) void {
+            if (analysis.net_count == 0) return;
+            if (ctx == null) return;
+            const queue: *EventQueueType = @ptrCast(@alignCast(ctx));
+
+            // Convert driver event to HAL NetEvent
+            const hal_event: net_mod.NetEvent = switch (driver_event) {
+                .dhcp_bound => |data| .{ .dhcp_bound = .{
+                    .interface = data.interface,
+                    .ip = data.ip,
+                    .netmask = data.netmask,
+                    .gateway = data.gateway,
+                    .dns_main = data.dns_main,
+                    .dns_backup = data.dns_backup,
+                    .lease_time = data.lease_time,
+                } },
+                .dhcp_renewed => |data| .{ .dhcp_renewed = .{
+                    .interface = data.interface,
+                    .ip = data.ip,
+                    .netmask = data.netmask,
+                    .gateway = data.gateway,
+                    .dns_main = data.dns_main,
+                    .dns_backup = data.dns_backup,
+                    .lease_time = data.lease_time,
+                } },
+                .ip_lost => |data| .{ .ip_lost = .{
+                    .interface = data.interface,
+                } },
+                .static_ip_set => |data| .{ .static_ip_set = .{
+                    .interface = data.interface,
+                } },
+                .ap_sta_assigned => |data| .{ .ap_sta_assigned = .{
+                    .mac = data.mac,
+                    .ip = data.ip,
+                } },
+            };
+
+            // Push to board's event queue
+            if (!queue.trySend(.{ .net = hal_event })) {
+                log.warn("Event queue full, Net event dropped", .{});
             }
+        }
 
-            // Poll single Button
-            if (analysis.button_count > 0) {
-                const current_time = self.rtc.uptime();
-                if (self.button.poll(current_time)) |btn_event| {
-                    _ = self.events.trySend(.{ .button = .{
-                        .source = btn_event.source,
-                        .id = @enumFromInt(0),
-                        .action = btn_event.action,
-                        .timestamp_ms = current_time,
-                        .click_count = 1,
-                        .duration_ms = btn_event.duration_ms,
-                    } });
-                }
+        /// Button event callback for direct push (called from ButtonGroup.poll)
+        /// This converts ButtonGroup.Event to Board.Event and pushes to board queue
+        fn buttonEventCallback(ctx: ?*anyopaque, btn_event: if (analysis.button_group_count > 0) ButtonGroupType.Event else void) void {
+            if (analysis.button_group_count == 0) return;
+            if (ctx == null) return;
+            const queue: *EventQueueType = @ptrCast(@alignCast(ctx));
+
+            // Convert to Board.Event and push
+            if (!queue.trySend(.{ .button = .{
+                .source = btn_event.source,
+                .id = btn_event.id,
+                .action = btn_event.action,
+                .timestamp_ms = btn_event.timestamp_ms,
+                .click_count = btn_event.click_count,
+                .duration_ms = btn_event.duration_ms,
+            } })) {
+                log.warn("Event queue full, Button event dropped", .{});
             }
+        }
 
-            // Poll WiFi events
-            if (analysis.wifi_count > 0) {
-                if (self.wifi.pollEvent()) |wifi_event| {
-                    if (!self.events.trySend(.{ .wifi = wifi_event })) {
-                        log.warn("Event queue full, WiFi event dropped", .{});
-                    }
-                }
-            }
+        /// Motion event callback for direct push (called from Motion.poll)
+        fn motionEventCallback(ctx: ?*anyopaque, motion_event: if (analysis.motion_count > 0) MotionType.Event else void) void {
+            if (analysis.motion_count == 0) return;
+            if (ctx == null) return;
+            const queue: *EventQueueType = @ptrCast(@alignCast(ctx));
 
-            // Poll Net events
-            if (analysis.net_count > 0) {
-                if (self.net.pollEvent()) |net_event| {
-                    if (!self.events.trySend(.{ .net = net_event })) {
-                        log.warn("Event queue full, Net event dropped", .{});
-                    }
-                }
+            // Push directly - MotionEventPayload is the same type
+            if (!queue.trySend(.{ .motion = motion_event })) {
+                log.warn("Event queue full, Motion event dropped", .{});
             }
         }
 
@@ -903,6 +1023,32 @@ fn getSwitchType(comptime spec: type) type {
         }
     }
     @compileError("No Switch found in spec");
+}
+
+fn getImuType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (imu_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No IMU found in spec");
+}
+
+fn getMotionType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (motion_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No Motion found in spec");
 }
 
 fn ButtonEventPayload(comptime ButtonId: type) type {

@@ -8,6 +8,7 @@
         .dns = .{ .path = "../../../../lib/dns" },
         .tls = .{ .path = "../../../../lib/tls" },
         .http = .{ .path = "../../../../lib/http" },
+        .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{
         "build.zig",

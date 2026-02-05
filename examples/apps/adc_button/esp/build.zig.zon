@@ -3,12 +3,9 @@
     .version = "0.1.0",
     .fingerprint = 0x9f53cb452486582a,
     .dependencies = .{
-        .esp = .{
-            .path = "../../../../lib/esp",
-        },
-        .hal = .{
-            .path = "../../../../lib/hal",
-        },
+        .esp = .{ .path = "../../../../lib/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{
         "build.zig",

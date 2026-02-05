@@ -5,6 +5,7 @@
         .esp = .{ .path = "../../../../lib/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
         .drivers = .{ .path = "../../../../lib/drivers" },
+        .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{
         "build.zig",

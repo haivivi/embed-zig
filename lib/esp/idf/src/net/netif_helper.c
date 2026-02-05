@@ -32,8 +32,12 @@ static const char* TAG = "net_helper";
 static esp_netif_t* s_netifs[MAX_NETIFS] = {NULL};
 static int s_netif_count = 0;
 
-// Event queue for IP events
+// Event queue for IP events (deprecated, use callback instead)
 static QueueHandle_t s_event_queue = NULL;
+
+// Callback for direct event push
+static net_event_callback_t s_event_callback = NULL;
+static void* s_event_callback_ctx = NULL;
 
 /**
  * Refresh the list of network interfaces
@@ -567,16 +571,36 @@ static void get_interface_name(esp_netif_t* netif, char* name_buf, size_t buf_le
 }
 
 /**
+ * Send event via callback or queue
+ */
+static void send_event(const net_event_t* evt) {
+    if (s_event_callback != NULL) {
+        // Direct callback (preferred)
+        s_event_callback(s_event_callback_ctx, evt);
+    } else if (s_event_queue != NULL) {
+        // Legacy queue-based (deprecated)
+        xQueueSend(s_event_queue, evt, 0);
+    }
+}
+
+/**
  * IP event handler
  */
 static void ip_event_handler(void* arg, esp_event_base_t event_base,
                              int32_t event_id, void* event_data) {
     (void)arg;
     
-    ESP_LOGD(TAG, "ip_event_handler called: event_id=%ld, queue=%p", event_id, (void*)s_event_queue);
+    ESP_LOGD(TAG, "ip_event_handler called: event_id=%ld, callback=%p, queue=%p", 
+             event_id, (void*)s_event_callback, (void*)s_event_queue);
     
-    if (event_base != IP_EVENT || s_event_queue == NULL) {
-        ESP_LOGW(TAG, "Ignoring event: base=%s, queue=%p", event_base, (void*)s_event_queue);
+    if (event_base != IP_EVENT) {
+        ESP_LOGW(TAG, "Ignoring event: base=%s", event_base);
+        return;
+    }
+    
+    // Must have either callback or queue
+    if (s_event_callback == NULL && s_event_queue == NULL) {
+        ESP_LOGW(TAG, "No callback or queue configured");
         return;
     }
     
@@ -585,7 +609,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
     
     switch (event_id) {
         case IP_EVENT_STA_GOT_IP: {
-            ESP_LOGI(TAG, "GOT_IP event - sending to queue");
+            ESP_LOGI(TAG, "GOT_IP event");
             ip_event_got_ip_t* got_ip = (ip_event_got_ip_t*)event_data;
             
             evt.type = got_ip->ip_changed ? NET_EVT_DHCP_BOUND : NET_EVT_DHCP_RENEWED;
@@ -609,14 +633,14 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
             // Lease time not directly available, set to 0
             evt.data.dhcp_bound.lease_time = 0;
             
-            xQueueSend(s_event_queue, &evt, 0);
+            send_event(&evt);
             break;
         }
         
         case IP_EVENT_STA_LOST_IP: {
             evt.type = NET_EVT_IP_LOST;
             strncpy(evt.data.ip_lost.interface, "sta", sizeof(evt.data.ip_lost.interface) - 1);
-            xQueueSend(s_event_queue, &evt, 0);
+            send_event(&evt);
             break;
         }
         
@@ -627,7 +651,7 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
             memcpy(evt.data.ap_sta_assigned.mac, assigned->mac, 6);
             ip4_to_bytes(&assigned->ip, evt.data.ap_sta_assigned.ip);
             
-            xQueueSend(s_event_queue, &evt, 0);
+            send_event(&evt);
             break;
         }
         
@@ -643,14 +667,14 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
             ip4_to_bytes(&got_ip->ip_info.netmask, evt.data.dhcp_bound.netmask);
             ip4_to_bytes(&got_ip->ip_info.gw, evt.data.dhcp_bound.gateway);
             
-            xQueueSend(s_event_queue, &evt, 0);
+            send_event(&evt);
             break;
         }
         
         case IP_EVENT_ETH_LOST_IP: {
             evt.type = NET_EVT_IP_LOST;
             strncpy(evt.data.ip_lost.interface, "eth", sizeof(evt.data.ip_lost.interface) - 1);
-            xQueueSend(s_event_queue, &evt, 0);
+            send_event(&evt);
             break;
         }
         
@@ -659,28 +683,10 @@ static void ip_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-int netif_helper_event_init(void) {
-    ESP_LOGI(TAG, "netif_helper_event_init called, queue=%p", (void*)s_event_queue);
-    
-    if (s_event_queue != NULL) {
-        // Already initialized
-        ESP_LOGI(TAG, "Already initialized");
-        return 0;
-    }
-    
-    // Note: Event loop must be initialized before calling this function
-    // Use idf/event.init() to ensure event loop exists
-    
-    // Create event queue
-    s_event_queue = xQueueCreate(8, sizeof(net_event_t));
-    if (s_event_queue == NULL) {
-        ESP_LOGE(TAG, "Failed to create event queue");
-        return -1;
-    }
-    
-    ESP_LOGI(TAG, "Event queue created: %p", (void*)s_event_queue);
-    
-    // Register IP event handlers
+/**
+ * Register IP event handlers (shared by both init functions)
+ */
+static int register_ip_handlers(void) {
     esp_err_t ret;
     ret = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                         &ip_event_handler, NULL, NULL);
@@ -703,7 +709,54 @@ int netif_helper_event_init(void) {
     return 0;
 }
 
+int netif_helper_event_init_with_callback(net_event_callback_t callback, void* ctx) {
+    ESP_LOGI(TAG, "netif_helper_event_init_with_callback called, callback=%p", (void*)callback);
+    
+    // Check if already initialized with callback
+    if (s_event_callback != NULL) {
+        ESP_LOGI(TAG, "Already initialized with callback");
+        return 0;
+    }
+    
+    // Store callback
+    s_event_callback = callback;
+    s_event_callback_ctx = ctx;
+    
+    // Register handlers
+    return register_ip_handlers();
+}
+
+int netif_helper_event_init(void) {
+    ESP_LOGW(TAG, "netif_helper_event_init() is deprecated. Use netif_helper_event_init_with_callback() instead.");
+    ESP_LOGI(TAG, "netif_helper_event_init called, queue=%p", (void*)s_event_queue);
+    
+    if (s_event_queue != NULL || s_event_callback != NULL) {
+        // Already initialized
+        ESP_LOGI(TAG, "Already initialized");
+        return 0;
+    }
+    
+    // Note: Event loop must be initialized before calling this function
+    // Use idf/event.init() to ensure event loop exists
+    
+    // Create event queue (deprecated path)
+    s_event_queue = xQueueCreate(8, sizeof(net_event_t));
+    if (s_event_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create event queue");
+        return -1;
+    }
+    
+    ESP_LOGI(TAG, "Event queue created: %p", (void*)s_event_queue);
+    
+    // Register handlers
+    return register_ip_handlers();
+}
+
 bool netif_helper_poll_event(net_event_t* event) {
+    // This function is deprecated - use callback-based API instead
+    if (s_event_callback != NULL) {
+        ESP_LOGW(TAG, "poll_event() called but callback is registered - events go to callback, not queue");
+    }
     if (s_event_queue == NULL || event == NULL) {
         return false;
     }

@@ -23,6 +23,13 @@ const hal = @import("hal");
 const drivers = @import("drivers");
 
 // ============================================================================
+// Thread-safe Queue (for HAL event queue)
+// ============================================================================
+
+/// FreeRTOS-based thread-safe queue for multi-task event handling
+pub const Queue = idf.Queue;
+
+// ============================================================================
 // Board Identification
 // ============================================================================
 
@@ -119,6 +126,98 @@ pub const pca9557_dvp_pwdn: u8 = 2; // IO2: Camera power down
 
 /// QMI8658 I2C address
 pub const qmi8658_addr: u7 = 0x6A;
+
+/// QMI8658 driver type (requires I2C and Time interfaces)
+const Qmi8658ImuDriver = drivers.Qmi8658(*idf.I2c, impl.time.Time);
+
+/// IMU driver for HAL integration
+/// Wraps QMI8658 and provides the interface expected by hal.imu
+pub const ImuDriver = struct {
+    const Self = @This();
+
+    inner: Qmi8658ImuDriver = undefined,
+    i2c: ?*idf.I2c = null,
+    initialized: bool = false,
+
+    pub fn init() !Self {
+        return Self{};
+    }
+
+    /// Initialize with external I2C bus
+    pub fn initWithI2c(self: *Self, i2c: *idf.I2c) !void {
+        if (self.initialized) return;
+
+        self.i2c = i2c;
+        self.inner = Qmi8658ImuDriver.init(i2c, .{
+            .address = qmi8658_addr,
+            .accel_range = .@"4g",
+            .gyro_range = .@"512dps",
+            .accel_odr = .@"125Hz",
+            .gyro_odr = .@"125Hz",
+        });
+
+        try self.inner.open();
+        log.info("ImuDriver: QMI8658 @ 0x{x} initialized", .{qmi8658_addr});
+        self.initialized = true;
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.initialized) {
+            self.inner.close() catch {};
+            self.initialized = false;
+        }
+    }
+
+    /// Read accelerometer data in g (required by hal.imu)
+    pub fn readAccel(self: *Self) !hal.AccelData {
+        if (!self.initialized) return error.NotInitialized;
+
+        const data = try self.inner.readScaled();
+        return .{
+            .x = data.acc_x,
+            .y = data.acc_y,
+            .z = data.acc_z,
+        };
+    }
+
+    /// Read gyroscope data in dps (required by hal.imu for has_gyro)
+    pub fn readGyro(self: *Self) !hal.GyroData {
+        if (!self.initialized) return error.NotInitialized;
+
+        const data = try self.inner.readScaled();
+        return .{
+            .x = data.gyr_x,
+            .y = data.gyr_y,
+            .z = data.gyr_z,
+        };
+    }
+
+    /// Read angles (optional, for convenience)
+    pub fn readAngles(self: *Self) !struct { roll: f32, pitch: f32 } {
+        if (!self.initialized) return error.NotInitialized;
+
+        const angles = try self.inner.readAngles();
+        return .{ .roll = angles.roll, .pitch = angles.pitch };
+    }
+
+    /// Read temperature
+    pub fn readTemperature(self: *Self) !f32 {
+        if (!self.initialized) return error.NotInitialized;
+        return self.inner.readTemperature();
+    }
+
+    /// Check if data is ready
+    pub fn isDataReady(self: *Self) !bool {
+        if (!self.initialized) return false;
+        return self.inner.isDataReady();
+    }
+};
+
+/// IMU spec for HAL
+pub const imu_spec = struct {
+    pub const Driver = ImuDriver;
+    pub const meta = .{ .id = "imu.qmi8658" };
+};
 
 // ============================================================================
 // LCD Configuration (SPI)

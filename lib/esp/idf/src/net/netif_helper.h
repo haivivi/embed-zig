@@ -212,14 +212,39 @@ void netif_helper_stop_dhcps(const char* name);
 // ============================================================================
 
 /**
+ * Callback function type for net events
+ * Called from ESP-IDF event handler context when IP events occur.
+ * 
+ * @param ctx User context pointer (passed to init function)
+ * @param event Pointer to the event data (valid only during callback)
+ */
+typedef void (*net_event_callback_t)(void* ctx, const net_event_t* event);
+
+/**
+ * Initialize net event system with callback (registers IP_EVENT handlers)
+ * Call this after esp_event_loop_create_default() and esp_netif_init()
+ * 
+ * Events are delivered directly via callback instead of internal queue.
+ * 
+ * @param callback Function to call when events occur (can be NULL to disable)
+ * @param ctx User context pointer passed to callback
+ * @return 0 on success, -1 on failure
+ */
+int netif_helper_event_init_with_callback(net_event_callback_t callback, void* ctx);
+
+/**
  * Initialize net event system (registers IP_EVENT handlers)
  * Call this after esp_event_loop_create_default() and esp_netif_init()
+ * 
+ * @deprecated Use netif_helper_event_init_with_callback() for direct push
  */
 int netif_helper_event_init(void);
 
 /**
  * Poll for net events (non-blocking)
  * Returns true if event available, fills event structure
+ * 
+ * @deprecated Use callback-based API instead
  */
 bool netif_helper_poll_event(net_event_t* event);
 

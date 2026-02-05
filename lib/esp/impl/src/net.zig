@@ -134,41 +134,22 @@ pub const DhcpServerConfig = struct {
 // Net Driver (HAL-compatible)
 // ============================================================================
 
+/// Callback type for event notifications
+pub const EventCallback = *const fn (ctx: ?*anyopaque, event: NetEvent) void;
+
 /// Network interface driver for HAL
 pub const NetDriver = struct {
+    /// Event callback type (exported for HAL access)
+    pub const CallbackType = EventCallback;
+    /// Event type (exported for HAL access)
+    pub const EventType = NetEvent;
     const Self = @This();
 
     initialized: bool = false,
+    use_callback: bool = false,
 
-    /// Initialize network event system
-    /// Ensures event loop exists and registers IP event handlers
-    pub fn init() Error!Self {
-        const idf_event = @import("idf").event;
-
-        // Ensure event loop exists (idempotent)
-        idf_event.init() catch {
-            return error.InitFailed;
-        };
-
-        // Register IP event handlers
-        netif.eventInit() catch {
-            return error.InitFailed;
-        };
-
-        std.log.info("[net] Network event system initialized", .{});
-
-        return .{ .initialized = true };
-    }
-
-    /// Deinitialize (currently no cleanup needed)
-    pub fn deinit(self: *Self) void {
-        self.initialized = false;
-    }
-
-    /// Poll for network events
-    pub fn pollEvent(_: *Self) ?NetEvent {
-        const idf_event = netif.pollEvent() orelse return null;
-
+    /// Convert netif.Event to NetEvent
+    fn convertEvent(idf_event: netif.Event) NetEvent {
         return switch (idf_event) {
             .dhcp_bound => |data| NetEvent{
                 .dhcp_bound = .{
@@ -209,6 +190,85 @@ pub const NetDriver = struct {
                 },
             },
         };
+    }
+
+    /// Stored callback for forwarding events
+    var s_event_callback: ?EventCallback = null;
+    var s_event_callback_ctx: ?*anyopaque = null;
+
+    /// Internal callback that forwards to user callback
+    fn internalCallback(ctx: ?*anyopaque, event: netif.Event) void {
+        _ = ctx;
+        if (s_event_callback) |callback| {
+            callback(s_event_callback_ctx, convertEvent(event));
+        }
+    }
+
+    /// Initialize network event system with callback (direct push)
+    /// Events are delivered directly to the callback from ESP-IDF event handler context.
+    pub fn initWithCallback(callback: EventCallback, ctx: ?*anyopaque) Error!Self {
+        const idf_event = @import("idf").event;
+
+        // Ensure event loop exists (idempotent)
+        idf_event.init() catch {
+            return error.InitFailed;
+        };
+
+        // Store callback
+        s_event_callback = callback;
+        s_event_callback_ctx = ctx;
+
+        // Register IP event handlers with callback
+        netif.eventInitWithCallback(internalCallback, null) catch {
+            s_event_callback = null;
+            s_event_callback_ctx = null;
+            return error.InitFailed;
+        };
+
+        std.log.info("[net] Network event system initialized (callback mode)", .{});
+
+        return .{ .initialized = true, .use_callback = true };
+    }
+
+    /// Initialize network event system (polling mode)
+    /// @deprecated Use initWithCallback() for direct push
+    /// Ensures event loop exists and registers IP event handlers
+    pub fn init() Error!Self {
+        const idf_event = @import("idf").event;
+
+        // Ensure event loop exists (idempotent)
+        idf_event.init() catch {
+            return error.InitFailed;
+        };
+
+        // Register IP event handlers (legacy queue-based)
+        netif.eventInit() catch {
+            return error.InitFailed;
+        };
+
+        std.log.info("[net] Network event system initialized (polling mode - deprecated)", .{});
+
+        return .{ .initialized = true, .use_callback = false };
+    }
+
+    /// Deinitialize (currently no cleanup needed)
+    pub fn deinit(self: *Self) void {
+        if (self.use_callback) {
+            s_event_callback = null;
+            s_event_callback_ctx = null;
+        }
+        self.initialized = false;
+    }
+
+    /// Poll for network events (deprecated when using callback mode)
+    /// @deprecated Use initWithCallback() for direct push instead of polling
+    pub fn pollEvent(self: *Self) ?NetEvent {
+        if (self.use_callback) {
+            // In callback mode, events go directly to callback, not poll
+            return null;
+        }
+        const idf_event = netif.pollEvent() orelse return null;
+        return convertEvent(idf_event);
     }
 
     /// Get interface info by name

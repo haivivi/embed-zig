@@ -19,7 +19,7 @@
 //!         pub fn init() Error!Self;
 //!         pub fn deinit(self: *Self) void;
 //!
-//!         // Event polling - called by board.poll()
+//!         // Event polling - events pushed via ESP-IDF callbacks
 //!         pub fn pollEvent(self: *Self) ?NetEvent;
 //!
 //!         // Query functions
@@ -260,7 +260,7 @@ pub fn from(comptime spec: type) type {
         // Event Polling
         // ================================================================
 
-        /// Poll for Net events (called by board.poll())
+        /// Poll for Net events (legacy - events now pushed via callbacks)
         /// Returns the next pending event, or null if none
         pub fn pollEvent(self: *Self) ?NetEvent {
             const driver_event = self.driver.pollEvent() orelse return null;

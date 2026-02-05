@@ -36,7 +36,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/esp/idf/src/event/event.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
-    deps = ["//lib/hal", "//lib/trait", "//lib/tls", "//lib/dns", "//lib/http"],
+    deps = ["//lib/hal", "//lib/trait", "//lib/tls", "//lib/dns", "//lib/http", "//lib/motion", "//lib/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",
     app_config = "//examples/esp:app",
     env = ":env",

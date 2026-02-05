@@ -7,5 +7,5 @@ package(default_visibility = ["//visibility:public"])
 zig_lib(
     name = "drivers",
     srcs = glob(["**/*"]),
-    deps = ["//lib/trait"],
+    deps = ["//lib/trait", "//lib/math"],
 )

@@ -15,6 +15,13 @@ const impl = @import("impl");
 const hal = @import("hal");
 
 // ============================================================================
+// Thread-safe Queue (for HAL event queue)
+// ============================================================================
+
+/// FreeRTOS-based thread-safe queue for multi-task event handling
+pub const Queue = idf.Queue;
+
+// ============================================================================
 // Board Identification
 // ============================================================================
 

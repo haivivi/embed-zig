@@ -117,7 +117,7 @@ fn runLocalTest(server_ip: [4]u8, port: u16, path: []const u8, test_name: []cons
     // Receive response with streaming (larger buffer for throughput)
     var total_bytes: usize = 0;
     var last_print: usize = 0;
-    var recv_buf: [16384]u8 = undefined;  // 16KB buffer
+    var recv_buf: [16384]u8 = undefined; // 16KB buffer
     var header_done = false;
     var status_logged = false;
     var first_chunk = true;
@@ -519,9 +519,6 @@ pub fn run(env: anytype) void {
 
     // Event loop
     while (Board.isRunning()) {
-        // Poll for events
-        b.poll();
-
         // Process events
         while (b.nextEvent()) |event| {
             switch (event) {

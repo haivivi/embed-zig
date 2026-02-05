@@ -6,6 +6,7 @@
         .esp = .{ .path = "../../../../lib/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
         .ntp = .{ .path = "../../../../lib/ntp" },
+        .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{
         "build.zig",

@@ -7,6 +7,7 @@
         .hal = .{ .path = "../../../../lib/hal" },
         .drivers = .{ .path = "../../../../lib/drivers" },
         .raysim = .{ .path = "../../../../lib/raysim" },
+        .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{
         "build.zig",

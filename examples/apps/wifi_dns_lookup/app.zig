@@ -214,8 +214,6 @@ pub fn run(env: anytype) void {
     var dhcp_dns: [4]u8 = .{ 0, 0, 0, 0 }; // DNS from DHCP
 
     while (Board.isRunning()) {
-        b.poll();
-
         while (b.nextEvent()) |event| {
             switch (event) {
                 .wifi => |wifi_event| {

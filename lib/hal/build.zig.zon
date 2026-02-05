@@ -9,5 +9,6 @@
     },
     .dependencies = .{
         .trait = .{ .path = "../trait" },
+        .motion = .{ .path = "../motion" },
     },
 }
