@@ -4,6 +4,7 @@ const std = @import("std");
 pub const BoardType = enum {
     korvo2_v3,
     esp32s3_devkit,
+    lichuang_szp,
     sim_raylib,
 };
 

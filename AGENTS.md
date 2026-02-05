@@ -146,6 +146,82 @@ pub const button = esp.adc.Button(.{
 
 ---
 
+### Driver
+
+**Goal**: Keep board definitions simple. Reusable drivers belong in the platform layer.
+
+#### Three-Layer Architecture
+
+| Layer | Location | Responsibility |
+|-------|----------|----------------|
+| **Platform** | `lib/{platform}/` | Generic driver implementations (core, most important) |
+| **BSP** | `lib/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
+| **App Board** | `examples/apps/{app}/esp/{board}.zig` | Dependency injection (keep it simple) |
+
+#### Layer 1: Platform (Core Implementations)
+
+**Location**: `lib/esp/idf/src/speaker.zig`
+
+Encapsulate reusable driver logic:
+- Combine low-level components (DAC + I2S)
+- Handle data format conversion
+- Provide unified interface
+
+```zig
+// lib/esp/idf/src/speaker.zig
+pub fn Speaker(comptime Dac: type) type {
+    return struct {
+        dac: *Dac,
+        i2s: *I2s,
+        pub fn write(self: *Self, buffer: []const i16) !usize { ... }
+        pub fn setVolume(self: *Self, volume: u8) !void { ... }
+    };
+}
+```
+
+#### Layer 2: BSP (Board-Specific)
+
+**Location**: `lib/esp/src/boards/{board}.zig`
+
+Only board-specific configurations:
+- GPIO/I2C pin definitions
+- Hardware parameters (addresses, clocks)
+- Special initialization logic
+
+```zig
+// lib/esp/src/boards/korvo2_v3.zig
+pub const i2c_config = .{ .sda = 17, .scl = 18 };
+pub const speaker_config = .{ .dac_addr = 0x18, .pa_gpio = 12 };
+```
+
+#### Layer 3: App Board (Dependency Injection)
+
+**Location**: `examples/apps/{app}/esp/{board}.zig`
+
+Import and assemble only, no logic implementation:
+
+```zig
+// examples/apps/speaker_test/esp/korvo2_v3.zig
+const board = esp.boards.korvo2_v3;
+pub const SpeakerDriver = board.SpeakerDriver;  // Reuse directly
+pub const speaker_spec = board.speaker_spec;
+```
+
+#### Anti-pattern
+
+**Don't** duplicate driver implementation in app board files:
+
+```zig
+// BAD: Reimplementing driver in app layer
+pub const SpeakerDriver = struct {
+    pub fn write(...) { /* duplicated logic */ }
+};
+```
+
+**Do** reuse existing platform layer implementations.
+
+---
+
 ## 2. How-to Recipes
 
 ### Build & Flash

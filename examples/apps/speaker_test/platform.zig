@@ -1,11 +1,16 @@
 //! Platform Configuration - Speaker Test
 //!
-//! Supports: Korvo-2 V3 (ES8311 mono DAC + PA control)
+//! Supports: Korvo-2 V3, LiChuang SZP (ES8311 mono DAC + PA control)
 
 const std = @import("std");
 const hal = @import("hal");
 const esp = @import("esp");
-const hw = @import("esp/korvo2_v3.zig");
+const build_options = @import("build_options");
+
+const hw = switch (build_options.board) {
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .lichuang_szp => @import("esp/lichuang_szp.zig"),
+};
 
 const idf = esp.idf;
 
@@ -67,8 +72,13 @@ pub const Board = struct {
         try self.speaker.initWithShared(&self.i2c, &self.i2s);
         errdefer self.speaker.deinit();
 
-        // Initialize PA switch
-        self.pa_switch = try hw.PaSwitchDriver.init();
+        // Initialize PA switch (different init method per board)
+        if (@hasDecl(hw.PaSwitchDriver, "initWithI2c")) {
+            // LiChuang SZP uses I2C GPIO expander, I2C already initialized
+            self.pa_switch = try hw.PaSwitchDriver.initWithI2c(false);
+        } else {
+            self.pa_switch = try hw.PaSwitchDriver.init();
+        }
         errdefer self.pa_switch.deinit();
 
         self.initialized = true;
