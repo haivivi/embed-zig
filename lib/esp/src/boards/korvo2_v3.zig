@@ -176,10 +176,8 @@ const audio_system = @import("../audio_system.zig");
 /// - ES8311 DAC (mono speaker)
 /// - I2S duplex for audio data
 /// - AEC (Acoustic Echo Cancellation)
+/// I2C is managed externally and passed to AudioSystem.init()
 pub const AudioSystem = audio_system.AudioSystem(.{
-    .i2c_sda = i2c_sda,
-    .i2c_scl = i2c_scl,
-    .i2c_freq_hz = i2c_freq_hz,
     .i2s_port = i2s_port,
     .i2s_bclk = i2s_bclk,
     .i2s_ws = i2s_ws,
@@ -232,7 +230,9 @@ pub const PaSwitchDriver = struct {
 
     is_on: bool = false,
 
-    pub fn init() !Self {
+    /// Initialize PA switch driver
+    /// Note: i2c parameter is for API compatibility with other boards (ignored here, uses direct GPIO)
+    pub fn init(_: *idf.I2c) !Self {
         try gpio.configOutput(pa_gpio);
         try gpio.setLevel(pa_gpio, 0);
         return Self{ .is_on = false };
@@ -392,31 +392,14 @@ pub const LedDriver = struct {
     const BLUE_PIN: Pin = @enumFromInt(led_blue_pin);
 
     initialized: bool = false,
-    i2c_initialized_here: bool = false,
-    i2c: idf.I2c = undefined,
     gpio: Tca9554Driver = undefined,
 
-    pub fn init() !Self {
-        return initWithI2c(null);
-    }
-
-    /// Initialize with optional external I2C (pass null to auto-init)
-    pub fn initWithI2c(external_i2c: ?bool) !Self {
+    /// Initialize with external I2C (managed by caller)
+    pub fn init(i2c: *idf.I2c) !Self {
         var self = Self{};
 
-        // Initialize I2C if not provided externally
-        const i2c_external = external_i2c orelse false;
-        if (!i2c_external) {
-            self.i2c = idf.I2c.init(.{
-                .sda = i2c_sda,
-                .scl = i2c_scl,
-                .freq_hz = i2c_freq_hz,
-            }) catch return error.I2cInitFailed;
-            self.i2c_initialized_here = true;
-        }
-
         // Initialize TCA9554 GPIO expander driver
-        self.gpio = Tca9554Driver.init(&self.i2c, tca9554_addr);
+        self.gpio = Tca9554Driver.init(i2c, tca9554_addr);
 
         // Sync current state from device
         self.gpio.syncFromDevice() catch return error.GpioInitFailed;
@@ -435,10 +418,7 @@ pub const LedDriver = struct {
             // Turn off LEDs (set high = off)
             self.gpio.setHigh(RED_PIN) catch |err| log.warn("LedDriver deinit: failed to turn off red LED: {}", .{err});
             self.gpio.setHigh(BLUE_PIN) catch |err| log.warn("LedDriver deinit: failed to turn off blue LED: {}", .{err});
-
-            if (self.i2c_initialized_here) {
-                self.i2c.deinit();
-            }
+            // I2C is managed externally, don't deinit here
             self.initialized = false;
         }
     }

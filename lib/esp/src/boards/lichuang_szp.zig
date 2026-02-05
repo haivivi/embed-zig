@@ -74,10 +74,6 @@ pub const i2c_scl: u8 = 2;
 /// I2C frequency (Hz)
 pub const i2c_freq_hz: u32 = 100_000;
 
-/// Module-level I2C initialization state (shared between AudioSystem and PaSwitchDriver)
-var i2c_initialized: bool = false;
-var shared_i2c: idf.I2c = undefined;
-
 // ============================================================================
 // I2S Audio Configuration
 // ============================================================================
@@ -180,10 +176,8 @@ pub fn isRunning() bool {
 const audio_system = @import("../audio_system.zig");
 
 /// Base AudioSystem type with board-specific configuration
+/// I2C is managed externally and passed to AudioSystem.init()
 const BaseAudioSystem = audio_system.AudioSystem(.{
-    .i2c_sda = i2c_sda,
-    .i2c_scl = i2c_scl,
-    .i2c_freq_hz = i2c_freq_hz,
     .i2s_port = i2s_port,
     .i2s_bclk = i2s_bclk,
     .i2s_ws = i2s_ws,
@@ -262,32 +256,14 @@ pub const PaSwitchDriver = struct {
     const PA_EN_PIN: Pin = @enumFromInt(pca9557_pa_en);
 
     is_on: bool = false,
-    i2c_initialized_here: bool = false,
-    i2c: idf.I2c = undefined,
     gpio: Tca9554Driver = undefined,
 
-    /// Initialize PA switch driver
-    /// Automatically detects if I2C is already initialized (by AudioSystem or idf.I2c)
-    pub fn init() !Self {
+    /// Initialize PA switch driver with external I2C bus
+    pub fn init(i2c: *idf.I2c) !Self {
         var self = Self{};
 
-        // Check module-level I2C state - skip init if already done by our code
-        if (!i2c_initialized) {
-            self.i2c = idf.I2c.init(.{
-                .sda = i2c_sda,
-                .scl = i2c_scl,
-                .freq_hz = i2c_freq_hz,
-            }) catch return error.I2cInitFailed;
-            shared_i2c = self.i2c;
-            self.i2c_initialized_here = true;
-            i2c_initialized = true;
-        } else {
-            // Use the shared I2C instance initialized by AudioSystem
-            self.i2c = shared_i2c;
-        }
-
         // Initialize PCA9557 GPIO expander driver (compatible with TCA9554)
-        self.gpio = Tca9554Driver.init(&self.i2c, pca9557_addr);
+        self.gpio = Tca9554Driver.init(i2c, pca9557_addr);
 
         // Sync current state from device
         self.gpio.syncFromDevice() catch return error.GpioInitFailed;
@@ -301,10 +277,7 @@ pub const PaSwitchDriver = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.is_on) self.off() catch |err| log.warn("PA off failed in deinit: {}", .{err});
-        if (self.i2c_initialized_here) {
-            self.i2c.deinit();
-            i2c_initialized = false;
-        }
+        // I2C is managed externally, don't deinit here
     }
 
     pub fn on(self: *Self) !void {
@@ -502,58 +475,17 @@ pub const TempSensorDriver = struct {
 };
 
 // ============================================================================
-// Audio System Wrapper (handles shared I2C for PaSwitchDriver)
+// Audio System (re-export from generic audio_system)
 // ============================================================================
 
 /// AudioSystem manages the complete audio subsystem for LiChuang SZP.
-/// This is a wrapper around the generic AudioSystem that handles
-/// the shared I2C bus with PaSwitchDriver.
-pub const AudioSystem = struct {
-    const Self = @This();
-
-    inner: BaseAudioSystem = undefined,
-
-    /// Initialize the audio system and set up shared I2C
-    pub fn init() !Self {
-        var self = Self{};
-        self.inner = try BaseAudioSystem.init();
-
-        // Set up shared I2C for PaSwitchDriver
-        shared_i2c = self.inner.getI2c().*;
-        i2c_initialized = true;
-
-        return self;
-    }
-
-    /// Deinitialize the audio system
-    pub fn deinit(self: *Self) void {
-        self.inner.deinit();
-        i2c_initialized = false;
-    }
-
-    /// Read AEC-processed audio from microphone
-    pub fn readMic(self: *Self, buffer: []i16) !usize {
-        return self.inner.readMic(buffer);
-    }
-
-    /// Write audio to speaker
-    pub fn writeSpeaker(self: *Self, buffer: []const i16) !usize {
-        return self.inner.writeSpeaker(buffer);
-    }
-
-    /// Get the AEC frame size (optimal read buffer size)
-    pub fn getFrameSize(self: *const Self) usize {
-        return self.inner.getFrameSize();
-    }
-
-    /// Set speaker volume (0-255)
-    pub fn setVolume(self: *Self, volume: u8) void {
-        self.inner.setVolume(volume);
-    }
-
-    /// Get the I2C instance (for sharing with other drivers)
-    pub fn getI2c(self: *Self) *idf.I2c {
-        return self.inner.getI2c();
-    }
-};
+/// Uses the generic AudioSystem with board-specific configuration.
+///
+/// Usage with shared I2C (recommended):
+/// ```
+/// var i2c = try idf.I2c.init(.{ .sda = i2c_sda, .scl = i2c_scl, .freq_hz = i2c_freq_hz });
+/// var audio = try AudioSystem.initWithI2c(&i2c);
+/// var pa = try PaSwitchDriver.init(&i2c);
+/// ```
+pub const AudioSystem = BaseAudioSystem;
 

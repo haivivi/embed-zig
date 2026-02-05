@@ -60,12 +60,8 @@ extern fn aec_helper_destroy(handle: *AecHandle) void;
 // ============================================================================
 
 /// Configuration for AudioSystem
+/// Note: I2C is managed externally and passed to init()
 pub const AudioConfig = struct {
-    // I2C configuration
-    i2c_sda: u8,
-    i2c_scl: u8,
-    i2c_freq_hz: u32 = 400_000,
-
     // I2S configuration
     i2s_port: u8 = 0,
     i2s_bclk: u8,
@@ -102,8 +98,8 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
         aec_handle: ?*AecHandle = null,
         aec_frame_size: usize = 256,
 
-        // Audio codec drivers
-        i2c: idf.I2c = undefined,
+        // Audio codec drivers (I2C is managed externally)
+        i2c_ptr: *idf.I2c = undefined,
         es8311: Es8311Driver = undefined,
         es7210: Es7210Driver = undefined,
 
@@ -113,32 +109,22 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
         aec_output: ?[]i16 = null,
         tx_buffer_32: ?[]i32 = null,
 
-        /// Get the I2C instance (for sharing with other drivers)
-        pub fn getI2c(self: *Self) *idf.I2c {
-            return &self.i2c;
-        }
-
-        /// Initialize the audio system: I2C, I2S, codecs, and AEC
-        pub fn init() !Self {
+        /// Initialize the audio system with external I2C bus
+        /// I2C must be initialized by caller and remains owned by caller
+        pub fn init(i2c: *idf.I2c) !Self {
             var self = Self{};
+            self.i2c_ptr = i2c;
 
-            log.info("AudioSystem: Init I2C (SDA={}, SCL={})", .{ config.i2c_sda, config.i2c_scl });
-            self.i2c = idf.I2c.init(.{
-                .sda = config.i2c_sda,
-                .scl = config.i2c_scl,
-                .freq_hz = config.i2c_freq_hz,
-            }) catch return error.I2cInitFailed;
-            errdefer self.i2c.deinit();
-
+            log.info("AudioSystem: Init with external I2C", .{});
             log.info("AudioSystem: Init ES8311 (DAC @ 0x{x})", .{config.es8311_addr});
-            self.es8311 = Es8311Driver.init(&self.i2c, .{ .address = config.es8311_addr });
+            self.es8311 = Es8311Driver.init(self.i2c_ptr, .{ .address = config.es8311_addr });
             self.es8311.open() catch |err| {
                 log.err("ES8311 open failed: {}", .{err});
                 return error.CodecInitFailed;
             };
 
             log.info("AudioSystem: Init ES7210 (ADC @ 0x{x})", .{config.es7210_addr});
-            self.es7210 = Es7210Driver.init(&self.i2c, .{
+            self.es7210 = Es7210Driver.init(self.i2c_ptr, .{
                 .address = config.es7210_addr,
                 .mic_select = config.mic_select,
             });
@@ -256,7 +242,7 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             _ = i2s_helper_deinit(config.i2s_port);
             self.es7210.close() catch |err| log.warn("ES7210 close failed: {}", .{err});
             self.es8311.close() catch |err| log.warn("ES8311 close failed: {}", .{err});
-            self.i2c.deinit();
+            // I2C is managed externally, don't deinit here
             self.initialized = false;
             log.info("AudioSystem: Deinitialized", .{});
         }

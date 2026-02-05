@@ -86,6 +86,8 @@ pub const ClockOff = struct {
     pub const ALL_OFF: u8 = 0x3F;
     /// All clocks on
     pub const ALL_ON: u8 = 0x00;
+    /// Stop all clocks completely (used in stop/power-down)
+    pub const STOP_ALL: u8 = 0x7F;
     /// MIC12 ADC clock select bits
     pub const MIC12_CLK: u8 = 0x0B;
     /// MIC34 ADC clock select bits
@@ -676,7 +678,7 @@ pub fn Es7210(comptime I2cImpl: type) type {
             try self.writeRegister(.mic12_power, MicPower.OFF);
             try self.writeRegister(.mic34_power, MicPower.OFF);
             try self.writeRegister(.analog, AnalogReg.LOW_POWER);
-            try self.writeRegister(.clock_off, 0x7F);
+            try self.writeRegister(.clock_off, ClockOff.STOP_ALL);
             try self.writeRegister(.power_down, PowerDown.ALL_OFF);
         }
 

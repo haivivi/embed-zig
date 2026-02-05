@@ -105,6 +105,8 @@ pub const ResetReg = struct {
 pub const ClkManager01 = struct {
     /// All clocks on
     pub const MCLK_ON: u8 = 0x3F;
+    /// All clocks off completely (used in stop/power-down)
+    pub const ALL_OFF: u8 = 0x00;
     /// MCLK select internal (from BCLK)
     pub const MCLK_SEL_INTERNAL: u8 = 0x80;
     /// MCLK select external (from pad)
@@ -660,7 +662,7 @@ pub fn Es8311(comptime I2cImpl: type) type {
             try self.writeRegister(.reset, ResetReg.SOFT_RESET_1);
             try self.writeRegister(.reset, ResetReg.ALL_OFF);
             try self.writeRegister(.clk_manager_01, ClkManager01.INIT_OFF);
-            try self.writeRegister(.clk_manager_01, 0x00);
+            try self.writeRegister(.clk_manager_01, ClkManager01.ALL_OFF);
             try self.writeRegister(.gp_45, 0x00);
             try self.writeRegister(.system_0d, 0xFC);
             try self.writeRegister(.clk_manager_02, 0x00);
