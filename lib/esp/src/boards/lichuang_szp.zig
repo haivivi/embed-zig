@@ -868,7 +868,7 @@ pub const AudioSystem = struct {
 
         const frames_read = bytes_read / @sizeOf(i32) / 2;
 
-        // 信号强度统计
+        // Signal strength statistics (static, persists across calls)
         const S = struct {
             var count: u32 = 0;
             var max_mic: i32 = 0;
@@ -877,7 +877,7 @@ pub const AudioSystem = struct {
         };
 
         // Extract MIC1 and REF - pack as "RM" (ref first, mic second)
-        // 立创实战派: L 高16位 = mic1, L 低16位 = ref
+        // LiChuang SZP I2S format: L[31:16] = mic1, L[15:0] = ref
         for (0..frames_read) |i| {
             const L = raw_buf[i * 2];
             const mic1: i16 = @truncate(L >> 16);
@@ -899,7 +899,7 @@ pub const AudioSystem = struct {
             if (@abs(aec_out[i]) > S.max_out) S.max_out = @abs(aec_out[i]);
         }
 
-        // 每 64 帧打印一次 (约每秒)
+        // Log every 64 frames (~1 second at 16kHz/256 frame size)
         S.count += 1;
         if (S.count >= 64) {
             log.info("Signal: mic={}, ref={}, out={}", .{ S.max_mic, S.max_ref, S.max_out });
