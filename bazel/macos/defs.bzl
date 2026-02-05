@@ -17,7 +17,7 @@ def _generate_copy_commands_preserve_structure(files):
     commands = []
     for f in files:
         rel_path = f.short_path
-        commands.append('mkdir -p "$WORK/$(dirname {})" && cp "{}" "$WORK/{}"'.format(
+        commands.append('mkdir -p "$WORK/$(dirname \"{}\")" && cp "{}" "$WORK/{}"'.format(
             rel_path, f.path, rel_path
         ))
     return commands

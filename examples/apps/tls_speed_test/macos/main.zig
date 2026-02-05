@@ -54,6 +54,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
         std.debug.print("Socket create failed: {}\n", .{err});
         return null;
     };
+    defer sock.close();
 
     // Set generous timeouts for large transfers
     sock.setRecvTimeout(30000);
@@ -62,7 +63,6 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
     // Connect
     sock.connect(config.server_ip, config.port) catch |err| {
         std.debug.print("Connect failed: {}\n", .{err});
-        sock.close();
         return null;
     };
     std.debug.print("TCP connected to {}.{}.{}.{}:{}\n", .{
@@ -84,7 +84,6 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
         .timeout_ms = 30000,
     }) catch |err| {
         std.debug.print("TLS init failed: {}\n", .{err});
-        sock.close();
         return null;
     };
 

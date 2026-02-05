@@ -160,7 +160,7 @@ pub const P256 = struct {
         const pk = Curve.fromSec1(&peer_public_key) catch {
             return error.InvalidPublicKey;
         };
-        const shared = pk.mulPublic(sk.toBytes(.big), .big) catch {
+        const shared = pk.mul(sk.toBytes(.big), .big) catch {
             return error.InvalidOperation;
         };
         return shared.affineCoordinates().x.toBytes(.big);
@@ -207,7 +207,7 @@ pub const P384 = struct {
         const pk = Curve.fromSec1(&peer_public_key) catch {
             return error.InvalidPublicKey;
         };
-        const shared = pk.mulPublic(sk.toBytes(.big), .big) catch {
+        const shared = pk.mul(sk.toBytes(.big), .big) catch {
             return error.InvalidOperation;
         };
         return shared.affineCoordinates().x.toBytes(.big);

@@ -71,6 +71,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         log.err("Socket create failed: {}", .{err});
         return null;
     };
+    defer sock.close();
 
     // Set generous timeouts for large transfers
     sock.setRecvTimeout(30000);
@@ -79,7 +80,6 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     // Connect
     sock.connect(config.server_ip, config.port) catch |err| {
         log.err("Connect failed: {}", .{err});
-        sock.close();
         return null;
     };
     log.info("TCP connected to {}.{}.{}.{}:{}", .{
@@ -101,7 +101,6 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         .timeout_ms = 30000,
     }) catch |err| {
         log.err("TLS init failed: {}", .{err});
-        sock.close();
         return null;
     };
 
