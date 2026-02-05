@@ -239,8 +239,6 @@ pub fn run(env: anytype) void {
 
     // Event loop
     while (Board.isRunning()) {
-        b.poll();
-
         while (b.nextEvent()) |event| {
             switch (event) {
                 .wifi => |wifi_event| {
