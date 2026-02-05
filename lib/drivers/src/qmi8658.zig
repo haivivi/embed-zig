@@ -424,8 +424,9 @@ pub fn Qmi8658(comptime I2cImpl: type, comptime TimeImpl: type) type {
         pub fn setAccelRange(self: *Self, range: qmi8658.AccelRange) !void {
             self.config.accel_range = range;
             if (self.is_open) {
-                const ctrl2 = (@as(u8, @intFromEnum(self.config.accel_odr)) << 4) |
-                    @as(u8, @intFromEnum(range));
+                // CTRL2 format: Bits 6:4 = aFS (range), Bits 3:0 = aODR
+                const ctrl2 = (@as(u8, @intFromEnum(range)) << 4) |
+                    @as(u8, @intFromEnum(self.config.accel_odr));
                 try self.writeRegister(.ctrl2, ctrl2);
             }
         }
@@ -434,8 +435,9 @@ pub fn Qmi8658(comptime I2cImpl: type, comptime TimeImpl: type) type {
         pub fn setGyroRange(self: *Self, range: qmi8658.GyroRange) !void {
             self.config.gyro_range = range;
             if (self.is_open) {
-                const ctrl3 = (@as(u8, @intFromEnum(self.config.gyro_odr)) << 4) |
-                    @as(u8, @intFromEnum(range));
+                // CTRL3 format: Bits 6:4 = gFS (range), Bits 3:0 = gODR
+                const ctrl3 = (@as(u8, @intFromEnum(range)) << 4) |
+                    @as(u8, @intFromEnum(self.config.gyro_odr));
                 try self.writeRegister(.ctrl3, ctrl3);
             }
         }
