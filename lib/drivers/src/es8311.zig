@@ -82,6 +82,123 @@ pub const Register = enum(u8) {
     chip_ver = 0xFF,
 };
 
+// ============================================================================
+// Register Bit Field Constants
+// ============================================================================
+
+/// Reset register (0x00) bit fields
+pub const ResetReg = struct {
+    /// Chip state machine on
+    pub const CSM_ON: u8 = 0x80;
+    /// Master/slave mode control (1 = master)
+    pub const MSC: u8 = 0x40;
+    /// Slave mode value
+    pub const SLAVE_MODE: u8 = 0xBF;
+    /// All modules off
+    pub const ALL_OFF: u8 = 0x1F;
+    /// Soft reset sequence values
+    pub const SOFT_RESET_1: u8 = 0x00;
+    pub const SOFT_RESET_2: u8 = 0x1F;
+};
+
+/// Clock Manager 01 register (0x01) bit fields
+pub const ClkManager01 = struct {
+    /// All clocks on
+    pub const MCLK_ON: u8 = 0x3F;
+    /// MCLK select internal (from BCLK)
+    pub const MCLK_SEL_INTERNAL: u8 = 0x80;
+    /// MCLK select external (from pad)
+    pub const MCLK_SEL_EXTERNAL: u8 = 0x7F;
+    /// MCLK invert
+    pub const MCLK_INV: u8 = 0x40;
+    /// Initial value (clocks off)
+    pub const INIT_OFF: u8 = 0x30;
+};
+
+/// Clock Manager 06 register (0x06) bit fields
+pub const ClkManager06 = struct {
+    /// SCLK invert
+    pub const SCLK_INV: u8 = 0x20;
+    /// BCLK divider mask
+    pub const BCLK_DIV_MASK: u8 = 0x1F;
+};
+
+/// SDP (Serial Data Port) register bit fields
+pub const SdpReg = struct {
+    /// Word length mask
+    pub const WL_MASK: u8 = 0x1C;
+    /// Word length shift
+    pub const WL_SHIFT: u4 = 2;
+    /// Format mask
+    pub const FMT_MASK: u8 = 0x03;
+    /// Left/right swap
+    pub const LRP: u8 = 0x40;
+};
+
+/// GPIO 44 register (0x44) values
+pub const Gpio44 = struct {
+    /// I2C noise filter enabled (default)
+    pub const I2C_FILTER: u8 = 0x08;
+    /// DAC reference enabled for AEC (ADC right = DAC output)
+    pub const DAC_REF_ENABLED: u8 = 0x58;
+    /// DAC reference disabled (normal mode)
+    pub const DAC_REF_DISABLED: u8 = 0x08;
+};
+
+/// DAC register (0x31) bit fields
+pub const DacReg = struct {
+    /// Mute mask
+    pub const MUTE_MASK: u8 = 0x60;
+    /// Mute value
+    pub const MUTE: u8 = 0x60;
+};
+
+/// System register default values
+pub const SystemDefaults = struct {
+    /// System 0B initial value
+    pub const SYS_0B_INIT: u8 = 0x00;
+    /// System 0C initial value
+    pub const SYS_0C_INIT: u8 = 0x00;
+    /// System 0D startup value
+    pub const SYS_0D_STARTUP: u8 = 0x01;
+    /// System 0D init value
+    pub const SYS_0D_INIT: u8 = 0x10;
+    /// System 0E startup value
+    pub const SYS_0E_STARTUP: u8 = 0x02;
+    /// System 10 initial value
+    pub const SYS_10_INIT: u8 = 0x1F;
+    /// System 11 initial value
+    pub const SYS_11_INIT: u8 = 0x7F;
+    /// System 12 DAC enable
+    pub const SYS_12_DAC_EN: u8 = 0x00;
+    /// System 13 init
+    pub const SYS_13_INIT: u8 = 0x10;
+    /// System 14 startup
+    pub const SYS_14_STARTUP: u8 = 0x1A;
+    /// Digital mic enable
+    pub const DMIC_ENABLE: u8 = 0x40;
+};
+
+/// ADC register defaults
+pub const AdcDefaults = struct {
+    /// ADC 15 startup
+    pub const ADC_15_STARTUP: u8 = 0x40;
+    /// ADC 16 default gain (24dB)
+    pub const ADC_16_DEFAULT: u8 = 0x24;
+    /// ADC 17 startup (volume)
+    pub const ADC_17_STARTUP: u8 = 0xBF;
+    /// ADC 1B init
+    pub const ADC_1B_INIT: u8 = 0x0A;
+    /// ADC 1C init
+    pub const ADC_1C_INIT: u8 = 0x6A;
+};
+
+/// DAC register defaults
+pub const DacDefaults = struct {
+    /// DAC 37 startup
+    pub const DAC_37_STARTUP: u8 = 0x08;
+};
+
 /// Microphone gain settings
 pub const MicGain = enum(u8) {
     @"0dB" = 0,
@@ -236,65 +353,65 @@ pub fn Es8311(comptime I2cImpl: type) type {
         /// Open and initialize the codec
         pub fn open(self: *Self) !void {
             // Enhance I2C noise immunity (write twice for reliability)
-            try self.writeRegister(.gpio_44, 0x08);
-            try self.writeRegister(.gpio_44, 0x08);
+            try self.writeRegister(.gpio_44, Gpio44.I2C_FILTER);
+            try self.writeRegister(.gpio_44, Gpio44.I2C_FILTER);
 
             // Initial register setup
-            try self.writeRegister(.clk_manager_01, 0x30);
+            try self.writeRegister(.clk_manager_01, ClkManager01.INIT_OFF);
             try self.writeRegister(.clk_manager_02, 0x00);
             try self.writeRegister(.clk_manager_03, 0x10);
-            try self.writeRegister(.adc_16, 0x24);
+            try self.writeRegister(.adc_16, AdcDefaults.ADC_16_DEFAULT);
             try self.writeRegister(.clk_manager_04, 0x10);
             try self.writeRegister(.clk_manager_05, 0x00);
-            try self.writeRegister(.system_0b, 0x00);
-            try self.writeRegister(.system_0c, 0x00);
-            try self.writeRegister(.system_10, 0x1F);
-            try self.writeRegister(.system_11, 0x7F);
-            try self.writeRegister(.reset, 0x80);
+            try self.writeRegister(.system_0b, SystemDefaults.SYS_0B_INIT);
+            try self.writeRegister(.system_0c, SystemDefaults.SYS_0C_INIT);
+            try self.writeRegister(.system_10, SystemDefaults.SYS_10_INIT);
+            try self.writeRegister(.system_11, SystemDefaults.SYS_11_INIT);
+            try self.writeRegister(.reset, ResetReg.CSM_ON);
 
             // Set master/slave mode
             var regv = try self.readRegister(.reset);
             if (self.config.master_mode) {
-                regv |= 0x40;
+                regv |= ResetReg.MSC;
             } else {
-                regv &= 0xBF;
+                regv &= ResetReg.SLAVE_MODE;
             }
             try self.writeRegister(.reset, regv);
 
             // Configure MCLK source
-            regv = 0x3F;
+            regv = ClkManager01.MCLK_ON;
             if (self.config.use_mclk) {
-                regv &= 0x7F;
+                regv &= ClkManager01.MCLK_SEL_EXTERNAL;
             } else {
-                regv |= 0x80;
+                regv |= ClkManager01.MCLK_SEL_INTERNAL;
             }
             if (self.config.invert_mclk) {
-                regv |= 0x40;
+                regv |= ClkManager01.MCLK_INV;
             } else {
-                regv &= ~@as(u8, 0x40);
+                regv &= ~ClkManager01.MCLK_INV;
             }
             try self.writeRegister(.clk_manager_01, regv);
 
             // Configure SCLK inversion
             regv = try self.readRegister(.clk_manager_06);
             if (self.config.invert_sclk) {
-                regv |= 0x20;
+                regv |= ClkManager06.SCLK_INV;
             } else {
-                regv &= ~@as(u8, 0x20);
+                regv &= ~ClkManager06.SCLK_INV;
             }
             try self.writeRegister(.clk_manager_06, regv);
 
             // Additional initialization
-            try self.writeRegister(.system_13, 0x10);
-            try self.writeRegister(.adc_1b, 0x0A);
-            try self.writeRegister(.adc_1c, 0x6A);
+            try self.writeRegister(.system_13, SystemDefaults.SYS_13_INIT);
+            try self.writeRegister(.adc_1b, AdcDefaults.ADC_1B_INIT);
+            try self.writeRegister(.adc_1c, AdcDefaults.ADC_1C_INIT);
 
             // Configure DAC reference for AEC
             if (!self.config.no_dac_ref) {
                 // Set internal reference signal (ADCL + DACR)
-                try self.writeRegister(.gpio_44, 0x58);
+                try self.writeRegister(.gpio_44, Gpio44.DAC_REF_ENABLED);
             } else {
-                try self.writeRegister(.gpio_44, 0x08);
+                try self.writeRegister(.gpio_44, Gpio44.DAC_REF_DISABLED);
             }
 
             self.is_open = true;
@@ -388,12 +505,12 @@ pub fn Es8311(comptime I2cImpl: type) type {
             var dac_iface = try self.readRegister(.sdp_in);
             var adc_iface = try self.readRegister(.sdp_out);
 
-            dac_iface &= ~@as(u8, 0x1C);
-            adc_iface &= ~@as(u8, 0x1C);
+            dac_iface &= ~SdpReg.WL_MASK;
+            adc_iface &= ~SdpReg.WL_MASK;
 
             const bits_val = @intFromEnum(bits);
-            dac_iface |= bits_val << 2;
-            adc_iface |= bits_val << 2;
+            dac_iface |= bits_val << SdpReg.WL_SHIFT;
+            adc_iface |= bits_val << SdpReg.WL_SHIFT;
 
             try self.writeRegister(.sdp_in, dac_iface);
             try self.writeRegister(.sdp_out, adc_iface);
@@ -404,8 +521,8 @@ pub fn Es8311(comptime I2cImpl: type) type {
             var dac_iface = try self.readRegister(.sdp_in);
             var adc_iface = try self.readRegister(.sdp_out);
 
-            dac_iface &= 0xFC;
-            adc_iface &= 0xFC;
+            dac_iface &= ~SdpReg.FMT_MASK;
+            adc_iface &= ~SdpReg.FMT_MASK;
             dac_iface |= @intFromEnum(fmt);
             adc_iface |= @intFromEnum(fmt);
 
@@ -428,12 +545,17 @@ pub fn Es8311(comptime I2cImpl: type) type {
             try self.writeRegister(.dac_32, volume);
         }
 
+        /// Get current DAC volume
+        pub fn getVolume(self: *Self) !u8 {
+            return self.readRegister(.dac_32);
+        }
+
         /// Mute or unmute DAC output
         pub fn setMute(self: *Self, mute: bool) !void {
             var regv = try self.readRegister(.dac_31);
-            regv &= 0x9F;
+            regv &= ~DacReg.MUTE_MASK;
             if (mute) {
-                regv |= 0x60;
+                regv |= DacReg.MUTE;
             }
             try self.writeRegister(.dac_31, regv);
         }
@@ -445,67 +567,84 @@ pub fn Es8311(comptime I2cImpl: type) type {
             return (@as(u16, id1) << 8) | id2;
         }
 
+        /// Enable/disable DAC reference signal for AEC
+        /// When enabled, ADC right channel contains DAC output for echo cancellation
+        pub fn setDacReference(self: *Self, enable: bool) !void {
+            const val: u8 = if (enable) Gpio44.DAC_REF_ENABLED else Gpio44.DAC_REF_DISABLED;
+            try self.writeRegister(.gpio_44, val);
+        }
+
+        /// Get current ADC volume
+        pub fn getAdcVolume(self: *Self) !u8 {
+            return self.readRegister(.adc_17);
+        }
+
+        /// Set ADC volume (0-255)
+        pub fn setAdcVolume(self: *Self, volume: u8) !void {
+            try self.writeRegister(.adc_17, volume);
+        }
+
         // ====================================================================
         // Internal functions
         // ====================================================================
 
         fn start(self: *Self) !void {
-            var regv: u8 = 0x80;
+            var regv: u8 = ResetReg.CSM_ON;
             if (self.config.master_mode) {
-                regv |= 0x40;
+                regv |= ResetReg.MSC;
             }
             try self.writeRegister(.reset, regv);
 
-            regv = 0x3F;
+            regv = ClkManager01.MCLK_ON;
             if (self.config.use_mclk) {
-                regv &= 0x7F;
+                regv &= ClkManager01.MCLK_SEL_EXTERNAL;
             } else {
-                regv |= 0x80;
+                regv |= ClkManager01.MCLK_SEL_INTERNAL;
             }
             if (self.config.invert_mclk) {
-                regv |= 0x40;
+                regv |= ClkManager01.MCLK_INV;
             }
             try self.writeRegister(.clk_manager_01, regv);
 
             // Configure SDP interfaces based on codec mode
             var dac_iface = try self.readRegister(.sdp_in);
             var adc_iface = try self.readRegister(.sdp_out);
-            dac_iface &= 0xBF;
-            adc_iface &= 0xBF;
+            dac_iface &= ~SdpReg.LRP;
+            adc_iface &= ~SdpReg.LRP;
 
             switch (self.config.codec_mode) {
-                .adc_only => adc_iface &= ~@as(u8, 0x40),
-                .dac_only => dac_iface &= ~@as(u8, 0x40),
+                .adc_only => adc_iface &= ~SdpReg.LRP,
+                .dac_only => dac_iface &= ~SdpReg.LRP,
                 .both => {
-                    adc_iface &= ~@as(u8, 0x40);
-                    dac_iface &= ~@as(u8, 0x40);
+                    adc_iface &= ~SdpReg.LRP;
+                    dac_iface &= ~SdpReg.LRP;
                 },
             }
 
             try self.writeRegister(.sdp_in, dac_iface);
             try self.writeRegister(.sdp_out, adc_iface);
 
-            try self.writeRegister(.adc_17, 0xBF);
-            try self.writeRegister(.system_0e, 0x02);
+            try self.writeRegister(.adc_17, AdcDefaults.ADC_17_STARTUP);
+            try self.writeRegister(.system_0e, SystemDefaults.SYS_0E_STARTUP);
 
             if (self.config.codec_mode == .dac_only or self.config.codec_mode == .both) {
-                try self.writeRegister(.system_12, 0x00);
+                try self.writeRegister(.system_12, SystemDefaults.SYS_12_DAC_EN);
             }
 
-            try self.writeRegister(.system_14, 0x1A);
+            try self.writeRegister(.system_14, SystemDefaults.SYS_14_STARTUP);
 
             // Configure digital mic
             regv = try self.readRegister(.system_14);
             if (self.config.digital_mic) {
-                regv |= 0x40;
+                regv |= SystemDefaults.DMIC_ENABLE;
             } else {
-                regv &= ~@as(u8, 0x40);
+                regv &= ~SystemDefaults.DMIC_ENABLE;
             }
             try self.writeRegister(.system_14, regv);
 
-            try self.writeRegister(.system_0d, 0x01);
-            try self.writeRegister(.adc_15, 0x40);
-            try self.writeRegister(.dac_37, 0x08);
+            try self.writeRegister(.system_0d, SystemDefaults.SYS_0D_STARTUP);
+            try self.writeRegister(.adc_15, AdcDefaults.ADC_15_STARTUP);
+            try self.writeRegister(.dac_37, DacDefaults.DAC_37_STARTUP);
             try self.writeRegister(.gp_45, 0x00);
         }
 
@@ -518,9 +657,9 @@ pub fn Es8311(comptime I2cImpl: type) type {
             try self.writeRegister(.system_0d, 0xFA);
             try self.writeRegister(.adc_15, 0x00);
             try self.writeRegister(.clk_manager_02, 0x10);
-            try self.writeRegister(.reset, 0x00);
-            try self.writeRegister(.reset, 0x1F);
-            try self.writeRegister(.clk_manager_01, 0x30);
+            try self.writeRegister(.reset, ResetReg.SOFT_RESET_1);
+            try self.writeRegister(.reset, ResetReg.ALL_OFF);
+            try self.writeRegister(.clk_manager_01, ClkManager01.INIT_OFF);
             try self.writeRegister(.clk_manager_01, 0x00);
             try self.writeRegister(.gp_45, 0x00);
             try self.writeRegister(.system_0d, 0xFC);
