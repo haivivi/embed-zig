@@ -413,10 +413,8 @@ def _esp_zig_app_impl(ctx):
                 end_idx = idx + len(dep_path)
                 is_end_boundary = (end_idx == len(first_file)) or (first_file[end_idx] == "/")
                 if is_start_boundary and is_end_boundary:
-                    dep_actual_path = first_file[:end_idx]
-                    # Remove leading "./" if present
-                    if dep_actual_path.startswith("./"):
-                        dep_actual_path = dep_actual_path[2:]
+                    path = first_file[:end_idx]
+                    dep_actual_path = path[2:] if path.startswith("./") else path
         
         # For esp_project/main/build.zig.zon: path relative to esp_project/main/
         # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_actual_path}/
