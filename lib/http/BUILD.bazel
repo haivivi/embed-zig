@@ -9,7 +9,7 @@ zig_lib(
     srcs = glob(["**/*"]),
     deps = [
         "//lib/dns",
-        "//lib/platforms/std",
+        "//lib/platform/std",
         "//lib/tls",
         "//lib/trait",
     ],

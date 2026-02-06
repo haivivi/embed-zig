@@ -7,7 +7,7 @@
             .path = "../trait",
         },
         .std_sal = .{
-            .path = "../platforms/std",
+            .path = "../platform/std",
         },
     },
     .paths = .{

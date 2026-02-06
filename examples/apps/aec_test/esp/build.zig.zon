@@ -2,7 +2,7 @@
     .name = "aec_test",
     .version = "0.1.0",
     .dependencies = .{
-        .esp = .{ .path = "../../../../lib/platforms/esp" },
+        .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
         .drivers = .{ .path = "../../../../lib/drivers" },
         .motion = .{ .path = "../../../../lib/motion" },

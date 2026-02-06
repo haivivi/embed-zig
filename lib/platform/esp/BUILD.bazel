@@ -7,8 +7,8 @@ package(default_visibility = ["//visibility:public"])
 zig_lib(
     name = "esp",
     srcs = glob(["**/*"], exclude = ["idf/**", "impl/**"]) + [
-        "//lib/platforms/esp/idf",
-        "//lib/platforms/esp/impl",
+        "//lib/platform/esp/idf",
+        "//lib/platform/esp/impl",
     ],
     deps = [
         "//lib/crypto",

@@ -3,10 +3,10 @@
     .version = "0.1.0",
     .fingerprint = 0xf99f0b79c7099dd5,
     .dependencies = .{
-        .esp = .{ .path = "../../../../lib/platforms/esp" },
+        .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
         .drivers = .{ .path = "../../../../lib/drivers" },
-        .raysim = .{ .path = "../../../../lib/platforms/raysim" },
+        .raysim = .{ .path = "../../../../lib/platform/raysim" },
         .motion = .{ .path = "../../../../lib/motion" },
     },
     .paths = .{

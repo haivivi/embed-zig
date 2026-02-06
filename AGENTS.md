@@ -10,7 +10,7 @@
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
 - Can depend on other cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/platforms/{platform}/` (e.g., `lib/platforms/esp/`)
+- **MUST NOT** depend on `lib/platform/{platform}/` (e.g., `lib/platform/esp/`)
 - **Avoid** `std` (freestanding environment)
 
 **Example**: `lib/tls`, `lib/http`, `lib/dns` - they accept generic parameters like `Socket`, `Crypto`
@@ -29,16 +29,16 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 ### Platform
 
-**Location**: `lib/platforms/{platform}/` + `bazel/{platform}/`
+**Location**: `lib/platform/{platform}/` + `bazel/{platform}/`
 
 **Steps to introduce a new platform**:
 
 1. **Implement native bindings** (as needed)
-   - Location: `lib/platforms/{platform}/src/` or sub-package (e.g., `idf/`, `raylib/`)
+   - Location: `lib/platform/{platform}/src/` or sub-package (e.g., `idf/`, `raylib/`)
    - Wrap platform SDK APIs
 
 2. **Implement trait interfaces** (as needed)
-   - Location: `lib/platforms/{platform}/impl/` or `src/impl/`
+   - Location: `lib/platform/{platform}/impl/` or `src/impl/`
    - Provide implementations for `lib/trait` contracts
    - e.g., socket, rng, crypto
 
@@ -51,9 +51,9 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
    - Build rules, flash rules, etc.
 
 **Current platforms**:
-- `lib/platforms/esp/` — ESP32 (idf/ for bindings, impl/ for trait/hal implementations)
-- `lib/platforms/std/` — Zig std library (src/impl/ for trait implementations)
-- `lib/platforms/raysim/` — Raylib simulator (src/raylib/ for bindings, src/impl/ for drivers)
+- `lib/platform/esp/` — ESP32 (idf/ for bindings, impl/ for trait/hal implementations)
+- `lib/platform/std/` — Zig std library (src/impl/ for trait implementations)
+- `lib/platform/raysim/` — Raylib simulator (src/raylib/ for bindings, src/impl/ for drivers)
 
 ---
 
@@ -71,7 +71,7 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 **File structure**:
 ```
-lib/platforms/{platform}/src/idf/{lib_name}/
+lib/platform/{platform}/src/idf/{lib_name}/
 ├── xxx_helper.c   # C wrapper for problematic APIs
 ├── xxx_helper.h   # Simple byte-array interface
 └── xxx.zig        # Zig binding via @cImport
@@ -82,7 +82,7 @@ lib/platforms/{platform}/src/idf/{lib_name}/
 - Return int error codes (0 = success)
 - Don't expose internal types
 
-**Example** (`lib/platforms/esp/idf/src/mbed_tls/`):
+**Example** (`lib/platform/esp/idf/src/mbed_tls/`):
 
 ```c
 // x25519_helper.h
@@ -113,7 +113,7 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
 - Can depend on cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/platforms/{platform}/`
+- **MUST NOT** depend on `lib/platform/{platform}/`
 
 ```zig
 // platform.zig - abstracts board selection
@@ -160,13 +160,13 @@ pub const button = esp.adc.Button(.{
 
 | Layer | Location | Responsibility |
 |-------|----------|----------------|
-| **Platform** | `lib/platforms/{platform}/` | Generic driver implementations (core, most important) |
-| **BSP** | `lib/platforms/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
+| **Platform** | `lib/platform/{platform}/` | Generic driver implementations (core, most important) |
+| **BSP** | `lib/platform/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
 | **App Board** | `examples/apps/{app}/esp/{board}.zig` | Dependency injection (keep it simple) |
 
 #### Layer 1: Platform (Core Implementations)
 
-**Location**: `lib/platforms/esp/idf/src/speaker.zig`
+**Location**: `lib/platform/esp/idf/src/speaker.zig`
 
 Encapsulate reusable driver logic:
 - Combine low-level components (DAC + I2S)
@@ -174,7 +174,7 @@ Encapsulate reusable driver logic:
 - Provide unified interface
 
 ```zig
-// lib/platforms/esp/idf/src/speaker.zig
+// lib/platform/esp/idf/src/speaker.zig
 pub fn Speaker(comptime Dac: type) type {
     return struct {
         dac: *Dac,
@@ -187,7 +187,7 @@ pub fn Speaker(comptime Dac: type) type {
 
 #### Layer 2: BSP (Board-Specific)
 
-**Location**: `lib/platforms/esp/src/boards/{board}.zig`
+**Location**: `lib/platform/esp/src/boards/{board}.zig`
 
 Only board-specific configurations:
 - GPIO/I2C pin definitions
@@ -195,7 +195,7 @@ Only board-specific configurations:
 - Special initialization logic
 
 ```zig
-// lib/platforms/esp/src/boards/korvo2_v3.zig
+// lib/platform/esp/src/boards/korvo2_v3.zig
 pub const i2c_config = .{ .sda = 17, .scl = 18 };
 pub const speaker_config = .{ .dac_addr = 0x18, .pa_gpio = 12 };
 ```
@@ -252,7 +252,7 @@ pub const SpeakerDriver = struct {
 │  (lib/hal/hci.zig) │                                    │
 ├────────────────────┤                                    │
 │  ESP VHCI impl     │  Apple hardware                    │
-│  (platforms/esp/)   │                                    │
+│  (platform/esp/)    │                                    │
 └────────────────────┴────────────────────────────────────┘
 ```
 
@@ -337,9 +337,9 @@ HciDriver.poll():
 ```
 
 Files:
-- `lib/platforms/esp/idf/src/bt/bt_helper.c` - BT controller init + VHCI callbacks
-- `lib/platforms/esp/idf/src/bt/bt.zig` - Zig binding
-- `lib/platforms/esp/impl/src/hci.zig` - HCI driver (event group based)
+- `lib/platform/esp/idf/src/bt/bt_helper.c` - BT controller init + VHCI callbacks
+- `lib/platform/esp/idf/src/bt/bt.zig` - Zig binding
+- `lib/platform/esp/impl/src/hci.zig` - HCI driver (event group based)
 
 #### BLE Protocol Layers
 
@@ -392,8 +392,8 @@ lib/bluetooth/
         advertiser.zig
         scanner.zig
 
-lib/platforms/esp/idf/src/bt/          -- ESP VHCI bindings
-lib/platforms/esp/impl/src/hci.zig     -- ESP HCI driver implementation
+lib/platform/esp/idf/src/bt/          -- ESP VHCI bindings
+lib/platform/esp/impl/src/hci.zig     -- ESP HCI driver implementation
 ```
 
 ---
@@ -609,16 +609,16 @@ const Sync = struct {
 };
 ```
 
-ESP 映射：Mutex = FreeRTOS Mutex (`lib/platforms/esp/idf/src/sync.zig`)，Condition = Event Group
+ESP 映射：Mutex = FreeRTOS Mutex (`lib/platform/esp/idf/src/sync.zig`)，Condition = Event Group
 std 映射：Mutex = `std.Thread.Mutex`，Condition = `std.Thread.Condition`
 
 #### Phase 1: HCI 传输层
 
 - [ ] **1.1** 定义 HCI transport trait `lib/hal/src/hci.zig` — read/write/poll 三个方法
 - [ ] **1.2** 注册到 `lib/hal/src/hal.zig` — `pub const hci = @import("hci.zig")`
-- [ ] **1.3** ESP VHCI C helper — `lib/platforms/esp/idf/src/bt/bt_helper.c/.h`（BT controller init + VHCI 回调）
-- [ ] **1.4** ESP VHCI Zig binding — `lib/platforms/esp/idf/src/bt/bt.zig`
-- [ ] **1.5** ESP HCI driver — `lib/platforms/esp/impl/src/hci.zig`（Event Group: READABLE/WRITABLE bits）
+- [ ] **1.3** ESP VHCI C helper — `lib/platform/esp/idf/src/bt/bt_helper.c/.h`（BT controller init + VHCI 回调）
+- [ ] **1.4** ESP VHCI Zig binding — `lib/platform/esp/idf/src/bt/bt.zig`
+- [ ] **1.5** ESP HCI driver — `lib/platform/esp/impl/src/hci.zig`（Event Group: READABLE/WRITABLE bits）
 
 **HCI trait 接口：**
 
@@ -669,4 +669,4 @@ Executor.spawn(writeLoop):
 - [ ] **3.1** SMP — 配对、绑定
 - [ ] **3.2** GATT client — 服务发现、读写 characteristic
 - [ ] **3.3** BLE 5.4 扩展 — PAwR、加密广播
-- [ ] **3.4** macOS CoreBluetooth 后端 — `lib/platforms/macos/impl/src/ble.zig` (future)
+- [ ] **3.4** macOS CoreBluetooth 后端 — `lib/platform/macos/impl/src/ble.zig` (future)

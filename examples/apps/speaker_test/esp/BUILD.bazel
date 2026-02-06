@@ -21,8 +21,8 @@ esp_zig_app(
         "${I2C_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/platforms/esp/idf/src/i2s/i2s.cmake)",
-        "include(${_ESP_LIB}/platforms/esp/idf/src/i2c/i2c.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2s/i2s.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES"],
     deps = ["//lib/hal", "//lib/drivers", "//lib/motion", "//lib/math"],

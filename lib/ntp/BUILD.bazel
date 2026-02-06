@@ -8,7 +8,7 @@ zig_lib(
     name = "ntp",
     srcs = glob(["**/*"]),
     deps = [
-        "//lib/platforms/std",
+        "//lib/platform/std",
         "//lib/trait",
     ],
 )
