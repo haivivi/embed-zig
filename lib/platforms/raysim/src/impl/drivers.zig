@@ -4,7 +4,7 @@
 //! These drivers communicate with the raylib UI through SimState.
 
 const std = @import("std");
-const sim_state_mod = @import("sim_state.zig");
+const sim_state_mod = @import("../raylib/sim_state.zig");
 
 // Re-export from sim_state
 pub const SimState = sim_state_mod.SimState;

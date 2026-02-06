@@ -23,10 +23,10 @@
 
 const std = @import("std");
 
-pub const rgl = @import("rgl.zig");
-pub const widgets = @import("widgets.zig");
-pub const drivers = @import("drivers.zig");
-pub const sim_state_mod = @import("sim_state.zig");
+pub const rgl = @import("raylib/rgl.zig");
+pub const widgets = @import("raylib/widgets.zig");
+pub const drivers = @import("impl/drivers.zig");
+pub const sim_state_mod = @import("raylib/sim_state.zig");
 
 // Re-export common types
 pub const Color = widgets.Color;

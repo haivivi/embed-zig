@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) void {
     test_options.addOption([]const u8, "log_file", "");
 
     const test_module = b.createModule(.{
-        .root_source_file = b.path("src/sim_state.zig"),
+        .root_source_file = b.path("src/raylib/sim_state.zig"),
         .target = target,
         .optimize = optimize,
     });

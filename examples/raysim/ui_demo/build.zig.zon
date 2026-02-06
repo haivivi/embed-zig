@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0x6a329b79f330e72a,
     .dependencies = .{
-        .raysim = .{ .path = "../../../lib/raysim" },
+        .raysim = .{ .path = "../../../lib/platforms/raysim" },
     },
     .paths = .{
         "build.zig",
