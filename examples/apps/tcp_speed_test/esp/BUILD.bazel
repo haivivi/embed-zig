@@ -18,9 +18,6 @@ make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER", "TCP_PORT"],
     defaults = {
-        "WIFI_SSID": "HAIVIVI-MFG",
-        "WIFI_PASSWORD": "!haivivi",
-        "TEST_SERVER": "192.168.1.100",
         "TCP_PORT": "11300",
     },
 )

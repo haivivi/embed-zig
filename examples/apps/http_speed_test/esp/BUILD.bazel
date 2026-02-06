@@ -16,12 +16,6 @@ filegroup(
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
-    defaults = {
-        "WIFI_SSID": "HAIVIVI-MFG",
-        "WIFI_PASSWORD": "!haivivi",
-        "TEST_SERVER_IP": "192.168.1.100",
-        "TEST_SERVER_PORT": "8080",
-    },
 )
 
 esp_zig_app(
