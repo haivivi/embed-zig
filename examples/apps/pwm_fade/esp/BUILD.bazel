@@ -23,7 +23,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/ledc/ledc.cmake)",
     ],
     extra_c_sources = ["LEDC_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/motion", "//lib/math"],
+    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

@@ -8,7 +8,7 @@ zig_lib(
     name = "tls",
     srcs = glob(["**/*"], exclude = ["test/**"]),
     deps = [
-        "//lib/crypto",
+        "//lib/pkg/crypto",
         "//lib/trait",
     ],
 )

@@ -25,7 +25,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/timer/timer.cmake)",
     ],
     extra_c_sources = ["TIMER_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/motion", "//lib/math"],
+    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
     idf_deps = ["espressif/led_strip:^3.0.0"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",

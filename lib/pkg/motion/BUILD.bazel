@@ -7,5 +7,5 @@ package(default_visibility = ["//visibility:public"])
 zig_lib(
     name = "motion",
     srcs = glob(["**/*"]),
-    deps = ["//lib/math"],
+    deps = ["//lib/pkg/math"],
 )

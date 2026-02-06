@@ -5,9 +5,9 @@
     .dependencies = .{
         .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
-        .drivers = .{ .path = "../../../../lib/drivers" },
+        .drivers = .{ .path = "../../../../lib/pkg/drivers" },
         .raysim = .{ .path = "../../../../lib/platform/raysim" },
-        .motion = .{ .path = "../../../../lib/motion" },
+        .motion = .{ .path = "../../../../lib/pkg/motion" },
     },
     .paths = .{
         "build.zig",

@@ -4,7 +4,7 @@
     .fingerprint = 0x97780db2659c81ec,
     .dependencies = .{
         .trait = .{
-            .path = "../trait",
+            .path = "../../trait",
         },
         .tls = .{
             .path = "../tls",
@@ -13,7 +13,7 @@
             .path = "../dns",
         },
         .std_sal = .{
-            .path = "../platform/std",
+            .path = "../../platform/std",
         },
     },
     .paths = .{

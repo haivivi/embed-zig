@@ -4,10 +4,10 @@
     .fingerprint = 0xa65ef2f6fddd83e4,
     .dependencies = .{
         .trait = .{
-            .path = "../trait",
+            .path = "../../trait",
         },
         .std_sal = .{
-            .path = "../platform/std",
+            .path = "../../platform/std",
         },
     },
     .paths = .{

@@ -40,7 +40,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
     ],
     extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES", "SR_C_SOURCES", "RUNTIME_C_SOURCES", "WIFI_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/drivers", "//lib/motion", "//lib/math"],
+    deps = ["//lib/hal", "//lib/pkg/drivers", "//lib/pkg/motion", "//lib/pkg/math"],
     idf_deps = [
         "espressif/esp-sr:^2.1.1",
     ],

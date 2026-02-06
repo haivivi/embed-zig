@@ -4,8 +4,8 @@
     .fingerprint = 0x2c303477a4c04fb8,
     .dependencies = .{
         .std_sal = .{ .path = "../../../../lib/platform/std" },
-        .tls = .{ .path = "../../../../lib/tls" },
-        .crypto = .{ .path = "../../../../lib/crypto" },
+        .tls = .{ .path = "../../../../lib/pkg/tls" },
+        .crypto = .{ .path = "../../../../lib/pkg/crypto" },
     },
     .paths = .{
         "build.zig",

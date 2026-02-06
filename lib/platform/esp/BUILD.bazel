@@ -11,9 +11,9 @@ zig_lib(
         "//lib/platform/esp/impl",
     ],
     deps = [
-        "//lib/crypto",
-        "//lib/dns",
-        "//lib/drivers",
+        "//lib/pkg/crypto",
+        "//lib/pkg/dns",
+        "//lib/pkg/drivers",
         "//lib/hal",
         "//lib/trait",
     ],

@@ -473,13 +473,13 @@ cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
             .path = "{app_to_lib_prefix}/hal",
         }},
         .drivers = .{{
-            .path = "{app_to_lib_prefix}/drivers",
+            .path = "{app_to_lib_prefix}/pkg/drivers",
         }},
         .trait = .{{
             .path = "{app_to_lib_prefix}/trait",
         }},
         .dns = .{{
-            .path = "{app_to_lib_prefix}/dns",
+            .path = "{app_to_lib_prefix}/pkg/dns",
         }},
 {app_extra_deps_zon}    }},
     .paths = .{{

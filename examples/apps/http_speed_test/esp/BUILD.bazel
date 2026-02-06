@@ -31,7 +31,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/trait", "//lib/motion", "//lib/math"],
+    deps = ["//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi",
     app_config = "//examples/esp:app_internal",
     env = ":env",

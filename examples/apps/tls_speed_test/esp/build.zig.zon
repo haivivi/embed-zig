@@ -6,8 +6,8 @@
         .hal = .{ .path = "../../../../lib/hal" },
         .esp = .{ .path = "../../../../lib/platform/esp" },
         .trait = .{ .path = "../../../../lib/trait" },
-        .tls = .{ .path = "../../../../lib/tls" },
-        .motion = .{ .path = "../../../../lib/motion" },
+        .tls = .{ .path = "../../../../lib/pkg/tls" },
+        .motion = .{ .path = "../../../../lib/pkg/motion" },
     },
     .paths = .{
         "build.zig",

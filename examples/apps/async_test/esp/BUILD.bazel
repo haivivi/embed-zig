@@ -17,7 +17,7 @@ esp_zig_app(
     app = ":srcs",
     boards = ["esp32s3_devkit"],
     requires = ["freertos"],
-    deps = ["//lib/hal", "//lib/motion", "//lib/math"],
+    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

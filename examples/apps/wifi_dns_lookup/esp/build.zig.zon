@@ -5,10 +5,10 @@
     .dependencies = .{
         .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
-        .dns = .{ .path = "../../../../lib/dns" },
-        .tls = .{ .path = "../../../../lib/tls" },
-        .http = .{ .path = "../../../../lib/http" },
-        .motion = .{ .path = "../../../../lib/motion" },
+        .dns = .{ .path = "../../../../lib/pkg/dns" },
+        .tls = .{ .path = "../../../../lib/pkg/tls" },
+        .http = .{ .path = "../../../../lib/pkg/http" },
+        .motion = .{ .path = "../../../../lib/pkg/motion" },
     },
     .paths = .{
         "build.zig",

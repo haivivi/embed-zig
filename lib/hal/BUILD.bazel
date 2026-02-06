@@ -9,6 +9,6 @@ zig_lib(
     srcs = glob(["**/*"]),
     deps = [
         "//lib/trait",
-        "//lib/motion",
+        "//lib/pkg/motion",
     ],
 )

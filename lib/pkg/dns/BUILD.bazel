@@ -1,16 +1,15 @@
-# HTTP library - HTTP/1.1 client
+# DNS library - DNS resolver with DoH support
 
 load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
 zig_lib(
-    name = "http",
+    name = "dns",
     srcs = glob(["**/*"]),
     deps = [
-        "//lib/dns",
         "//lib/platform/std",
-        "//lib/tls",
+        "//lib/pkg/tls",
         "//lib/trait",
     ],
 )

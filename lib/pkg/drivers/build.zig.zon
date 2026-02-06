@@ -1,13 +1,14 @@
 .{
-    .name = .tls,
+    .name = .drivers,
     .version = "0.1.0",
-    .fingerprint = 0xacfd1db3c5e6d45d,
+    .fingerprint = 0xe410c30739c84f26,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .trait = .{
-            .path = "../trait",
+            .path = "../../trait",
         },
-        .crypto = .{
-            .path = "../crypto",
+        .math = .{
+            .path = "../math",
         },
     },
     .paths = .{

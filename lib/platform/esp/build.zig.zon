@@ -4,10 +4,10 @@
     .fingerprint = 0xe54a8bd0bac6a302,
     .dependencies = .{
         .dns = .{
-            .path = "../../dns",
+            .path = "../../pkg/dns",
         },
         .drivers = .{
-            .path = "../../drivers",
+            .path = "../../pkg/drivers",
         },
         .idf = .{
             .path = "idf",
@@ -22,7 +22,7 @@
             .path = "../../hal",
         },
         .crypto = .{
-            .path = "../../crypto",
+            .path = "../../pkg/crypto",
         },
     },
     .paths = .{
