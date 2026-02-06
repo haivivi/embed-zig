@@ -10,7 +10,7 @@
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
 - Can depend on other cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/{platform}/` (e.g., `lib/esp/`, `lib/beken/`)
+- **MUST NOT** depend on `lib/platforms/{platform}/` (e.g., `lib/platforms/esp/`)
 - **Avoid** `std` (freestanding environment)
 
 **Example**: `lib/tls`, `lib/http`, `lib/dns` - they accept generic parameters like `Socket`, `Crypto`
@@ -29,15 +29,16 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 ### Platform
 
-**Location**: `lib/{platform}/` + `bazel/{platform}/`
+**Location**: `lib/platforms/{platform}/` + `bazel/{platform}/`
 
 **Steps to introduce a new platform**:
 
 1. **Implement native bindings** (as needed)
-   - Location: `lib/{platform}/src/`
+   - Location: `lib/platforms/{platform}/src/` or sub-package (e.g., `idf/`, `raylib/`)
    - Wrap platform SDK APIs
 
 2. **Implement trait interfaces** (as needed)
+   - Location: `lib/platforms/{platform}/impl/` or `src/impl/`
    - Provide implementations for `lib/trait` contracts
    - e.g., socket, rng, crypto
 
@@ -48,6 +49,11 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 4. **Provide Bazel rules**
    - Location: `bazel/{platform}/defs.bzl`
    - Build rules, flash rules, etc.
+
+**Current platforms**:
+- `lib/platforms/esp/` — ESP32 (idf/ for bindings, impl/ for trait/hal implementations)
+- `lib/platforms/std/` — Zig std library (src/impl/ for trait implementations)
+- `lib/platforms/raysim/` — Raylib simulator (src/raylib/ for bindings, src/impl/ for drivers)
 
 ---
 
@@ -65,7 +71,7 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 **File structure**:
 ```
-lib/{platform}/src/idf/{lib_name}/
+lib/platforms/{platform}/src/idf/{lib_name}/
 ├── xxx_helper.c   # C wrapper for problematic APIs
 ├── xxx_helper.h   # Simple byte-array interface
 └── xxx.zig        # Zig binding via @cImport
@@ -76,7 +82,7 @@ lib/{platform}/src/idf/{lib_name}/
 - Return int error codes (0 = success)
 - Don't expose internal types
 
-**Example** (`lib/esp/src/idf/mbed_tls/`):
+**Example** (`lib/platforms/esp/idf/src/mbed_tls/`):
 
 ```c
 // x25519_helper.h
@@ -107,7 +113,7 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
 - Can depend on cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/{platform}/`
+- **MUST NOT** depend on `lib/platforms/{platform}/`
 
 ```zig
 // platform.zig - abstracts board selection
@@ -154,13 +160,13 @@ pub const button = esp.adc.Button(.{
 
 | Layer | Location | Responsibility |
 |-------|----------|----------------|
-| **Platform** | `lib/{platform}/` | Generic driver implementations (core, most important) |
-| **BSP** | `lib/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
+| **Platform** | `lib/platforms/{platform}/` | Generic driver implementations (core, most important) |
+| **BSP** | `lib/platforms/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
 | **App Board** | `examples/apps/{app}/esp/{board}.zig` | Dependency injection (keep it simple) |
 
 #### Layer 1: Platform (Core Implementations)
 
-**Location**: `lib/esp/idf/src/speaker.zig`
+**Location**: `lib/platforms/esp/idf/src/speaker.zig`
 
 Encapsulate reusable driver logic:
 - Combine low-level components (DAC + I2S)
@@ -168,7 +174,7 @@ Encapsulate reusable driver logic:
 - Provide unified interface
 
 ```zig
-// lib/esp/idf/src/speaker.zig
+// lib/platforms/esp/idf/src/speaker.zig
 pub fn Speaker(comptime Dac: type) type {
     return struct {
         dac: *Dac,
@@ -181,7 +187,7 @@ pub fn Speaker(comptime Dac: type) type {
 
 #### Layer 2: BSP (Board-Specific)
 
-**Location**: `lib/esp/src/boards/{board}.zig`
+**Location**: `lib/platforms/esp/src/boards/{board}.zig`
 
 Only board-specific configurations:
 - GPIO/I2C pin definitions
@@ -189,7 +195,7 @@ Only board-specific configurations:
 - Special initialization logic
 
 ```zig
-// lib/esp/src/boards/korvo2_v3.zig
+// lib/platforms/esp/src/boards/korvo2_v3.zig
 pub const i2c_config = .{ .sda = 17, .scl = 18 };
 pub const speaker_config = .{ .dac_addr = 0x18, .pa_gpio = 12 };
 ```
@@ -219,6 +225,176 @@ pub const SpeakerDriver = struct {
 ```
 
 **Do** reuse existing platform layer implementations.
+
+---
+
+### BLE Stack
+
+#### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  App Code                                               │
+│    gatt_server.handle(svc, char, handler_fn)            │
+├─────────────────────────────────────────────────────────┤
+│  gatt_server / gatt_client          (lib/bluetooth/)    │
+│    Cross-platform, handler pattern like Go http.Server  │
+│    Each handler runs in a coroutine                     │
+├─────────────────────────────────────────────────────────┤
+│  Host trait                          (lib/hal/ble.zig)  │
+│    GAP/GATT-level abstraction boundary                  │
+├────────────────────┬────────────────────────────────────┤
+│  Pure Zig Host     │  CoreBluetooth wrapper             │
+│  (lib/bluetooth/)  │  (future platform impl)            │
+│  HCI → L2CAP → ATT│                                    │
+├────────────────────┤  (no HCI needed)                   │
+│  HCI trait         │                                    │
+│  (lib/hal/hci.zig) │                                    │
+├────────────────────┤                                    │
+│  ESP VHCI impl     │  Apple hardware                    │
+│  (platforms/esp/)   │                                    │
+└────────────────────┴────────────────────────────────────┘
+```
+
+**Analogy with Go:**
+- `Host trait` = `net.Conn` (transport abstraction)
+- `gatt_server` = `http.Server` (handler pattern, cross-platform)
+- `gatt_client` = `http.Client` (cross-platform)
+
+#### Two-Level Traits
+
+| Trait | Location | Purpose | Implemented by |
+|-------|----------|---------|----------------|
+| HCI transport | `lib/hal/src/hci.zig` | Raw HCI read/write/poll | ESP VHCI, Linux raw HCI |
+| BLE Host | `lib/hal/src/ble.zig` | GAP/GATT-level API | Pure Zig stack, CoreBluetooth |
+
+#### HCI Transport Interface
+
+Three non-blocking methods:
+
+```zig
+// lib/hal/src/hci.zig - Driver must implement:
+fn read(self: *Self, buf: []u8) error{WouldBlock, HciError}!usize
+fn write(self: *Self, buf: []const u8) error{WouldBlock, HciError}!usize
+fn poll(self: *Self, flags: PollFlags, timeout_ms: i32) PollFlags
+```
+
+- `read()` - Non-blocking, returns HCI packet or `WouldBlock`
+- `write()` - Non-blocking, sends HCI packet or `WouldBlock`
+- `poll()` - POSIX-style poll, waits for read/write readiness with timeout
+
+#### Concurrency Model
+
+**Two dedicated loops** (each runs in its own task/coroutine):
+- **Read loop**: HCI read → demux → L2CAP → ATT → dispatch to handlers
+- **Write loop**: drain write queue → HCI write (queue protected by mutex)
+
+**Handler pattern** (like Go `http.HandleFunc`):
+
+```zig
+// App code
+const server = gatt_server.Server(Host, Executor);
+
+server.handle(heart_rate_svc, bpm_char, struct {
+    fn handler(req: *Request, resp: *Response) void {
+        // Runs in its own coroutine
+        // Can "block" (actually coroutine yield)
+        const data = sensor.read();
+        resp.setValue(data);
+    }
+}.handler);
+
+server.run();  // Starts read loop + write loop
+```
+
+#### Executor Trait
+
+Defined in `lib/trait`, provides coroutine primitives via comptime generic:
+
+```zig
+// lib/trait/src/executor.zig - Platform must implement:
+fn spawn(func, ctx) void      // Create a coroutine/task
+fn Mutex                       // Mutual exclusion
+fn Channel(T)                  // Inter-coroutine communication
+```
+
+Platform mapping:
+- ESP: FreeRTOS tasks + semaphores + queues
+- macOS: GCD / pthreads
+- Linux: pthreads
+
+#### ESP HCI Implementation
+
+Uses ESP-IDF VHCI API with FreeRTOS Event Groups:
+
+```
+ESP VHCI callbacks:
+  host_recv_pkt    → enqueue to rx buffer → set READABLE event bit
+  host_send_available → set WRITABLE event bit
+
+HciDriver.poll():
+  xEventGroupWaitBits(READABLE | WRITABLE, timeout)
+```
+
+Files:
+- `lib/platforms/esp/idf/src/bt/bt_helper.c` - BT controller init + VHCI callbacks
+- `lib/platforms/esp/idf/src/bt/bt.zig` - Zig binding
+- `lib/platforms/esp/impl/src/hci.zig` - HCI driver (event group based)
+
+#### BLE Protocol Layers
+
+```
+Controller (Link Layer + PHY)  — ESP32 hardware
+         │
+        HCI                    — transport (read/write/poll)
+         │
+       L2CAP                   — multiplexing, fragmentation
+         │
+    ┌────┴────┬───────┐
+    │         │       │
+   ATT       SMP   Signaling   — fixed L2CAP channels
+ (CID 4)  (CID 6)  (CID 5)
+    │         │
+  GATT     Security
+    │
+   GAP                         — advertising, scanning, connections
+```
+
+#### Directory Structure
+
+```
+lib/hal/src/
+  hci.zig                   -- HCI transport trait (read/write/poll)
+  ble.zig                   -- BLE Host trait (GAP/GATT level)
+
+lib/bluetooth/
+  src/
+    bluetooth.zig            -- root module
+    gatt_server.zig          -- GATT server (handler pattern, cross-platform)
+    gatt_client.zig          -- GATT client (cross-platform)
+    host/                    -- Pure Zig Host implementation
+      host.zig               -- central coordinator, read/write loops
+      hci/                   -- HCI packet encode/decode
+        commands.zig
+        events.zig
+        acl.zig
+      l2cap/                 -- L2CAP channel manager
+        l2cap.zig
+        signal.zig
+      att/                   -- Attribute Protocol
+        att.zig
+        server.zig
+        client.zig
+      smp/                   -- Security Manager
+        smp.zig
+      gap/                   -- GAP state machine
+        gap.zig
+        advertiser.zig
+        scanner.zig
+
+lib/platforms/esp/idf/src/bt/          -- ESP VHCI bindings
+lib/platforms/esp/impl/src/hci.zig     -- ESP HCI driver implementation
+```
 
 ---
 
@@ -387,3 +563,110 @@ esp_partition_table(
    - `{board}.zig` files
 
 Reference: `examples/apps/adc_button/` for complete example.
+
+---
+
+## 3. BLE Stack Implementation Plan
+
+### Overview
+
+构建纯 Zig BLE 协议栈。分为三大阶段：async 原语、HCI 传输、BLE 协议栈。每完成一步就提交。
+
+### TODO List
+
+#### Phase 0: Async 原语 (from zgrnet)
+
+从 [zgrnet/zgrnet](https://github.com/zgrnet/zgrnet) 的 `zig/src/async/` 复制并改造到 `lib/async/`。
+
+- [ ] **0.1** 创建 `lib/async/` 模块骨架（BUILD.bazel, build.zig, build.zig.zon, src/async.zig）
+- [ ] **0.2** 复制 `task.zig` — 类型擦除的可调用单元，零平台依赖，直接搬
+- [ ] **0.3** 复制 `executor.zig` — Executor vtable + InlineExecutor，零平台依赖，直接搬
+- [ ] **0.4** 复制 `concepts.zig` — comptime 接口校验，零平台依赖，直接搬
+- [ ] **0.5** 改造 `channel.zig` — 原版硬编码 `std.Thread.Mutex/Condition`，改成 `Channel(T, Sync)` 接受 comptime Sync 参数
+- [ ] **0.6** 改造 `mpsc.zig` — 同上，`MpscQueue(T, Mutex)` 和 `BoundedMpscQueue(T, N, Sync)` 泛化
+- [ ] **0.7** 改造 `actor.zig` — 依赖 MpscQueue + Executor，跟着泛化
+- [ ] **0.8** 复制 `thread/` 后端 — ThreadExecutor + EventLoop，保持用 `std.Thread`（桌面平台用）
+- [ ] **0.9** 预留 `minicoro/` 目录 — stackful coroutine 后端（后续裸机平台用）
+
+**Sync trait 说明：** 平台提供一个 Sync 类型，包含 Mutex 和 Condition：
+
+```zig
+// 平台注入的 Sync 类型示例
+const Sync = struct {
+    pub const Mutex = struct {
+        pub fn init() @This() { ... }
+        pub fn deinit(self: *@This()) void { ... }
+        pub fn lock(self: *@This()) void { ... }
+        pub fn unlock(self: *@This()) void { ... }
+    };
+    pub const Condition = struct {
+        pub fn init() @This() { ... }
+        pub fn wait(self: *@This(), mutex: *Mutex) void { ... }
+        pub fn timedWait(self: *@This(), mutex: *Mutex, timeout_ns: u64) error{Timeout}!void { ... }
+        pub fn signal(self: *@This()) void { ... }
+        pub fn broadcast(self: *@This()) void { ... }
+    };
+};
+```
+
+ESP 映射：Mutex = FreeRTOS Mutex (`lib/platforms/esp/idf/src/sync.zig`)，Condition = Event Group
+std 映射：Mutex = `std.Thread.Mutex`，Condition = `std.Thread.Condition`
+
+#### Phase 1: HCI 传输层
+
+- [ ] **1.1** 定义 HCI transport trait `lib/hal/src/hci.zig` — read/write/poll 三个方法
+- [ ] **1.2** 注册到 `lib/hal/src/hal.zig` — `pub const hci = @import("hci.zig")`
+- [ ] **1.3** ESP VHCI C helper — `lib/platforms/esp/idf/src/bt/bt_helper.c/.h`（BT controller init + VHCI 回调）
+- [ ] **1.4** ESP VHCI Zig binding — `lib/platforms/esp/idf/src/bt/bt.zig`
+- [ ] **1.5** ESP HCI driver — `lib/platforms/esp/impl/src/hci.zig`（Event Group: READABLE/WRITABLE bits）
+
+**HCI trait 接口：**
+
+```zig
+// lib/hal/src/hci.zig — Driver 必须实现：
+fn read(self: *Self, buf: []u8) error{WouldBlock, HciError}!usize
+fn write(self: *Self, buf: []const u8) error{WouldBlock, HciError}!usize
+fn poll(self: *Self, flags: PollFlags, timeout_ms: i32) PollFlags
+
+const PollFlags = packed struct {
+    readable: bool = false,
+    writable: bool = false,
+    _padding: u6 = 0,
+};
+```
+
+#### Phase 2: BLE 协议栈 (`lib/bluetooth/`)
+
+- [ ] **2.1** 创建 `lib/bluetooth/` 模块骨架
+- [ ] **2.2** HCI 包层 — `host/hci/commands.zig` + `events.zig` + `acl.zig`（编码/解码 HCI 包）
+- [ ] **2.3** L2CAP 层 — `host/l2cap/l2cap.zig`（固定信道 CID 4/5/6，分片/重组）
+- [ ] **2.4** ATT 协议 — `host/att/att.zig`（PDU 编码/解码）
+- [ ] **2.5** GATT server — `gatt_server.zig`（handler 模式，Go http.Server 风格）
+- [ ] **2.6** GAP — `host/gap/gap.zig`（广播、扫描、连接管理）
+- [ ] **2.7** Host 组装 — `host/host.zig`（read loop + write loop + 状态机协调器）
+- [ ] **2.8** BLE Host trait — `lib/hal/src/ble.zig`（GAP/GATT 级别抽象边界）
+
+**Host 并发模型：**
+
+```
+Executor.spawn(readLoop):
+  loop:
+    hci.poll(.readable, -1)       // 阻塞等可读
+    pkt = hci.read()              // 非阻塞读
+    l2cap.handlePacket(pkt)       // 解包分发
+    → att → gatt_server.dispatch  // 找到 handler
+    → Executor.spawn(handler)     // handler 跑在新 coroutine
+
+Executor.spawn(writeLoop):
+  loop:
+    cmd = write_channel.recv()    // 阻塞等队列
+    hci.poll(.writable, -1)       // 等可写
+    hci.write(cmd)                // 非阻塞写
+```
+
+#### Phase 3: 扩展 (后续)
+
+- [ ] **3.1** SMP — 配对、绑定
+- [ ] **3.2** GATT client — 服务发现、读写 characteristic
+- [ ] **3.3** BLE 5.4 扩展 — PAwR、加密广播
+- [ ] **3.4** macOS CoreBluetooth 后端 — `lib/platforms/macos/impl/src/ble.zig` (future)
