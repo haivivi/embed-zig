@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0x41d635fa08a81a62,
     .dependencies = .{
-        .trait = .{ .path = "../trait" },
+        .trait = .{ .path = "../../trait" },
     },
     .paths = .{
         "build.zig",

@@ -27,7 +27,7 @@ filegroup(
         "//lib/ntp",
         "//lib/portaudio",
         "//lib/raysim",
-        "//lib/std",
+        "//lib/platforms/std",
         "//lib/tls",
         "//lib/tls/test:test_sources",
         "//lib/tls/test:server_sources",

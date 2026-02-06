@@ -24,14 +24,14 @@
 //!   mutex.lock();
 //!   mutex.unlock();
 
-// SAL modules
-pub const async_ = @import("sal/async.zig");
-pub const thread = @import("sal/thread.zig");
-pub const time = @import("sal/time.zig");
-pub const sync = @import("sal/sync.zig");
-pub const socket = @import("sal/socket.zig");
-pub const tls = @import("sal/tls.zig");
-pub const queue = @import("sal/queue.zig");
+// impl modules
+pub const async_ = @import("impl/async.zig");
+pub const thread = @import("impl/thread.zig");
+pub const time = @import("impl/time.zig");
+pub const sync = @import("impl/sync.zig");
+pub const socket = @import("impl/socket.zig");
+pub const tls = @import("impl/tls.zig");
+pub const queue = @import("impl/queue.zig");
 
 // Convenience type re-exports
 pub const Mutex = sync.Mutex;
@@ -43,13 +43,13 @@ pub const Queue = queue.Queue;
 
 // Legacy sal namespace for backwards compatibility
 pub const sal = struct {
-    pub const async_ = @import("sal/async.zig");
-    pub const thread = @import("sal/thread.zig");
-    pub const time = @import("sal/time.zig");
-    pub const sync = @import("sal/sync.zig");
-    pub const socket = @import("sal/socket.zig");
-    pub const tls = @import("sal/tls.zig");
-    pub const queue = @import("sal/queue.zig");
+    pub const async_ = @import("impl/async.zig");
+    pub const thread = @import("impl/thread.zig");
+    pub const time = @import("impl/time.zig");
+    pub const sync = @import("impl/sync.zig");
+    pub const socket = @import("impl/socket.zig");
+    pub const tls = @import("impl/tls.zig");
+    pub const queue = @import("impl/queue.zig");
 };
 
 test {
