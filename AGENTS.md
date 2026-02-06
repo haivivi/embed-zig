@@ -4,19 +4,19 @@
 
 ### Cross-Platform Lib
 
-**Location**: `lib/{lib_name}/`
+**Location**: `lib/pkg/{lib_name}/`
 
 **Dependency Rules**:
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
-- Can depend on other cross-platform libs in `lib/`
+- Can depend on other cross-platform libs in `lib/pkg/`
 - **MUST NOT** depend on `lib/platform/{platform}/` (e.g., `lib/platform/esp/`)
 - **Avoid** `std` (freestanding environment)
 
-**Example**: `lib/tls`, `lib/http`, `lib/dns` - they accept generic parameters like `Socket`, `Crypto`
+**Example**: `lib/pkg/tls`, `lib/pkg/http`, `lib/pkg/dns` - they accept generic parameters like `Socket`, `Crypto`
 
 ```zig
-// lib/tls/src/client.zig
+// lib/pkg/tls/src/client.zig
 pub fn Client(comptime Socket: type, comptime Crypto: type) type {
     // Socket and Crypto are validated via lib/trait
     return struct {
@@ -112,7 +112,7 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
 **Dependency Rules**:
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
-- Can depend on cross-platform libs in `lib/`
+- Can depend on cross-platform libs in `lib/pkg/`
 - **MUST NOT** depend on `lib/platform/{platform}/`
 
 ```zig
