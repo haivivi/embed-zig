@@ -185,6 +185,7 @@ pub fn run(env: anytype) void {
                             log.info("[WIFI] connection_failed (reason: {})", .{reason});
                             events.wifi_failed = true;
                         },
+                        else => {},
                     }
                 },
                 .net => |net_event| {

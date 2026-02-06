@@ -37,6 +37,12 @@ pub const AudioSystem = board.AudioSystem;
 pub const PaSwitchDriver = board.PaSwitchDriver;
 pub const RtcDriver = board.RtcDriver;
 
+// I2C config for shared bus
+pub const idf = esp.idf;
+pub const i2c_sda = board.i2c_sda;
+pub const i2c_scl = board.i2c_scl;
+pub const i2c_freq_hz = board.i2c_freq_hz;
+
 // ============================================================================
 // HAL Specs
 // ============================================================================

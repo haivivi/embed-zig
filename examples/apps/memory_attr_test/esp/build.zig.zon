@@ -1,10 +1,12 @@
 .{
-    .name = .memory_attr_test,
+    .name = .memory_attr_test_app,
     .version = "0.1.0",
+    .fingerprint = 0xe9a1b4c7d2f36580,
     .dependencies = .{},
     .paths = .{
-        "../app.zig",
         "build.zig",
         "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
     },
 }
