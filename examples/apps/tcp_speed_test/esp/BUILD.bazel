@@ -33,9 +33,9 @@ esp_zig_app(
         "${EVENT_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
-        "include(${_ESP_LIB}/esp/idf/src/net/net.cmake)",
-        "include(${_ESP_LIB}/esp/idf/src/event/event.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/net/net.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/event/event.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
     deps = ["//lib/hal", "//lib/trait", "//lib/motion", "//lib/math"],

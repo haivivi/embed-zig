@@ -20,7 +20,7 @@ esp_zig_app(
         "${LEDC_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/idf/src/ledc/ledc.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/ledc/ledc.cmake)",
     ],
     extra_c_sources = ["LEDC_C_SOURCES"],
     deps = ["//lib/hal", "//lib/motion", "//lib/math"],

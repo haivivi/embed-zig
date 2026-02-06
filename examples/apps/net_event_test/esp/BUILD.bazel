@@ -28,8 +28,8 @@ esp_zig_app(
         "${NET_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/src/idf/wifi/wifi.cmake)",
-        "include(${_ESP_LIB}/esp/src/idf/net/net.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/net/net.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES"],
     deps = ["//lib/hal", "//lib/motion", "//lib/math"],

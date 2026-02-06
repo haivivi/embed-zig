@@ -22,7 +22,7 @@ esp_zig_app(
         "led_strip_new_rmt_device",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/idf/src/timer/timer.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/timer/timer.cmake)",
     ],
     extra_c_sources = ["TIMER_C_SOURCES"],
     deps = ["//lib/hal", "//lib/motion", "//lib/math"],

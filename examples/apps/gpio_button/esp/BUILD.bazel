@@ -23,7 +23,7 @@ esp_zig_app(
     ],
     extra_cmake = [
         "# _ESP_LIB is set by the generated shell to point to $WORK/lib",
-        "include(${_ESP_LIB}/esp/idf/src/i2c/i2c.cmake)",
+        "include(${_ESP_LIB}/platforms/esp/idf/src/i2c/i2c.cmake)",
     ],
     extra_c_sources = ["I2C_C_SOURCES"],
     deps = ["//lib/hal", "//lib/drivers", "//lib/motion", "//lib/math"],
