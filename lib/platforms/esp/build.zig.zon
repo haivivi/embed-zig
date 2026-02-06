@@ -4,10 +4,10 @@
     .fingerprint = 0xe54a8bd0bac6a302,
     .dependencies = .{
         .dns = .{
-            .path = "../dns",
+            .path = "../../dns",
         },
         .drivers = .{
-            .path = "../drivers",
+            .path = "../../drivers",
         },
         .idf = .{
             .path = "idf",
@@ -16,13 +16,13 @@
             .path = "impl",
         },
         .trait = .{
-            .path = "../trait",
+            .path = "../../trait",
         },
         .hal = .{
-            .path = "../hal",
+            .path = "../../hal",
         },
         .crypto = .{
-            .path = "../crypto",
+            .path = "../../crypto",
         },
     },
     .paths = .{

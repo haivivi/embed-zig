@@ -4,7 +4,7 @@
     .fingerprint = 0xdec0de0001000002,
     .dependencies = .{
         .hal = .{ .path = "../../../../lib/hal" },
-        .esp = .{ .path = "../../../../lib/esp" },
+        .esp = .{ .path = "../../../../lib/platforms/esp" },
         .trait = .{ .path = "../../../../lib/trait" },
         .tls = .{ .path = "../../../../lib/tls" },
         .motion = .{ .path = "../../../../lib/motion" },

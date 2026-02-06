@@ -7,13 +7,13 @@
             .path = "../idf",
         },
         .trait = .{
-            .path = "../../trait",
+            .path = "../../../trait",
         },
         .hal = .{
-            .path = "../../hal",
+            .path = "../../../hal",
         },
         .drivers = .{
-            .path = "../../drivers",
+            .path = "../../../drivers",
         },
     },
     .paths = .{

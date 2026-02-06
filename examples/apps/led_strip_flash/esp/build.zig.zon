@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0x2de756b6704a2fec,
     .dependencies = .{
-        .esp = .{ .path = "../../../../lib/esp" },
+        .esp = .{ .path = "../../../../lib/platforms/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
         .drivers = .{ .path = "../../../../lib/drivers" },
         .motion = .{ .path = "../../../../lib/motion" },
