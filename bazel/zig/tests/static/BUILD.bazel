@@ -1,0 +1,7 @@
+load("//bazel/zig:defs.bzl", "zig_static_library")
+
+# Compile math_utils (zig_library) into a .a static library
+zig_static_library(
+    name = "math_utils_a",
+    lib = "//bazel/zig/tests/math_utils",
+)

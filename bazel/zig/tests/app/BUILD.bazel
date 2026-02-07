@@ -1,0 +1,15 @@
+load("//bazel/zig:defs.bzl", "zig_binary")
+
+# Full chain binary: app → math_utils → base (pure Zig, tests zig_binary + transitive deps)
+# NOTE: zig_binary with deps that have @cImport requires C headers to be
+# available transitively. This is a known zig multi-module CLI limitation.
+# Use zig_package with c_srcs for C-dependent binaries.
+zig_binary(
+    name = "app",
+    main = "src/main.zig",
+    srcs = ["src/main.zig"],
+    deps = [
+        "//bazel/zig/tests/math_utils",
+        "//bazel/zig/tests/base",
+    ],
+)

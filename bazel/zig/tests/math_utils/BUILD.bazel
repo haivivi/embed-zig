@@ -1,0 +1,8 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//bazel/zig/tests:__subpackages__"])
+
+zig_package(
+    name = "math_utils",
+    deps = ["//bazel/zig/tests/base"],
+)

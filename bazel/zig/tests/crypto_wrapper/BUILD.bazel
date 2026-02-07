@@ -1,0 +1,14 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//bazel/zig/tests:__subpackages__"])
+
+zig_package(
+    name = "crypto_wrapper",
+    c_srcs = ["src/xor.c", "src/xor.h"],
+    c_includes = ["src"],
+    link_libc = True,
+    deps = [
+        "//bazel/zig/tests/math_utils",
+        "//bazel/zig/tests/base",
+    ],
+)
