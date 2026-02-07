@@ -14,17 +14,19 @@ package(default_visibility = ["//visibility:public"])
 # --- adc_button: korvo2_v3 ---
 esp_board_build(name = "adc_button_korvo2_v3", target = "//examples/apps/adc_button/esp:app", board = "korvo2_v3")
 
-# --- aec_test: korvo2_v3, lichuang_szp ---
+# --- aec_test: korvo2_v3, lichuang_szp, lichuang_gocool ---
 esp_board_build(name = "aec_test_korvo2_v3", target = "//examples/apps/aec_test/esp:app", board = "korvo2_v3")
 esp_board_build(name = "aec_test_lichuang_szp", target = "//examples/apps/aec_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "aec_test_lichuang_gocool", target = "//examples/apps/aec_test/esp:app", board = "lichuang_gocool")
 
 # --- async_test: esp32s3_devkit ---
 esp_board_build(name = "async_test_esp32s3_devkit", target = "//examples/apps/async_test/esp:app", board = "esp32s3_devkit")
 
-# --- gpio_button: esp32s3_devkit, korvo2_v3, lichuang_szp (skip sim_raylib) ---
+# --- gpio_button: esp32s3_devkit, korvo2_v3, lichuang_szp, lichuang_gocool (skip sim_raylib) ---
 esp_board_build(name = "gpio_button_esp32s3_devkit", target = "//examples/apps/gpio_button/esp:app", board = "esp32s3_devkit")
 # esp_board_build(name = "gpio_button_korvo2_v3", target = "//examples/apps/gpio_button/esp:app", board = "korvo2_v3")  # TODO: pre-existing board.zig error
 esp_board_build(name = "gpio_button_lichuang_szp", target = "//examples/apps/gpio_button/esp:app", board = "lichuang_szp")
+esp_board_build(name = "gpio_button_lichuang_gocool", target = "//examples/apps/gpio_button/esp:app", board = "lichuang_gocool")
 
 # --- http_speed_test: esp32s3_devkit (needs env) ---
 esp_board_build(name = "http_speed_test_esp32s3_devkit", target = "//examples/apps/http_speed_test/esp:app", board = "esp32s3_devkit")
@@ -43,8 +45,9 @@ esp_board_build(name = "led_strip_flash_esp32s3_devkit", target = "//examples/ap
 # --- memory_attr_test: esp32s3_devkit ---
 esp_board_build(name = "memory_attr_test_esp32s3_devkit", target = "//examples/apps/memory_attr_test/esp:app", board = "esp32s3_devkit")
 
-# --- motion_test: lichuang_szp ---
+# --- motion_test: lichuang_szp, lichuang_gocool ---
 esp_board_build(name = "motion_test_lichuang_szp", target = "//examples/apps/motion_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "motion_test_lichuang_gocool", target = "//examples/apps/motion_test/esp:app", board = "lichuang_gocool")
 
 # --- net_event_test: esp32s3_devkit (needs env) ---
 esp_board_build(name = "net_event_test_esp32s3_devkit", target = "//examples/apps/net_event_test/esp:app", board = "esp32s3_devkit")
@@ -59,9 +62,10 @@ esp_board_build(name = "nvs_storage_esp32s3_devkit", target = "//examples/apps/n
 # --- pwm_fade: esp32s3_devkit ---
 esp_board_build(name = "pwm_fade_esp32s3_devkit", target = "//examples/apps/pwm_fade/esp:app", board = "esp32s3_devkit")
 
-# --- speaker_test: korvo2_v3, lichuang_szp ---
+# --- speaker_test: korvo2_v3, lichuang_szp, lichuang_gocool ---
 esp_board_build(name = "speaker_test_korvo2_v3", target = "//examples/apps/speaker_test/esp:app", board = "korvo2_v3")
 esp_board_build(name = "speaker_test_lichuang_szp", target = "//examples/apps/speaker_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "speaker_test_lichuang_gocool", target = "//examples/apps/speaker_test/esp:app", board = "lichuang_gocool")
 
 # --- tcp_speed_test: esp32s3_devkit (needs env) ---
 esp_board_build(name = "tcp_speed_test_esp32s3_devkit", target = "//examples/apps/tcp_speed_test/esp:app", board = "esp32s3_devkit")
@@ -92,10 +96,12 @@ filegroup(
         ":adc_button_korvo2_v3",
         ":aec_test_korvo2_v3",
         ":aec_test_lichuang_szp",
+        ":aec_test_lichuang_gocool",
         ":async_test_esp32s3_devkit",
         ":gpio_button_esp32s3_devkit",
         # ":gpio_button_korvo2_v3",  # TODO: pre-existing board.zig error
         ":gpio_button_lichuang_szp",
+        ":gpio_button_lichuang_gocool",
         ":http_speed_test_esp32s3_devkit",
         ":https_speed_test_esp32s3_devkit",
         ":led_strip_anim_esp32s3_devkit",
@@ -104,6 +110,7 @@ filegroup(
         # ":led_strip_flash_korvo2_v3",  # TODO: pre-existing board.zig error
         ":memory_attr_test_esp32s3_devkit",
         ":motion_test_lichuang_szp",
+        ":motion_test_lichuang_gocool",
         ":net_event_test_esp32s3_devkit",
         ":ntp_test_esp32s3_devkit",
         ":ntp_test_korvo2_v3",
@@ -111,6 +118,7 @@ filegroup(
         ":pwm_fade_esp32s3_devkit",
         ":speaker_test_korvo2_v3",
         ":speaker_test_lichuang_szp",
+        ":speaker_test_lichuang_gocool",
         ":tcp_speed_test_esp32s3_devkit",
         ":temperature_sensor_esp32s3_devkit",
         ":timer_callback_esp32s3_devkit",
