@@ -15,6 +15,9 @@
         .drivers = .{
             .path = "../../../pkg/drivers",
         },
+        .waitgroup = .{
+            .path = "../../../pkg/waitgroup",
+        },
     },
     .paths = .{
         "build.zig",

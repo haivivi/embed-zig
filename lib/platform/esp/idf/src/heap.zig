@@ -12,8 +12,8 @@
 //!   const buf = try heap.psram.alloc(u8, 32768);
 //!   defer heap.psram.free(buf);
 //!
-//!   // Use with idf.async_
-//!   try idf.async_.go(heap.psram, "task", fn, arg, .{});
+//!   // Use with runtime spawn
+//!   try idf.runtime.spawn("task", fn, arg, .{ .allocator = heap.psram });
 
 const std = @import("std");
 

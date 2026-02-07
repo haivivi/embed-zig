@@ -21,6 +21,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const waitgroup_dep = b.dependency("waitgroup", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // Create the impl module
     _ = b.addModule("impl", .{
@@ -32,6 +36,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "trait", .module = trait_dep.module("trait") },
             .{ .name = "hal", .module = hal_dep.module("hal") },
             .{ .name = "drivers", .module = drivers_dep.module("drivers") },
+            .{ .name = "waitgroup", .module = waitgroup_dep.module("waitgroup") },
         },
     });
 }

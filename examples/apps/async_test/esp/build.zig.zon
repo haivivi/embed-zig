@@ -5,7 +5,8 @@
     .dependencies = .{
         .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
-        .motion = .{ .path = "../../../../lib/pkg/motion" },
+        .cancellation = .{ .path = "../../../../lib/pkg/cancellation" },
+        .waitgroup = .{ .path = "../../../../lib/pkg/waitgroup" },
     },
     .paths = .{
         "build.zig",

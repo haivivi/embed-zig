@@ -15,6 +15,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const cancellation_dep = b.dependency("cancellation", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const waitgroup_dep = b.dependency("waitgroup", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create app module
     const app_module = b.addModule("app", .{
         .root_source_file = b.path("../app.zig"),
@@ -25,4 +35,6 @@ pub fn build(b: *std.Build) void {
     // Add dependencies
     app_module.addImport("esp", esp_dep.module("esp"));
     app_module.addImport("hal", hal_dep.module("hal"));
+    app_module.addImport("cancellation", cancellation_dep.module("cancellation"));
+    app_module.addImport("waitgroup", waitgroup_dep.module("waitgroup"));
 }
