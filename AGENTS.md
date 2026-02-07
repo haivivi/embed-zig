@@ -252,7 +252,7 @@ pub const SpeakerDriver = struct {
 │  (lib/hal/hci.zig) │                                    │
 ├────────────────────┤                                    │
 │  ESP VHCI impl     │  Apple hardware                    │
-│  (platform/esp/)    │                                    │
+│(lib/platform/esp/) │                                    │
 └────────────────────┴────────────────────────────────────┘
 ```
 

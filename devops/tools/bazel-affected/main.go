@@ -402,10 +402,3 @@ func getTargetDeps(target string) ([]string, error) {
 	return deps, scanner.Err()
 }
 
-// extractPackage extracts the package path from a Bazel target.
-func extractPackage(target string) string {
-	if idx := strings.LastIndex(target, ":"); idx != -1 {
-		return target[:idx]
-	}
-	return target
-}
