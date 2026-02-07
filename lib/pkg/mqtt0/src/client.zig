@@ -164,13 +164,17 @@ pub fn Client(comptime Transport: type) type {
         /// Returns on disconnect or error.
         pub fn readLoop(self: *Self) !void {
             while (self.connected) {
-                const pkt_len = pkt.readPacket(self.transport, &self.buf) catch |err| {
-                    self.connected = false;
-                    return err;
-                };
-
-                try self.handlePacket(self.buf[0..pkt_len]);
+                try self.poll();
             }
+        }
+
+        /// Read and process a single packet. Blocks until one packet arrives.
+        pub fn poll(self: *Self) !void {
+            const pkt_len = pkt.readPacket(self.transport, &self.buf) catch |err| {
+                self.connected = false;
+                return err;
+            };
+            try self.dispatchPacket(self.buf[0..pkt_len]);
         }
 
         // ---- Keepalive ----
@@ -250,7 +254,7 @@ pub fn Client(comptime Transport: type) type {
             self.connected = false;
         }
 
-        fn handlePacket(self: *Self, data: []const u8) !void {
+        fn dispatchPacket(self: *Self, data: []const u8) !void {
             const hdr = try pkt.decodeFixedHeader(data);
 
             switch (hdr.packet_type) {
