@@ -1,7 +1,9 @@
 //! Hardware Definition & Drivers: GoCool 改版立创实战派 ESP32-S3 (LiChuang GoCool)
 //!
-//! This file defines hardware configuration and provides pre-configured drivers
-//! for the GoCool modified LiChuang ShiZhanPai ESP32-S3 development board.
+//! Based on the LiChuang ShiZhanPai (lichuang_szp) board with GoCool modifications.
+//! Currently shares the same pin configuration as lichuang_szp.
+//!
+//! TODO: GoCool 板增加了一个额外按键，需要确认 GPIO 并添加驱动支持。
 //!
 //! Key features:
 //! - ESP32-S3 with 16MB Flash, 8MB Octal PSRAM

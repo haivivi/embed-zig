@@ -54,18 +54,28 @@ pub const button_spec = struct {
 // IMU Driver (QMI8658)
 // ============================================================================
 
-/// Custom IMU driver that initializes I2C and QMI8658
-/// Eagerly initializes in init() — no lazy init needed.
+/// Custom IMU driver that initializes I2C and QMI8658.
+///
+/// Uses two-phase init: init() returns a lightweight struct, ensureInit()
+/// performs the actual I2C + QMI8658 initialization on first use.
+/// This is necessary because init() returns Self by value (copy), so any
+/// internal pointers (e.g. inner.i2c → &self.i2c_bus) would dangle after
+/// the struct is moved to its final address in the HAL Board.
 pub const ImuDriver = struct {
     const Self = @This();
 
-    i2c_bus: idf.I2c,
-    inner: board.ImuDriver,
+    i2c_bus: idf.I2c = undefined,
+    inner: board.ImuDriver = undefined,
+    initialized: bool = false,
 
     pub fn init() !Self {
-        var self: Self = undefined;
+        return .{};
+    }
 
-        // Initialize I2C bus
+    /// Initialize I2C and QMI8658 on first use (self must be at stable address)
+    fn ensureInit(self: *Self) !void {
+        if (self.initialized) return;
+
         self.i2c_bus = try idf.I2c.init(.{
             .port = 0,
             .sda = board.i2c_sda,
@@ -74,36 +84,43 @@ pub const ImuDriver = struct {
         });
         errdefer self.i2c_bus.deinit();
 
-        // Initialize IMU driver with I2C
         self.inner = board.ImuDriver{};
         try self.inner.initWithI2c(&self.i2c_bus);
 
+        self.initialized = true;
         log.info("ImuDriver: I2C and QMI8658 initialized", .{});
-        return self;
     }
 
     pub fn deinit(self: *Self) void {
-        self.inner.deinit();
-        self.i2c_bus.deinit();
+        if (self.initialized) {
+            self.inner.deinit();
+            self.i2c_bus.deinit();
+            self.initialized = false;
+        }
     }
 
     pub fn readAccel(self: *Self) !hal.AccelData {
+        try self.ensureInit();
         return self.inner.readAccel();
     }
 
     pub fn readGyro(self: *Self) !hal.GyroData {
+        try self.ensureInit();
         return self.inner.readGyro();
     }
 
     pub fn readAngles(self: *Self) !struct { roll: f32, pitch: f32 } {
+        try self.ensureInit();
         return self.inner.readAngles();
     }
 
     pub fn readTemperature(self: *Self) !f32 {
+        try self.ensureInit();
         return self.inner.readTemperature();
     }
 
     pub fn isDataReady(self: *Self) !bool {
+        if (!self.initialized) return false;
         return self.inner.isDataReady();
     }
 };
