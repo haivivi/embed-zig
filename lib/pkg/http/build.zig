@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const std_sal_dep = b.dependency("std_sal", .{
+    const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     integration_test.root_module.addImport("src/http.zig", http_mod);
-    integration_test.root_module.addImport("std_sal", std_sal_dep.module("std_sal"));
+    integration_test.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
     integration_test.root_module.addImport("trait", trait_dep.module("trait"));
     integration_test.root_module.addImport("tls", tls_dep.module("tls"));
     integration_test.root_module.addImport("dns", dns_dep.module("dns"));
