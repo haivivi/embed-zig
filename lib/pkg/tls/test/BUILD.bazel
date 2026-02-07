@@ -13,6 +13,8 @@
 #   - Large data transfer (1MB)
 
 load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 

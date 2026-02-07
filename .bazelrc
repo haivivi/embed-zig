@@ -4,10 +4,8 @@
 # Build options
 # =============================================================================
 
-build --enable_bzlmod
-
-# Platform
-build --incompatible_enable_cc_toolchain_resolution
+# Bzlmod is always enabled in Bazel 9+
+# CC toolchain resolution is always enabled in Bazel 9+
 
 # =============================================================================
 # Cache configuration

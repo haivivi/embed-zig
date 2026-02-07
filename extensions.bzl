@@ -16,7 +16,7 @@ def _opus_repo_impl(ctx):
     """Download and setup opus source."""
     ctx.download_and_extract(
         url = "https://downloads.xiph.org/releases/opus/opus-{}.tar.gz".format(_OPUS_VERSION),
-        stripPrefix = "opus-{}".format(_OPUS_VERSION),
+        strip_prefix = "opus-{}".format(_OPUS_VERSION),
     )
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
@@ -60,7 +60,7 @@ def _ogg_repo_impl(ctx):
     """Download and setup libogg source."""
     ctx.download_and_extract(
         url = "https://downloads.xiph.org/releases/ogg/libogg-{}.tar.gz".format(_OGG_VERSION),
-        stripPrefix = "libogg-{}".format(_OGG_VERSION),
+        strip_prefix = "libogg-{}".format(_OGG_VERSION),
     )
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
@@ -149,10 +149,12 @@ def _zig_toolchain_impl(ctx):
     ctx.download_and_extract(
         url = url,
         sha256 = _ZIG_SHA256.get(platform, ""),
-        stripPrefix = "zig-{}-baseline".format(platform),
+        strip_prefix = "zig-{}-baseline".format(platform),
     )
 
     ctx.file("BUILD.bazel", """
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
