@@ -24,7 +24,7 @@
 // Core types
 pub const packet = @import("packet.zig");
 pub const v4 = @import("v4.zig");
-// pub const v5 = @import("v5.zig");
+pub const v5 = @import("v5.zig");
 // pub const trie = @import("trie.zig");
 // pub const mux = @import("mux.zig");
 // pub const client = @import("client.zig");
@@ -47,4 +47,5 @@ pub const detectProtocolVersion = packet.detectProtocolVersion;
 test {
     _ = packet;
     _ = v4;
+    _ = v5;
 }
