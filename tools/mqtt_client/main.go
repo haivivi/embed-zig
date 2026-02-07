@@ -1,16 +1,12 @@
 // mqtt_client — Go MQTT client for cross-testing with Zig mqtt0 broker.
 //
-// Usage:
-//   go run . [-addr tcp://127.0.0.1:1883] [-id test-go-client] [-topic test/#] [-pub test/hello] [-msg hello]
+// Uses paho.mqtt.golang (standard Go MQTT client).
 //
-// Modes:
-//   - Subscribe mode (default): subscribes and prints received messages
-//   - Publish mode (-pub): publishes a message then exits
-//   - Both: subscribes, publishes, receives echo
+// Usage:
+//   go run . [-addr 127.0.0.1:1883] [-id go-client] [-sub test/#] [-pub test/hello] [-msg "hello from Go"] [-v5]
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -19,90 +15,74 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/haivivi/giztoy/go/pkg/mqtt0"
+	pahov3 "github.com/eclipse/paho.mqtt.golang"
 )
 
 func main() {
-	addr := flag.String("addr", "tcp://127.0.0.1:1883", "Broker address")
-	clientID := flag.String("id", "test-go-client", "Client ID")
-	subTopic := flag.String("topic", "test/#", "Subscribe topic (empty to skip)")
+	addr := flag.String("addr", "127.0.0.1:1883", "Broker address (host:port)")
+	clientID := flag.String("id", "go-test-client", "Client ID")
+	subTopic := flag.String("sub", "", "Subscribe topic (empty to skip)")
 	pubTopic := flag.String("pub", "", "Publish topic (empty to skip)")
-	pubMsg := flag.String("msg", "hello from Go", "Publish message")
-	v5 := flag.Bool("v5", false, "Use MQTT 5.0 (default: 3.1.1)")
+	pubMsg := flag.String("msg", "hello from Go", "Message payload")
 	flag.Parse()
 
-	version := mqtt0.ProtocolV4
-	if *v5 {
-		version = mqtt0.ProtocolV5
-	}
+	opts := pahov3.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("tcp://%s", *addr))
+	opts.SetClientID(*clientID)
+	opts.SetKeepAlive(30 * time.Second)
+	opts.SetCleanSession(true)
+	opts.SetProtocolVersion(4) // MQTT 3.1.1
 
-	ctx := context.Background()
-
-	client, err := mqtt0.Connect(ctx, mqtt0.ClientConfig{
-		Addr:            *addr,
-		ClientID:        *clientID,
-		ProtocolVersion: version,
-		KeepAlive:       30,
+	opts.SetDefaultPublishHandler(func(client pahov3.Client, msg pahov3.Message) {
+		fmt.Printf("[RECV] topic=%s payload=%s retain=%v\n", msg.Topic(), string(msg.Payload()), msg.Retained())
 	})
-	if err != nil {
-		log.Fatalf("Connect failed: %v", err)
-	}
-	defer client.Close()
 
-	fmt.Printf("Connected to %s as %s (v%d)\n", *addr, *clientID, version)
+	client := pahov3.NewClient(opts)
+	token := client.Connect()
+	if !token.WaitTimeout(10 * time.Second) {
+		log.Fatal("Connect timeout")
+	}
+	if token.Error() != nil {
+		log.Fatalf("Connect error: %v", token.Error())
+	}
+	fmt.Printf("Connected to %s as %s\n", *addr, *clientID)
 
 	// Subscribe
 	if *subTopic != "" {
-		if err := client.Subscribe(ctx, *subTopic); err != nil {
-			log.Fatalf("Subscribe failed: %v", err)
+		token := client.Subscribe(*subTopic, 0, nil)
+		if !token.WaitTimeout(5 * time.Second) {
+			log.Fatal("Subscribe timeout")
 		}
-		fmt.Printf("Subscribed to: %s\n", *subTopic)
+		if token.Error() != nil {
+			log.Fatalf("Subscribe error: %v", token.Error())
+		}
+		fmt.Printf("Subscribed to %s\n", *subTopic)
 	}
 
 	// Publish
 	if *pubTopic != "" {
-		if err := client.Publish(ctx, *pubTopic, []byte(*pubMsg)); err != nil {
-			log.Fatalf("Publish failed: %v", err)
+		token := client.Publish(*pubTopic, 0, false, []byte(*pubMsg))
+		if !token.WaitTimeout(5 * time.Second) {
+			log.Fatal("Publish timeout")
 		}
-		fmt.Printf("Published: %s -> %s\n", *pubTopic, *pubMsg)
-
-		// If no subscription, exit after publish
-		if *subTopic == "" {
-			return
+		if token.Error() != nil {
+			log.Fatalf("Publish error: %v", token.Error())
 		}
+		fmt.Printf("Published to %s: %s\n", *pubTopic, *pubMsg)
 	}
 
-	// Receive loop
-	if *subTopic != "" {
-		fmt.Println("Waiting for messages (Ctrl+C to quit)...")
-
-		// Graceful shutdown
-		ctx, cancel := context.WithCancel(ctx)
-		go func() {
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-			<-sigCh
-			cancel()
-		}()
-
-		for {
-			msg, err := client.RecvTimeout(2 * time.Second)
-			if err != nil {
-				if ctx.Err() != nil {
-					fmt.Println("\nStopped.")
-					return
-				}
-				log.Printf("Recv error: %v", err)
-				return
-			}
-			if msg != nil {
-				fmt.Printf("[MSG] topic=%s payload=%s retain=%v\n",
-					msg.Topic, string(msg.Payload), msg.Retain)
-			}
-			if ctx.Err() != nil {
-				fmt.Println("\nStopped.")
-				return
-			}
-		}
+	// If no sub topic, exit after publish
+	if *subTopic == "" {
+		time.Sleep(500 * time.Millisecond)
+		client.Disconnect(250)
+		return
 	}
+
+	// Wait for signal
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	client.Disconnect(250)
+	fmt.Println("Disconnected")
 }
