@@ -1,0 +1,10 @@
+load("//bazel/zig:defs.bzl", "zig_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_lib(
+    name = "mqtt0",
+    srcs = glob(["**/*"]),
+    # Zero deps — mqtt0 is fully self-contained at the packet/codec level.
+    # Client and broker will add deps on channel/waitgroup/cancellation/trait later.
+)

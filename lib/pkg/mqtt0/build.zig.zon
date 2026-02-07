@@ -1,0 +1,10 @@
+.{
+    .name = .mqtt0,
+    .version = "0.1.0",
+    .fingerprint = 0x4a71cfca93084516,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
