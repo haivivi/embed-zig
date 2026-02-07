@@ -3,6 +3,7 @@ const std = @import("std");
 pub const BoardType = enum {
     korvo2_v3,
     lichuang_szp,
+    lichuang_gocool,
 };
 
 pub fn build(b: *std.Build) void {

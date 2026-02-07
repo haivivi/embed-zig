@@ -15,7 +15,7 @@ filegroup(
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["korvo2_v3", "lichuang_szp"],
+    boards = ["korvo2_v3", "lichuang_szp", "lichuang_gocool"],
     requires = [
         "driver",
         "esp_driver_i2s",

@@ -12,6 +12,7 @@ const hal = @import("hal");
 const hw = switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
     .lichuang_szp => @import("esp/lichuang_szp.zig"),
+    .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
 };
 
 pub const Hardware = hw.Hardware;

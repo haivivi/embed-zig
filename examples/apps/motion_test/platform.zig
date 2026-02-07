@@ -9,6 +9,7 @@ const hal = @import("hal");
 // Select board implementation based on build option
 const hw = switch (build_options.board) {
     .lichuang_szp => @import("esp/lichuang_szp.zig"),
+    .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
 };
 
 /// Board specification for hal.Board

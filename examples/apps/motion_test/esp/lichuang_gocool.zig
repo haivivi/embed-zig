@@ -1,6 +1,6 @@
-//! LiChuang SZP Board Support Package
+//! LiChuang GoCool Board Support Package
 //!
-//! Motion detection configuration for the LiChuang ShiZhanPai ESP32-S3 board.
+//! Motion detection configuration for the LiChuang GoCool ESP32-S3 board.
 //! Uses QMI8658 6-axis IMU for motion detection.
 
 const std = @import("std");
@@ -8,7 +8,7 @@ const hal = @import("hal");
 const esp = @import("esp");
 
 const idf = esp.idf;
-const board = esp.boards.lichuang_szp;
+const board = esp.boards.lichuang_gocool;
 
 // ============================================================================
 // Hardware Info
