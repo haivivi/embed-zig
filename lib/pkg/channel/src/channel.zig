@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```zig
-//! const Rt = @import("std_sal").runtime;
+//! const Rt = @import("std_impl").runtime;
 //! const Ch = channel.Channel(u32, 16, Rt);
 //!
 //! var ch = Ch.init();
