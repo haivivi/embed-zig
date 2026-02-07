@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Get dependencies
-    const std_sal_dep = b.dependency("std_sal", .{
+    const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    exe.root_module.addImport("std_sal", std_sal_dep.module("std_sal"));
+    exe.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
     exe.root_module.addImport("tls", tls_dep.module("tls"));
     exe.root_module.addImport("crypto", crypto_dep.module("crypto"));
 
