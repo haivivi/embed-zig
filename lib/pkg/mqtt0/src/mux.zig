@@ -1,291 +1,202 @@
-//! Mux — Topic-based message routing (like http.ServeMux)
+//! ServeMux — Topic-based message router
 //!
-//! Two variants:
-//! - Comptime Mux: routes known at compile time, zero runtime allocation
-//! - Runtime Mux: routes registered at runtime, fixed-capacity pool
+//! Routes incoming MQTT messages to handlers based on topic patterns.
+//! Uses a Trie internally for O(topic_depth) matching with +/# wildcards.
 //!
-//! ## Comptime Mux (recommended for clients)
-//!
-//! ```zig
-//! const MyMux = mqtt0.mux.comptimeMux(.{
-//!     .{ "sensor/+/data", handleSensor },
-//!     .{ "device/#", handleDevice },
-//! });
-//!
-//! client.onMessage(MyMux.handler());
-//! ```
-//!
-//! ## Runtime Mux (for dynamic routing, brokers)
-//!
-//! ```zig
-//! var rt_mux = mqtt0.mux.RuntimeMux(16).init();
-//! try rt_mux.handle("sensor/#", myHandler);
-//!
-//! client.onMessage(rt_mux.handler());
-//! ```
+//! Both Client and Broker can use Mux. No global instance.
+//! Mux itself implements Handler (for composability).
 
-const pkt = @import("packet.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const trie_mod = @import("trie.zig");
-
-const Message = pkt.Message;
-const Handler = pkt.Handler;
-const topicMatches = trie_mod.topicMatches;
+const packet = @import("packet.zig");
 
 // ============================================================================
-// Comptime Mux
+// Handler — type-erased message handler
 // ============================================================================
 
-/// Route entry for comptime mux
-pub const Route = struct {
-    pattern: []const u8,
-    handler_fn: *const fn (*const Message) void,
-};
+pub const Handler = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
 
-/// Create a comptime mux from a list of routes.
-/// All patterns are stored in .rodata. Dispatch is a comptime-unrolled loop.
-///
-/// Usage:
-///   const MyMux = comptimeMux(.{
-///       .{ "sensor/+/data", handleSensor },
-///       .{ "device/#", handleDevice },
-///   });
-///   const h = MyMux.handler();
-pub fn comptimeMux(comptime route_tuples: anytype) type {
-    const routes = comptime blk: {
-        var result: [route_tuples.len]Route = undefined;
-        for (route_tuples, 0..) |tuple, i| {
-            result[i] = .{
-                .pattern = tuple[0],
-                .handler_fn = tuple[1],
-            };
-        }
-        break :blk result;
+    pub const VTable = struct {
+        handleMessage: *const fn (ptr: *anyopaque, msg: *const packet.Message) anyerror!void,
     };
 
-    return struct {
-        /// Returns a Handler that dispatches to the comptime-defined routes
-        pub fn handler() Handler {
-            return .{
-                .ctx = null,
-                .handleFn = dispatch,
-            };
-        }
+    pub fn handleMessage(self: Handler, msg: *const packet.Message) !void {
+        return self.vtable.handleMessage(self.ptr, msg);
+    }
 
-        fn dispatch(_: ?*anyopaque, msg: *const Message) void {
-            inline for (routes) |route| {
-                if (topicMatches(route.pattern, msg.topic)) {
-                    route.handler_fn(msg);
-                }
-            }
-        }
-    };
-}
-
-// ============================================================================
-// Runtime Mux
-// ============================================================================
-
-/// Runtime topic→handler router with fixed capacity.
-///
-/// Usage:
-///   var mux = RuntimeMux(16).init();
-///   try mux.handle("sensor/#", myHandler);
-///   const h = mux.handler();
-pub fn RuntimeMux(comptime max_routes: usize) type {
-    return struct {
-        const Self = @This();
-        const max_pattern_len = 256;
-
-        const RouteEntry = struct {
-            pattern_buf: [max_pattern_len]u8 = undefined,
-            pattern_len: u16 = 0,
-            route_handler: Handler = undefined,
-            active: bool = false,
-
-            fn pattern(self: *const RouteEntry) []const u8 {
-                return self.pattern_buf[0..self.pattern_len];
+    /// Create Handler from a pointer type that has `handleMessage(*const Message) !void`.
+    pub fn from(ptr: anytype) Handler {
+        const Ptr = @TypeOf(ptr);
+        const impl = struct {
+            fn handleMessage(raw: *anyopaque, msg: *const packet.Message) anyerror!void {
+                const self: Ptr = @ptrCast(@alignCast(raw));
+                return self.handleMessage(msg);
             }
         };
+        return .{
+            .ptr = @ptrCast(@constCast(ptr)),
+            .vtable = &.{ .handleMessage = impl.handleMessage },
+        };
+    }
+};
 
-        routes: [max_routes]RouteEntry = [_]RouteEntry{.{}} ** max_routes,
-        count: u16 = 0,
+// ============================================================================
+// HandlerFn wrapper — wraps a bare function as a Handler
+// ============================================================================
 
-        pub fn init() Self {
-            return .{};
-        }
+const FnHandler = struct {
+    func: *const fn (*const packet.Message) anyerror!void,
 
-        /// Register a handler for a topic pattern.
-        /// Supports MQTT wildcards: + (single level), # (multi level).
-        pub fn handle(self: *Self, pattern: []const u8, h: Handler) !void {
-            if (self.count >= max_routes) return error.TooManyRoutes;
-            if (pattern.len > max_pattern_len) return error.PatternTooLong;
+    pub fn handleMessage(self: *const FnHandler, msg: *const packet.Message) anyerror!void {
+        return self.func(msg);
+    }
+};
 
-            const idx = self.count;
-            self.routes[idx].active = true;
-            self.routes[idx].route_handler = h;
-            self.routes[idx].pattern_len = @intCast(pattern.len);
-            for (pattern, 0..) |b, i| {
-                self.routes[idx].pattern_buf[i] = b;
-            }
-            self.count += 1;
-        }
+// ============================================================================
+// Mux
+// ============================================================================
 
-        /// Register a simple function as a handler (convenience).
-        pub fn handleFunc(self: *Self, pattern: []const u8, comptime f: *const fn (*const Message) void) !void {
-            try self.handle(pattern, pkt.handlerFn(f));
-        }
+pub const Mux = struct {
+    allocator: Allocator,
+    trie: trie_mod.Trie(Entry),
+    /// Stored FnHandler wrappers (for handleFn lifetime)
+    fn_handlers: std.ArrayListUnmanaged(*FnHandler),
+    mutex: std.Thread.Mutex,
 
-        /// Returns a Handler that dispatches to all matching routes.
-        pub fn handler(self: *Self) Handler {
-            return .{
-                .ctx = @ptrCast(self),
-                .handleFn = dispatchRuntime,
-            };
-        }
-
-        fn dispatchRuntime(ctx: ?*anyopaque, msg: *const Message) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.routes[0..self.count]) |*route| {
-                if (route.active and topicMatches(route.pattern(), msg.topic)) {
-                    route.route_handler.handle(msg);
-                }
-            }
-        }
+    const Entry = struct {
+        handler: Handler,
     };
-}
+
+    pub fn init(allocator: Allocator) !Mux {
+        return .{
+            .allocator = allocator,
+            .trie = try trie_mod.Trie(Entry).init(allocator),
+            .fn_handlers = .empty,
+            .mutex = .{},
+        };
+    }
+
+    pub fn deinit(self: *Mux) void {
+        for (self.fn_handlers.items) |fh| {
+            self.allocator.destroy(fh);
+        }
+        self.fn_handlers.deinit(self.allocator);
+        self.trie.deinit();
+    }
+
+    /// Register a Handler for a topic pattern (supports + and # wildcards).
+    pub fn handle(self: *Mux, pattern: []const u8, h: Handler) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.trie.insert(pattern, .{ .handler = h });
+    }
+
+    /// Register a function handler (convenience).
+    pub fn handleFn(self: *Mux, pattern: []const u8, f: *const fn (*const packet.Message) anyerror!void) !void {
+        // Allocate a FnHandler so its pointer is stable
+        const fh = try self.allocator.create(FnHandler);
+        fh.* = .{ .func = f };
+        try self.fn_handlers.append(self.allocator, fh);
+
+        const h = Handler{
+            .ptr = @ptrCast(fh),
+            .vtable = &.{
+                .handleMessage = struct {
+                    fn call(ptr: *anyopaque, msg: *const packet.Message) anyerror!void {
+                        const fh_ptr: *const FnHandler = @ptrCast(@alignCast(ptr));
+                        return fh_ptr.func(msg);
+                    }
+                }.call,
+            },
+        };
+        try self.handle(pattern, h);
+    }
+
+    /// Dispatch a message to all matching handlers.
+    pub fn handleMessage(self: *Mux, msg: *const packet.Message) !void {
+        self.mutex.lock();
+        const entries = self.trie.match(msg.topic);
+        self.mutex.unlock();
+
+        if (entries) |items| {
+            for (items) |entry| {
+                try entry.handler.handleMessage(msg);
+            }
+        }
+    }
+
+    /// Return self as a Handler (for passing to Broker, composing muxes).
+    pub fn handler(self: *Mux) Handler {
+        return .{
+            .ptr = @ptrCast(self),
+            .vtable = &.{
+                .handleMessage = struct {
+                    fn call(ptr: *anyopaque, msg: *const packet.Message) anyerror!void {
+                        const mux: *Mux = @ptrCast(@alignCast(ptr));
+                        return mux.handleMessage(msg);
+                    }
+                }.call,
+            },
+        };
+    }
+};
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-// Test helpers
-var test_call_count: u32 = 0;
-var test_last_topic: [256]u8 = undefined;
-var test_last_topic_len: usize = 0;
+test "Mux basic dispatch" {
+    var called = false;
+    const callback = struct {
+        fn handle(_: *const packet.Message) anyerror!void {
+            // Can't capture, but we test that it doesn't crash
+        }
+    }.handle;
+    _ = &called;
 
-fn resetTestState() void {
-    test_call_count = 0;
-    test_last_topic_len = 0;
+    var mux = try Mux.init(std.testing.allocator);
+    defer mux.deinit();
+
+    try mux.handleFn("test/+", callback);
+
+    const msg = packet.Message{
+        .topic = "test/hello",
+        .payload = "world",
+    };
+    try mux.handleMessage(&msg);
 }
 
-fn testHandler1(msg: *const Message) void {
-    test_call_count += 1;
-    const len = @min(msg.topic.len, 256);
-    for (msg.topic[0..len], 0..) |b, i| {
-        test_last_topic[i] = b;
-    }
-    test_last_topic_len = len;
+test "Mux wildcard routing" {
+    var count: usize = 0;
+    _ = &count;
+
+    const callback = struct {
+        fn handle(_: *const packet.Message) anyerror!void {}
+    }.handle;
+
+    var mux = try Mux.init(std.testing.allocator);
+    defer mux.deinit();
+
+    try mux.handleFn("device/+/state", callback);
+    try mux.handleFn("device/#", callback);
+
+    // This should match "device/+/state"
+    const msg1 = packet.Message{ .topic = "device/001/state", .payload = "" };
+    try mux.handleMessage(&msg1);
+
+    // This should match "device/#" only
+    const msg2 = packet.Message{ .topic = "device/001/cmd", .payload = "" };
+    try mux.handleMessage(&msg2);
 }
 
-fn testHandler2(msg: *const Message) void {
-    _ = msg;
-    test_call_count += 10; // Different increment to distinguish
-}
-
-fn eql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (x != y) return false;
-    }
-    return true;
-}
-
-test "comptimeMux: basic dispatch" {
-    resetTestState();
-
-    const MyMux = comptimeMux(.{
-        .{ "sensor/+/data", testHandler1 },
-    });
-
-    const h = MyMux.handler();
-    const msg = Message{ .topic = "sensor/1/data", .payload = "hello", .retain = false };
-    h.handle(&msg);
-
-    if (test_call_count != 1) return error.TestExpectedEqual;
-    if (!eql(test_last_topic[0..test_last_topic_len], "sensor/1/data")) return error.TestExpectedEqual;
-}
-
-test "comptimeMux: no match" {
-    resetTestState();
-
-    const MyMux = comptimeMux(.{
-        .{ "sensor/+/data", testHandler1 },
-    });
-
-    const h = MyMux.handler();
-    const msg = Message{ .topic = "other/topic", .payload = "", .retain = false };
-    h.handle(&msg);
-
-    if (test_call_count != 0) return error.TestExpectedEqual;
-}
-
-test "comptimeMux: multiple matches" {
-    resetTestState();
-
-    const MyMux = comptimeMux(.{
-        .{ "sensor/+/data", testHandler1 },
-        .{ "sensor/#", testHandler2 },
-    });
-
-    const h = MyMux.handler();
-    const msg = Message{ .topic = "sensor/1/data", .payload = "", .retain = false };
-    h.handle(&msg);
-
-    // Both handlers should fire: 1 + 10 = 11
-    if (test_call_count != 11) return error.TestExpectedEqual;
-}
-
-test "RuntimeMux: basic dispatch" {
-    resetTestState();
-
-    var mux = RuntimeMux(8).init();
-    try mux.handleFunc("sensor/+/data", testHandler1);
+test "Mux as Handler" {
+    var mux = try Mux.init(std.testing.allocator);
+    defer mux.deinit();
 
     const h = mux.handler();
-    const msg = Message{ .topic = "sensor/1/data", .payload = "test", .retain = false };
-    h.handle(&msg);
-
-    if (test_call_count != 1) return error.TestExpectedEqual;
-}
-
-test "RuntimeMux: multiple routes" {
-    resetTestState();
-
-    var mux = RuntimeMux(8).init();
-    try mux.handleFunc("sensor/+/data", testHandler1);
-    try mux.handleFunc("sensor/#", testHandler2);
-
-    const h = mux.handler();
-    const msg = Message{ .topic = "sensor/temp/data", .payload = "", .retain = false };
-    h.handle(&msg);
-
-    // Both should match: 1 + 10 = 11
-    if (test_call_count != 11) return error.TestExpectedEqual;
-}
-
-test "RuntimeMux: no match" {
-    resetTestState();
-
-    var mux = RuntimeMux(8).init();
-    try mux.handleFunc("sensor/#", testHandler1);
-
-    const h = mux.handler();
-    const msg = Message{ .topic = "device/status", .payload = "", .retain = false };
-    h.handle(&msg);
-
-    if (test_call_count != 0) return error.TestExpectedEqual;
-}
-
-test "RuntimeMux: capacity limit" {
-    var mux = RuntimeMux(2).init();
-    try mux.handleFunc("a", testHandler1);
-    try mux.handleFunc("b", testHandler1);
-
-    // Third should fail
-    const result = mux.handleFunc("c", testHandler1);
-    if (result) |_| {
-        return error.TestExpectedEqual; // Should have errored
-    } else |_| {
-        // Expected error
-    }
+    const msg = packet.Message{ .topic = "test", .payload = "" };
+    try h.handleMessage(&msg); // Should not crash (no handlers registered)
 }

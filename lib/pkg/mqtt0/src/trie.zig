@@ -1,594 +1,347 @@
-//! Topic Trie — MQTT topic pattern matching with wildcard support
+//! MQTT Topic Trie — pattern matching with + and # wildcards
 //!
-//! A static-pool trie for O(L) topic matching where L = topic depth.
-//! Supports MQTT wildcards:
-//!   - `+` matches exactly one topic level
-//!   - `#` matches zero or more remaining topic levels (must be last)
-//!
-//! MQTT spec compliance:
-//!   - $ topics only match explicit $ patterns, not + or # at root level
-//!
-//! ## Usage
-//!
-//! ```zig
-//! const MyTrie = Trie(u16, 256, 16);  // value=u16, 256 nodes, 16 values/node
-//! var trie = MyTrie.init();
-//!
-//! try trie.insert("sensor/+/data", 1);
-//! try trie.insert("sensor/#", 2);
-//!
-//! var result_buf: [16]u16 = undefined;
-//! const matches = trie.get("sensor/1/data", &result_buf);
-//! // matches = [1, 2]
-//! ```
+//! Thread-safety is NOT provided here — the Mux wraps with a lock.
+//! Uses std.mem.Allocator for dynamic node allocation.
 
-// ============================================================================
-// Topic Matching (standalone, no trie needed)
-// ============================================================================
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
-/// Check if a subscription pattern matches a topic.
-/// Supports MQTT wildcards: + (single level) and # (multi level).
-/// MQTT spec: wildcards should not match $ topics unless pattern also starts with $.
-pub fn topicMatches(pattern: []const u8, topic: []const u8) bool {
-    var p_iter = TopicIterator.init(pattern);
-    var t_iter = TopicIterator.init(topic);
-    var at_root = true;
+pub const Error = error{
+    InvalidTopic,
+    OutOfMemory,
+};
 
-    while (true) {
-        const p_seg = p_iter.next();
-        const t_seg = t_iter.next();
-
-        // Pattern segment is #
-        if (p_seg != null and eql(p_seg.?, "#")) {
-            // # at root level should not match $ topics
-            if (at_root) {
-                if (t_seg) |ts| {
-                    if (ts.len > 0 and ts[0] == '$') return false;
-                }
-            }
-            return true; // # matches everything remaining
-        }
-
-        // Both exhausted → match
-        if (p_seg == null and t_seg == null) return true;
-
-        // One exhausted but not the other → no match
-        if (p_seg == null or t_seg == null) return false;
-
-        const ps = p_seg.?;
-        const ts = t_seg.?;
-
-        // + wildcard
-        if (eql(ps, "+")) {
-            // + at root level should not match $ topics
-            if (at_root and ts.len > 0 and ts[0] == '$') return false;
-            at_root = false;
-            continue;
-        }
-
-        // Exact match
-        if (!eql(ps, ts)) return false;
-        at_root = false;
-    }
-}
-
-// ============================================================================
-// Trie
-// ============================================================================
-
-/// Static-pool topic pattern trie.
-///
-/// - `T`: value type stored at leaf nodes
-/// - `max_nodes`: maximum number of trie nodes
-/// - `max_values_per_node`: maximum values stored per node
-pub fn Trie(comptime T: type, comptime max_nodes: usize, comptime max_values_per_node: usize) type {
+pub fn Trie(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        pub const NodeIndex = enum(u16) {
-            none = 0xFFFF,
-            _,
-
-            fn val(self: NodeIndex) ?u16 {
-                if (self == .none) return null;
-                return @intFromEnum(self);
-            }
-        };
-
         const Node = struct {
-            // Segment stored inline
-            segment_buf: [max_segment_len]u8 = undefined,
-            segment_len: u8 = 0,
+            children: std.StringHashMap(*Node),
+            match_any: ?*Node, // + wildcard
+            match_all: ?*Node, // # wildcard
+            values: std.ArrayListUnmanaged(T),
+            allocator: Allocator,
 
-            // Tree links (sibling list for children)
-            first_child: NodeIndex = .none,
-            next_sibling: NodeIndex = .none,
-
-            // Wildcard children (special)
-            match_any: NodeIndex = .none, // + wildcard child
-            match_all: NodeIndex = .none, // # wildcard child
-
-            // Values at this node (leaf)
-            values: [max_values_per_node]T = undefined,
-            value_count: u8 = 0,
-
-            active: bool = false,
-
-            fn segment(self: *const Node) []const u8 {
-                return self.segment_buf[0..self.segment_len];
+            fn init(allocator: Allocator) !*Node {
+                const node = try allocator.create(Node);
+                node.* = .{
+                    .children = std.StringHashMap(*Node).init(allocator),
+                    .match_any = null,
+                    .match_all = null,
+                    .values = .empty,
+                    .allocator = allocator,
+                };
+                return node;
             }
 
-            fn setSegment(self: *Node, seg: []const u8) void {
-                const len = @min(seg.len, max_segment_len);
-                for (seg[0..len], 0..) |b, i| {
-                    self.segment_buf[i] = b;
+            fn deinit(self: *Node) void {
+                var it = self.children.iterator();
+                while (it.next()) |entry| {
+                    self.allocator.free(entry.key_ptr.*);
+                    entry.value_ptr.*.deinit();
+                    self.allocator.destroy(entry.value_ptr.*);
                 }
-                self.segment_len = @intCast(len);
+                self.children.deinit();
+                if (self.match_any) |n| {
+                    n.deinit();
+                    self.allocator.destroy(n);
+                }
+                if (self.match_all) |n| {
+                    n.deinit();
+                    self.allocator.destroy(n);
+                }
+                self.values.deinit(self.allocator);
             }
         };
 
-        const max_segment_len = 64;
+        root: *Node,
+        allocator: Allocator,
 
-        nodes: [max_nodes]Node = [_]Node{.{}} ** max_nodes,
-        node_count: u16 = 0,
-
-        // Root node is always index 0
-        pub fn init() Self {
-            var self = Self{};
-            // Allocate root node
-            self.nodes[0].active = true;
-            self.node_count = 1;
-            return self;
+        pub fn init(allocator: Allocator) !Self {
+            return .{
+                .root = try Node.init(allocator),
+                .allocator = allocator,
+            };
         }
 
-        /// Insert a value at the given pattern.
-        /// Pattern is split by '/' into segments.
+        pub fn deinit(self: *Self) void {
+            self.root.deinit();
+            self.allocator.destroy(self.root);
+        }
+
+        /// Insert a value at the given topic pattern.
         pub fn insert(self: *Self, pattern: []const u8, value: T) !void {
-            var node_idx: u16 = 0; // Start at root
-            var iter = TopicIterator.init(pattern);
-
-            while (iter.next()) |seg| {
-                node_idx = try self.getOrCreateChild(node_idx, seg);
-            }
-
-            // Add value to the final node
-            const node = &self.nodes[node_idx];
-            if (node.value_count >= max_values_per_node) return error.TooManyValues;
-            node.values[node.value_count] = value;
-            node.value_count += 1;
+            try self.insertAt(self.root, pattern, value);
         }
 
-        /// Get all values matching the given topic.
-        /// Returns a slice of result_buf filled with matching values.
-        pub fn get(self: *Self, topic: []const u8, result_buf: []T) []T {
-            var count: usize = 0;
-            self.matchNode(0, topic, true, result_buf, &count);
-            return result_buf[0..count];
+        /// Get all values matching a concrete topic (returns first match).
+        pub fn get(self: *const Self, topic: []const u8) []const T {
+            return self.match(topic) orelse &.{};
         }
 
-        /// Remove values matching a predicate from the given pattern.
-        /// Returns true if any value was removed.
+        /// Match returns the first matching node's values.
+        pub fn match(self: *const Self, topic: []const u8) ?[]const T {
+            return matchNode(self.root, topic);
+        }
+
+        /// Remove values matching predicate from a pattern.
         pub fn remove(self: *Self, pattern: []const u8, predicate: *const fn (T) bool) bool {
-            var node_idx: u16 = 0;
-            var iter = TopicIterator.init(pattern);
-
-            while (iter.next()) |seg| {
-                const child = self.findChild(node_idx, seg);
-                if (child == null) return false;
-                node_idx = child.?;
-            }
-
-            // Remove matching values
-            const node = &self.nodes[node_idx];
-            var removed = false;
-            var write: u8 = 0;
-            var read: u8 = 0;
-            while (read < node.value_count) : (read += 1) {
-                if (predicate(node.values[read])) {
-                    removed = true;
-                } else {
-                    node.values[write] = node.values[read];
-                    write += 1;
-                }
-            }
-            node.value_count = write;
-            return removed;
+            return removeAt(self.root, pattern, predicate);
         }
 
-        // ================================================================
-        // Internal
-        // ================================================================
+        // ====================================================================
+        // Private
+        // ====================================================================
 
-        fn getOrCreateChild(self: *Self, parent_idx: u16, seg: []const u8) !u16 {
-            const parent = &self.nodes[parent_idx];
-
-            // Check for wildcard segments
-            if (eql(seg, "+")) {
-                if (parent.match_any.val()) |idx| return idx;
-                const new_idx = try self.allocNode(seg);
-                parent.match_any = @enumFromInt(new_idx);
-                return new_idx;
-            }
-            if (eql(seg, "#")) {
-                if (parent.match_all.val()) |idx| return idx;
-                const new_idx = try self.allocNode(seg);
-                parent.match_all = @enumFromInt(new_idx);
-                return new_idx;
-            }
-
-            // Look for existing child with this segment
-            var child_idx = parent.first_child;
-            while (child_idx.val()) |idx| {
-                const child = &self.nodes[idx];
-                if (eql(child.segment(), seg)) return idx;
-                child_idx = child.next_sibling;
-            }
-
-            // Create new child
-            const new_idx = try self.allocNode(seg);
-            // Prepend to sibling list
-            self.nodes[new_idx].next_sibling = parent.first_child;
-            // Re-read parent since allocNode may have invalidated pointer
-            self.nodes[parent_idx].first_child = @enumFromInt(new_idx);
-            return new_idx;
-        }
-
-        fn findChild(self: *Self, parent_idx: u16, seg: []const u8) ?u16 {
-            const parent = &self.nodes[parent_idx];
-
-            if (eql(seg, "+")) return parent.match_any.val();
-            if (eql(seg, "#")) return parent.match_all.val();
-
-            var child_idx = parent.first_child;
-            while (child_idx.val()) |idx| {
-                const child = &self.nodes[idx];
-                if (eql(child.segment(), seg)) return idx;
-                child_idx = child.next_sibling;
-            }
-            return null;
-        }
-
-        fn allocNode(self: *Self, seg: []const u8) !u16 {
-            if (self.node_count >= max_nodes) return error.OutOfNodes;
-            const idx = self.node_count;
-            self.nodes[idx] = .{};
-            self.nodes[idx].active = true;
-            self.nodes[idx].setSegment(seg);
-            self.node_count += 1;
-            return idx;
-        }
-
-        fn matchNode(self: *Self, node_idx: u16, remaining_topic: []const u8, at_root: bool, result_buf: []T, count: *usize) void {
-            const node = &self.nodes[node_idx];
-
-            // Split first segment from remaining topic
-            var iter = TopicIterator.init(remaining_topic);
-            const first_seg = iter.next();
-            const rest = iter.rest();
-
-            // If no more segments, collect values at this node
-            if (first_seg == null) {
-                self.collectValues(node_idx, result_buf, count);
-
-                // Also check # wildcard child (matches zero remaining levels)
-                if (node.match_all.val()) |all_idx| {
-                    self.collectValues(all_idx, result_buf, count);
-                }
+        fn insertAt(self: *Self, node: *Node, pattern: []const u8, value: T) !void {
+            if (pattern.len == 0) {
+                try node.values.append(self.allocator, value);
                 return;
             }
 
-            const seg = first_seg.?;
-            const is_dollar = seg.len > 0 and seg[0] == '$';
+            const sep = std.mem.indexOfScalar(u8, pattern, '/');
+            const first = if (sep) |s| pattern[0..s] else pattern;
+            const rest = if (sep) |s| pattern[s + 1 ..] else "";
 
-            // Try exact match children
-            var child_idx = node.first_child;
-            while (child_idx.val()) |idx| {
-                const child = &self.nodes[idx];
-                if (eql(child.segment(), seg)) {
-                    self.matchNode(idx, rest, false, result_buf, count);
+            // Handle $share and $queue prefixes
+            if (std.mem.eql(u8, first, "$share")) {
+                // $share/<group>/<topic> — skip group, insert on actual topic
+                const rest2 = rest;
+                const sep2 = std.mem.indexOfScalar(u8, rest2, '/');
+                if (sep2) |s2| {
+                    const actual_topic = rest2[s2 + 1 ..];
+                    try self.insertAt(node, actual_topic, value);
+                    return;
                 }
-                child_idx = child.next_sibling;
+                return Error.InvalidTopic;
             }
 
-            // Try + wildcard (skip for $ topics at root level per MQTT spec)
-            if (node.match_any.val()) |any_idx| {
-                if (!(is_dollar and at_root)) {
-                    self.matchNode(any_idx, rest, false, result_buf, count);
-                }
-            }
-
-            // Try # wildcard (matches this and all remaining levels)
-            if (node.match_all.val()) |all_idx| {
-                if (!(is_dollar and at_root)) {
-                    self.collectValues(all_idx, result_buf, count);
+            if (std.mem.eql(u8, first, "+")) {
+                if (node.match_any == null) node.match_any = try Node.init(self.allocator);
+                try self.insertAt(node.match_any.?, rest, value);
+            } else if (std.mem.eql(u8, first, "#")) {
+                if (rest.len != 0) return Error.InvalidTopic;
+                if (node.match_all == null) node.match_all = try Node.init(self.allocator);
+                try node.match_all.?.values.append(self.allocator, value);
+            } else {
+                // Check existing children
+                if (node.children.get(first)) |child| {
+                    try self.insertAt(child, rest, value);
+                } else {
+                    const child = try Node.init(self.allocator);
+                    // Duplicate the key string so it persists
+                    const key_dup = try self.allocator.dupe(u8, first);
+                    try node.children.put(key_dup, child);
+                    try self.insertAt(child, rest, value);
                 }
             }
         }
 
-        fn collectValues(self: *Self, node_idx: u16, result_buf: []T, count: *usize) void {
-            const node = &self.nodes[node_idx];
-            var i: u8 = 0;
-            while (i < node.value_count) : (i += 1) {
-                if (count.* < result_buf.len) {
-                    result_buf[count.*] = node.values[i];
-                    count.* += 1;
+        fn removeAt(node: *Node, pattern: []const u8, predicate: *const fn (T) bool) bool {
+            if (pattern.len == 0) {
+                const before = node.values.items.len;
+                var i: usize = 0;
+                while (i < node.values.items.len) {
+                    if (predicate(node.values.items[i])) {
+                        _ = node.values.orderedRemove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+                return node.values.items.len < before;
+            }
+
+            const sep = std.mem.indexOfScalar(u8, pattern, '/');
+            const first = if (sep) |s| pattern[0..s] else pattern;
+            const rest = if (sep) |s| pattern[s + 1 ..] else "";
+
+            if (std.mem.eql(u8, first, "+")) {
+                if (node.match_any) |child| return removeAt(child, rest, predicate);
+            } else if (std.mem.eql(u8, first, "#")) {
+                if (node.match_all) |child| {
+                    const before = child.values.items.len;
+                    var i: usize = 0;
+                    while (i < child.values.items.len) {
+                        if (predicate(child.values.items[i])) {
+                            _ = child.values.orderedRemove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    return child.values.items.len < before;
+                }
+            } else {
+                if (node.children.get(first)) |child| return removeAt(child, rest, predicate);
+            }
+            return false;
+        }
+
+        fn matchNode(node: *const Node, topic: []const u8) ?[]const T {
+            const sep = std.mem.indexOfScalar(u8, topic, '/');
+            const first = if (sep) |s| topic[0..s] else topic;
+            const rest = if (sep) |s| topic[s + 1 ..] else "";
+            const at_end = rest.len == 0 and sep == null;
+
+            // Try exact match first
+            if (node.children.get(first)) |child| {
+                if (at_end) {
+                    if (child.values.items.len > 0) return child.values.items;
+                } else {
+                    if (matchNode(child, rest)) |vals| return vals;
                 }
             }
+
+            // Try single-level wildcard (+)
+            if (node.match_any) |child| {
+                if (at_end) {
+                    if (child.values.items.len > 0) return child.values.items;
+                } else {
+                    if (matchNode(child, rest)) |vals| return vals;
+                }
+            }
+
+            // Try multi-level wildcard (#)
+            if (node.match_all) |child| {
+                if (child.values.items.len > 0) return child.values.items;
+            }
+
+            return null;
         }
     };
 }
 
 // ============================================================================
-// Topic Iterator
+// Standalone topic matching (for Broker routing)
 // ============================================================================
 
-pub const TopicIterator = struct {
-    data: []const u8,
-    pos: usize,
-    done: bool,
+/// Check if a subscription pattern matches a topic.
+/// Supports MQTT wildcards: + (single level) and # (multi level).
+pub fn topicMatches(pattern: []const u8, topic: []const u8) bool {
+    var pat_pos: usize = 0;
+    var top_pos: usize = 0;
 
-    pub fn init(topic: []const u8) TopicIterator {
-        return .{ .data = topic, .pos = 0, .done = topic.len == 0 };
-    }
+    while (true) {
+        const pat_seg = nextSegment(pattern, pat_pos);
+        const top_seg = nextSegment(topic, top_pos);
 
-    pub fn next(self: *TopicIterator) ?[]const u8 {
-        if (self.done) return null;
+        if (pat_seg == null and top_seg == null) return true;
 
-        const start = self.pos;
-        while (self.pos < self.data.len and self.data[self.pos] != '/') {
-            self.pos += 1;
+        if (pat_seg) |ps| {
+            if (top_seg == null) {
+                // # at end matches zero remaining levels
+                if (std.mem.eql(u8, ps.seg, "#")) return true;
+                return false;
+            }
+            const ts = top_seg.?;
+
+            // MQTT spec: wildcards should not match $ topics at root level
+            if (pat_pos == 0 and ts.seg.len > 0 and ts.seg[0] == '$') {
+                if (std.mem.eql(u8, ps.seg, "+") or std.mem.eql(u8, ps.seg, "#")) return false;
+            }
+
+            // # matches everything remaining
+            if (std.mem.eql(u8, ps.seg, "#")) return true;
+
+            if (std.mem.eql(u8, ps.seg, "+")) {
+                // + matches exactly one level
+                pat_pos = ps.next;
+                top_pos = ts.next;
+                continue;
+            }
+
+            if (std.mem.eql(u8, ps.seg, ts.seg)) {
+                pat_pos = ps.next;
+                top_pos = ts.next;
+                continue;
+            }
+
+            return false;
         }
 
-        const seg = self.data[start..self.pos];
-
-        if (self.pos < self.data.len) {
-            self.pos += 1; // skip '/'
-        } else {
-            self.done = true;
-        }
-
-        return seg;
+        return false;
     }
+}
 
-    /// Return the remaining unparsed portion of the topic
-    pub fn rest(self: *const TopicIterator) []const u8 {
-        if (self.done) return "";
-        return self.data[self.pos..];
+const Segment = struct { seg: []const u8, next: usize };
+
+fn nextSegment(s: []const u8, pos: usize) ?Segment {
+    if (pos >= s.len) return null;
+    const rest = s[pos..];
+    const sep = std.mem.indexOfScalar(u8, rest, '/');
+    if (sep) |idx| {
+        return .{ .seg = rest[0..idx], .next = pos + idx + 1 };
     }
-};
-
-// ============================================================================
-// Utility
-// ============================================================================
-
-fn eql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (x != y) return false;
-    }
-    return true;
+    return .{ .seg = rest, .next = s.len };
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-const testing = struct {
-    fn expectTrue(actual: bool) !void {
-        if (!actual) return error.TestExpectedEqual;
-    }
-
-    fn expectUsize(expected: usize, actual: usize) !void {
-        if (expected != actual) return error.TestExpectedEqual;
-    }
-
-    fn expectU16(expected: u16, actual: u16) !void {
-        if (expected != actual) return error.TestExpectedEqual;
-    }
-
-    fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
-        if (expected.len != actual.len) return error.TestExpectedEqual;
-        for (expected, actual) |e, a| {
-            if (e != a) return error.TestExpectedEqual;
-        }
-    }
-
-    fn containsValue(comptime T: type, haystack: []const T, needle: T) bool {
-        for (haystack) |v| {
-            if (v == needle) return true;
-        }
-        return false;
-    }
-};
-
-// -- topicMatches tests --
-
-test "topicMatches: exact match" {
-    try testing.expectTrue(topicMatches("sensor/data", "sensor/data"));
-    try testing.expectTrue(!topicMatches("sensor/data", "sensor/other"));
-    try testing.expectTrue(!topicMatches("sensor", "sensor/data"));
-    try testing.expectTrue(!topicMatches("sensor/data", "sensor"));
+test "topicMatches exact" {
+    try std.testing.expect(topicMatches("a/b/c", "a/b/c"));
+    try std.testing.expect(!topicMatches("a/b/c", "a/b/d"));
+    try std.testing.expect(!topicMatches("a/b", "a/b/c"));
 }
 
-test "topicMatches: + wildcard" {
-    try testing.expectTrue(topicMatches("sensor/+/data", "sensor/1/data"));
-    try testing.expectTrue(topicMatches("sensor/+/data", "sensor/abc/data"));
-    try testing.expectTrue(!topicMatches("sensor/+/data", "sensor/1/2/data"));
-    try testing.expectTrue(topicMatches("+/+/+", "a/b/c"));
-    try testing.expectTrue(!topicMatches("+/+", "a/b/c"));
+test "topicMatches single-level wildcard" {
+    try std.testing.expect(topicMatches("a/+/c", "a/b/c"));
+    try std.testing.expect(topicMatches("a/+/c", "a/x/c"));
+    try std.testing.expect(!topicMatches("a/+/c", "a/b/d"));
+    try std.testing.expect(!topicMatches("a/+/c", "a/b/c/d"));
 }
 
-test "topicMatches: # wildcard" {
-    try testing.expectTrue(topicMatches("sensor/#", "sensor/1/data"));
-    try testing.expectTrue(topicMatches("sensor/#", "sensor"));
-    try testing.expectTrue(topicMatches("#", "anything/at/all"));
-    try testing.expectTrue(topicMatches("#", "single"));
+test "topicMatches multi-level wildcard" {
+    try std.testing.expect(topicMatches("a/#", "a/b"));
+    try std.testing.expect(topicMatches("a/#", "a/b/c"));
+    try std.testing.expect(topicMatches("a/#", "a/b/c/d"));
+    try std.testing.expect(!topicMatches("a/#", "b/c"));
 }
 
-test "topicMatches: $ topics not matched by wildcards at root" {
-    try testing.expectTrue(!topicMatches("#", "$SYS/broker/clients"));
-    try testing.expectTrue(!topicMatches("+/info", "$SYS/info"));
-    try testing.expectTrue(topicMatches("$SYS/#", "$SYS/broker/clients"));
-    try testing.expectTrue(topicMatches("$SYS/+/clients", "$SYS/broker/clients"));
+test "topicMatches dollar topics" {
+    try std.testing.expect(!topicMatches("+/info", "$SYS/info"));
+    try std.testing.expect(!topicMatches("#", "$SYS/info"));
+    try std.testing.expect(topicMatches("$SYS/info", "$SYS/info"));
+    try std.testing.expect(topicMatches("$SYS/#", "$SYS/info"));
 }
 
-// -- TopicIterator tests --
+test "Trie basic insert and match" {
+    var trie = try Trie([]const u8).init(std.testing.allocator);
+    defer trie.deinit();
 
-test "TopicIterator basic" {
-    var iter = TopicIterator.init("a/b/c");
-    try testing.expectEqualSlices(u8, "a", iter.next().?);
-    try testing.expectEqualSlices(u8, "b", iter.next().?);
-    try testing.expectEqualSlices(u8, "c", iter.next().?);
-    try testing.expectTrue(iter.next() == null);
-}
-
-test "TopicIterator single segment" {
-    var iter = TopicIterator.init("hello");
-    try testing.expectEqualSlices(u8, "hello", iter.next().?);
-    try testing.expectTrue(iter.next() == null);
-}
-
-test "TopicIterator empty" {
-    var iter = TopicIterator.init("");
-    try testing.expectTrue(iter.next() == null);
-}
-
-// -- Trie tests --
-
-test "Trie: basic insert and get" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
-
-    try trie.insert("sensor/temp", 1);
-    try trie.insert("sensor/humidity", 2);
-
-    var buf: [8]u16 = undefined;
-
-    const r1 = trie.get("sensor/temp", &buf);
-    try testing.expectUsize(1, r1.len);
-    try testing.expectU16(1, r1[0]);
-
-    const r2 = trie.get("sensor/humidity", &buf);
-    try testing.expectUsize(1, r2.len);
-    try testing.expectU16(2, r2[0]);
+    try trie.insert("device/001/state", "handler1");
+    const result = trie.match("device/001/state");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqual(@as(usize, 1), result.?.len);
+    try std.testing.expectEqualStrings("handler1", result.?[0]);
 
     // No match
-    const r3 = trie.get("sensor/other", &buf);
-    try testing.expectUsize(0, r3.len);
+    try std.testing.expect(trie.match("device/002/state") == null);
 }
 
-test "Trie: + wildcard" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
+test "Trie wildcard +" {
+    var trie = try Trie([]const u8).init(std.testing.allocator);
+    defer trie.deinit();
 
-    try trie.insert("sensor/+/data", 10);
-    try trie.insert("sensor/temp", 20);
-
-    var buf: [8]u16 = undefined;
-
-    const r1 = trie.get("sensor/1/data", &buf);
-    try testing.expectUsize(1, r1.len);
-    try testing.expectU16(10, r1[0]);
-
-    const r2 = trie.get("sensor/abc/data", &buf);
-    try testing.expectUsize(1, r2.len);
-    try testing.expectU16(10, r2[0]);
-
-    // + should NOT match multiple levels
-    const r3 = trie.get("sensor/1/2/data", &buf);
-    try testing.expectUsize(0, r3.len);
+    try trie.insert("device/+/state", "wild");
+    try std.testing.expect(trie.match("device/001/state") != null);
+    try std.testing.expect(trie.match("device/abc/state") != null);
+    try std.testing.expect(trie.match("device/001/cmd") == null);
 }
 
-test "Trie: # wildcard" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
+test "Trie wildcard #" {
+    var trie = try Trie([]const u8).init(std.testing.allocator);
+    defer trie.deinit();
 
-    try trie.insert("sensor/#", 100);
-
-    var buf: [8]u16 = undefined;
-
-    const r1 = trie.get("sensor/temp", &buf);
-    try testing.expectUsize(1, r1.len);
-    try testing.expectU16(100, r1[0]);
-
-    const r2 = trie.get("sensor/1/2/3", &buf);
-    try testing.expectUsize(1, r2.len);
-    try testing.expectU16(100, r2[0]);
-
-    // # also matches parent level itself
-    const r3 = trie.get("sensor", &buf);
-    try testing.expectUsize(1, r3.len);
+    try trie.insert("device/#", "multi");
+    try std.testing.expect(trie.match("device/001") != null);
+    try std.testing.expect(trie.match("device/001/state") != null);
+    try std.testing.expect(trie.match("other/001") == null);
 }
 
-test "Trie: multiple matches" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
+test "Trie # must be last" {
+    var trie = try Trie([]const u8).init(std.testing.allocator);
+    defer trie.deinit();
 
-    try trie.insert("sensor/+/data", 1);
-    try trie.insert("sensor/#", 2);
-    try trie.insert("sensor/temp/data", 3);
-
-    var buf: [8]u16 = undefined;
-
-    const r = trie.get("sensor/temp/data", &buf);
-    try testing.expectUsize(3, r.len);
-    try testing.expectTrue(testing.containsValue(u16, r, 1));
-    try testing.expectTrue(testing.containsValue(u16, r, 2));
-    try testing.expectTrue(testing.containsValue(u16, r, 3));
-}
-
-test "Trie: $ topic protection" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
-
-    try trie.insert("#", 1);
-    try trie.insert("+/info", 2);
-    try trie.insert("$SYS/#", 3);
-
-    var buf: [8]u16 = undefined;
-
-    // # and + at root should NOT match $ topics
-    const r1 = trie.get("$SYS/broker", &buf);
-    try testing.expectUsize(1, r1.len);
-    try testing.expectU16(3, r1[0]);
-
-    // Normal topics SHOULD match # and +
-    const r2 = trie.get("normal/info", &buf);
-    try testing.expectTrue(r2.len >= 1);
-}
-
-test "Trie: remove" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
-
-    try trie.insert("sensor/data", 1);
-    try trie.insert("sensor/data", 2);
-    try trie.insert("sensor/data", 3);
-
-    // Remove value 2
-    const removed = trie.remove("sensor/data", struct {
-        fn pred(v: u16) bool {
-            return v == 2;
-        }
-    }.pred);
-    try testing.expectTrue(removed);
-
-    var buf: [8]u16 = undefined;
-    const r = trie.get("sensor/data", &buf);
-    try testing.expectUsize(2, r.len);
-    try testing.expectTrue(testing.containsValue(u16, r, 1));
-    try testing.expectTrue(testing.containsValue(u16, r, 3));
-    try testing.expectTrue(!testing.containsValue(u16, r, 2));
-}
-
-test "Trie: multiple subscribers same pattern" {
-    const MyTrie = Trie(u16, 64, 8);
-    var trie = MyTrie.init();
-
-    try trie.insert("room/+/temp", 100);
-    try trie.insert("room/+/temp", 200);
-
-    var buf: [8]u16 = undefined;
-    const r = trie.get("room/living/temp", &buf);
-    try testing.expectUsize(2, r.len);
+    try std.testing.expectError(Error.InvalidTopic, trie.insert("device/#/state", "bad"));
 }

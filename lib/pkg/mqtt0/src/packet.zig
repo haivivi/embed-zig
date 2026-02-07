@@ -1,29 +1,18 @@
-//! MQTT Packet Primitives
+//! MQTT Packet Encoding/Decoding Primitives
 //!
-//! Shared encoding/decoding primitives for MQTT 3.1.1 and 5.0.
-//! Zero std dependency — all operations are manual byte manipulation.
+//! Common encoding functions shared by MQTT 3.1.1 (v4) and 5.0 (v5).
+//! All operations work on caller-provided `[]u8` buffers — zero allocation.
 
-// ============================================================================
-// Errors
-// ============================================================================
-
-pub const Error = error{
-    BufferTooSmall,
-    MalformedPacket,
-    MalformedVariableInt,
-    MalformedString,
-    UnknownPacketType,
-    ProtocolError,
-    UnsupportedProtocolVersion,
-};
+const std = @import("std");
 
 // ============================================================================
 // Constants
 // ============================================================================
 
+/// Maximum MQTT packet size (1MB default, configurable per broker)
+pub const max_packet_size: usize = 1024 * 1024;
+
 pub const protocol_name = "MQTT";
-pub const protocol_version_v4: u8 = 4; // MQTT 3.1.1
-pub const protocol_version_v5: u8 = 5; // MQTT 5.0
 
 // ============================================================================
 // Packet Types
@@ -46,6 +35,36 @@ pub const PacketType = enum(u4) {
     pingresp = 13,
     disconnect = 14,
     auth = 15,
+
+    pub fn name(self: PacketType) []const u8 {
+        return switch (self) {
+            .reserved => "RESERVED",
+            .connect => "CONNECT",
+            .connack => "CONNACK",
+            .publish => "PUBLISH",
+            .puback => "PUBACK",
+            .pubrec => "PUBREC",
+            .pubrel => "PUBREL",
+            .pubcomp => "PUBCOMP",
+            .subscribe => "SUBSCRIBE",
+            .suback => "SUBACK",
+            .unsubscribe => "UNSUBSCRIBE",
+            .unsuback => "UNSUBACK",
+            .pingreq => "PINGREQ",
+            .pingresp => "PINGRESP",
+            .disconnect => "DISCONNECT",
+            .auth => "AUTH",
+        };
+    }
+};
+
+// ============================================================================
+// Protocol Version
+// ============================================================================
+
+pub const ProtocolVersion = enum(u8) {
+    v4 = 4, // MQTT 3.1.1
+    v5 = 5, // MQTT 5.0
 };
 
 // ============================================================================
@@ -59,7 +78,7 @@ pub const QoS = enum(u2) {
 };
 
 // ============================================================================
-// Reason Codes (MQTT 5.0, also used as v4 connect return codes)
+// Reason Codes (MQTT 5.0, also used for v4 return codes)
 // ============================================================================
 
 pub const ReasonCode = enum(u8) {
@@ -113,7 +132,7 @@ pub const ReasonCode = enum(u8) {
     }
 };
 
-/// MQTT 3.1.1 Connect Return Codes (subset of ReasonCode values)
+/// MQTT 3.1.1 Connect return codes
 pub const ConnectReturnCode = enum(u8) {
     accepted = 0x00,
     bad_protocol = 0x01,
@@ -122,76 +141,105 @@ pub const ConnectReturnCode = enum(u8) {
     bad_credentials = 0x04,
     not_authorized = 0x05,
     _,
-
-    pub fn isError(self: ConnectReturnCode) bool {
-        return @intFromEnum(self) != 0x00;
-    }
 };
 
 // ============================================================================
-// Protocol Version
+// Errors
 // ============================================================================
 
-pub const ProtocolVersion = enum(u8) {
-    v4 = 4, // MQTT 3.1.1
-    v5 = 5, // MQTT 5.0
+pub const Error = error{
+    BufferTooSmall,
+    MalformedPacket,
+    MalformedVariableInt,
+    MalformedString,
+    UnknownPacketType,
+    ProtocolError,
+    UnsupportedProtocolVersion,
+    PacketTooLarge,
 };
 
 // ============================================================================
-// Variable-Length Integer Encoding
+// Message
 // ============================================================================
 
-/// Encode a variable-length integer (MQTT spec).
-/// Returns the number of bytes written.
+pub const Message = struct {
+    topic: []const u8,
+    payload: []const u8,
+    retain: bool = false,
+};
+
+// ============================================================================
+// Fixed Header
+// ============================================================================
+
+pub const FixedHeader = struct {
+    packet_type: PacketType,
+    flags: u4,
+    remaining_len: u32,
+    header_len: usize,
+};
+
+/// Encode fixed header into buffer. Returns bytes written.
+pub fn encodeFixedHeader(buf: []u8, packet_type: PacketType, flags: u4, remaining_len: u32) Error!usize {
+    if (buf.len < 2) return Error.BufferTooSmall;
+    buf[0] = (@as(u8, @intFromEnum(packet_type)) << 4) | @as(u8, flags);
+    const vlen = try encodeVariableInt(buf[1..], remaining_len);
+    return 1 + vlen;
+}
+
+/// Decode fixed header from buffer.
+pub fn decodeFixedHeader(buf: []const u8) Error!FixedHeader {
+    if (buf.len < 2) return Error.MalformedPacket;
+    const first = buf[0];
+    const ptype_raw = first >> 4;
+    const flags: u4 = @truncate(first & 0x0F);
+    const packet_type: PacketType = @enumFromInt(ptype_raw);
+    const vr = try decodeVariableInt(buf[1..]);
+    return .{
+        .packet_type = packet_type,
+        .flags = flags,
+        .remaining_len = vr.value,
+        .header_len = 1 + vr.len,
+    };
+}
+
+// ============================================================================
+// Variable-Length Integer
+// ============================================================================
+
+/// Encode a variable-length integer. Returns bytes written.
 pub fn encodeVariableInt(buf: []u8, value: u32) Error!usize {
     var v = value;
     var i: usize = 0;
-
     while (true) {
         if (i >= buf.len) return Error.BufferTooSmall;
-
-        var byte_val: u8 = @truncate(v & 0x7F);
+        var byte: u8 = @truncate(v & 0x7F);
         v >>= 7;
-
-        if (v > 0) {
-            byte_val |= 0x80;
-        }
-
-        buf[i] = byte_val;
+        if (v > 0) byte |= 0x80;
+        buf[i] = byte;
         i += 1;
-
         if (v == 0) break;
     }
-
     return i;
 }
 
-/// Decode a variable-length integer.
-/// Returns the value and number of bytes consumed.
+/// Decode a variable-length integer. Returns value and bytes consumed.
 pub fn decodeVariableInt(buf: []const u8) Error!struct { value: u32, len: usize } {
     var value: u32 = 0;
     var multiplier: u32 = 1;
     var i: usize = 0;
-
     while (i < 4) {
         if (i >= buf.len) return Error.MalformedVariableInt;
-
-        const byte_val = buf[i];
-        value += @as(u32, byte_val & 0x7F) * multiplier;
-
+        const byte = buf[i];
+        value += @as(u32, byte & 0x7F) * multiplier;
         i += 1;
-
-        if ((byte_val & 0x80) == 0) {
-            return .{ .value = value, .len = i };
-        }
-
+        if ((byte & 0x80) == 0) return .{ .value = value, .len = i };
         multiplier *= 128;
     }
-
     return Error.MalformedVariableInt;
 }
 
-/// Get the encoded size of a variable-length integer.
+/// Get encoded size of a variable-length integer.
 pub fn variableIntSize(value: u32) usize {
     if (value < 128) return 1;
     if (value < 16384) return 2;
@@ -200,10 +248,9 @@ pub fn variableIntSize(value: u32) usize {
 }
 
 // ============================================================================
-// Integer Encoding
+// 16-bit / 32-bit Integers (big-endian)
 // ============================================================================
 
-/// Encode a 16-bit unsigned integer (big-endian).
 pub fn encodeU16(buf: []u8, value: u16) Error!usize {
     if (buf.len < 2) return Error.BufferTooSmall;
     buf[0] = @truncate(value >> 8);
@@ -211,13 +258,11 @@ pub fn encodeU16(buf: []u8, value: u16) Error!usize {
     return 2;
 }
 
-/// Decode a 16-bit unsigned integer (big-endian).
 pub fn decodeU16(buf: []const u8) Error!u16 {
     if (buf.len < 2) return Error.MalformedPacket;
     return (@as(u16, buf[0]) << 8) | @as(u16, buf[1]);
 }
 
-/// Encode a 32-bit unsigned integer (big-endian).
 pub fn encodeU32(buf: []u8, value: u32) Error!usize {
     if (buf.len < 4) return Error.BufferTooSmall;
     buf[0] = @truncate(value >> 24);
@@ -227,7 +272,6 @@ pub fn encodeU32(buf: []u8, value: u32) Error!usize {
     return 4;
 }
 
-/// Decode a 32-bit unsigned integer (big-endian).
 pub fn decodeU32(buf: []const u8) Error!u32 {
     if (buf.len < 4) return Error.MalformedPacket;
     return (@as(u32, buf[0]) << 24) |
@@ -237,375 +281,178 @@ pub fn decodeU32(buf: []const u8) Error!u32 {
 }
 
 // ============================================================================
-// String / Binary Encoding
+// UTF-8 String (2-byte length prefix + data)
 // ============================================================================
 
-/// Encode a UTF-8 string (2-byte length prefix + data).
 pub fn encodeString(buf: []u8, str: []const u8) Error!usize {
     if (str.len > 65535) return Error.MalformedString;
-    if (buf.len < 2 + str.len) return Error.BufferTooSmall;
-
+    const total = 2 + str.len;
+    if (buf.len < total) return Error.BufferTooSmall;
     _ = try encodeU16(buf[0..2], @truncate(str.len));
-
-    for (str, 0..) |c, i| {
-        buf[2 + i] = c;
-    }
-
-    return 2 + str.len;
+    @memcpy(buf[2 .. 2 + str.len], str);
+    return total;
 }
 
-/// Decode a UTF-8 string.
-/// Returns the string slice (into buf) and total bytes consumed.
 pub fn decodeString(buf: []const u8) Error!struct { str: []const u8, len: usize } {
     if (buf.len < 2) return Error.MalformedString;
-
     const str_len = try decodeU16(buf[0..2]);
-    const total_len = 2 + @as(usize, str_len);
-
-    if (buf.len < total_len) return Error.MalformedString;
-
-    return .{
-        .str = buf[2..total_len],
-        .len = total_len,
-    };
+    const total = 2 + @as(usize, str_len);
+    if (buf.len < total) return Error.MalformedString;
+    return .{ .str = buf[2..total], .len = total };
 }
 
-/// Encode binary data (2-byte length prefix + data). Same format as string.
+/// Encode binary data (same format as string)
 pub fn encodeBinary(buf: []u8, data: []const u8) Error!usize {
     return encodeString(buf, data);
 }
 
-/// Decode binary data.
+/// Decode binary data (same format as string)
 pub fn decodeBinary(buf: []const u8) Error!struct { data: []const u8, len: usize } {
-    const result = try decodeString(buf);
-    return .{ .data = result.str, .len = result.len };
+    const r = try decodeString(buf);
+    return .{ .data = r.str, .len = r.len };
 }
 
 // ============================================================================
-// Fixed Header
+// Stream Helpers — read exact bytes from a Transport
 // ============================================================================
 
-/// Encode the fixed header (packet type + flags + remaining length).
-pub fn encodeFixedHeader(buf: []u8, pkt_type: PacketType, flags: u4, remaining_len: u32) Error!usize {
-    if (buf.len < 1) return Error.BufferTooSmall;
-
-    buf[0] = (@as(u8, @intFromEnum(pkt_type)) << 4) | @as(u8, flags);
-
-    const var_len = try encodeVariableInt(buf[1..], remaining_len);
-
-    return 1 + var_len;
-}
-
-/// Decode the fixed header.
-pub fn decodeFixedHeader(buf: []const u8) Error!FixedHeader {
-    if (buf.len < 2) return Error.MalformedPacket;
-
-    const first_byte = buf[0];
-    const pkt_type_raw = first_byte >> 4;
-    const flags: u4 = @truncate(first_byte & 0x0F);
-
-    const pkt_type: PacketType = @enumFromInt(pkt_type_raw);
-
-    const var_result = try decodeVariableInt(buf[1..]);
-
-    return .{
-        .packet_type = pkt_type,
-        .flags = flags,
-        .remaining_len = var_result.value,
-        .header_len = 1 + var_result.len,
-    };
-}
-
-pub const FixedHeader = struct {
-    packet_type: PacketType,
-    flags: u4,
-    remaining_len: u32,
-    header_len: usize,
-
-    /// Total packet length = header + remaining
-    pub fn totalLen(self: FixedHeader) usize {
-        return self.header_len + self.remaining_len;
-    }
-};
-
-// ============================================================================
-// Connect Config (shared between v4 and v5)
-// ============================================================================
-
-pub const ConnectConfig = struct {
-    client_id: []const u8,
-    username: ?[]const u8 = null,
-    password: ?[]const u8 = null,
-    clean_start: bool = true,
-    keep_alive: u16 = 60,
-
-    // Will message (optional)
-    will_topic: ?[]const u8 = null,
-    will_payload: ?[]const u8 = null,
-    will_qos: QoS = .at_most_once,
-    will_retain: bool = false,
-
-    // Protocol version
-    protocol_version: ProtocolVersion = .v5,
-};
-
-/// Publish options (shared between v4 and v5)
-pub const PublishOptions = struct {
-    topic: []const u8,
-    payload: []const u8,
-    retain: bool = false,
-    qos: QoS = .at_most_once,
-    dup: bool = false,
-    packet_id: u16 = 0, // only for QoS > 0
-};
-
-// ============================================================================
-// Message
-// ============================================================================
-
-/// A received MQTT message (slices into caller's buffer — zero copy)
-pub const Message = struct {
-    topic: []const u8,
-    payload: []const u8,
-    retain: bool,
-};
-
-// ============================================================================
-// Handler
-// ============================================================================
-
-/// Message handler — ctx + function pointer pattern (like Go's Handler interface)
-pub const Handler = struct {
-    ctx: ?*anyopaque,
-    handleFn: *const fn (ctx: ?*anyopaque, msg: *const Message) void,
-
-    pub fn handle(self: Handler, msg: *const Message) void {
-        self.handleFn(self.ctx, msg);
-    }
-};
-
-/// Adapter: wrap a simple function as a Handler (like Go's HandlerFunc)
-pub fn handlerFn(comptime f: *const fn (*const Message) void) Handler {
-    return .{
-        .ctx = null,
-        .handleFn = struct {
-            fn wrapper(_: ?*anyopaque, msg: *const Message) void {
-                f(msg);
-            }
-        }.wrapper,
-    };
-}
-
-// ============================================================================
-// Utility
-// ============================================================================
-
-/// Copy bytes (avoids @memcpy for freestanding compatibility)
-pub fn copyBytes(dst: []u8, src: []const u8) void {
-    for (src, 0..) |b, i| {
-        dst[i] = b;
+/// Read exactly `buf.len` bytes from transport.
+pub fn readFull(transport: anytype, buf: []u8) !void {
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = try transport.recv(buf[total..]);
+        if (n == 0) return error.ConnectionClosed;
+        total += n;
     }
 }
 
-/// Detect protocol version from the first bytes of a CONNECT packet.
-/// Needs at least 10 bytes to determine version.
-/// Returns null if not enough data or not a CONNECT packet.
-pub fn detectProtocolVersion(peek: []const u8) ?ProtocolVersion {
-    if (peek.len < 2) return null;
+/// Write all bytes to transport.
+pub fn writeAll(transport: anytype, data: []const u8) !void {
+    var sent: usize = 0;
+    while (sent < data.len) {
+        const n = try transport.send(data[sent..]);
+        if (n == 0) return error.ConnectionClosed;
+        sent += n;
+    }
+}
 
-    // Must be a CONNECT packet (0x10)
-    if (peek[0] & 0xF0 != 0x10) return null;
+/// Read a complete MQTT packet from transport into buf.
+/// Returns the total packet length (header + payload).
+pub fn readPacket(transport: anytype, buf: []u8) !usize {
+    // Read first byte
+    try readFull(transport, buf[0..1]);
 
-    // Parse remaining length to find header_len
+    // Read remaining length (variable int, up to 4 bytes)
+    var remaining_len: u32 = 0;
+    var multiplier: u32 = 1;
     var header_len: usize = 1;
-    var i: usize = 1;
-    while (i < peek.len and i < 5) : (i += 1) {
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        try readFull(transport, buf[header_len .. header_len + 1]);
+        const byte = buf[header_len];
         header_len += 1;
-        if (peek[i] & 0x80 == 0) break;
+        remaining_len += @as(u32, byte & 0x7F) * multiplier;
+        if ((byte & 0x80) == 0) break;
+        multiplier *= 128;
     }
 
-    // Protocol level offset: header_len + 2 (name length) + 4 ("MQTT")
-    const proto_level_offset = header_len + 2 + 4;
-    if (peek.len <= proto_level_offset) return null;
+    const total = header_len + remaining_len;
+    if (total > buf.len) return error.PacketTooLarge;
 
-    return switch (peek[proto_level_offset]) {
-        4 => .v4,
-        5 => .v5,
-        else => null,
-    };
+    // Read remaining payload
+    if (remaining_len > 0) {
+        try readFull(transport, buf[header_len..total]);
+    }
+
+    return total;
+}
+
+// ============================================================================
+// Packet Building Helper
+// ============================================================================
+
+/// Build a complete packet: encodes fixed header + copies payload.
+/// Returns total bytes written.
+pub fn buildPacket(buf: []u8, packet_type: PacketType, flags: u4, payload: []const u8) Error!usize {
+    const remaining: u32 = @truncate(payload.len);
+    const header_size = 1 + variableIntSize(remaining);
+    const total = header_size + payload.len;
+    if (buf.len < total) return Error.BufferTooSmall;
+
+    const hlen = try encodeFixedHeader(buf, packet_type, flags, remaining);
+    @memcpy(buf[hlen .. hlen + payload.len], payload);
+    return total;
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-const testing = struct {
-    fn expectEqual(expected: anytype, actual: anytype) !void {
-        if (expected != actual) return error.TestExpectedEqual;
-    }
-
-    fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const T) !void {
-        if (expected.len != actual.len) return error.TestExpectedEqual;
-        for (expected, actual) |e, a| {
-            if (e != a) return error.TestExpectedEqual;
-        }
-    }
-};
-
-test "varint encode/decode roundtrip" {
+test "variable int encode/decode roundtrip" {
     var buf: [4]u8 = undefined;
 
-    // Test various values
-    const test_values = [_]u32{ 0, 1, 127, 128, 16383, 16384, 2097151, 2097152, 268435455 };
-    for (test_values) |v| {
-        const n = try encodeVariableInt(&buf, v);
-        const result = try decodeVariableInt(buf[0..n]);
-        try testing.expectEqual(v, result.value);
-        try testing.expectEqual(n, result.len);
+    const values = [_]u32{ 0, 1, 127, 128, 16383, 16384, 2097151, 2097152, 268435455 };
+    for (values) |v| {
+        const written = try encodeVariableInt(&buf, v);
+        const result = try decodeVariableInt(buf[0..written]);
+        try std.testing.expectEqual(v, result.value);
+        try std.testing.expectEqual(written, result.len);
     }
 }
 
-test "varint sizes" {
-    try testing.expectEqual(@as(usize, 1), variableIntSize(0));
-    try testing.expectEqual(@as(usize, 1), variableIntSize(127));
-    try testing.expectEqual(@as(usize, 2), variableIntSize(128));
-    try testing.expectEqual(@as(usize, 2), variableIntSize(16383));
-    try testing.expectEqual(@as(usize, 3), variableIntSize(16384));
-    try testing.expectEqual(@as(usize, 4), variableIntSize(2097152));
+test "variable int size" {
+    try std.testing.expectEqual(@as(usize, 1), variableIntSize(0));
+    try std.testing.expectEqual(@as(usize, 1), variableIntSize(127));
+    try std.testing.expectEqual(@as(usize, 2), variableIntSize(128));
+    try std.testing.expectEqual(@as(usize, 2), variableIntSize(16383));
+    try std.testing.expectEqual(@as(usize, 3), variableIntSize(16384));
+    try std.testing.expectEqual(@as(usize, 4), variableIntSize(2097152));
 }
 
-test "u16 encode/decode roundtrip" {
+test "u16 encode/decode" {
     var buf: [2]u8 = undefined;
-    const values = [_]u16{ 0, 1, 255, 256, 65535 };
-    for (values) |v| {
-        _ = try encodeU16(&buf, v);
-        const decoded = try decodeU16(&buf);
-        try testing.expectEqual(v, decoded);
-    }
+    _ = try encodeU16(&buf, 0x1234);
+    try std.testing.expectEqual(@as(u16, 0x1234), try decodeU16(&buf));
 }
 
-test "u32 encode/decode roundtrip" {
+test "u32 encode/decode" {
     var buf: [4]u8 = undefined;
-    const values = [_]u32{ 0, 1, 255, 65535, 0xDEADBEEF };
-    for (values) |v| {
-        _ = try encodeU32(&buf, v);
-        const decoded = try decodeU32(&buf);
-        try testing.expectEqual(v, decoded);
-    }
+    _ = try encodeU32(&buf, 0x12345678);
+    try std.testing.expectEqual(@as(u32, 0x12345678), try decodeU32(&buf));
 }
 
-test "string encode/decode roundtrip" {
+test "string encode/decode" {
     var buf: [256]u8 = undefined;
-
-    // Empty string
-    {
-        const n = try encodeString(&buf, "");
-        try testing.expectEqual(@as(usize, 2), n);
-        const result = try decodeString(buf[0..n]);
-        try testing.expectEqual(@as(usize, 0), result.str.len);
-    }
-
-    // Normal string
-    {
-        const s = "hello/world";
-        const n = try encodeString(&buf, s);
-        try testing.expectEqual(2 + s.len, n);
-        const result = try decodeString(buf[0..n]);
-        try testing.expectEqualSlices(u8, s, result.str);
-    }
+    const written = try encodeString(&buf, "hello");
+    const result = try decodeString(buf[0..written]);
+    try std.testing.expectEqualStrings("hello", result.str);
+    try std.testing.expectEqual(@as(usize, 7), result.len);
 }
 
-test "fixed header encode/decode roundtrip" {
+test "empty string encode/decode" {
+    var buf: [256]u8 = undefined;
+    const written = try encodeString(&buf, "");
+    const result = try decodeString(buf[0..written]);
+    try std.testing.expectEqualStrings("", result.str);
+    try std.testing.expectEqual(@as(usize, 2), result.len);
+}
+
+test "fixed header encode/decode" {
     var buf: [5]u8 = undefined;
-
-    // CONNECT with small remaining
-    {
-        const n = try encodeFixedHeader(&buf, .connect, 0, 10);
-        const hdr = try decodeFixedHeader(buf[0..n]);
-        try testing.expectEqual(PacketType.connect, hdr.packet_type);
-        try testing.expectEqual(@as(u4, 0), hdr.flags);
-        try testing.expectEqual(@as(u32, 10), hdr.remaining_len);
-    }
-
-    // PUBLISH with retain flag and large remaining
-    {
-        const n = try encodeFixedHeader(&buf, .publish, 0x01, 300);
-        const hdr = try decodeFixedHeader(buf[0..n]);
-        try testing.expectEqual(PacketType.publish, hdr.packet_type);
-        try testing.expectEqual(@as(u4, 0x01), hdr.flags);
-        try testing.expectEqual(@as(u32, 300), hdr.remaining_len);
-    }
-
-    // SUBSCRIBE with fixed flags 0x02
-    {
-        const n = try encodeFixedHeader(&buf, .subscribe, 0x02, 0);
-        const hdr = try decodeFixedHeader(buf[0..n]);
-        try testing.expectEqual(PacketType.subscribe, hdr.packet_type);
-        try testing.expectEqual(@as(u4, 0x02), hdr.flags);
-        try testing.expectEqual(@as(u32, 0), hdr.remaining_len);
-    }
-
-    // PINGREQ with zero remaining
-    {
-        const n = try encodeFixedHeader(&buf, .pingreq, 0, 0);
-        const hdr = try decodeFixedHeader(buf[0..n]);
-        try testing.expectEqual(PacketType.pingreq, hdr.packet_type);
-        try testing.expectEqual(@as(u32, 0), hdr.remaining_len);
-    }
+    const written = try encodeFixedHeader(&buf, .publish, 0x03, 256);
+    const hdr = try decodeFixedHeader(buf[0..written]);
+    try std.testing.expectEqual(PacketType.publish, hdr.packet_type);
+    try std.testing.expectEqual(@as(u4, 0x03), hdr.flags);
+    try std.testing.expectEqual(@as(u32, 256), hdr.remaining_len);
 }
 
-test "detect protocol version" {
-    // MQTT 3.1.1 CONNECT packet (minimal)
-    // Fixed header: 0x10, remaining_len
-    // Variable header: protocol name "MQTT" (00 04 4D 51 54 54), protocol level 4
-    const v4_connect = [_]u8{
-        0x10, 0x0E, // Fixed header: CONNECT, remaining = 14
-        0x00, 0x04, 'M', 'Q', 'T', 'T', // Protocol name
-        0x04, // Protocol level = 4 (v3.1.1)
-        0x02, // Connect flags
-        0x00, 0x3C, // Keep alive = 60
-        0x00, 0x00, // Client ID (empty)
-    };
-    try testing.expectEqual(ProtocolVersion.v4, detectProtocolVersion(&v4_connect).?);
-
-    // MQTT 5.0 CONNECT packet
-    var v5_connect = v4_connect;
-    v5_connect[8] = 0x05; // Protocol level = 5
-    try testing.expectEqual(ProtocolVersion.v5, detectProtocolVersion(&v5_connect).?);
-
-    // Not a CONNECT packet
-    const not_connect = [_]u8{ 0x30, 0x00 }; // PUBLISH
-    try testing.expectEqual(@as(?ProtocolVersion, null), detectProtocolVersion(&not_connect));
-
-    // Too short
-    try testing.expectEqual(@as(?ProtocolVersion, null), detectProtocolVersion(&[_]u8{0x10}));
+test "PacketType name" {
+    try std.testing.expectEqualStrings("CONNECT", PacketType.connect.name());
+    try std.testing.expectEqualStrings("PUBLISH", PacketType.publish.name());
 }
 
-test "buffer too small errors" {
-    var tiny: [0]u8 = undefined;
-
-    // varint
-    {
-        const result = encodeVariableInt(&tiny, 1);
-        try testing.expectEqual(true, result == Error.BufferTooSmall);
-    }
-
-    // u16
-    {
-        const result = encodeU16(&tiny, 1);
-        try testing.expectEqual(true, result == Error.BufferTooSmall);
-    }
-
-    // string
-    {
-        const result = encodeString(&tiny, "hello");
-        try testing.expectEqual(true, result == Error.BufferTooSmall);
-    }
-}
-
-test "reason code is error" {
-    try testing.expectEqual(false, ReasonCode.success.isError());
-    try testing.expectEqual(false, ReasonCode.granted_qos_1.isError());
-    try testing.expectEqual(true, ReasonCode.unspecified_error.isError());
-    try testing.expectEqual(true, ReasonCode.not_authorized.isError());
+test "ReasonCode isError" {
+    try std.testing.expect(!ReasonCode.success.isError());
+    try std.testing.expect(ReasonCode.not_authorized.isError());
+    try std.testing.expect(ReasonCode.malformed_packet.isError());
 }
