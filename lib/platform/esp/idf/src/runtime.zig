@@ -86,17 +86,29 @@ pub const Condition = struct {
 
     /// Wake one waiting thread.
     pub fn signal(self: *Condition) void {
-        if (self.waiters.load(.acquire) > 0) {
-            _ = self.waiters.fetchSub(1, .acq_rel);
+        var current = self.waiters.load(.acquire);
+        while (current > 0) {
+            if (self.waiters.cmpxchgWeak(current, current - 1, .acq_rel, .acquire)) |actual| {
+                current = actual;
+                continue;
+            }
             _ = c.xSemaphoreGive(self.sem);
+            break;
         }
     }
 
     /// Wake all waiting threads.
     pub fn broadcast(self: *Condition) void {
-        var n = self.waiters.swap(0, .acq_rel);
-        while (n > 0) : (n -= 1) {
-            _ = c.xSemaphoreGive(self.sem);
+        var current = self.waiters.load(.acquire);
+        while (current > 0) {
+            if (self.waiters.cmpxchgWeak(current, 0, .acq_rel, .acquire)) |actual| {
+                current = actual;
+                continue;
+            }
+            while (current > 0) : (current -= 1) {
+                _ = c.xSemaphoreGive(self.sem);
+            }
+            break;
         }
     }
 };
