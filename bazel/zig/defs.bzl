@@ -1,36 +1,36 @@
-"""Zig build rules for Bazel.
+"""Zig build rules for Bazel — invoke zig compiler directly, no build.zig.
 
-Legacy rules (wrap zig build):
-    load("//bazel/zig:defs.bzl", "zig_lib", "zig_run")
+Rules:
+    zig_library      — Compile a Zig module, propagate cache
+    zig_test         — Compile and run Zig tests
+    zig_binary       — Compile a Zig executable
+    zig_static_library — Compile to .a (for C interop)
+    zig_tool         — Bootstrap helper tools (e.g., cache_merge)
 
-Bazel-native rules (invoke zig compiler directly):
+Macro:
+    zig_package      — High-level: auto zig_library + zig_test from convention
+
+Usage:
+    load("//bazel/zig:defs.bzl", "zig_package")
+
+    # One-liner for most packages (convention: src/{name}.zig)
+    zig_package(name = "trait")
+
+    # With deps
+    zig_package(name = "hal", deps = ["//lib/trait", "//lib/pkg/motion"])
+
+    # Custom root source or module name
+    zig_package(name = "crypto", main = "src/suite.zig")
+    zig_package(name = "std", module_name = "std_sal")
+
+    # Lower-level rules when needed
     load("//bazel/zig:defs.bzl", "zig_library", "zig_binary", "zig_test", "zig_static_library")
-
-    zig_library(
-        name = "trait",
-        main = "src/trait.zig",
-        srcs = glob(["src/**/*.zig"]),
-    )
-
-    zig_library(
-        name = "hal",
-        main = "src/hal.zig",
-        srcs = glob(["src/**/*.zig"]),
-        deps = ["//lib/trait"],
-    )
 
     zig_binary(
         name = "my_app",
         main = "src/main.zig",
         srcs = ["src/main.zig"],
         deps = [":hal"],
-    )
-
-    zig_test(
-        name = "hal_test",
-        main = "src/hal.zig",
-        srcs = glob(["src/**/*.zig"]),
-        deps = ["//lib/trait"],
     )
 
     zig_static_library(
@@ -40,197 +40,14 @@ Bazel-native rules (invoke zig compiler directly):
 """
 
 # =============================================================================
-# ZigLibInfo - Provider for Zig library information
-# =============================================================================
-
-ZigLibInfo = provider(
-    doc = "Information about a Zig library for dependency resolution",
-    fields = {
-        "name": "Library name (used in build.zig.zon)",
-        "srcs": "Depset of source files",
-        "path": "Path to library root (package path, e.g., 'lib/hal')",
-        "deps": "Depset of transitive ZigLibInfo dependencies",
-    },
-)
-
-# =============================================================================
-# zig_lib - Define a Zig library
-# =============================================================================
-
-def _zig_lib_impl(ctx):
-    """Define a Zig library that can be used as a dependency."""
-    
-    # Collect source files
-    src_files = []
-    for src in ctx.attr.srcs:
-        src_files.extend(src.files.to_list())
-    
-    # Determine library path from package
-    lib_path = ctx.label.package  # e.g., "lib/hal"
-    
-    # Library name (from label name or explicit)
-    lib_name = ctx.attr.lib_name if ctx.attr.lib_name else ctx.label.name
-    
-    # Collect transitive dependencies
-    transitive_deps = []
-    for dep in ctx.attr.deps:
-        if ZigLibInfo in dep:
-            transitive_deps.append(dep[ZigLibInfo])
-    
-    return [
-        DefaultInfo(
-            files = depset(src_files),
-        ),
-        ZigLibInfo(
-            name = lib_name,
-            srcs = depset(src_files),
-            path = lib_path,
-            deps = depset(transitive_deps),
-        ),
-    ]
-
-zig_lib = rule(
-    implementation = _zig_lib_impl,
-    attrs = {
-        "srcs": attr.label_list(
-            allow_files = True,
-            mandatory = True,
-            doc = "Source files for the Zig library",
-        ),
-        "lib_name": attr.string(
-            doc = "Library name (defaults to target name). Used in build.zig.zon.",
-        ),
-        "deps": attr.label_list(
-            providers = [ZigLibInfo],
-            doc = "Other zig_lib dependencies",
-        ),
-    },
-    doc = """Define a Zig library for use with esp_zig_app.
-
-Example:
-    zig_lib(
-        name = "hal",
-        srcs = glob(["**/*"]),
-        deps = ["//lib/trait"],
-    )
-""",
-)
-
-# =============================================================================
-# zig_run - Run a standalone Zig project
-# =============================================================================
-
-def _zig_run_impl(ctx):
-    """Run a standalone Zig project.
-    
-    This rule copies source files maintaining the workspace directory structure,
-    which is required for Zig's relative path dependencies (../trait, ../tls, etc.)
-    """
-    
-    # Collect source files
-    src_files = []
-    for src in ctx.attr.srcs:
-        src_files.extend(src.files.to_list())
-    
-    # Get Zig toolchain
-    zig_files = ctx.attr._zig_toolchain.files.to_list()
-    zig_bin = None
-    for f in zig_files:
-        if f.basename == "zig" and f.is_source:
-            zig_bin = f
-            break
-    
-    # Create run script
-    run_script = ctx.actions.declare_file("{}_run.sh".format(ctx.label.name))
-    
-    # Generate copy commands - preserve full workspace path structure
-    src_copy_commands = []
-    for f in src_files:
-        rel_path = f.short_path
-        src_copy_commands.append('mkdir -p "$WORK/$(dirname {})" && cp "{}" "$WORK/{}"'.format(
-            rel_path, f.path, rel_path
-        ))
-    
-    # Determine working directory
-    work_dir = ctx.attr.project_dir if ctx.attr.project_dir else "."
-    
-    # Determine build step
-    build_step = ctx.attr.build_step if ctx.attr.build_step else "run"
-    
-    script_content = """#!/bin/bash
-set -e
-
-WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
-
-# Copy source files (preserving directory structure for relative imports)
-{src_copy_commands}
-
-# Set up Zig path
-export PATH="{zig_dir}:$PATH"
-
-# Run zig build from project directory
-cd "$WORK/{work_dir}"
-echo "[zig_run] Building and running in {work_dir}..."
-zig build {build_step}
-""".format(
-        zig_dir = zig_bin.dirname if zig_bin else "",
-        src_copy_commands = "\n".join(src_copy_commands),
-        work_dir = work_dir,
-        build_step = build_step,
-    )
-    
-    ctx.actions.write(
-        output = run_script,
-        content = script_content,
-        is_executable = True,
-    )
-    
-    return [
-        DefaultInfo(
-            executable = run_script,
-            runfiles = ctx.runfiles(files = src_files + zig_files),
-        ),
-    ]
-
-zig_run = rule(
-    implementation = _zig_run_impl,
-    executable = True,
-    attrs = {
-        "srcs": attr.label_list(
-            allow_files = True,
-            mandatory = True,
-            doc = "Source files for the Zig project",
-        ),
-        "project_dir": attr.string(
-            doc = "Project directory to run zig build from (e.g., 'lib/dns')",
-        ),
-        "build_step": attr.string(
-            default = "run",
-            doc = "Zig build step to run (default: 'run')",
-        ),
-        "_zig_toolchain": attr.label(
-            default = "@zig_toolchain//:zig_files",
-            doc = "Zig compiler",
-        ),
-    },
-    doc = "Run a standalone Zig project",
-)
-
-# #############################################################################
-#
-# Bazel-native Zig rules — invoke zig compiler directly, no build.zig
-#
-# #############################################################################
-
-# =============================================================================
 # ZigModuleInfo — Provider for Bazel-native Zig module metadata
 # =============================================================================
 
 ZigModuleInfo = provider(
-    doc = "Bazel-native Zig module information (no build.zig needed)",
+    doc = "Zig module information for Bazel-native compilation (no build.zig needed)",
     fields = {
         "module_name": "string — Module name used in @import() and -M flag",
+        "package_path": "string — Bazel package path (e.g., 'lib/hal'), for esp_zig_app compat",
         "root_source": "File — Root .zig source file (e.g., src/trait.zig)",
         "srcs": "depset(File) — Source files belonging to this module only",
         "transitive_srcs": "depset(File) — All source files across transitive deps",
@@ -449,6 +266,7 @@ def _zig_library_impl(ctx):
         DefaultInfo(files = depset([output_a])),
         ZigModuleInfo(
             module_name = module_name,
+            package_path = ctx.label.package,
             root_source = root_source,
             srcs = own_srcs,
             transitive_srcs = depset(transitive = collected.transitive_src_depsets),
@@ -800,3 +618,63 @@ Example:
     )
 """,
 )
+
+# =============================================================================
+# zig_package — High-level macro: zig_library + zig_test from convention
+# =============================================================================
+
+def zig_package(name, main = None, srcs = None, module_name = None, deps = [], test = True, visibility = None):
+    """High-level macro for Zig packages.
+
+    Creates a zig_library target and optionally a zig_test target.
+
+    Convention: root source file is src/{name}.zig. Override with `main`.
+
+    Targets created:
+        {name}       — zig_library (provides ZigModuleInfo)
+        {name}_test  — zig_test (if test=True)
+
+    Args:
+        name: Package name. Also used as module_name and to find src/{name}.zig.
+        main: Root source file. Defaults to "src/{name}.zig".
+        srcs: Source files. Defaults to glob(["src/**/*.zig"]).
+        module_name: Module name for @import(). Defaults to name.
+        deps: zig_library / zig_package dependencies.
+        test: Whether to create a test target. Default True.
+        visibility: Visibility. Defaults to ["//visibility:public"].
+
+    Example:
+        # Simplest form — convention-based
+        zig_package(name = "trait")
+
+        # With deps
+        zig_package(name = "hal", deps = ["//lib/trait", "//lib/pkg/motion"])
+
+        # Custom root source
+        zig_package(name = "crypto", main = "src/suite.zig")
+
+        # Custom module name (avoid collision with zig std)
+        zig_package(name = "std", module_name = "std_sal")
+    """
+    _main = main if main else "src/{}.zig".format(name)
+    _srcs = srcs if srcs else native.glob(["src/**/*.zig"])
+    _module_name = module_name if module_name else name
+    _vis = visibility if visibility else ["//visibility:public"]
+
+    zig_library(
+        name = name,
+        main = _main,
+        srcs = _srcs,
+        module_name = _module_name,
+        deps = deps,
+        visibility = _vis,
+    )
+
+    if test:
+        zig_test(
+            name = name + "_test",
+            main = _main,
+            srcs = _srcs,
+            module_name = _module_name,
+            deps = deps,
+        )
