@@ -57,6 +57,13 @@ pub fn main() !void {
         }
     }
 
+    // Validate: must have zig command after "--"
+    if (sep_idx >= args.len) {
+        std.debug.print("cache_merge: missing '--' separator or no zig command after it\n" ++
+            "usage: cache_merge <out_cache> [dep_cache...] -- <zig> <args...>\n", .{});
+        process.exit(1);
+    }
+
     // Build zig command: remaining args + cache flags
     var zig_argv: std.ArrayListUnmanaged([]const u8) = .empty;
     defer zig_argv.deinit(allocator);
