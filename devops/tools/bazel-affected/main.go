@@ -285,10 +285,13 @@ func runBazelQuery(query string) ([]string, error) {
 
 	output, err := cmd.Output()
 	if err != nil {
-		if stderr := stderrBuf.String(); stderr != "" && *verbose {
-			fmt.Fprintf(os.Stderr, "bazel query stderr: %s\n", stderr)
+		if stderr := stderrBuf.String(); stderr != "" {
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "bazel query stderr: %s\n", stderr)
+			}
+			return nil, fmt.Errorf("bazel query failed: %w (stderr: %s)", err, stderr)
 		}
-		return nil, err
+		return nil, fmt.Errorf("bazel query failed: %w", err)
 	}
 
 	var targets []string
