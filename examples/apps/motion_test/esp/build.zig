@@ -3,6 +3,7 @@ const std = @import("std");
 /// Supported board types
 pub const BoardType = enum {
     lichuang_szp,
+    lichuang_gocool,
 };
 
 pub fn build(b: *std.Build) void {

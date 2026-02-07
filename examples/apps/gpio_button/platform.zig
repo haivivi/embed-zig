@@ -7,6 +7,7 @@ const hw = switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
     .lichuang_szp => @import("esp/lichuang_szp.zig"),
+    .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
     .sim_raylib => @import("esp/sim_raylib.zig"),
 };
 
