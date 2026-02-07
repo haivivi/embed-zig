@@ -1,1 +1,9 @@
+load(":defs.bzl", "zig_tool")
+
 exports_files(["defs.bzl"])
+
+zig_tool(
+    name = "cache_merge",
+    src = "cache_merge.zig",
+    visibility = ["//visibility:public"],
+)

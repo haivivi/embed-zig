@@ -1,9 +1,10 @@
 # HAL library - Hardware Abstraction Layer
 
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_lib", "zig_library", "zig_test", "zig_static_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# Legacy rule (for esp_zig_app backward compat)
 zig_lib(
     name = "hal",
     srcs = glob(["**/*"]),
@@ -11,4 +12,31 @@ zig_lib(
         "//lib/trait",
         "//lib/pkg/motion",
     ],
+)
+
+# Bazel-native rules
+zig_library(
+    name = "hal_native",
+    main = "src/hal.zig",
+    srcs = glob(["src/**/*.zig"]),
+    module_name = "hal",
+    deps = [
+        "//lib/trait:trait_native",
+        "//lib/pkg/motion:motion_native",
+    ],
+)
+
+zig_test(
+    name = "hal_test",
+    main = "src/hal.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = [
+        "//lib/trait:trait_native",
+        "//lib/pkg/motion:motion_native",
+    ],
+)
+
+zig_static_library(
+    name = "hal_a",
+    lib = ":hal_native",
 )
