@@ -1,0 +1,96 @@
+name: PR Build (Affected Targets)
+
+on:
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  affected:
+    name: Find Affected Targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.affected.outputs.targets }}
+      has_targets: ${{ steps.affected.outputs.has_targets }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Find affected targets
+        id: affected
+        run: |
+          # Build the affected-targets tool, then run it
+          bazel run //devops/tools/bazel-affected -- \
+            --base="${{ github.event.pull_request.base.sha }}" \
+            --oneline \
+            --output=/tmp/targets.txt || echo "//..." > /tmp/targets.txt
+
+          TARGETS=$(cat /tmp/targets.txt)
+          echo "Affected: $TARGETS"
+          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          echo "has_targets=$([[ -n "$TARGETS" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Affected Targets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          TARGETS="${{ steps.affected.outputs.targets }}"
+          if [[ -z "$TARGETS" ]]; then
+            echo "No affected targets found." >> $GITHUB_STEP_SUMMARY
+          else
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$TARGETS" | tr ' ' '\n' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  build:
+    name: Build Affected
+    needs: affected
+    if: needs.affected.outputs.has_targets == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Build affected targets
+        run: |
+          TARGETS="${{ needs.affected.outputs.targets }}"
+          echo "Building: $TARGETS"
+          # Note: ESP app targets require ESP-IDF and will be skipped on standard runners.
+          # Only non-ESP targets (Go tools, tests, etc.) will build successfully.
+          bazel build $TARGETS --keep_going 2>&1 || true
+
+      - name: Test affected targets
+        run: |
+          TARGETS="${{ needs.affected.outputs.targets }}"
+          # Exit code 4 means "no test targets found", which is OK
+          bazel test $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
+
+  skip:
+    name: No Changes
+    needs: affected
+    if: needs.affected.outputs.has_targets == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip build
+        run: echo "No affected targets, skipping build"

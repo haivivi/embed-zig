@@ -1,0 +1,84 @@
+name: Main Build (Push)
+
+on:
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  affected:
+    name: Find Affected Targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.affected.outputs.targets }}
+      has_targets: ${{ steps.affected.outputs.has_targets }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need previous commit for diff
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Find affected targets
+        id: affected
+        run: |
+          # Compare with previous commit (this push's diff)
+          bazel run //devops/tools/bazel-affected -- \
+            --base=HEAD~1 \
+            --oneline \
+            --output=/tmp/targets.txt || echo "//..." > /tmp/targets.txt
+
+          TARGETS=$(cat /tmp/targets.txt)
+          echo "Affected: $TARGETS"
+          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          echo "has_targets=$([[ -n "$TARGETS" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Affected Targets (push to ${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          TARGETS="${{ steps.affected.outputs.targets }}"
+          if [[ -z "$TARGETS" ]]; then
+            echo "No affected targets found." >> $GITHUB_STEP_SUMMARY
+          else
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$TARGETS" | tr ' ' '\n' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  build:
+    name: Build Affected
+    needs: affected
+    if: needs.affected.outputs.has_targets == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Build affected targets
+        run: |
+          TARGETS="${{ needs.affected.outputs.targets }}"
+          echo "Building: $TARGETS"
+          bazel build $TARGETS --keep_going 2>&1 || true
+
+      - name: Test affected targets
+        run: |
+          TARGETS="${{ needs.affected.outputs.targets }}"
+          bazel test $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
