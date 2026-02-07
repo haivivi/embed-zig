@@ -23,6 +23,15 @@ Usage:
     zig_package(name = "crypto", main = "src/suite.zig")
     zig_package(name = "std", module_name = "std_sal")
 
+    # Mixed Zig + C + ASM
+    zig_package(
+        name = "noise",
+        c_srcs = glob(["src/**/*.c", "src/**/*.h"]),
+        asm_srcs = glob(["src/**/*.S"]),
+        c_flags = ["-O3"],
+        link_libc = True,
+    )
+
     # Lower-level rules when needed
     load("//bazel/zig:defs.bzl", "zig_library", "zig_binary", "zig_test", "zig_static_library")
 
@@ -124,6 +133,77 @@ def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_modu
         args.append("-M{}={}".format(mod.name, mod.root_path))
 
     return args
+
+def _build_c_asm_args(ctx):
+    """Build C/ASM compiler arguments from rule attributes.
+
+    Returns a struct with:
+        args: list(string) — compiler args (-lc, -I, -cflags, source files)
+        inputs: list(File) — C/ASM/header files to add to action inputs
+    """
+    args = []
+    inputs = []
+
+    # Link libc
+    if ctx.attr.link_libc:
+        args.append("-lc")
+
+    # Include paths (relative to package dir)
+    pkg = ctx.label.package
+    for inc in ctx.attr.c_includes:
+        if inc:
+            args.extend(["-I", pkg + "/" + inc])
+        else:
+            args.extend(["-I", pkg])
+
+    # Collect C and ASM source files
+    c_files = []
+    for src in ctx.attr.c_srcs:
+        for f in src.files.to_list():
+            inputs.append(f)
+            if f.path.endswith(".c"):
+                c_files.append(f)
+            # .h files are inputs (for include resolution) but not compiled
+
+    asm_files = []
+    for src in ctx.attr.asm_srcs:
+        for f in src.files.to_list():
+            inputs.append(f)
+            if f.path.endswith(".S") or f.path.endswith(".s"):
+                asm_files.append(f)
+
+    # Append C/ASM source files with optional c_flags
+    if c_files or asm_files:
+        if ctx.attr.c_flags:
+            args.append("-cflags")
+            args.extend(ctx.attr.c_flags)
+            args.append("--")
+        for f in c_files + asm_files:
+            args.append(f.path)
+
+    return struct(args = args, inputs = inputs)
+
+# Common C/ASM attributes shared by zig_library, zig_binary, zig_test
+_C_ASM_ATTRS = {
+    "c_srcs": attr.label_list(
+        allow_files = [".c", ".h"],
+        doc = "C source and header files. Headers are inputs only (not compiled).",
+    ),
+    "asm_srcs": attr.label_list(
+        allow_files = [".S", ".s"],
+        doc = "Assembly source files (.S/.s)",
+    ),
+    "c_includes": attr.string_list(
+        doc = "C include directories, relative to package (e.g., 'src/noise/include')",
+    ),
+    "c_flags": attr.string_list(
+        doc = "C compiler flags (e.g., ['-O3']). Applied to all c_srcs and asm_srcs.",
+    ),
+    "link_libc": attr.bool(
+        default = False,
+        doc = "Whether to link libc (-lc)",
+    ),
+}
 
 def _collect_deps(own_srcs, deps):
     """Collect dependency info from zig_library deps.
@@ -243,6 +323,9 @@ def _zig_library_impl(ctx):
         all_dep_module_strings = collected.all_dep_module_strings,
     )
 
+    # C/ASM sources
+    c_asm = _build_c_asm_args(ctx)
+
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib <args> -femit-bin=out.a
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
@@ -250,13 +333,14 @@ def _zig_library_impl(ctx):
     cm_args.append("--")
     cm_args.append(zig_bin.path)
     cm_args.extend(["build-lib"] + module_args + ["-femit-bin=" + output_a.path])
+    cm_args.extend(c_asm.args)
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [output_a, cache_dir],
         mnemonic = "ZigLibCompile",
         progress_message = "Compiling Zig library %s" % ctx.label,
@@ -278,7 +362,7 @@ def _zig_library_impl(ctx):
 
 zig_library = rule(
     implementation = _zig_library_impl,
-    attrs = {
+    attrs = dict(_C_ASM_ATTRS, **{
         "srcs": attr.label_list(
             allow_files = [".zig"],
             mandatory = True,
@@ -304,18 +388,23 @@ zig_library = rule(
             executable = True,
             cfg = "exec",
         ),
-    },
+    }),
     doc = """Define a Zig module and pre-compile to populate cache for downstream rules.
 
 Each zig_library compiles with zig build-lib through the cache_merge tool,
 producing an accumulated cache_dir that downstream rules can reuse for
-incremental builds.
+incremental builds. Supports mixed Zig + C + ASM compilation.
 
 Example:
     zig_library(
-        name = "trait",
-        main = "src/trait.zig",
+        name = "noise",
+        main = "src/noise.zig",
         srcs = glob(["src/**/*.zig"]),
+        c_srcs = glob(["src/**/*.c", "src/**/*.h"]),
+        asm_srcs = glob(["src/**/*.S"]),
+        c_includes = ["src/noise/include"],
+        c_flags = ["-O3"],
+        link_libc = True,
     )
 """,
 )
@@ -434,6 +523,9 @@ def _zig_binary_impl(ctx):
         all_dep_module_strings = collected.all_dep_module_strings,
     )
 
+    # C/ASM sources
+    c_asm = _build_c_asm_args(ctx)
+
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-exe <args>
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
@@ -445,13 +537,14 @@ def _zig_binary_impl(ctx):
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
+    cm_args.extend(c_asm.args)
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [output, cache_dir],
         mnemonic = "ZigBuildExe",
         progress_message = "Compiling Zig binary %s" % ctx.label,
@@ -465,7 +558,7 @@ def _zig_binary_impl(ctx):
 zig_binary = rule(
     implementation = _zig_binary_impl,
     executable = True,
-    attrs = {
+    attrs = dict(_C_ASM_ATTRS, **{
         "srcs": attr.label_list(
             allow_files = [".zig"],
             mandatory = True,
@@ -497,7 +590,7 @@ zig_binary = rule(
             executable = True,
             cfg = "exec",
         ),
-    },
+    }),
     doc = """Compile a Zig executable using dep caches for incremental builds.
 
 Example:
@@ -534,6 +627,9 @@ def _zig_test_impl(ctx):
         all_dep_module_strings = collected.all_dep_module_strings,
     )
 
+    # C/ASM sources
+    c_asm = _build_c_asm_args(ctx)
+
     # cache_merge <out_cache> [dep_caches...] -- <zig> test <args>
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
@@ -548,13 +644,14 @@ def _zig_test_impl(ctx):
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
+    cm_args.extend(c_asm.args)
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [test_bin, cache_dir],
         mnemonic = "ZigTestCompile",
         progress_message = "Compiling Zig tests %s" % ctx.label,
@@ -576,7 +673,7 @@ def _zig_test_impl(ctx):
 zig_test = rule(
     implementation = _zig_test_impl,
     test = True,
-    attrs = {
+    attrs = dict(_C_ASM_ATTRS, **{
         "srcs": attr.label_list(
             allow_files = [".zig"],
             mandatory = True,
@@ -608,7 +705,7 @@ zig_test = rule(
             executable = True,
             cfg = "exec",
         ),
-    },
+    }),
     doc = """Compile and run Zig tests using dep caches for incremental builds.
 
 Example:
@@ -624,10 +721,23 @@ Example:
 # zig_package — High-level macro: zig_library + zig_test from convention
 # =============================================================================
 
-def zig_package(name, main = None, srcs = None, module_name = None, deps = [], test = True, visibility = None):
+def zig_package(
+        name,
+        main = None,
+        srcs = None,
+        module_name = None,
+        deps = [],
+        c_srcs = [],
+        asm_srcs = [],
+        c_includes = [],
+        c_flags = [],
+        link_libc = False,
+        test = True,
+        visibility = None):
     """High-level macro for Zig packages.
 
     Creates a zig_library target and optionally a zig_test target.
+    Supports mixed Zig + C + ASM compilation.
 
     Convention: root source file is src/{name}.zig. Override with `main`.
 
@@ -638,9 +748,14 @@ def zig_package(name, main = None, srcs = None, module_name = None, deps = [], t
     Args:
         name: Package name. Also used as module_name and to find src/{name}.zig.
         main: Root source file. Defaults to "src/{name}.zig".
-        srcs: Source files. Defaults to glob(["src/**/*.zig"]).
+        srcs: Zig source files. Defaults to glob(["src/**/*.zig"]).
         module_name: Module name for @import(). Defaults to name.
         deps: zig_library / zig_package dependencies.
+        c_srcs: C source and header files (.c, .h).
+        asm_srcs: Assembly source files (.S, .s).
+        c_includes: C include directories, relative to package.
+        c_flags: C compiler flags (e.g., ["-O3"]).
+        link_libc: Whether to link libc.
         test: Whether to create a test target. Default True.
         visibility: Visibility. Defaults to ["//visibility:public"].
 
@@ -651,11 +766,14 @@ def zig_package(name, main = None, srcs = None, module_name = None, deps = [], t
         # With deps
         zig_package(name = "hal", deps = ["//lib/trait", "//lib/pkg/motion"])
 
-        # Custom root source
-        zig_package(name = "crypto", main = "src/suite.zig")
-
-        # Custom module name (avoid collision with zig std)
-        zig_package(name = "std", module_name = "std_sal")
+        # Mixed Zig + C + ASM
+        zig_package(
+            name = "noise",
+            c_srcs = glob(["src/**/*.c", "src/**/*.h"]),
+            asm_srcs = glob(["src/**/*.S"]),
+            c_flags = ["-O3"],
+            link_libc = True,
+        )
     """
     _main = main if main else "src/{}.zig".format(name)
     _srcs = srcs if srcs else native.glob(["src/**/*.zig"])
@@ -668,6 +786,11 @@ def zig_package(name, main = None, srcs = None, module_name = None, deps = [], t
         srcs = _srcs,
         module_name = _module_name,
         deps = deps,
+        c_srcs = c_srcs,
+        asm_srcs = asm_srcs,
+        c_includes = c_includes,
+        c_flags = c_flags,
+        link_libc = link_libc,
         visibility = _vis,
     )
 
@@ -678,4 +801,9 @@ def zig_package(name, main = None, srcs = None, module_name = None, deps = [], t
             srcs = _srcs,
             module_name = _module_name,
             deps = deps,
+            c_srcs = c_srcs,
+            asm_srcs = asm_srcs,
+            c_includes = c_includes,
+            c_flags = c_flags,
+            link_libc = link_libc,
         )
