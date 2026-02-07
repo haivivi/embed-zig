@@ -43,6 +43,7 @@ pub const boards = struct {
     pub const korvo2_v3 = @import("boards/korvo2_v3.zig");
     pub const esp32s3_devkit = @import("boards/esp32s3_devkit.zig");
     pub const lichuang_szp = @import("boards/lichuang_szp.zig");
+    pub const lichuang_gocool = @import("boards/lichuang_gocool.zig");
 };
 
 test {

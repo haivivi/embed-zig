@@ -1,7 +1,7 @@
-//! Hardware Definition & Drivers: 立创实战派 ESP32-S3 (LiChuang SZP)
+//! Hardware Definition & Drivers: GoCool 改版立创实战派 ESP32-S3 (LiChuang GoCool)
 //!
 //! This file defines hardware configuration and provides pre-configured drivers
-//! for the LiChuang ShiZhanPai (实战派) ESP32-S3 development board.
+//! for the GoCool modified LiChuang ShiZhanPai ESP32-S3 development board.
 //!
 //! Key features:
 //! - ESP32-S3 with 16MB Flash, 8MB Octal PSRAM
@@ -12,7 +12,7 @@
 //! - MicroSD card slot
 //!
 //! Usage:
-//!   const board = @import("esp").boards.lichuang_szp;
+//!   const board = @import("esp").boards.lichuang_gocool;
 //!   pub const ButtonDriver = board.BootButtonDriver;
 //!   pub const WifiDriver = board.WifiDriver;
 
@@ -34,10 +34,10 @@ pub const Queue = idf.Queue;
 // ============================================================================
 
 /// Board name
-pub const name = "LiChuang-SZP-ESP32S3";
+pub const name = "LiChuang-GoCool-ESP32S3";
 
 /// Serial port for flashing (USB-JTAG built-in)
-pub const serial_port = "/dev/cu.usbmodem112301";
+pub const serial_port = "/dev/cu.usbmodem1101";
 
 // ============================================================================
 // WiFi Configuration
