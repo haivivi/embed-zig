@@ -331,7 +331,8 @@ def _zig_static_library_impl(ctx):
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
 
-    output = ctx.actions.declare_file("lib{}.a".format(info.module_name))
+    # Use target name (not module name) to avoid filename conflicts with zig_library
+    output = ctx.actions.declare_file("lib{}.a".format(ctx.label.name))
     cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
     module_args = _build_module_args(

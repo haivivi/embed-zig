@@ -2,10 +2,12 @@ load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
+# No test: record.zig references crypto.Suite which doesn't exist (crypto module IS the suite)
 zig_package(
     name = "tls",
     deps = [
         "//lib/pkg/crypto",
         "//lib/trait",
     ],
+    test = False,
 )
