@@ -9,7 +9,7 @@
         .tls = .{
             .path = "../tls",
         },
-        .std_sal = .{
+        .std_impl = .{
             .path = "../../platform/std",
         },
     },

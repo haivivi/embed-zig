@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const std_sal_dep = b.dependency("std_sal", .{
+    const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.addImport("trait", trait_dep.module("trait"));
     tests.root_module.addImport("runtime", b.createModule(.{
-        .root_source_file = std_sal_dep.path("src/impl/runtime.zig"),
+        .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),
         .target = target,
         .optimize = optimize,
     }));

@@ -13,13 +13,13 @@
 //!   cd examples/apps/tls_speed_test/macos && zig build run -- 127.0.0.1
 
 const std = @import("std");
-const std_sal = @import("std_sal");
+const std_impl = @import("std_impl");
 const crypto = @import("crypto");
 const tls = @import("tls");
 
-const Socket = std_sal.Socket;
+const Socket = std_impl.Socket;
 const Crypto = crypto; // Use lib/crypto's std.crypto-based suite
-const sal_time = std_sal.time;
+const impl_time = std_impl.time;
 
 /// TLS Client type using pure Zig TLS implementation with std.crypto
 const TlsClient = tls.Client(Socket, Crypto);
@@ -75,7 +75,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
 
     // TLS handshake
     std.debug.print("TLS handshake...\n", .{});
-    const handshake_start = sal_time.nowMs();
+    const handshake_start = impl_time.nowMs();
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = allocator,
@@ -93,7 +93,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
         return null;
     };
 
-    const handshake_time = sal_time.nowMs() - handshake_start;
+    const handshake_time = impl_time.nowMs() - handshake_start;
     std.debug.print("TLS handshake complete ({} ms)\n", .{handshake_time});
 
     // Prepare send buffer with pattern data
@@ -106,7 +106,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
     var total_sent: usize = 0;
     var total_recv: usize = 0;
 
-    const start_ms = sal_time.nowMs();
+    const start_ms = impl_time.nowMs();
 
     // Send and receive in chunks
     while (total_sent < config.total_bytes) {
@@ -138,7 +138,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
 
         // Progress every 256KB
         if (total_sent % (256 * 1024) == 0) {
-            const elapsed = sal_time.nowMs() - start_ms;
+            const elapsed = impl_time.nowMs() - start_ms;
             const speed = if (elapsed > 0) @as(u32, @intCast(@as(u64, total_sent + total_recv) * 1000 / elapsed / 1024)) else 0;
             std.debug.print("Progress: {} KB sent, {} KB recv ({} KB/s)\n", .{
                 total_sent / 1024,
@@ -148,7 +148,7 @@ fn runSpeedTest(allocator: std.mem.Allocator, config: TestConfig, round: usize) 
         }
     }
 
-    const end_ms = sal_time.nowMs();
+    const end_ms = impl_time.nowMs();
     const elapsed_ms = end_ms - start_ms;
 
     // Cleanup
@@ -229,7 +229,7 @@ pub fn main() !void {
             total_time += elapsed;
             successful_rounds += 1;
         }
-        sal_time.sleepMs(1000); // Pause between rounds
+        impl_time.sleepMs(1000); // Pause between rounds
     }
 
     // Summary

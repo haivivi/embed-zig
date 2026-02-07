@@ -12,7 +12,7 @@
         .dns = .{
             .path = "../dns",
         },
-        .std_sal = .{
+        .std_impl = .{
             .path = "../../platform/std",
         },
     },

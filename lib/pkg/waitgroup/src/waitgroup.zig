@@ -6,7 +6,7 @@
 //! ## Usage
 //!
 //! ```zig
-//! const Rt = @import("std_sal").runtime;
+//! const Rt = @import("std_impl").runtime;
 //! const WaitGroup = waitgroup.WaitGroup(Rt);
 //!
 //! var wg = WaitGroup.init(allocator);

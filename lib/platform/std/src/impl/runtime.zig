@@ -6,8 +6,8 @@
 //! ## Usage
 //!
 //! ```zig
-//! const std_sal = @import("std_sal");
-//! const Rt = std_sal.runtime;
+//! const std_impl = @import("std_impl");
+//! const Rt = std_impl.runtime;
 //!
 //! const MyChannel = channel.Channel(u32, 16, Rt);
 //! const MyWaitGroup = waitgroup.WaitGroup(Rt);

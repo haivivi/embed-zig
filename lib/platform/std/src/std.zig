@@ -1,18 +1,18 @@
-//! std-sal - SAL Implementation using Zig Standard Library
+//! std_impl - Trait implementations using Zig Standard Library
 //!
-//! Platform-independent implementation of the SAL interface using
+//! Platform-independent implementation of trait interfaces using
 //! std.Thread, std.posix, and std.crypto.tls.
 //!
 //! Usage:
-//!   const std_sal = @import("std_sal");
-//!   const Rt = std_sal.runtime;  // Runtime for async packages
+//!   const std_impl = @import("std_impl");
+//!   const Rt = std_impl.runtime;  // Runtime for async packages
 //!
 //!   // Socket
-//!   var sock = try std_sal.socket.tcp();
+//!   var sock = try std_impl.socket.tcp();
 //!   defer sock.close();
 //!
 //!   // Sync
-//!   var mutex = std_sal.sync.Mutex.init();
+//!   var mutex = std_impl.sync.Mutex.init();
 //!   mutex.lock();
 //!   mutex.unlock();
 

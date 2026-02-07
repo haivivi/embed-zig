@@ -36,8 +36,8 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     test_step.dependOn(&run_tests.step);
 
-    // std_sal dependency (for host socket)
-    const std_sal_dep = b.dependency("std_sal", .{
+    // std_impl dependency (for host socket)
+    const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
     });
     integration_test.root_module.addImport("trait", trait_dep.module("trait"));
     integration_test.root_module.addImport("tls", tls_dep.module("tls"));
-    integration_test.root_module.addImport("std_sal", std_sal_dep.module("std_sal"));
+    integration_test.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
 
     const run_integration = b.addRunArtifact(integration_test);
     const run_step = b.step("run-test", "Run DNS integration test");

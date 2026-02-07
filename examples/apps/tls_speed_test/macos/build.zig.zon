@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0x2c303477a4c04fb8,
     .dependencies = .{
-        .std_sal = .{ .path = "../../../../lib/platform/std" },
+        .std_impl = .{ .path = "../../../../lib/platform/std" },
         .tls = .{ .path = "../../../../lib/pkg/tls" },
         .crypto = .{ .path = "../../../../lib/pkg/crypto" },
     },

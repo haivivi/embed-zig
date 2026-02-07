@@ -10,13 +10,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Create the std_sal module
-    const std_sal_module = b.addModule("std_sal", .{
+    // Create the std_impl module
+    const std_impl_module = b.addModule("std_impl", .{
         .root_source_file = b.path("src/std.zig"),
         .target = target,
         .optimize = optimize,
     });
-    std_sal_module.addImport("trait", trait_dep.module("trait"));
+    std_impl_module.addImport("trait", trait_dep.module("trait"));
 
     const test_step = b.step("test", "Run all unit tests");
 

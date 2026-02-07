@@ -4,12 +4,12 @@
 
 const std = @import("std");
 const dns = @import("src/dns.zig");
-const std_sal = @import("std_sal");
+const std_impl = @import("std_impl");
 
 const print = std.debug.print;
 
-/// Use std_sal socket (implements trait.socket interface)
-const Socket = std_sal.socket.Socket;
+/// Use std_impl socket (implements trait.socket interface)
+const Socket = std_impl.socket.Socket;
 
 /// Standard RNG wrapper
 const StdRng = struct {
