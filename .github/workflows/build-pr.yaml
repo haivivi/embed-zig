@@ -76,15 +76,15 @@ jobs:
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
           echo "Building: $TARGETS"
-          # Note: ESP app targets require ESP-IDF and will be skipped on standard runners.
-          # Only non-ESP targets (Go tools, tests, etc.) will build successfully.
-          bazel build $TARGETS --keep_going 2>&1 || true
+          # --config=ci provides dummy env defines for ESP apps that need WIFI_SSID etc.
+          # ESP app targets require ESP-IDF and will be skipped on standard runners.
+          bazel build --config=ci $TARGETS --keep_going 2>&1 || true
 
       - name: Test affected targets
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
           # Exit code 4 means "no test targets found", which is OK
-          bazel test $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
+          bazel test --config=ci $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
 
   skip:
     name: No Changes

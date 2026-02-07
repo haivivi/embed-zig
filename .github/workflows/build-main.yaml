@@ -76,9 +76,10 @@ jobs:
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
           echo "Building: $TARGETS"
-          bazel build $TARGETS --keep_going 2>&1 || true
+          # --config=ci provides dummy env defines for ESP apps that need WIFI_SSID etc.
+          bazel build --config=ci $TARGETS --keep_going 2>&1 || true
 
       - name: Test affected targets
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
-          bazel test $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
+          bazel test --config=ci $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
