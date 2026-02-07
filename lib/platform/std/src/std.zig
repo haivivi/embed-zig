@@ -32,6 +32,7 @@ pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");
 pub const tls = @import("impl/tls.zig");
 pub const queue = @import("impl/queue.zig");
+pub const runtime = @import("impl/runtime.zig");
 
 // Convenience type re-exports
 pub const Mutex = sync.Mutex;
@@ -50,6 +51,7 @@ pub const sal = struct {
     pub const socket = @import("impl/socket.zig");
     pub const tls = @import("impl/tls.zig");
     pub const queue = @import("impl/queue.zig");
+    pub const runtime = @import("impl/runtime.zig");
 };
 
 test {
