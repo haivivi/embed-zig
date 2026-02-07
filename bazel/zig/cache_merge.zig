@@ -15,12 +15,11 @@ const mem = std.mem;
 const process = std.process;
 
 pub fn main() !void {
-    var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa_state.deinit();
-    const allocator = gpa_state.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const args = try process.argsAlloc(allocator);
-    defer process.argsFree(allocator, args);
 
     if (args.len < 3) {
         std.debug.print("Usage: cache_merge <out_cache> [dep_cache...] -- <zig> <args...>\n", .{});
@@ -33,7 +32,6 @@ pub fn main() !void {
     // Create output subdirectories
     inline for (.{ "z", "b" }) |subdir| {
         const path = try fs.path.join(allocator, &.{ out_cache, subdir });
-        defer allocator.free(path);
         cwd.makePath(path) catch |err| {
             std.debug.print("cache_merge: failed to create {s}: {}\n", .{ path, err });
             process.exit(1);
@@ -66,7 +64,6 @@ pub fn main() !void {
 
     // Build zig command: remaining args + cache flags
     var zig_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    defer zig_argv.deinit(allocator);
 
     while (sep_idx < args.len) : (sep_idx += 1) {
         try zig_argv.append(allocator, args[sep_idx]);
@@ -98,9 +95,7 @@ fn copyDirEntries(
     subdir: []const u8,
 ) !void {
     const src_path = try fs.path.join(allocator, &.{ src_base, subdir });
-    defer allocator.free(src_path);
     const dst_path = try fs.path.join(allocator, &.{ dst_base, subdir });
-    defer allocator.free(dst_path);
 
     var src_dir = try cwd.openDir(src_path, .{ .iterate = true });
     defer src_dir.close();
