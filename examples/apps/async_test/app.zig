@@ -85,7 +85,7 @@ fn waitGroupTask(ctx: ?*anyopaque) void {
 fn testWaitGroupSingle() !void {
     log.info("=== Test 2: WaitGroup single task ===", .{});
 
-    var wg = WG.init();
+    var wg = WG.init(heap.psram);
     defer wg.deinit();
 
     var ctx = WaitGroupCtx{ .id = 1, .delay_ms = 500 };
@@ -120,7 +120,7 @@ fn testWaitGroupSingle() !void {
 fn testWaitGroupMultiple() !void {
     log.info("=== Test 3: WaitGroup multiple tasks ===", .{});
 
-    var wg = WG.init();
+    var wg = WG.init(heap.psram);
     defer wg.deinit();
 
     var ctx1 = WaitGroupCtx{ .id = 1, .delay_ms = 300 };

@@ -9,7 +9,7 @@
 //! const Rt = @import("std_sal").runtime;
 //! const WaitGroup = waitgroup.WaitGroup(Rt);
 //!
-//! var wg = WaitGroup.init();
+//! var wg = WaitGroup.init(allocator);
 //! defer wg.deinit();
 //!
 //! // Spawn tracked tasks
@@ -51,13 +51,16 @@ pub fn WaitGroup(comptime Rt: type) type {
         mutex: Rt.Mutex,
         cond: Rt.Condition,
         counter: i32,
+        allocator: std.mem.Allocator,
 
-        /// Initialize a new WaitGroup with counter = 0
-        pub fn init() Self {
+        /// Initialize a new WaitGroup with counter = 0.
+        /// The allocator is used internally by go() to allocate task context.
+        pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .mutex = Rt.Mutex.init(),
                 .cond = Rt.Condition.init(),
                 .counter = 0,
+                .allocator = allocator,
             };
         }
 
@@ -101,58 +104,31 @@ pub fn WaitGroup(comptime Rt: type) type {
         ///   Rt.spawn(name, wrappedFunc, ctx, opts)
         ///
         /// The task will automatically call wg.done() when it returns.
+        /// GoContext is heap-allocated via the WaitGroup's allocator and
+        /// freed by the wrapper after the user function completes.
         pub fn go(self: *Self, name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Rt.Options) !void {
             self.add(1);
             errdefer self.done(); // rollback counter if spawn fails
 
-            // Allocate a GoContext from the static pool to pass wg+func+ctx
-            // to the spawned task. The pool avoids allocator dependency.
-            const go_ctx = GoContext.alloc() orelse {
-                self.done(); // rollback counter
-                return error.OutOfMemory;
-            };
-            errdefer GoContext.free(go_ctx); // return to pool if spawn fails
+            const go_ctx = try self.allocator.create(GoContext);
+            errdefer self.allocator.destroy(go_ctx); // free if spawn fails
 
             go_ctx.* = .{
                 .wg = self,
                 .func = func,
                 .ctx = ctx,
+                .allocator = self.allocator,
             };
 
             try Rt.spawn(name, goWrapper, @ptrCast(go_ctx), opts);
         }
 
-        /// Context for go() wrapper
+        /// Context for go() wrapper. Heap-allocated, freed by goWrapper.
         const GoContext = struct {
             wg: *Self,
             func: TaskFn,
             ctx: ?*anyopaque,
-
-            // Simple pool: fixed-size array of contexts.
-            // Max concurrent go() calls = pool_size.
-            const pool_size = 64;
-            var pool: [pool_size]GoContext = undefined;
-            var pool_used: [pool_size]std.atomic.Value(bool) = init: {
-                var arr: [pool_size]std.atomic.Value(bool) = undefined;
-                for (&arr) |*v| {
-                    v.* = std.atomic.Value(bool).init(false);
-                }
-                break :init arr;
-            };
-
-            fn alloc() ?*GoContext {
-                for (0..pool_size) |i| {
-                    if (pool_used[i].cmpxchgStrong(false, true, .acquire, .monotonic) == null) {
-                        return &pool[i];
-                    }
-                }
-                return null;
-            }
-
-            fn free(self_ctx: *GoContext) void {
-                const idx = (@intFromPtr(self_ctx) - @intFromPtr(&pool)) / @sizeOf(GoContext);
-                pool_used[idx].store(false, .release);
-            }
+            allocator: std.mem.Allocator,
         };
 
         fn goWrapper(raw_ctx: ?*anyopaque) void {
@@ -160,7 +136,8 @@ pub fn WaitGroup(comptime Rt: type) type {
             const wg = go_ctx.wg;
             const func = go_ctx.func;
             const ctx = go_ctx.ctx;
-            GoContext.free(go_ctx);
+            const allocator = go_ctx.allocator;
+            allocator.destroy(go_ctx);
 
             func(ctx);
             wg.done();
@@ -176,7 +153,7 @@ const TestRt = @import("runtime");
 
 test "WaitGroup empty wait" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init();
+    var wg = WG.init(std.testing.allocator);
     defer wg.deinit();
 
     // Should not block
@@ -185,7 +162,7 @@ test "WaitGroup empty wait" {
 
 test "WaitGroup manual add/done" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init();
+    var wg = WG.init(std.testing.allocator);
     defer wg.deinit();
 
     var result: i32 = 0;
@@ -207,7 +184,7 @@ test "WaitGroup manual add/done" {
 
 test "WaitGroup go single task" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init();
+    var wg = WG.init(std.testing.allocator);
     defer wg.deinit();
 
     var result = std.atomic.Value(i32).init(0);
@@ -226,7 +203,7 @@ test "WaitGroup go single task" {
 
 test "WaitGroup go multiple tasks" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init();
+    var wg = WG.init(std.testing.allocator);
     defer wg.deinit();
 
     var counter = std.atomic.Value(u32).init(0);

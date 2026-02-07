@@ -62,8 +62,6 @@ pub const Condition = struct {
     sem: c.SemaphoreHandle_t,
     waiters: std.atomic.Value(u32),
 
-    pub const InitError = error{SemaphoreCreateFailed};
-
     pub fn init() Condition {
         const sem = c.xSemaphoreCreateCounting(64, 0);
         if (sem == null) @panic("Condition.init: xSemaphoreCreateCounting failed (out of memory)");
@@ -137,97 +135,50 @@ pub const Options = struct {
 };
 
 /// Context for the C-calling-convention wrapper.
-/// Stores everything needed to run the user function and clean up afterwards.
 const SpawnCtx = struct {
     func: TaskFn,
     ctx: ?*anyopaque,
     allocator: std.mem.Allocator,
-    stack: []u8,
 };
 
-/// Deferred stack cleanup: a task cannot safely free its own stack before
-/// vTaskDelete (the stack is still in use). Instead, each exiting task
-/// schedules its stack for cleanup, and the next spawn() call frees it.
-/// Protected by a FreeRTOS mutex for thread safety.
-var deferred_mutex: c.SemaphoreHandle_t = null;
-const max_deferred = 8;
-var deferred_stacks: [max_deferred]?[]u8 = .{null} ** max_deferred;
-var deferred_allocs: [max_deferred]std.mem.Allocator = undefined;
-var deferred_count: usize = 0;
-
-fn deferredInit() void {
-    if (deferred_mutex == null) {
-        deferred_mutex = c.xSemaphoreCreateMutex();
-    }
-}
-
-/// Schedule a stack to be freed by the next spawn() call.
-fn deferStackFree(stack: []u8, allocator: std.mem.Allocator) void {
-    _ = c.xSemaphoreTake(deferred_mutex, c.portMAX_DELAY);
-    defer _ = c.xSemaphoreGive(deferred_mutex);
-
-    if (deferred_count < max_deferred) {
-        deferred_stacks[deferred_count] = stack;
-        deferred_allocs[deferred_count] = allocator;
-        deferred_count += 1;
-    }
-    // If full, leak (bounded: max 8 * stack_size). This should not
-    // happen in practice since spawn() drains the list.
-}
-
-/// Free all deferred stacks. Called at the start of spawn().
-fn drainDeferredStacks() void {
-    _ = c.xSemaphoreTake(deferred_mutex, c.portMAX_DELAY);
-    defer _ = c.xSemaphoreGive(deferred_mutex);
-
-    for (0..deferred_count) |i| {
-        if (deferred_stacks[i]) |stack| {
-            deferred_allocs[i].free(stack);
-            deferred_stacks[i] = null;
-        }
-    }
-    deferred_count = 0;
-}
-
 /// C-calling-convention wrapper that FreeRTOS calls.
-/// Calls the Zig function, schedules stack cleanup, then deletes the task.
+/// Calls the Zig function, frees context, then deletes the task.
+///
+/// Note on stack cleanup: we do NOT free the stack here. The stack was
+/// allocated by the caller and passed to xTaskCreateRestrictedPinnedToCore.
+/// This is an ESP-IDF extension (idf_additions.h) that sets
+/// ucStaticallyAllocated = tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB,
+/// so prvDeleteTCB will free BOTH the stack and TCB via vPortFreeStack/vPortFree
+/// when vTaskDelete is called. (This differs from standard FreeRTOS
+/// xTaskCreateRestricted which marks the stack as static and does NOT free it.)
 fn spawnWrapper(raw_ctx: ?*anyopaque) callconv(.c) void {
     const spawn_ctx: *SpawnCtx = @ptrCast(@alignCast(raw_ctx));
     const func = spawn_ctx.func;
     const ctx = spawn_ctx.ctx;
     const allocator = spawn_ctx.allocator;
-    const stack = spawn_ctx.stack;
     allocator.destroy(spawn_ctx);
 
     // Run user function
     func(ctx);
 
-    // Cannot free our own stack (we're running on it).
-    // Schedule it for deferred cleanup by the next spawn() call.
-    deferStackFree(stack, allocator);
-
-    // Delete self (does not return)
+    // Delete self (does not return).
+    // Stack is freed automatically by FreeRTOS (see note above).
     c.vTaskDelete(null);
 }
 
 /// Spawn a detached FreeRTOS task.
 ///
-/// Allocates stack from `opts.allocator`, creates the task, and detaches it.
-/// The task will call `vTaskDelete(null)` after the function returns.
+/// Allocates stack from `opts.allocator` and creates the task via
+/// xTaskCreateRestrictedPinnedToCore. The stack is automatically freed
+/// by FreeRTOS when the task exits (via vTaskDelete).
 pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) !void {
     const allocator = opts.allocator;
 
-    // Initialize deferred cleanup on first call
-    deferredInit();
-
-    // Free stacks from previously completed tasks
-    drainDeferredStacks();
-
-    // Allocate context
+    // Allocate context (freed by spawnWrapper before user function runs)
     const spawn_ctx = try allocator.create(SpawnCtx);
     errdefer allocator.destroy(spawn_ctx);
 
-    // Allocate stack
+    // Allocate stack (freed by FreeRTOS on vTaskDelete, see spawnWrapper note)
     const stack = try allocator.alloc(u8, opts.stack_size);
     errdefer allocator.free(stack);
 
@@ -235,10 +186,11 @@ pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) 
         .func = func,
         .ctx = ctx,
         .allocator = allocator,
-        .stack = stack,
     };
 
-    // Create FreeRTOS task with custom stack
+    // Create FreeRTOS task with custom stack.
+    // Uses ESP-IDF's xTaskCreateRestrictedPinnedToCore which takes ownership
+    // of the stack buffer and frees it on task deletion.
     var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
     task_params.pvTaskCode = spawnWrapper;
     task_params.pcName = name.ptr;

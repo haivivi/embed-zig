@@ -39,6 +39,9 @@ const waitgroup = @import("waitgroup");
 const log = std.log.scoped(.wifi_impl);
 const heap = idf.heap;
 const EspRt = idf.runtime;
+
+/// WaitGroup type used for running tasks on IRAM stack.
+/// Uses heap.iram allocator for GoContext allocation.
 const WG = waitgroup.WaitGroup(EspRt);
 
 // ============================================================================
@@ -160,7 +163,7 @@ pub const StaDriver = struct {
     /// Initializes: event loop -> netif -> wifi driver -> STA mode
     pub fn init() !Self {
         // Run initialization on IRAM stack (PHY calibration accesses Flash)
-        var wg = WG.init();
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = StaInitCtx{};
@@ -201,7 +204,7 @@ pub const StaDriver = struct {
         }
 
         // Run connection on IRAM stack
-        var wg = WG.init();
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = StaConnectCtx{
@@ -332,7 +335,7 @@ pub const ApDriver = struct {
 
     /// Initialize AP mode
     pub fn init() !Self {
-        var wg = WG.init();
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = ApInitCtx{};
