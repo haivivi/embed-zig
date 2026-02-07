@@ -1,25 +1,5 @@
-# Trait library - Interface definitions
-
-load("//bazel/zig:defs.bzl", "zig_lib", "zig_library", "zig_test")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# Legacy rule (for esp_zig_app backward compat)
-zig_lib(
-    name = "trait",
-    srcs = glob(["**/*"]),
-)
-
-# Bazel-native rules
-zig_library(
-    name = "trait_native",
-    main = "src/trait.zig",
-    srcs = glob(["src/**/*.zig"]),
-    module_name = "trait",
-)
-
-zig_test(
-    name = "trait_test",
-    main = "src/trait.zig",
-    srcs = glob(["src/**/*.zig"]),
-)
+zig_package(name = "trait")

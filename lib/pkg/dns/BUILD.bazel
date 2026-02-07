@@ -1,12 +1,9 @@
-# DNS library - DNS resolver with DoH support
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "dns",
-    srcs = glob(["**/*"]),
     deps = [
         "//lib/platform/std",
         "//lib/pkg/tls",

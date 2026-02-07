@@ -1,12 +1,9 @@
-# TLS library - Pure Zig TLS 1.2/1.3 implementation
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "tls",
-    srcs = glob(["**/*"], exclude = ["test/**"]),
     deps = [
         "//lib/pkg/crypto",
         "//lib/trait",
