@@ -1,10 +1,6 @@
 # CI build targets - compile all ESP examples for all supported boards
 #
 # Usage:
-#   # Apps without WiFi env:
-#   bazel build //examples/ci:build_no_env
-#
-#   # All apps (with dummy env from --config=ci):
 #   bazel build //examples/ci:build_all --config=ci
 
 load("//bazel/esp:transitions.bzl", "esp_board_build")
@@ -86,12 +82,12 @@ esp_board_build(name = "wifi_dns_lookup_esp32s3_devkit", target = "//examples/ap
 esp_board_build(name = "wifi_scan_test_esp32s3_devkit", target = "//examples/apps/wifi_scan_test/esp:app", board = "esp32s3_devkit")
 
 # =============================================================================
-# Aggregate targets
+# Aggregate target
 # =============================================================================
 
-# All apps that don't require --define env vars
+# All apps (requires --config=ci or manual --define flags for env-dependent apps)
 filegroup(
-    name = "build_no_env",
+    name = "build_all",
     srcs = [
         ":adc_button_korvo2_v3",
         ":aec_test_korvo2_v3",
@@ -100,36 +96,26 @@ filegroup(
         ":gpio_button_esp32s3_devkit",
         # ":gpio_button_korvo2_v3",  # TODO: pre-existing board.zig error
         ":gpio_button_lichuang_szp",
+        ":http_speed_test_esp32s3_devkit",
+        ":https_speed_test_esp32s3_devkit",
         ":led_strip_anim_esp32s3_devkit",
         # ":led_strip_anim_korvo2_v3",  # TODO: pre-existing board.zig error
         ":led_strip_flash_esp32s3_devkit",
         # ":led_strip_flash_korvo2_v3",  # TODO: pre-existing board.zig error
         ":memory_attr_test_esp32s3_devkit",
         ":motion_test_lichuang_szp",
+        ":net_event_test_esp32s3_devkit",
+        ":ntp_test_esp32s3_devkit",
+        ":ntp_test_korvo2_v3",
         ":nvs_storage_esp32s3_devkit",
         ":pwm_fade_esp32s3_devkit",
         ":speaker_test_korvo2_v3",
         ":speaker_test_lichuang_szp",
+        ":tcp_speed_test_esp32s3_devkit",
         ":temperature_sensor_esp32s3_devkit",
         ":timer_callback_esp32s3_devkit",
-        ":wifi_scan_test_esp32s3_devkit",
-    ],
-)
-
-# All apps (requires --config=ci or manual --define flags)
-filegroup(
-    name = "build_all",
-    srcs = [
-        ":build_no_env",
-        # WiFi-only apps
-        ":net_event_test_esp32s3_devkit",
-        ":ntp_test_esp32s3_devkit",
-        ":ntp_test_korvo2_v3",
-        ":wifi_dns_lookup_esp32s3_devkit",
-        # WiFi + test server apps
-        ":http_speed_test_esp32s3_devkit",
-        ":https_speed_test_esp32s3_devkit",
-        ":tcp_speed_test_esp32s3_devkit",
         ":tls_speed_test_esp32s3_devkit",
+        ":wifi_dns_lookup_esp32s3_devkit",
+        ":wifi_scan_test_esp32s3_devkit",
     ],
 )
