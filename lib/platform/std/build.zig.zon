@@ -1,5 +1,5 @@
 .{
-    .name = .std_sal,
+    .name = .std_impl,
     .version = "0.1.0",
     .fingerprint = 0x41d635fa08a81a62,
     .dependencies = .{

@@ -1,4 +1,4 @@
-# Std library - Standard library extensions (std_sal)
+# Std library - Standard library trait implementations (std_impl)
 
 load("//bazel/zig:defs.bzl", "zig_lib")
 
@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_lib(
     name = "std",
-    lib_name = "std_sal",  # Zig module name differs from target name
+    lib_name = "std_impl",  # Zig module name differs from target name
     srcs = glob(["**/*"]),
     deps = ["//lib/trait"],
 )
