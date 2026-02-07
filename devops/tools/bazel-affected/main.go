@@ -262,8 +262,9 @@ func findTargetsForPackage(pkg string) ([]string, error) {
 	query := fmt.Sprintf("rdeps(//..., %s:all)", pkg)
 	targets, err := runBazelQuery(query)
 	if err != nil {
-		query = fmt.Sprintf("%s:all", pkg)
-		targets, err = runBazelQuery(query)
+		fmt.Fprintf(os.Stderr, "Warning: rdeps query failed for %s, falling back to //...
+", pkg)
+		targets, err = runBazelQuery("//...")
 		if err != nil {
 			return nil, err
 		}
@@ -333,72 +334,13 @@ func findNearestPackage(dir string) string {
 }
 
 // isTargetAffected checks if a specific target is affected by the changes.
+// Since rdeps() is transitive, the target should already be in affectedTargets
+// if any of its dependencies changed.
 func isTargetAffected(target string, affectedTargets []string) (bool, error) {
 	for _, t := range affectedTargets {
 		if t == target {
 			return true, nil
 		}
 	}
-
-	deps, err := getTargetDeps(target)
-	if err != nil {
-		return false, err
-	}
-
-	if *verbose {
-		fmt.Fprintf(os.Stderr, "Dependencies of %s (%d):\n", target, len(deps))
-		for _, d := range deps {
-			fmt.Fprintf(os.Stderr, "  %s\n", d)
-		}
-		fmt.Fprintln(os.Stderr)
-	}
-
-	depSet := make(map[string]bool)
-	for _, d := range deps {
-		depSet[d] = true
-	}
-
-	for _, affected := range affectedTargets {
-		if depSet[affected] {
-			if *verbose {
-				fmt.Fprintf(os.Stderr, "Target %s is affected via dependency %s\n", target, affected)
-			}
-			return true, nil
-		}
-	}
-
 	return false, nil
 }
-
-// getTargetDeps returns all dependencies of a target.
-func getTargetDeps(target string) ([]string, error) {
-	query := fmt.Sprintf("deps(%s)", target)
-	cmd := exec.Command("bazel", "query", query, "--keep_going", "--noshow_progress")
-
-	var stderrBuf bytes.Buffer
-	if *verbose {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = &stderrBuf
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		if stderr := stderrBuf.String(); stderr != "" {
-			return nil, fmt.Errorf("bazel query deps failed: %w (stderr: %s)", err, stderr)
-		}
-		return nil, fmt.Errorf("bazel query deps failed: %w", err)
-	}
-
-	var deps []string
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	for scanner.Scan() {
-		dep := strings.TrimSpace(scanner.Text())
-		if dep != "" && !strings.HasPrefix(dep, "@") {
-			deps = append(deps, dep)
-		}
-	}
-
-	return deps, scanner.Err()
-}
-
