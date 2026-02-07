@@ -24,7 +24,7 @@ lib/docs/
 pages/docs/
 pages/api/
 
-# Bazel
-bazel-*
+# Bazel output symlinks (top-level only)
+/bazel-*
 .bazelrc.user
 MODULE.bazel.lock

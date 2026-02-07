@@ -4,19 +4,19 @@
 
 ### Cross-Platform Lib
 
-**Location**: `lib/{lib_name}/`
+**Location**: `lib/pkg/{lib_name}/`
 
 **Dependency Rules**:
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
-- Can depend on other cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/{platform}/` (e.g., `lib/esp/`, `lib/beken/`)
+- Can depend on other cross-platform libs in `lib/pkg/`
+- **MUST NOT** depend on `lib/platform/{platform}/` (e.g., `lib/platform/esp/`)
 - **Avoid** `std` (freestanding environment)
 
-**Example**: `lib/tls`, `lib/http`, `lib/dns` - they accept generic parameters like `Socket`, `Crypto`
+**Example**: `lib/pkg/tls`, `lib/pkg/http`, `lib/pkg/dns` - they accept generic parameters like `Socket`, `Crypto`
 
 ```zig
-// lib/tls/src/client.zig
+// lib/pkg/tls/src/client.zig
 pub fn Client(comptime Socket: type, comptime Crypto: type) type {
     // Socket and Crypto are validated via lib/trait
     return struct {
@@ -29,15 +29,16 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 ### Platform
 
-**Location**: `lib/{platform}/` + `bazel/{platform}/`
+**Location**: `lib/platform/{platform}/` + `bazel/{platform}/`
 
 **Steps to introduce a new platform**:
 
 1. **Implement native bindings** (as needed)
-   - Location: `lib/{platform}/src/`
+   - Location: `lib/platform/{platform}/src/` or sub-package (e.g., `idf/`, `raylib/`)
    - Wrap platform SDK APIs
 
 2. **Implement trait interfaces** (as needed)
+   - Location: `lib/platform/{platform}/impl/` or `src/impl/`
    - Provide implementations for `lib/trait` contracts
    - e.g., socket, rng, crypto
 
@@ -48,6 +49,11 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 4. **Provide Bazel rules**
    - Location: `bazel/{platform}/defs.bzl`
    - Build rules, flash rules, etc.
+
+**Current platforms**:
+- `lib/platform/esp/` — ESP32 (idf/ for bindings, impl/ for trait/hal implementations)
+- `lib/platform/std/` — Zig std library (src/impl/ for trait implementations)
+- `lib/platform/raysim/` — Raylib simulator (src/raylib/ for bindings, src/impl/ for drivers)
 
 ---
 
@@ -65,7 +71,7 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
 **File structure**:
 ```
-lib/{platform}/src/idf/{lib_name}/
+lib/platform/{platform}/src/idf/{lib_name}/
 ├── xxx_helper.c   # C wrapper for problematic APIs
 ├── xxx_helper.h   # Simple byte-array interface
 └── xxx.zig        # Zig binding via @cImport
@@ -76,7 +82,7 @@ lib/{platform}/src/idf/{lib_name}/
 - Return int error codes (0 = success)
 - Don't expose internal types
 
-**Example** (`lib/esp/src/idf/mbed_tls/`):
+**Example** (`lib/platform/esp/idf/src/mbed_tls/`):
 
 ```c
 // x25519_helper.h
@@ -106,8 +112,8 @@ pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
 **Dependency Rules**:
 - Can depend on `lib/trait`
 - Can depend on `lib/hal`
-- Can depend on cross-platform libs in `lib/`
-- **MUST NOT** depend on `lib/{platform}/`
+- Can depend on cross-platform libs in `lib/pkg/`
+- **MUST NOT** depend on `lib/platform/{platform}/`
 
 ```zig
 // platform.zig - abstracts board selection
@@ -154,13 +160,13 @@ pub const button = esp.adc.Button(.{
 
 | Layer | Location | Responsibility |
 |-------|----------|----------------|
-| **Platform** | `lib/{platform}/` | Generic driver implementations (core, most important) |
-| **BSP** | `lib/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
+| **Platform** | `lib/platform/{platform}/` | Generic driver implementations (core, most important) |
+| **BSP** | `lib/platform/{platform}/src/boards/` | Pin configs + board-specific code (differences only) |
 | **App Board** | `examples/apps/{app}/esp/{board}.zig` | Dependency injection (keep it simple) |
 
 #### Layer 1: Platform (Core Implementations)
 
-**Location**: `lib/esp/idf/src/speaker.zig`
+**Location**: `lib/platform/esp/idf/src/speaker.zig`
 
 Encapsulate reusable driver logic:
 - Combine low-level components (DAC + I2S)
@@ -168,7 +174,7 @@ Encapsulate reusable driver logic:
 - Provide unified interface
 
 ```zig
-// lib/esp/idf/src/speaker.zig
+// lib/platform/esp/idf/src/speaker.zig
 pub fn Speaker(comptime Dac: type) type {
     return struct {
         dac: *Dac,
@@ -181,7 +187,7 @@ pub fn Speaker(comptime Dac: type) type {
 
 #### Layer 2: BSP (Board-Specific)
 
-**Location**: `lib/esp/src/boards/{board}.zig`
+**Location**: `lib/platform/esp/src/boards/{board}.zig`
 
 Only board-specific configurations:
 - GPIO/I2C pin definitions
@@ -189,7 +195,7 @@ Only board-specific configurations:
 - Special initialization logic
 
 ```zig
-// lib/esp/src/boards/korvo2_v3.zig
+// lib/platform/esp/src/boards/korvo2_v3.zig
 pub const i2c_config = .{ .sda = 17, .scl = 18 };
 pub const speaker_config = .{ .dac_addr = 0x18, .pa_gpio = 12 };
 ```
@@ -220,170 +226,3 @@ pub const SpeakerDriver = struct {
 
 **Do** reuse existing platform layer implementations.
 
----
-
-## 2. How-to Recipes
-
-### Build & Flash
-
-#### How to Build
-
-```bash
-# Build with defaults (first board, first data variant)
-bazel build //examples/apps/{app}/esp:app
-
-# Build with specific board and data
-bazel build //examples/apps/{app}/esp:app \
-  --//bazel:board=esp32s3_devkit \
-  --//bazel:data=zero
-```
-
-#### How to Flash
-
-```bash
-bazel run //examples/apps/{app}/esp:flash \
-  --//bazel:port=/dev/cu.usbmodem2101
-```
-
-#### How to Monitor
-
-```bash
-bazel run //bazel/esp:monitor --//bazel:port=/dev/cu.usbmodem2101
-```
-
-**Port types**:
-- USB-JTAG (built-in): `/dev/cu.usbmodem*` - ESP32-S3 DevKit
-- USB-UART (external): `/dev/cu.usbserial*` - CP2102/CH340
-
----
-
-### Configuration
-
-#### How to Select Board
-
-First board in `boards` list is default:
-
-```python
-# esp/BUILD.bazel
-esp_zig_app(
-    boards = ["korvo2_v3", "esp32s3_devkit"],  # korvo2_v3 is default
-)
-```
-
-Override: `--//bazel:board=esp32s3_devkit`
-
-#### How to Select Data Variant
-
-First option in `data_select` is default:
-
-```python
-# BUILD.bazel
-load("//bazel:data.bzl", "data_select")
-
-data_select(
-    name = "data_files",
-    options = {
-        "tiga": glob(["data/tiga/**"]),  # default
-        "zero": glob(["data/zero/**"]),
-    },
-)
-```
-
-Override: `--//bazel:data=zero`
-
-#### How to Configure WiFi (env)
-
-Compile-time environment variables (baked into firmware):
-
-```python
-# esp/BUILD.bazel
-load("//bazel:env.bzl", "make_env_file")
-
-make_env_file(
-    name = "env",
-    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
-    defaults = {
-        "WIFI_SSID": "MyWiFi",
-        "WIFI_PASSWORD": "12345678",
-    },
-)
-```
-
-Override: `--define WIFI_SSID=OtherWiFi`
-
-#### How to Add NVS Data
-
-Runtime storage (can update without reflashing app):
-
-```python
-# esp/BUILD.bazel
-load("//bazel/esp/partition:nvs.bzl", "esp_nvs_string", "esp_nvs_u8", "esp_nvs_image")
-
-esp_nvs_string(name = "nvs_sn", namespace = "device", key = "sn")
-esp_nvs_u8(name = "nvs_hw_ver", namespace = "device", key = "hw_ver")
-
-esp_nvs_image(
-    name = "nvs_data",
-    entries = [":nvs_sn", ":nvs_hw_ver"],
-    partition_size = "24K",
-)
-```
-
-Override: `--define nvs_sn=H106-000001`
-
-#### How to Add Data Files (SPIFFS)
-
-```python
-# esp/BUILD.bazel
-load("//bazel/esp/partition:spiffs.bzl", "esp_spiffs_image")
-
-esp_spiffs_image(
-    name = "storage_data",
-    srcs = ["//examples/apps/{app}:data_files"],
-    partition_size = "1M",
-    strip_prefix = "examples/apps/{app}/data",
-)
-```
-
-#### How to Define Partition Table
-
-```python
-# esp/BUILD.bazel
-load("//bazel/esp/partition:entry.bzl", "esp_partition_entry")
-load("//bazel/esp/partition:table.bzl", "esp_partition_table")
-
-esp_partition_entry(name = "part_nvs", partition_name = "nvs", type = "data", subtype = "nvs", partition_size = "24K")
-esp_partition_entry(name = "part_factory", partition_name = "factory", type = "app", subtype = "factory", partition_size = "4M")
-esp_partition_entry(name = "part_storage", partition_name = "storage", type = "data", subtype = "spiffs", partition_size = "1M")
-
-esp_partition_table(
-    name = "partitions",
-    entries = [":part_nvs", ":part_factory", ":part_storage"],
-    flash_size = "8M",
-)
-```
-
----
-
-### Development
-
-#### How to Add a New Board
-
-1. Create board file: `examples/apps/{app}/esp/{board}.zig`
-2. Define hardware configuration (GPIO, ADC, etc.)
-3. Add to `boards` list in `esp/BUILD.bazel`
-4. Add to `BoardType` enum in `esp/build.zig`
-5. Add switch case in `platform.zig`
-
-#### How to Add a New App
-
-1. Create directory: `examples/apps/{app}/`
-2. Create `app.zig` (application logic)
-3. Create `platform.zig` (board abstraction)
-4. Create `BUILD.bazel` (app_srcs, data_select)
-5. Create `esp/` subdirectory with:
-   - `BUILD.bazel` (sdkconfig, app, flash rules)
-   - `build.zig`, `build.zig.zon`
-   - `{board}.zig` files
-
-Reference: `examples/apps/adc_button/` for complete example.

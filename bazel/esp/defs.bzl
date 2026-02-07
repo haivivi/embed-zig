@@ -467,19 +467,19 @@ cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
     .version = "0.1.0",
     .dependencies = .{{
         .esp = .{{
-            .path = "{app_to_lib_prefix}/esp",
+            .path = "{app_to_lib_prefix}/platform/esp",
         }},
         .hal = .{{
             .path = "{app_to_lib_prefix}/hal",
         }},
         .drivers = .{{
-            .path = "{app_to_lib_prefix}/drivers",
+            .path = "{app_to_lib_prefix}/pkg/drivers",
         }},
         .trait = .{{
             .path = "{app_to_lib_prefix}/trait",
         }},
         .dns = .{{
-            .path = "{app_to_lib_prefix}/dns",
+            .path = "{app_to_lib_prefix}/pkg/dns",
         }},
 {app_extra_deps_zon}    }},
     .paths = .{{
@@ -701,7 +701,7 @@ cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
     .name = .{app_name},
     .version = "0.1.0",
     .dependencies = .{{
-        .esp = .{{ .path = "../../{lib_prefix}/esp" }},
+        .esp = .{{ .path = "../../{lib_prefix}/platform/esp" }},
         .app = .{{ .path = "../../{app_path}" }},
 {extra_deps_zon}    }},
     .paths = .{{

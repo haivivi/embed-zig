@@ -4,7 +4,7 @@
 # See individual lib/*/BUILD.bazel for specific dependencies.
 #
 # Usage in esp_zig_app:
-#   deps = ["//lib/hal", "//lib/drivers", ...]
+#   deps = ["//lib/hal", "//lib/pkg/drivers", ...]
 
 package(default_visibility = ["//visibility:public"])
 
@@ -13,24 +13,24 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "all_sources",
     srcs = glob(["*"]) + [  # Files in lib/ root + all libraries
-        "//lib/audio",
-        "//lib/crypto",
-        "//lib/crypto/certs:root_cas",
-        "//lib/dns",
-        "//lib/drivers",
-        "//lib/esp",
-        "//lib/esp/idf",
-        "//lib/esp/impl",
+        "//lib/pkg/audio",
+        "//lib/pkg/crypto",
+        "//lib/pkg/crypto/certs:root_cas",
+        "//lib/pkg/dns",
+        "//lib/pkg/drivers",
+        "//lib/platform/esp",
+        "//lib/platform/esp/idf",
+        "//lib/platform/esp/impl",
         "//lib/hal",
-        "//lib/http",
-        "//lib/input",
-        "//lib/ntp",
-        "//lib/portaudio",
-        "//lib/raysim",
-        "//lib/std",
-        "//lib/tls",
-        "//lib/tls/test:test_sources",
-        "//lib/tls/test:server_sources",
+        "//lib/pkg/http",
+        "//lib/pkg/input",
+        "//lib/pkg/ntp",
+        "//lib/pkg/portaudio",
+        "//lib/platform/raysim",
+        "//lib/platform/std",
+        "//lib/pkg/tls",
+        "//lib/pkg/tls/test:test_sources",
+        "//lib/pkg/tls/test:server_sources",
         "//lib/trait",
     ],
 )

@@ -3,9 +3,9 @@
     .version = "0.1.0",
     .fingerprint = 0x2c303477a4c04fb8,
     .dependencies = .{
-        .std_sal = .{ .path = "../../../../lib/std" },
-        .tls = .{ .path = "../../../../lib/tls" },
-        .crypto = .{ .path = "../../../../lib/crypto" },
+        .std_sal = .{ .path = "../../../../lib/platform/std" },
+        .tls = .{ .path = "../../../../lib/pkg/tls" },
+        .crypto = .{ .path = "../../../../lib/pkg/crypto" },
     },
     .paths = .{
         "build.zig",

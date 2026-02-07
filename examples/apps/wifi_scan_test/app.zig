@@ -19,8 +19,8 @@ const ApInfo = wifi_hal.ApInfo;
 const AuthMode = wifi_hal.AuthMode;
 
 // Memory monitoring
-const idf = @import("esp");
-const heap = idf.heap;
+const esp = @import("esp");
+const heap = esp.idf.heap;
 
 // ============================================================================
 // Helper Functions

@@ -1,0 +1,349 @@
+// affected-targets analyzes git diff to find affected Bazel targets.
+//
+// Usage:
+//
+//	bazel run //devops/tools/bazel-affected -- --base=origin/main
+//	bazel run //devops/tools/bazel-affected -- --base=HEAD~1 --check=//examples:build_all
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+var (
+	base    = flag.String("base", "", "Base commit/branch to compare against (required)")
+	check   = flag.String("check", "", "Check if specific target is affected (optional)")
+	output  = flag.String("output", "", "Output file path (default: stdout)")
+	oneline = flag.Bool("oneline", false, "Output targets as space-separated single line")
+	verbose = flag.Bool("v", false, "Verbose output")
+)
+
+func main() {
+	flag.Parse()
+
+	if *base == "" {
+		fmt.Fprintln(os.Stderr, "Error: --base is required")
+		fmt.Fprintln(os.Stderr, "Usage: affected-targets --base=<commit> [--check=<target>]")
+		os.Exit(1)
+	}
+
+	// Change to workspace directory if running via bazel
+	if wsDir := os.Getenv("BUILD_WORKSPACE_DIRECTORY"); wsDir != "" {
+		if err := os.Chdir(wsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to chdir to workspace: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Get changed files
+	changedFiles, err := getChangedFiles(*base)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting changed files: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(changedFiles) == 0 {
+		if *verbose {
+			fmt.Fprintln(os.Stderr, "No changed files found")
+		}
+		if *check != "" {
+			fmt.Println("not-affected")
+		}
+		return
+	}
+
+	if *verbose {
+		fmt.Fprintf(os.Stderr, "Changed files (%d):\n", len(changedFiles))
+		for _, f := range changedFiles {
+			fmt.Fprintf(os.Stderr, "  %s\n", f)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Find affected targets
+	affectedTargets, err := findAffectedTargets(changedFiles)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding affected targets: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *check != "" {
+		// Check mode: see if specific target is affected
+		isAffected, err := isTargetAffected(*check, affectedTargets)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error checking target: %v\n", err)
+			os.Exit(2)
+		}
+
+		if isAffected {
+			fmt.Println("affected")
+			os.Exit(0)
+		} else {
+			fmt.Println("not-affected")
+			os.Exit(1)
+		}
+	}
+
+	// Output all affected targets
+	var out *os.File
+	if *output != "" {
+		f, err := os.Create(*output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		out = f
+	} else {
+		out = os.Stdout
+	}
+
+	if *oneline {
+		fmt.Fprintln(out, strings.Join(affectedTargets, " "))
+	} else {
+		for _, target := range affectedTargets {
+			fmt.Fprintln(out, target)
+		}
+	}
+}
+
+// getChangedFiles returns the list of files changed between base and head.
+func getChangedFiles(base string, head ...string) ([]string, error) {
+	headRef := "HEAD"
+	if len(head) > 0 && head[0] != "" {
+		headRef = head[0]
+	}
+
+	// Use merge-base to handle divergent branches properly
+	mergeBaseCmd := exec.Command("git", "merge-base", base, headRef)
+	mergeBaseOutput, err := mergeBaseCmd.Output()
+	if err != nil {
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "merge-base failed, using base directly: %v\n", err)
+		}
+	} else {
+		base = strings.TrimSpace(string(mergeBaseOutput))
+	}
+
+	cmd := exec.Command("git", "diff", "--name-only", base+".."+headRef)
+	output, err := cmd.Output()
+	if err != nil {
+		cmd = exec.Command("git", "diff", "--name-only", base, headRef)
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git diff failed: %w", err)
+		}
+	}
+
+	var files []string
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		file := strings.TrimSpace(scanner.Text())
+		if file != "" {
+			files = append(files, file)
+		}
+	}
+
+	return files, scanner.Err()
+}
+
+// findAffectedTargets finds all Bazel targets affected by the changed files.
+func findAffectedTargets(changedFiles []string) ([]string, error) {
+	var bazelFiles []string
+	for _, f := range changedFiles {
+		if _, err := os.Stat(f); err == nil {
+			bazelFiles = append(bazelFiles, f)
+		}
+	}
+
+	if len(bazelFiles) == 0 {
+		if *verbose {
+			fmt.Fprintln(os.Stderr, "All changed files were deleted, returning no affected targets")
+		}
+		return nil, nil
+	}
+
+	var fileLabels []string
+	for _, f := range bazelFiles {
+		if strings.HasPrefix(f, "bazel-") {
+			continue
+		}
+		fileLabels = append(fileLabels, f)
+	}
+
+	if len(fileLabels) == 0 {
+		return nil, nil
+	}
+
+	// Deduplicate packages
+	pkgSet := make(map[string]bool)
+	for _, file := range fileLabels {
+		pkg := findPackageForFile(file)
+		if pkg != "" {
+			pkgSet[pkg] = true
+		}
+	}
+
+	if *verbose {
+		fmt.Fprintf(os.Stderr, "Unique packages to query (%d):\n", len(pkgSet))
+		for pkg := range pkgSet {
+			fmt.Fprintf(os.Stderr, "  %s\n", pkg)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Query affected targets for each unique package
+	affectedSet := make(map[string]bool)
+	for pkg := range pkgSet {
+		targets, err := findTargetsForPackage(pkg)
+		if err != nil {
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to find targets for package %s: %v\n", pkg, err)
+			}
+			continue
+		}
+		for _, t := range targets {
+			affectedSet[t] = true
+		}
+	}
+
+	var result []string
+	for t := range affectedSet {
+		result = append(result, t)
+	}
+	sort.Strings(result)
+
+	return result, nil
+}
+
+// findPackageForFile determines the Bazel package containing the given file.
+func findPackageForFile(file string) string {
+	dir := filepath.Dir(file)
+	if dir == "." {
+		dir = ""
+	}
+
+	var pkg string
+	if dir == "" {
+		pkg = "//"
+	} else {
+		pkg = "//" + dir
+	}
+
+	hasBuild := false
+	for _, buildFile := range []string{"BUILD", "BUILD.bazel"} {
+		buildPath := filepath.Join(dir, buildFile)
+		if dir == "" {
+			buildPath = buildFile
+		}
+		if _, err := os.Stat(buildPath); err == nil {
+			hasBuild = true
+			break
+		}
+	}
+
+	if !hasBuild {
+		pkg = findNearestPackage(dir)
+	}
+
+	return pkg
+}
+
+// findTargetsForPackage finds all targets affected by changes to a package.
+func findTargetsForPackage(pkg string) ([]string, error) {
+	query := fmt.Sprintf("rdeps(//..., %s:all)", pkg)
+	targets, err := runBazelQuery(query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: rdeps query failed for %s, falling back to //...
+", pkg)
+		targets, err = runBazelQuery("//...")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return targets, nil
+}
+
+// runBazelQuery executes a bazel query and returns the results.
+func runBazelQuery(query string) ([]string, error) {
+	cmd := exec.Command("bazel", "query", query, "--keep_going", "--noshow_progress")
+
+	var stderrBuf bytes.Buffer
+	if *verbose {
+		cmd.Stderr = os.Stderr
+	} else {
+		cmd.Stderr = &stderrBuf
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		if stderr := stderrBuf.String(); stderr != "" {
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "bazel query stderr: %s\n", stderr)
+			}
+			return nil, fmt.Errorf("bazel query failed: %w (stderr: %s)", err, stderr)
+		}
+		return nil, fmt.Errorf("bazel query failed: %w", err)
+	}
+
+	var targets []string
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		target := strings.TrimSpace(scanner.Text())
+		if target != "" && !strings.HasPrefix(target, "@") {
+			targets = append(targets, target)
+		}
+	}
+
+	return targets, scanner.Err()
+}
+
+// findNearestPackage finds the nearest Bazel package containing or above the given directory.
+func findNearestPackage(dir string) string {
+	current := dir
+	for {
+		for _, buildFile := range []string{"BUILD", "BUILD.bazel"} {
+			var buildPath string
+			if current == "" {
+				buildPath = buildFile
+			} else {
+				buildPath = filepath.Join(current, buildFile)
+			}
+			if _, err := os.Stat(buildPath); err == nil {
+				if current == "" {
+					return "//"
+				}
+				return "//" + current
+			}
+		}
+
+		if current == "" || current == "." {
+			break
+		}
+		current = filepath.Dir(current)
+		if current == "." {
+			current = ""
+		}
+	}
+	return ""
+}
+
+// isTargetAffected checks if a specific target is affected by the changes.
+// Since rdeps() is transitive, the target should already be in affectedTargets
+// if any of its dependencies changed.
+func isTargetAffected(target string, affectedTargets []string) (bool, error) {
+	for _, t := range affectedTargets {
+		if t == target {
+			return true, nil
+		}
+	}
+	return false, nil
+}

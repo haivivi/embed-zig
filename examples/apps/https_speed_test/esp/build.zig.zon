@@ -4,12 +4,12 @@
     .fingerprint = 0xbb392e3b05ab7814,
     .dependencies = .{
         .hal = .{ .path = "../../../../lib/hal" },
-        .esp = .{ .path = "../../../../lib/esp" },
+        .esp = .{ .path = "../../../../lib/platform/esp" },
         .trait = .{ .path = "../../../../lib/trait" },
-        .tls = .{ .path = "../../../../lib/tls" },
-        .dns = .{ .path = "../../../../lib/dns" },
-        .http = .{ .path = "../../../../lib/http" },
-        .motion = .{ .path = "../../../../lib/motion" },
+        .tls = .{ .path = "../../../../lib/pkg/tls" },
+        .dns = .{ .path = "../../../../lib/pkg/dns" },
+        .http = .{ .path = "../../../../lib/pkg/http" },
+        .motion = .{ .path = "../../../../lib/pkg/motion" },
     },
     .paths = .{
         "build.zig",

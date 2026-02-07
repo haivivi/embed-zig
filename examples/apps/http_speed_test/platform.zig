@@ -19,6 +19,9 @@ const spec = struct {
     // WiFi HAL peripheral
     pub const wifi = hal.wifi.from(hw.wifi_spec);
 
+    // Net HAL peripheral (for IP events)
+    pub const net = hal.net.from(hw.net_spec);
+
     // Socket trait (for HTTP client)
     pub const socket = hw.socket;
 };

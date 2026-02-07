@@ -32,6 +32,7 @@ pub const socket = idf.socket.Socket;
 
 pub const RtcDriver = board.RtcDriver;
 pub const WifiDriver = board.WifiDriver;
+pub const NetDriver = board.NetDriver;
 
 // ============================================================================
 // HAL Specs
@@ -43,6 +44,7 @@ pub const rtc_spec = struct {
 };
 
 pub const wifi_spec = board.wifi_spec;
+pub const net_spec = board.net_spec;
 
 // ============================================================================
 // Platform Primitives (re-export from central board)

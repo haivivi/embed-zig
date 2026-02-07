@@ -1,0 +1,35 @@
+.{
+    .name = .esp,
+    .version = "0.1.0",
+    .fingerprint = 0xe54a8bd0bac6a302,
+    .dependencies = .{
+        .dns = .{
+            .path = "../../pkg/dns",
+        },
+        .drivers = .{
+            .path = "../../pkg/drivers",
+        },
+        .idf = .{
+            .path = "idf",
+        },
+        .impl = .{
+            .path = "impl",
+        },
+        .trait = .{
+            .path = "../../trait",
+        },
+        .hal = .{
+            .path = "../../hal",
+        },
+        .crypto = .{
+            .path = "../../pkg/crypto",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "idf",
+        "impl",
+    },
+}

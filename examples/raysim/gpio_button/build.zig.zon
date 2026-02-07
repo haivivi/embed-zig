@@ -3,7 +3,7 @@
     .version = "0.1.0",
     .fingerprint = 0x1e3bb9a689f5dee9,
     .dependencies = .{
-        .raysim = .{ .path = "../../../lib/raysim" },
+        .raysim = .{ .path = "../../../lib/platform/raysim" },
         .gpio_button_app = .{ .path = "../../apps/gpio_button" },
     },
     .paths = .{

@@ -1,0 +1,11 @@
+# Drivers library - Hardware driver implementations
+
+load("//bazel/zig:defs.bzl", "zig_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_lib(
+    name = "drivers",
+    srcs = glob(["**/*"]),
+    deps = ["//lib/trait", "//lib/pkg/math"],
+)

@@ -16,6 +16,7 @@ esp_zig_app(
     name = "app",
     app = ":srcs",
     requires = ["driver"],
+    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

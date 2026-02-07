@@ -2,10 +2,10 @@
     .name = "aec_test",
     .version = "0.1.0",
     .dependencies = .{
-        .esp = .{ .path = "../../../../lib/esp" },
+        .esp = .{ .path = "../../../../lib/platform/esp" },
         .hal = .{ .path = "../../../../lib/hal" },
-        .drivers = .{ .path = "../../../../lib/drivers" },
-        .motion = .{ .path = "../../../../lib/motion" },
+        .drivers = .{ .path = "../../../../lib/pkg/drivers" },
+        .motion = .{ .path = "../../../../lib/pkg/motion" },
     },
     .paths = .{
         "build.zig",

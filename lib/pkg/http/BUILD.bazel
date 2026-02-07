@@ -1,0 +1,16 @@
+# HTTP library - HTTP/1.1 client
+
+load("//bazel/zig:defs.bzl", "zig_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_lib(
+    name = "http",
+    srcs = glob(["**/*"]),
+    deps = [
+        "//lib/pkg/dns",
+        "//lib/platform/std",
+        "//lib/pkg/tls",
+        "//lib/trait",
+    ],
+)

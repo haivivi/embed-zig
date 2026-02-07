@@ -59,10 +59,6 @@ pub fn run(env: anytype) void {
                         .connected => {
                             log.info("WiFi connected to AP", .{});
                         },
-                        .got_ip => |ip| {
-                            log.info("Got IP: {}.{}.{}.{}", .{ ip[0], ip[1], ip[2], ip[3] });
-                            state = .connected;
-                        },
                         .disconnected => |reason| {
                             log.warn("WiFi disconnected: {}", .{reason});
                             state = .connecting;
@@ -71,7 +67,16 @@ pub fn run(env: anytype) void {
                             log.err("WiFi connection failed: {}", .{reason});
                             return;
                         },
-                        .rssi_changed => {},
+                        else => {},
+                    }
+                },
+                .net => |net_event| {
+                    switch (net_event) {
+                        .dhcp_bound => |info| {
+                            log.info("Got IP: {}.{}.{}.{}", .{ info.ip[0], info.ip[1], info.ip[2], info.ip[3] });
+                            state = .connected;
+                        },
+                        else => {},
                     }
                 },
                 else => {},

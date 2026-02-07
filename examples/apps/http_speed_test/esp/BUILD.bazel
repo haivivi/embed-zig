@@ -15,8 +15,7 @@ filegroup(
 # Environment from command line
 make_env_file(
     name = "env",
-    defines = ["WIFI_SSID", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
-    env_vars = ["WIFI_PASSWORD"],
+    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
 )
 
 esp_zig_app(
@@ -25,13 +24,17 @@ esp_zig_app(
     boards = ["esp32s3_devkit"],
     requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash"],
     force_link = [
+        "${EVENT_FORCE_LINK}",
         "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
     ],
     extra_cmake = [
-        "include(${_ESP_LIB}/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
     ],
-    extra_c_sources = ["WIFI_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/trait", "//lib/motion", "//lib/math"],
+    extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "NET_C_SOURCES"],
+    deps = ["//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi",
     app_config = "//examples/esp:app_internal",
     env = ":env",

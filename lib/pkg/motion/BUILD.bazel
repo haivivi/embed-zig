@@ -1,0 +1,11 @@
+# Motion detection library
+
+load("//bazel/zig:defs.bzl", "zig_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_lib(
+    name = "motion",
+    srcs = glob(["**/*"]),
+    deps = ["//lib/pkg/math"],
+)
