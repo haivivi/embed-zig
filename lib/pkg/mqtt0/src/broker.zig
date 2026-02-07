@@ -132,6 +132,66 @@ pub fn Broker(comptime Transport: type) type {
             }
         };
 
+        /// Shared subscription group — round-robin distribution among subscribers.
+        const SharedGroup = struct {
+            group_name_buf: [128]u8 = undefined,
+            group_name_len: usize = 0,
+            subscribers: std.ArrayListUnmanaged(*ClientHandle) = .empty,
+            next_index: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+            mutex: std.Thread.Mutex = .{},
+
+            fn groupName(self: *const SharedGroup) []const u8 {
+                return self.group_name_buf[0..self.group_name_len];
+            }
+
+            fn setGroupName(self: *SharedGroup, name: []const u8) void {
+                const len = @min(name.len, 128);
+                @memcpy(self.group_name_buf[0..len], name[0..len]);
+                self.group_name_len = len;
+            }
+
+            fn add(self: *SharedGroup, allocator: Allocator, handle: *ClientHandle) void {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                // Check if already subscribed
+                for (self.subscribers.items) |s| {
+                    if (s == handle) return;
+                }
+                self.subscribers.append(allocator, handle) catch {};
+            }
+
+            fn removeByHandle(self: *SharedGroup, handle: *ClientHandle) void {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                var i: usize = 0;
+                while (i < self.subscribers.items.len) {
+                    if (self.subscribers.items[i] == handle) {
+                        _ = self.subscribers.orderedRemove(i);
+                        return;
+                    }
+                    i += 1;
+                }
+            }
+
+            fn isEmpty(self: *SharedGroup) bool {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                return self.subscribers.items.len == 0;
+            }
+
+            fn nextSubscriber(self: *SharedGroup) ?*ClientHandle {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                if (self.subscribers.items.len == 0) return null;
+                const idx = (self.next_index.fetchAdd(1, .monotonic)) % self.subscribers.items.len;
+                return self.subscribers.items[idx];
+            }
+
+            fn deinit(self: *SharedGroup, allocator: Allocator) void {
+                self.subscribers.deinit(allocator);
+            }
+        };
+
         pub const Config = struct {
             max_packet_size: usize = pkt.max_packet_size,
             max_topic_alias: u16 = 65535,
@@ -146,12 +206,16 @@ pub fn Broker(comptime Transport: type) type {
 
         // Subscription management
         subscriptions: trie_mod.Trie(*ClientHandle),
+        shared_trie: trie_mod.Trie(*SharedGroup), // $share/ subscriptions
         sub_mutex: std.Thread.Mutex,
 
         // Client tracking
         clients: std.StringHashMap(*ClientHandle),
         client_subscriptions: std.StringHashMap(std.ArrayListUnmanaged([]const u8)),
         clients_mutex: std.Thread.Mutex,
+
+        // Shared group storage (owns SharedGroup allocations)
+        shared_groups: std.ArrayListUnmanaged(*SharedGroup),
 
         // Callbacks
         on_connect: ?ConnectCallback = null,
@@ -164,10 +228,12 @@ pub fn Broker(comptime Transport: type) type {
                 .auth = AllowAll.authenticator(),
                 .config = config,
                 .subscriptions = try trie_mod.Trie(*ClientHandle).init(allocator),
+                .shared_trie = try trie_mod.Trie(*SharedGroup).init(allocator),
                 .sub_mutex = .{},
                 .clients = std.StringHashMap(*ClientHandle).init(allocator),
                 .client_subscriptions = std.StringHashMap(std.ArrayListUnmanaged([]const u8)).init(allocator),
                 .clients_mutex = .{},
+                .shared_groups = .empty,
             };
         }
 
@@ -192,6 +258,14 @@ pub fn Broker(comptime Transport: type) type {
             self.client_subscriptions.deinit();
 
             self.subscriptions.deinit();
+
+            // Free shared groups
+            for (self.shared_groups.items) |sg| {
+                sg.deinit(self.allocator);
+                self.allocator.destroy(sg);
+            }
+            self.shared_groups.deinit(self.allocator);
+            self.shared_trie.deinit();
         }
 
         pub fn setAuthenticator(self: *Self, auth: Authenticator) void {
@@ -248,7 +322,9 @@ pub fn Broker(comptime Transport: type) type {
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(connect.client_id);
 
-            // Client loop
+            // Set keepalive timeout (1.5x keep_alive)
+            setKeepaliveTimeout(transport, connect.keep_alive);
+
             self.clientLoopV4(transport, buf, handle);
         }
 
@@ -279,6 +355,9 @@ pub fn Broker(comptime Transport: type) type {
 
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(connect.client_id);
+
+            // Set keepalive timeout (1.5x keep_alive)
+            setKeepaliveTimeout(transport, connect.keep_alive);
 
             self.clientLoopV5(transport, buf, handle);
         }
@@ -456,13 +535,17 @@ pub fn Broker(comptime Transport: type) type {
         // ====================================================================
 
         fn handleSubscribe(self: *Self, handle: *ClientHandle, topic: []const u8) bool {
+            // Parse shared subscription
+            const shared = parseSharedTopic(topic);
+            const acl_topic = if (shared) |s| s.actual_topic else topic;
+
             // Validate topic length
-            if (topic.len > self.config.max_topic_length) return false;
+            if (acl_topic.len > self.config.max_topic_length) return false;
 
             // ACL check
-            if (!self.auth.acl(handle.clientId(), topic, false)) return false;
+            if (!self.auth.acl(handle.clientId(), acl_topic, false)) return false;
 
-            // Check subscription limit
+            // Check subscription limit and track
             self.clients_mutex.lock();
             const key = handle.clientId();
             if (self.client_subscriptions.getPtr(key)) |subs| {
@@ -470,7 +553,6 @@ pub fn Broker(comptime Transport: type) type {
                     self.clients_mutex.unlock();
                     return false;
                 }
-                // Track subscription
                 const topic_dup = self.allocator.dupe(u8, topic) catch {
                     self.clients_mutex.unlock();
                     return false;
@@ -483,29 +565,73 @@ pub fn Broker(comptime Transport: type) type {
             }
             self.clients_mutex.unlock();
 
-            // Add to trie
-            self.sub_mutex.lock();
-            self.subscriptions.insert(topic, handle) catch {
+            if (shared) |s| {
+                // Shared subscription — add to shared group
+                self.sub_mutex.lock();
+                defer self.sub_mutex.unlock();
+                self.addToSharedGroup(s.group, s.actual_topic, handle);
+            } else {
+                // Normal subscription — add to trie
+                self.sub_mutex.lock();
+                self.subscriptions.insert(topic, handle) catch {
+                    self.sub_mutex.unlock();
+                    return false;
+                };
                 self.sub_mutex.unlock();
-                return false;
-            };
-            self.sub_mutex.unlock();
+            }
 
             return true;
         }
 
+        fn addToSharedGroup(self: *Self, group_name: []const u8, actual_topic: []const u8, handle: *ClientHandle) void {
+            // Check if shared group already exists for this topic
+            if (self.shared_trie.match(actual_topic)) |groups| {
+                for (groups) |sg| {
+                    if (std.mem.eql(u8, sg.groupName(), group_name)) {
+                        sg.add(self.allocator, handle);
+                        return;
+                    }
+                }
+            }
+
+            // Create new shared group
+            const sg = self.allocator.create(SharedGroup) catch return;
+            sg.* = .{};
+            sg.setGroupName(group_name);
+            sg.add(self.allocator, handle);
+            self.shared_groups.append(self.allocator, sg) catch {
+                self.allocator.destroy(sg);
+                return;
+            };
+            self.shared_trie.insert(actual_topic, sg) catch {};
+        }
+
         fn handleUnsubscribe(self: *Self, handle: *ClientHandle, topic: []const u8) void {
             const cid = handle.clientId();
+            const shared = parseSharedTopic(topic);
 
-            // Remove from trie
-            self.sub_mutex.lock();
-            _ = self.subscriptions.remove(topic, &struct {
-                fn pred(h: *ClientHandle) bool {
-                    _ = h;
-                    return true; // TODO: compare handle pointers properly
+            if (shared) |s| {
+                // Remove from shared group
+                self.sub_mutex.lock();
+                if (self.shared_trie.match(s.actual_topic)) |groups| {
+                    for (groups) |sg| {
+                        if (std.mem.eql(u8, sg.groupName(), s.group)) {
+                            sg.removeByHandle(handle);
+                            break;
+                        }
+                    }
                 }
-            }.pred);
-            self.sub_mutex.unlock();
+                self.sub_mutex.unlock();
+            } else {
+                // Remove from normal trie
+                self.sub_mutex.lock();
+                _ = self.subscriptions.remove(topic, &struct {
+                    fn pred(_: *ClientHandle) bool {
+                        return true;
+                    }
+                }.pred);
+                self.sub_mutex.unlock();
+            }
 
             // Remove from tracking
             self.clients_mutex.lock();
@@ -529,12 +655,13 @@ pub fn Broker(comptime Transport: type) type {
 
         fn routeMessage(self: *Self, msg: *const Message, sender: ?*ClientHandle) void {
             self.sub_mutex.lock();
+
+            // Normal subscribers
             const subscribers = self.subscriptions.match(msg.topic);
-            // Copy handles while holding lock to avoid UAF
             var handles_buf: [128]*ClientHandle = undefined;
             var handle_count: usize = 0;
-            if (subscribers) |transports| {
-                for (transports) |h| {
+            if (subscribers) |items| {
+                for (items) |h| {
                     if (sender != null and h == sender.?) continue;
                     if (handle_count < handles_buf.len) {
                         handles_buf[handle_count] = h;
@@ -542,6 +669,20 @@ pub fn Broker(comptime Transport: type) type {
                     }
                 }
             }
+
+            // Shared subscription groups (round-robin)
+            if (self.shared_trie.match(msg.topic)) |groups| {
+                for (groups) |sg| {
+                    if (sg.nextSubscriber()) |h| {
+                        if (sender != null and h == sender.?) continue;
+                        if (handle_count < handles_buf.len) {
+                            handles_buf[handle_count] = h;
+                            handle_count += 1;
+                        }
+                    }
+                }
+            }
+
             self.sub_mutex.unlock();
 
             // Send outside lock — each handle has its own write_mutex
@@ -598,16 +739,30 @@ pub fn Broker(comptime Transport: type) type {
 
             const cid = handle.clientId();
 
-            // Remove subscriptions from trie
+            // Remove subscriptions from both normal and shared tries
             self.clients_mutex.lock();
             if (self.client_subscriptions.getPtr(cid)) |subs| {
                 self.sub_mutex.lock();
                 for (subs.items) |topic| {
-                    _ = self.subscriptions.remove(topic, &struct {
-                        fn pred(_: *ClientHandle) bool {
-                            return true; // Remove all matching (simplified)
+                    const shared = parseSharedTopic(topic);
+                    if (shared) |s| {
+                        // Remove from shared group
+                        if (self.shared_trie.match(s.actual_topic)) |groups| {
+                            for (groups) |sg| {
+                                if (std.mem.eql(u8, sg.groupName(), s.group)) {
+                                    sg.removeByHandle(handle);
+                                    break;
+                                }
+                            }
                         }
-                    }.pred);
+                    } else {
+                        // Remove from normal trie
+                        _ = self.subscriptions.remove(topic, &struct {
+                            fn pred(_: *ClientHandle) bool {
+                                return true;
+                            }
+                        }.pred);
+                    }
                     self.allocator.free(topic);
                 }
                 subs.deinit(self.allocator);
@@ -615,6 +770,43 @@ pub fn Broker(comptime Transport: type) type {
                 self.sub_mutex.unlock();
             }
             self.clients_mutex.unlock();
+        }
+
+        // ====================================================================
+        // Shared topic parsing
+        // ====================================================================
+
+        const SharedTopicInfo = struct {
+            group: []const u8,
+            actual_topic: []const u8,
+        };
+
+        /// Parse $share/{group}/{topic} format.
+        fn parseSharedTopic(topic: []const u8) ?SharedTopicInfo {
+            const prefix = "$share/";
+            if (topic.len <= prefix.len) return null;
+            if (!std.mem.startsWith(u8, topic, prefix)) return null;
+            const rest = topic[prefix.len..];
+            const sep = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
+            if (sep == 0) return null;
+            const group = rest[0..sep];
+            const actual = rest[sep + 1 ..];
+            if (actual.len == 0) return null;
+            return .{ .group = group, .actual_topic = actual };
+        }
+
+        // ====================================================================
+        // Keepalive
+        // ====================================================================
+
+        /// Set socket recv timeout for keepalive enforcement.
+        /// MQTT spec: broker should wait 1.5x keepalive before disconnecting.
+        fn setKeepaliveTimeout(transport: *Transport, keep_alive: u16) void {
+            if (keep_alive == 0) return;
+            const timeout_ms: u32 = @as(u32, keep_alive) * 1500; // 1.5x in ms
+            if (@hasDecl(Transport, "setRecvTimeout")) {
+                transport.setRecvTimeout(timeout_ms);
+            }
         }
 
         // ====================================================================
