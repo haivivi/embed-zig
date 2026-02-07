@@ -308,6 +308,48 @@ def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_modu
 
     return args
 
+def _collect_deps(own_srcs, deps):
+    """Collect dependency info from zig_library deps.
+
+    Args:
+        own_srcs: depset(File) — this module's own source files
+        deps: list(Target) — targets providing ZigModuleInfo
+
+    Returns a struct with:
+        direct_dep_names: list(string)
+        dep_cache_dirs: list(File)
+        transitive_src_depsets: list(depset) — own_srcs + all deps' transitive_srcs
+        all_dep_module_strings: depset(string) — encoded module records for all deps
+    """
+    direct_dep_infos = []
+    direct_dep_names = []
+    transitive_src_depsets = [own_srcs]
+    dep_cache_dirs = []
+
+    for dep in deps:
+        info = dep[ZigModuleInfo]
+        direct_dep_infos.append(info)
+        direct_dep_names.append(info.module_name)
+        transitive_src_depsets.append(info.transitive_srcs)
+        if info.cache_dir:
+            dep_cache_dirs.append(info.cache_dir)
+
+    direct_dep_strings = [
+        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
+        for info in direct_dep_infos
+    ]
+    all_dep_module_strings = depset(
+        direct_dep_strings,
+        transitive = [info.transitive_module_strings for info in direct_dep_infos],
+    )
+
+    return struct(
+        direct_dep_names = direct_dep_names,
+        dep_cache_dirs = dep_cache_dirs,
+        transitive_src_depsets = transitive_src_depsets,
+        all_dep_module_strings = all_dep_module_strings,
+    )
+
 # =============================================================================
 # _zig_tool — Bootstrap rule for compiling Zig helper tools (e.g., cache_merge)
 # =============================================================================
@@ -367,29 +409,7 @@ def _zig_library_impl(ctx):
     module_name = ctx.attr.module_name if ctx.attr.module_name else ctx.label.name
     own_srcs = depset(ctx.files.srcs)
 
-    # Collect direct deps
-    direct_dep_infos = []
-    direct_dep_names = []
-    transitive_src_depsets = [own_srcs]
-    dep_cache_dirs = []
-
-    for dep in ctx.attr.deps:
-        info = dep[ZigModuleInfo]
-        direct_dep_infos.append(info)
-        direct_dep_names.append(info.module_name)
-        transitive_src_depsets.append(info.transitive_srcs)
-        if info.cache_dir:
-            dep_cache_dirs.append(info.cache_dir)
-
-    # Build transitive_module_strings via depset (O(1) merge per layer)
-    direct_dep_strings = [
-        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
-        for info in direct_dep_infos
-    ]
-    transitive_module_strings = depset(
-        direct_dep_strings,
-        transitive = [info.transitive_module_strings for info in direct_dep_infos],
-    )
+    collected = _collect_deps(own_srcs, ctx.attr.deps)
 
     # Compile: zig build-lib through cache_merge tool
     zig_files = ctx.attr._zig_toolchain.files.to_list()
@@ -402,24 +422,24 @@ def _zig_library_impl(ctx):
     module_args = _build_module_args(
         main_name = module_name,
         main_root_path = root_source.path,
-        direct_dep_names = direct_dep_names,
-        all_dep_module_strings = transitive_module_strings,
+        direct_dep_names = collected.direct_dep_names,
+        all_dep_module_strings = collected.all_dep_module_strings,
     )
 
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib <args> -femit-bin=out.a
     cm_args = [cache_dir.path]
-    for dc in dep_cache_dirs:
+    for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
     cm_args.extend(["build-lib"] + module_args + ["-femit-bin=" + output_a.path])
 
-    all_srcs = depset(transitive = transitive_src_depsets).to_list()
+    all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
         outputs = [output_a, cache_dir],
         mnemonic = "ZigLibCompile",
         progress_message = "Compiling Zig library %s" % ctx.label,
@@ -431,9 +451,9 @@ def _zig_library_impl(ctx):
             module_name = module_name,
             root_source = root_source,
             srcs = own_srcs,
-            transitive_srcs = depset(transitive = transitive_src_depsets),
-            direct_dep_names = direct_dep_names,
-            transitive_module_strings = transitive_module_strings,
+            transitive_srcs = depset(transitive = collected.transitive_src_depsets),
+            direct_dep_names = collected.direct_dep_names,
+            transitive_module_strings = collected.all_dep_module_strings,
             cache_dir = cache_dir,
         ),
     ]
@@ -586,39 +606,18 @@ def _zig_binary_impl(ctx):
     output = ctx.actions.declare_file(ctx.label.name)
     cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
-    # Collect deps
-    direct_dep_names = []
-    transitive_src_depsets = [depset(ctx.files.srcs)]
-    direct_dep_infos = []
-    dep_cache_dirs = []
-
-    for dep in ctx.attr.deps:
-        info = dep[ZigModuleInfo]
-        direct_dep_infos.append(info)
-        direct_dep_names.append(info.module_name)
-        transitive_src_depsets.append(info.transitive_srcs)
-        if info.cache_dir:
-            dep_cache_dirs.append(info.cache_dir)
-
-    direct_dep_strings = [
-        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
-        for info in direct_dep_infos
-    ]
-    all_dep_module_strings = depset(
-        direct_dep_strings,
-        transitive = [info.transitive_module_strings for info in direct_dep_infos],
-    )
+    collected = _collect_deps(depset(ctx.files.srcs), ctx.attr.deps)
 
     module_args = _build_module_args(
         main_name = module_name,
         main_root_path = root_source.path,
-        direct_dep_names = direct_dep_names,
-        all_dep_module_strings = all_dep_module_strings,
+        direct_dep_names = collected.direct_dep_names,
+        all_dep_module_strings = collected.all_dep_module_strings,
     )
 
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-exe <args>
     cm_args = [cache_dir.path]
-    for dc in dep_cache_dirs:
+    for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
@@ -628,12 +627,12 @@ def _zig_binary_impl(ctx):
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
 
-    all_srcs = depset(transitive = transitive_src_depsets).to_list()
+    all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
         outputs = [output, cache_dir],
         mnemonic = "ZigBuildExe",
         progress_message = "Compiling Zig binary %s" % ctx.label,
@@ -707,39 +706,18 @@ def _zig_test_impl(ctx):
     test_bin = ctx.actions.declare_file(ctx.label.name + "_test_bin")
     cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
-    # Collect deps
-    direct_dep_names = []
-    transitive_src_depsets = [depset(ctx.files.srcs)]
-    direct_dep_infos = []
-    dep_cache_dirs = []
-
-    for dep in ctx.attr.deps:
-        info = dep[ZigModuleInfo]
-        direct_dep_infos.append(info)
-        direct_dep_names.append(info.module_name)
-        transitive_src_depsets.append(info.transitive_srcs)
-        if info.cache_dir:
-            dep_cache_dirs.append(info.cache_dir)
-
-    direct_dep_strings = [
-        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
-        for info in direct_dep_infos
-    ]
-    all_dep_module_strings = depset(
-        direct_dep_strings,
-        transitive = [info.transitive_module_strings for info in direct_dep_infos],
-    )
+    collected = _collect_deps(depset(ctx.files.srcs), ctx.attr.deps)
 
     module_args = _build_module_args(
         main_name = module_name,
         main_root_path = root_source.path,
-        direct_dep_names = direct_dep_names,
-        all_dep_module_strings = all_dep_module_strings,
+        direct_dep_names = collected.direct_dep_names,
+        all_dep_module_strings = collected.all_dep_module_strings,
     )
 
     # cache_merge <out_cache> [dep_caches...] -- <zig> test <args>
     cm_args = [cache_dir.path]
-    for dc in dep_cache_dirs:
+    for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
@@ -752,12 +730,12 @@ def _zig_test_impl(ctx):
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
 
-    all_srcs = depset(transitive = transitive_src_depsets).to_list()
+    all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + dep_cache_dirs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs,
         outputs = [test_bin, cache_dir],
         mnemonic = "ZigTestCompile",
         progress_message = "Compiling Zig tests %s" % ctx.label,

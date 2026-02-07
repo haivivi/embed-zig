@@ -105,10 +105,10 @@ fn copyDirEntries(
         switch (entry.kind) {
             .file => {
                 // Content-addressed: overwrite is safe (same hash = same content)
-                src_dir.copyFile(entry.name, dst_dir, entry.name, .{}) catch {};
+                try src_dir.copyFile(entry.name, dst_dir, entry.name, .{});
             },
             .directory => {
-                copySubDir(allocator, src_dir, dst_dir, entry.name) catch {};
+                try copySubDir(allocator, src_dir, dst_dir, entry.name);
             },
             else => {},
         }
@@ -135,7 +135,7 @@ fn copySubDir(
     while (try iter.next()) |entry| {
         switch (entry.kind) {
             .file => {
-                src.copyFile(entry.name, dst, entry.name, .{}) catch {};
+                try src.copyFile(entry.name, dst, entry.name, .{});
             },
             .directory => {
                 try copySubDir(allocator, src, dst, entry.name);
