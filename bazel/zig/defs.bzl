@@ -227,13 +227,6 @@ zig_run = rule(
 # ZigModuleInfo — Provider for Bazel-native Zig module metadata
 # =============================================================================
 
-# Struct-like record for a single module in the transitive graph.
-# Stored as a plain struct (not a provider) inside ZigModuleInfo.transitive_modules.
-# Fields:
-#   name:           string — module name (for --dep / -M flags)
-#   root_source:    File   — root .zig source file
-#   dep_names:      list(string) — names of direct module dependencies
-
 ZigModuleInfo = provider(
     doc = "Bazel-native Zig module information (no build.zig needed)",
     fields = {
@@ -242,7 +235,8 @@ ZigModuleInfo = provider(
         "srcs": "depset(File) — Source files belonging to this module only",
         "transitive_srcs": "depset(File) — All source files across transitive deps",
         "direct_dep_names": "list(string) — Names of direct module dependencies",
-        "transitive_modules": "list(struct) — Flattened, deduped list of all transitive module records (name, root_source, dep_names)",
+        "transitive_module_strings": "depset(string) — Encoded module records for all transitive deps (O(1) merge per layer)",
+        "cache_dir": "File (TreeArtifact) — accumulated zig cache (own + deps)",
     },
 )
 
@@ -257,36 +251,31 @@ def _get_zig_bin(zig_toolchain_files):
             return f
     fail("Could not find zig binary in toolchain")
 
-def _collect_transitive_modules(direct_deps):
-    """Walk the dep graph and return a deduped list of module records.
+def _encode_module(name, root_path, dep_names):
+    """Encode a module record as a tab-separated string for depset storage.
 
-    Each record is a struct(name, root_source, dep_names).
-    Order: direct deps first, then their deps, etc. (BFS).
-    Deduped by module_name — first occurrence wins.
+    Format: "name\\troot_source_path\\tdep1,dep2,dep3"
     """
-    seen = {}
-    result = []
-    queue = list(direct_deps)  # list of ZigModuleInfo
-    for info in queue:
-        if info.module_name in seen:
-            continue
-        seen[info.module_name] = True
-        result.append(struct(
-            name = info.module_name,
-            root_source = info.root_source,
-            dep_names = info.direct_dep_names,
-        ))
-        for sub in info.transitive_modules:
-            if sub.name not in seen:
-                seen[sub.name] = True
-                result.append(sub)
-        # Also enqueue direct deps' direct deps for BFS
-        for dep in direct_deps:
-            pass  # already handled via transitive_modules
-    return result
+    return "{}\t{}\t{}".format(name, root_path, ",".join(dep_names) if dep_names else "")
 
-def _build_module_args(main_name, main_root, direct_dep_names, transitive_modules):
+def _decode_module(encoded):
+    """Decode a tab-separated module string back to a struct."""
+    parts = encoded.split("\t")
+    return struct(
+        name = parts[0],
+        root_path = parts[1],
+        dep_names = parts[2].split(",") if len(parts) > 2 and parts[2] else [],
+    )
+
+def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_module_strings):
     """Build the -M / --dep argument list for the zig compiler.
+
+    Args:
+        main_name: string — main module name
+        main_root_path: string — path to main module root source file
+        direct_dep_names: list(string) — names of main module's direct deps
+        all_dep_module_strings: depset(string) — encoded module records for ALL
+            transitive deps (direct deps + their transitive deps, deduped by depset)
 
     Returns a list of strings, e.g.:
         ["--dep", "trait", "--dep", "motion", "-Mhal=lib/hal/src/hal.zig",
@@ -304,55 +293,148 @@ def _build_module_args(main_name, main_root, direct_dep_names, transitive_module
     # 1. Main module
     for dep_name in direct_dep_names:
         args.extend(["--dep", dep_name])
-    args.append("-M{}={}".format(main_name, main_root.path))
+    args.append("-M{}={}".format(main_name, main_root_path))
 
-    # 2. Dependency modules (already deduped, topological-ish via BFS)
-    for mod in transitive_modules:
+    # 2. Dependency modules (deduped by depset)
+    seen = {main_name: True}
+    for encoded in all_dep_module_strings.to_list():
+        mod = _decode_module(encoded)
+        if mod.name in seen:
+            continue
+        seen[mod.name] = True
         for dep_name in mod.dep_names:
             args.extend(["--dep", dep_name])
-        args.append("-M{}={}".format(mod.name, mod.root_source.path))
+        args.append("-M{}={}".format(mod.name, mod.root_path))
 
     return args
 
 # =============================================================================
-# zig_library — Metadata-only module definition (no compilation)
+# _zig_tool — Bootstrap rule for compiling Zig helper tools (e.g., cache_merge)
+# =============================================================================
+
+def _zig_tool_impl(ctx):
+    """Compile a single .zig file into an executable tool. No deps, no modules."""
+    zig_files = ctx.attr._zig_toolchain.files.to_list()
+    zig_bin = _get_zig_bin(zig_files)
+    src = ctx.file.src
+    output = ctx.actions.declare_file(ctx.label.name)
+    cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
+
+    ctx.actions.run(
+        executable = zig_bin,
+        arguments = [
+            "build-exe",
+            "-Mroot=" + src.path,
+            "-femit-bin=" + output.path,
+            "--cache-dir", cache_dir.path,
+            "--global-cache-dir", cache_dir.path,
+        ],
+        inputs = [src] + zig_files,
+        outputs = [output, cache_dir],
+        mnemonic = "ZigToolBuild",
+        progress_message = "Building Zig tool %s" % ctx.label,
+    )
+
+    return [DefaultInfo(
+        files = depset([output]),
+        executable = output,
+    )]
+
+zig_tool = rule(
+    implementation = _zig_tool_impl,
+    executable = True,
+    attrs = {
+        "src": attr.label(
+            allow_single_file = [".zig"],
+            mandatory = True,
+            doc = "Single .zig source file to compile",
+        ),
+        "_zig_toolchain": attr.label(
+            default = "@zig_toolchain//:zig_files",
+        ),
+    },
+    doc = "Bootstrap rule for compiling Zig helper tools (no deps, no modules).",
+)
+
+# =============================================================================
+# zig_library — Compile a Zig module and propagate cache for incremental builds
 # =============================================================================
 
 def _zig_library_impl(ctx):
-    """Define a Zig module. No compilation — just metadata for downstream rules."""
+    """Define and pre-compile a Zig module, propagating accumulated cache."""
 
-    # Root source file
     root_source = ctx.file.main
-
-    # Module name
     module_name = ctx.attr.module_name if ctx.attr.module_name else ctx.label.name
-
-    # This module's source files
     own_srcs = depset(ctx.files.srcs)
 
     # Collect direct deps
-    direct_deps = []
+    direct_dep_infos = []
     direct_dep_names = []
     transitive_src_depsets = [own_srcs]
+    dep_cache_dirs = []
 
     for dep in ctx.attr.deps:
         info = dep[ZigModuleInfo]
-        direct_deps.append(info)
+        direct_dep_infos.append(info)
         direct_dep_names.append(info.module_name)
         transitive_src_depsets.append(info.transitive_srcs)
+        if info.cache_dir:
+            dep_cache_dirs.append(info.cache_dir)
 
-    # Flatten transitive modules (deduped)
-    transitive_modules = _collect_transitive_modules(direct_deps)
+    # Build transitive_module_strings via depset (O(1) merge per layer)
+    direct_dep_strings = [
+        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
+        for info in direct_dep_infos
+    ]
+    transitive_module_strings = depset(
+        direct_dep_strings,
+        transitive = [info.transitive_module_strings for info in direct_dep_infos],
+    )
+
+    # Compile: zig build-lib through cache_merge tool
+    zig_files = ctx.attr._zig_toolchain.files.to_list()
+    zig_bin = _get_zig_bin(zig_files)
+
+    # Use target name (not module name) for .a to avoid conflicts with zig_static_library
+    output_a = ctx.actions.declare_file("lib{}.a".format(ctx.label.name))
+    cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
+
+    module_args = _build_module_args(
+        main_name = module_name,
+        main_root_path = root_source.path,
+        direct_dep_names = direct_dep_names,
+        all_dep_module_strings = transitive_module_strings,
+    )
+
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib <args> -femit-bin=out.a
+    cm_args = [cache_dir.path]
+    for dc in dep_cache_dirs:
+        cm_args.append(dc.path)
+    cm_args.append("--")
+    cm_args.append(zig_bin.path)
+    cm_args.extend(["build-lib"] + module_args + ["-femit-bin=" + output_a.path])
+
+    all_srcs = depset(transitive = transitive_src_depsets).to_list()
+
+    ctx.actions.run(
+        executable = ctx.executable._compile_tool,
+        arguments = cm_args,
+        inputs = all_srcs + zig_files + dep_cache_dirs,
+        outputs = [output_a, cache_dir],
+        mnemonic = "ZigLibCompile",
+        progress_message = "Compiling Zig library %s" % ctx.label,
+    )
 
     return [
-        DefaultInfo(files = own_srcs),
+        DefaultInfo(files = depset([output_a])),
         ZigModuleInfo(
             module_name = module_name,
             root_source = root_source,
             srcs = own_srcs,
             transitive_srcs = depset(transitive = transitive_src_depsets),
             direct_dep_names = direct_dep_names,
-            transitive_modules = transitive_modules,
+            transitive_module_strings = transitive_module_strings,
+            cache_dir = cache_dir,
         ),
     ]
 
@@ -376,11 +458,20 @@ zig_library = rule(
             providers = [ZigModuleInfo],
             doc = "zig_library dependencies",
         ),
+        "_zig_toolchain": attr.label(
+            default = "@zig_toolchain//:zig_files",
+        ),
+        "_compile_tool": attr.label(
+            default = "//bazel/zig:cache_merge",
+            executable = True,
+            cfg = "exec",
+        ),
     },
-    doc = """Define a Zig module (metadata only, no compilation).
+    doc = """Define a Zig module and pre-compile to populate cache for downstream rules.
 
-Downstream zig_binary / zig_test / zig_static_library rules consume this
-to build -M / --dep flags for the zig compiler.
+Each zig_library compiles with zig build-lib through the cache_merge tool,
+producing an accumulated cache_dir that downstream rules can reuse for
+incremental builds.
 
 Example:
     zig_library(
@@ -402,53 +493,46 @@ def _zig_static_library_impl(ctx):
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
 
-    # Output .a file
     output = ctx.actions.declare_file("lib{}.a".format(info.module_name))
+    cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
-    # Build -M / --dep args
     module_args = _build_module_args(
         main_name = info.module_name,
-        main_root = info.root_source,
+        main_root_path = info.root_source.path,
         direct_dep_names = info.direct_dep_names,
-        transitive_modules = info.transitive_modules,
+        all_dep_module_strings = info.transitive_module_strings,
     )
 
-    # Assemble full command
-    cmd_parts = [
-        '"{zig}"'.format(zig = zig_bin.path),
-        "build-lib",
-    ]
-    cmd_parts.extend(['"{}"'.format(a) for a in module_args])
-    cmd_parts.extend([
-        "-femit-bin=" + output.path,
-        "--cache-dir", '"$ZC"',
-        "--global-cache-dir", '"$ZC"',
-    ])
+    # Collect dep cache from the lib target
+    dep_cache_dirs = []
+    if info.cache_dir:
+        dep_cache_dirs.append(info.cache_dir)
 
-    # Extra compile options
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib <args>
+    cm_args = [cache_dir.path]
+    for dc in dep_cache_dirs:
+        cm_args.append(dc.path)
+    cm_args.append("--")
+    cm_args.append(zig_bin.path)
+    cm_args.extend(["build-lib"] + module_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
-        cmd_parts.extend(["-O", ctx.attr.optimize])
+        cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
-        cmd_parts.extend(["-target", ctx.attr.target])
+        cm_args.extend(["-target", ctx.attr.target])
 
-    cmd = " ".join(cmd_parts)
-    script = 'set -e && ZC=$(mktemp -d) && trap \'rm -rf "$ZC"\' EXIT && {cmd}'.format(cmd = cmd)
-
-    # All transitive source files as inputs
     all_srcs = info.transitive_srcs.to_list()
 
-    ctx.actions.run_shell(
-        command = script,
-        inputs = all_srcs + zig_files,
-        outputs = [output],
+    ctx.actions.run(
+        executable = ctx.executable._compile_tool,
+        arguments = cm_args,
+        inputs = all_srcs + zig_files + dep_cache_dirs,
+        outputs = [output, cache_dir],
         mnemonic = "ZigBuildLib",
         progress_message = "Compiling Zig static library %s" % ctx.label,
-        use_default_shell_env = True,
     )
 
     return [
         DefaultInfo(files = depset([output])),
-        # Also forward ZigModuleInfo so this can be used as a dep
         info,
     ]
 
@@ -469,10 +553,15 @@ zig_static_library = rule(
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
+        "_compile_tool": attr.label(
+            default = "//bazel/zig:cache_merge",
+            executable = True,
+            cfg = "exec",
+        ),
     },
     doc = """Compile a zig_library into a static library (.a).
 
-Useful for C interop — e.g., linking Zig code into an ESP-IDF CMake project.
+Uses the dep's accumulated cache for incremental compilation.
 
 Example:
     zig_static_library(
@@ -494,59 +583,60 @@ def _zig_binary_impl(ctx):
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
 
-    # Output executable
     output = ctx.actions.declare_file(ctx.label.name)
+    cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
     # Collect deps
     direct_dep_names = []
     transitive_src_depsets = [depset(ctx.files.srcs)]
-    direct_deps = []
+    direct_dep_infos = []
+    dep_cache_dirs = []
 
     for dep in ctx.attr.deps:
         info = dep[ZigModuleInfo]
-        direct_deps.append(info)
+        direct_dep_infos.append(info)
         direct_dep_names.append(info.module_name)
         transitive_src_depsets.append(info.transitive_srcs)
+        if info.cache_dir:
+            dep_cache_dirs.append(info.cache_dir)
 
-    transitive_modules = _collect_transitive_modules(direct_deps)
-
-    # Build -M / --dep args
-    module_args = _build_module_args(
-        main_name = module_name,
-        main_root = root_source,
-        direct_dep_names = direct_dep_names,
-        transitive_modules = transitive_modules,
+    direct_dep_strings = [
+        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
+        for info in direct_dep_infos
+    ]
+    all_dep_module_strings = depset(
+        direct_dep_strings,
+        transitive = [info.transitive_module_strings for info in direct_dep_infos],
     )
 
-    # Assemble command
-    cmd_parts = [
-        '"{zig}"'.format(zig = zig_bin.path),
-        "build-exe",
-    ]
-    cmd_parts.extend(['"{}"'.format(a) for a in module_args])
-    cmd_parts.extend([
-        "-femit-bin=" + output.path,
-        "--cache-dir", '"$ZC"',
-        "--global-cache-dir", '"$ZC"',
-    ])
+    module_args = _build_module_args(
+        main_name = module_name,
+        main_root_path = root_source.path,
+        direct_dep_names = direct_dep_names,
+        all_dep_module_strings = all_dep_module_strings,
+    )
 
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-exe <args>
+    cm_args = [cache_dir.path]
+    for dc in dep_cache_dirs:
+        cm_args.append(dc.path)
+    cm_args.append("--")
+    cm_args.append(zig_bin.path)
+    cm_args.extend(["build-exe"] + module_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
-        cmd_parts.extend(["-O", ctx.attr.optimize])
+        cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
-        cmd_parts.extend(["-target", ctx.attr.target])
-
-    cmd = " ".join(cmd_parts)
-    script = 'set -e && ZC=$(mktemp -d) && trap \'rm -rf "$ZC"\' EXIT && {cmd}'.format(cmd = cmd)
+        cm_args.extend(["-target", ctx.attr.target])
 
     all_srcs = depset(transitive = transitive_src_depsets).to_list()
 
-    ctx.actions.run_shell(
-        command = script,
-        inputs = all_srcs + zig_files,
-        outputs = [output],
+    ctx.actions.run(
+        executable = ctx.executable._compile_tool,
+        arguments = cm_args,
+        inputs = all_srcs + zig_files + dep_cache_dirs,
+        outputs = [output, cache_dir],
         mnemonic = "ZigBuildExe",
         progress_message = "Compiling Zig binary %s" % ctx.label,
-        use_default_shell_env = True,
     )
 
     return [DefaultInfo(
@@ -584,8 +674,13 @@ zig_binary = rule(
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
+        "_compile_tool": attr.label(
+            default = "//bazel/zig:cache_merge",
+            executable = True,
+            cfg = "exec",
+        ),
     },
-    doc = """Compile a Zig executable.
+    doc = """Compile a Zig executable using dep caches for incremental builds.
 
 Example:
     zig_binary(
@@ -609,61 +704,63 @@ def _zig_test_impl(ctx):
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
 
-    # Output test binary
     test_bin = ctx.actions.declare_file(ctx.label.name + "_test_bin")
+    cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
 
     # Collect deps
     direct_dep_names = []
     transitive_src_depsets = [depset(ctx.files.srcs)]
-    direct_deps = []
+    direct_dep_infos = []
+    dep_cache_dirs = []
 
     for dep in ctx.attr.deps:
         info = dep[ZigModuleInfo]
-        direct_deps.append(info)
+        direct_dep_infos.append(info)
         direct_dep_names.append(info.module_name)
         transitive_src_depsets.append(info.transitive_srcs)
+        if info.cache_dir:
+            dep_cache_dirs.append(info.cache_dir)
 
-    transitive_modules = _collect_transitive_modules(direct_deps)
-
-    # Build -M / --dep args
-    module_args = _build_module_args(
-        main_name = module_name,
-        main_root = root_source,
-        direct_dep_names = direct_dep_names,
-        transitive_modules = transitive_modules,
+    direct_dep_strings = [
+        _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
+        for info in direct_dep_infos
+    ]
+    all_dep_module_strings = depset(
+        direct_dep_strings,
+        transitive = [info.transitive_module_strings for info in direct_dep_infos],
     )
 
-    # For zig test, we compile the test binary, then create a wrapper script
-    # that runs it. This lets Bazel's test infrastructure handle the execution.
-    cmd_parts = [
-        '"{zig}"'.format(zig = zig_bin.path),
-        "test",
-    ]
-    cmd_parts.extend(['"{}"'.format(a) for a in module_args])
-    cmd_parts.extend([
+    module_args = _build_module_args(
+        main_name = module_name,
+        main_root_path = root_source.path,
+        direct_dep_names = direct_dep_names,
+        all_dep_module_strings = all_dep_module_strings,
+    )
+
+    # cache_merge <out_cache> [dep_caches...] -- <zig> test <args>
+    cm_args = [cache_dir.path]
+    for dc in dep_cache_dirs:
+        cm_args.append(dc.path)
+    cm_args.append("--")
+    cm_args.append(zig_bin.path)
+    cm_args.extend(["test"] + module_args + [
         "--test-no-exec",
         "-femit-bin=" + test_bin.path,
-        "--cache-dir", '"$ZC"',
-        "--global-cache-dir", '"$ZC"',
     ])
-
     if ctx.attr.optimize:
-        cmd_parts.extend(["-O", ctx.attr.optimize])
+        cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
-        cmd_parts.extend(["-target", ctx.attr.target])
-
-    cmd = " ".join(cmd_parts)
-    script = 'set -e && ZC=$(mktemp -d) && trap \'rm -rf "$ZC"\' EXIT && {cmd}'.format(cmd = cmd)
+        cm_args.extend(["-target", ctx.attr.target])
 
     all_srcs = depset(transitive = transitive_src_depsets).to_list()
 
-    ctx.actions.run_shell(
-        command = script,
-        inputs = all_srcs + zig_files,
-        outputs = [test_bin],
+    ctx.actions.run(
+        executable = ctx.executable._compile_tool,
+        arguments = cm_args,
+        inputs = all_srcs + zig_files + dep_cache_dirs,
+        outputs = [test_bin, cache_dir],
         mnemonic = "ZigTestCompile",
         progress_message = "Compiling Zig tests %s" % ctx.label,
-        use_default_shell_env = True,
     )
 
     # Create a runner script that executes the compiled test binary
@@ -709,8 +806,13 @@ zig_test = rule(
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
+        "_compile_tool": attr.label(
+            default = "//bazel/zig:cache_merge",
+            executable = True,
+            cfg = "exec",
+        ),
     },
-    doc = """Compile and run Zig tests.
+    doc = """Compile and run Zig tests using dep caches for incremental builds.
 
 Example:
     zig_test(
