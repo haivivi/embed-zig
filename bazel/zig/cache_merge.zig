@@ -102,6 +102,11 @@ fn copyDirEntries(
     var dst_dir = try cwd.openDir(dst_path, .{});
     defer dst_dir.close();
 
+    try copyDirRecursive(allocator, src_dir, dst_dir);
+}
+
+/// Recursively copy a directory's contents.
+fn copyDirRecursive(allocator: mem.Allocator, src_dir: fs.Dir, dst_dir: fs.Dir) !void {
     var iter = src_dir.iterate();
     while (try iter.next()) |entry| {
         switch (entry.kind) {
@@ -110,37 +115,14 @@ fn copyDirEntries(
                 try src_dir.copyFile(entry.name, dst_dir, entry.name, .{});
             },
             .directory => {
-                try copySubDir(allocator, src_dir, dst_dir, entry.name);
-            },
-            else => {},
-        }
-    }
-}
-
-/// Recursively copy a subdirectory
-fn copySubDir(
-    allocator: mem.Allocator,
-    src_parent: fs.Dir,
-    dst_parent: fs.Dir,
-    name: []const u8,
-) !void {
-    dst_parent.makeDir(name) catch |err| {
-        if (err != error.PathAlreadyExists) return err;
-    };
-
-    var src = try src_parent.openDir(name, .{ .iterate = true });
-    defer src.close();
-    var dst = try dst_parent.openDir(name, .{});
-    defer dst.close();
-
-    var iter = src.iterate();
-    while (try iter.next()) |entry| {
-        switch (entry.kind) {
-            .file => {
-                try src.copyFile(entry.name, dst, entry.name, .{});
-            },
-            .directory => {
-                try copySubDir(allocator, src, dst, entry.name);
+                dst_dir.makeDir(entry.name) catch |err| {
+                    if (err != error.PathAlreadyExists) return err;
+                };
+                var src_sub = try src_dir.openDir(entry.name, .{ .iterate = true });
+                defer src_sub.close();
+                var dst_sub = try dst_dir.openDir(entry.name, .{});
+                defer dst_sub.close();
+                try copyDirRecursive(allocator, src_sub, dst_sub);
             },
             else => {},
         }
