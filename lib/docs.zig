@@ -99,7 +99,7 @@ pub const esp = @import("esp/src/idf.zig");
 ///
 /// Cross-platform interface definitions for threading, synchronization,
 /// time management, queues, sockets, and TLS.
-/// Use with platform-specific implementations (esp.sal or std_sal).
+/// Use with platform-specific implementations (esp impl or std_impl).
 pub const sal = @import("sal/src/sal.zig");
 
 /// Hardware Abstraction Layer
