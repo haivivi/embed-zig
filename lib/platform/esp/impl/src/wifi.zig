@@ -34,10 +34,15 @@
 const std = @import("std");
 const idf = @import("idf");
 const hal = @import("hal");
+const waitgroup = @import("waitgroup");
 
 const log = std.log.scoped(.wifi_impl);
 const heap = idf.heap;
-const async_task = idf.async_;
+const EspRt = idf.runtime;
+
+/// WaitGroup type used for running tasks on IRAM stack.
+/// Uses heap.iram allocator for GoContext allocation.
+const WG = waitgroup.WaitGroup(EspRt);
 
 // ============================================================================
 // Common Types
@@ -66,7 +71,7 @@ const StaInitCtx = struct {
 };
 
 /// STA init task - runs on IRAM stack to avoid XIP PSRAM conflict
-fn staInitTask(ctx_ptr: ?*anyopaque) callconv(.c) void {
+fn staInitTask(ctx_ptr: ?*anyopaque) void {
     const ctx: *StaInitCtx = @ptrCast(@alignCast(ctx_ptr));
 
     // 1. Initialize event loop
@@ -111,7 +116,7 @@ const StaConnectCtx = struct {
 };
 
 /// STA connect task - runs on IRAM stack
-fn staConnectTask(ctx_ptr: ?*anyopaque) callconv(.c) void {
+fn staConnectTask(ctx_ptr: ?*anyopaque) void {
     const ctx: *StaConnectCtx = @ptrCast(@alignCast(ctx_ptr));
 
     const ssid_len = std.mem.indexOfScalar(u8, &ctx.ssid, 0) orelse ctx.ssid.len;
@@ -158,13 +163,14 @@ pub const StaDriver = struct {
     /// Initializes: event loop -> netif -> wifi driver -> STA mode
     pub fn init() !Self {
         // Run initialization on IRAM stack (PHY calibration accesses Flash)
-        var wg = async_task.WaitGroup.init(heap.iram);
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = StaInitCtx{};
-        wg.go(heap.iram, "sta_init", staInitTask, &ctx, .{
+        wg.go("sta_init", staInitTask, &ctx, .{
             .stack_size = 8192,
             .priority = 20,
+            .allocator = heap.iram,
         }) catch {
             return error.InitFailed;
         };
@@ -198,7 +204,7 @@ pub const StaDriver = struct {
         }
 
         // Run connection on IRAM stack
-        var wg = async_task.WaitGroup.init(heap.iram);
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = StaConnectCtx{
@@ -210,9 +216,10 @@ pub const StaDriver = struct {
         @memcpy(ctx.ssid[0..ssid_len], ssid[0..ssid_len]);
         @memcpy(ctx.password[0..pass_len], password[0..pass_len]);
 
-        wg.go(heap.iram, "sta_conn", staConnectTask, &ctx, .{
+        wg.go("sta_conn", staConnectTask, &ctx, .{
             .stack_size = 8192,
             .priority = 20,
+            .allocator = heap.iram,
         }) catch {
             log.err("Failed to spawn connect task", .{});
             return;
@@ -281,7 +288,7 @@ const ApInitCtx = struct {
 };
 
 /// AP init task - runs on IRAM stack
-fn apInitTask(ctx_ptr: ?*anyopaque) callconv(.c) void {
+fn apInitTask(ctx_ptr: ?*anyopaque) void {
     const ctx: *ApInitCtx = @ptrCast(@alignCast(ctx_ptr));
 
     // 1. Initialize event loop
@@ -328,13 +335,14 @@ pub const ApDriver = struct {
 
     /// Initialize AP mode
     pub fn init() !Self {
-        var wg = async_task.WaitGroup.init(heap.iram);
+        var wg = WG.init(heap.iram);
         defer wg.deinit();
 
         var ctx = ApInitCtx{};
-        wg.go(heap.iram, "ap_init", apInitTask, &ctx, .{
+        wg.go("ap_init", apInitTask, &ctx, .{
             .stack_size = 8192,
             .priority = 20,
+            .allocator = heap.iram,
         }) catch {
             return error.InitFailed;
         };

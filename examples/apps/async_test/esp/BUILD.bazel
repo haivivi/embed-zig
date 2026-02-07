@@ -1,5 +1,5 @@
 # Async Test - ESP Platform
-# Tests go() and WaitGroup with TLS callbacks
+# Tests cross-platform async framework (CancellationToken, WaitGroup, Channel)
 
 load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
 
@@ -17,7 +17,14 @@ esp_zig_app(
     app = ":srcs",
     boards = ["esp32s3_devkit"],
     requires = ["freertos"],
-    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [
+        "//lib/hal",
+        "//lib/pkg/cancellation",
+        "//lib/pkg/waitgroup",
+        "//lib/pkg/drivers",
+        "//lib/pkg/math",
+        "//lib/pkg/motion",
+    ],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

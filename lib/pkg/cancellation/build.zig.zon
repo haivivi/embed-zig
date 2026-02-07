@@ -1,0 +1,10 @@
+.{
+    .name = .cancellation,
+    .version = "0.1.0",
+    .fingerprint = 0xfbce5d0c13279a6c,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,12 @@
+load("//bazel/zig:defs.bzl", "zig_lib")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_lib(
+    name = "waitgroup",
+    srcs = glob(["**/*"]),
+    deps = [
+        "//lib/trait",
+        "//lib/platform/std",
+    ],
+)

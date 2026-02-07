@@ -20,23 +20,12 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit tests");
 
-    // Test socket module (needs trait)
-    const socket_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sal/socket.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    socket_tests.root_module.addImport("trait", trait_dep.module("trait"));
-    test_step.dependOn(&b.addRunArtifact(socket_tests).step);
-
-    // Test other modules (no dependencies)
+    // Test modules (no dependencies)
     const test_files = [_][]const u8{
-        "src/sal/async.zig",
-        "src/sal/sync.zig",
-        "src/sal/time.zig",
-        "src/sal/thread.zig",
+        "src/impl/sync.zig",
+        "src/impl/time.zig",
+        "src/impl/thread.zig",
+        "src/impl/runtime.zig",
     };
 
     for (test_files) |file| {

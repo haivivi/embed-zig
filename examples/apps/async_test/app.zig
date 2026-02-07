@@ -1,25 +1,26 @@
-//! Async Task Test - Tests go() and WaitGroup with TLS callbacks
+//! Async Framework Test
 //!
-//! This example verifies:
-//! 1. go() fire-and-forget tasks execute and clean up properly
-//! 2. WaitGroup.go() tasks trigger done() via TLS deletion callback
+//! This example verifies the cross-platform async primitives:
+//! 1. CancellationToken - cooperative cancellation
+//! 2. WaitGroup.go() - spawn tracked tasks, wait for completion
 //! 3. Multiple concurrent tasks work correctly
 
 const std = @import("std");
 const esp = @import("esp");
+const cancellation = @import("cancellation");
+const waitgroup = @import("waitgroup");
 
 const idf = esp.idf;
-const async_mod = idf.async_;
 const heap = idf.heap;
+const EspRt = idf.runtime;
+const WG = waitgroup.WaitGroup(EspRt);
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
 
-const BUILD_TAG = "async_test_tls_callback";
-
 // ============================================================================
-// Test 1: Fire-and-forget task
+// Test 1: Fire-and-forget task via runtime.spawn
 // ============================================================================
 
 const FireForgetCtx = struct {
@@ -27,7 +28,7 @@ const FireForgetCtx = struct {
     delay_ms: u32,
 };
 
-fn fireForgetTask(ctx: ?*anyopaque) callconv(.c) void {
+fn fireForgetTask(ctx: ?*anyopaque) void {
     const ff_ctx: *FireForgetCtx = @ptrCast(@alignCast(ctx));
     log.info("[FireForget #{}] Started, will sleep {}ms", .{ ff_ctx.id, ff_ctx.delay_ms });
     idf.time.sleepMs(ff_ctx.delay_ms);
@@ -44,14 +45,14 @@ fn testFireForget() !void {
     const ctx2 = try heap.psram.create(FireForgetCtx);
     ctx2.* = .{ .id = 2, .delay_ms = 1000 };
 
-    // Spawn fire-and-forget tasks
-    try async_mod.go(heap.psram, "ff_task1", fireForgetTask, ctx1, .{
+    // Spawn fire-and-forget tasks via runtime
+    try EspRt.spawn("ff_task1", fireForgetTask, ctx1, .{
         .stack_size = 4096,
         .priority = 10,
     });
     log.info("Spawned fire-forget task #1", .{});
 
-    try async_mod.go(heap.psram, "ff_task2", fireForgetTask, ctx2, .{
+    try EspRt.spawn("ff_task2", fireForgetTask, ctx2, .{
         .stack_size = 4096,
         .priority = 10,
     });
@@ -73,19 +74,18 @@ const WaitGroupCtx = struct {
     completed: bool = false,
 };
 
-fn waitGroupTask(ctx: ?*anyopaque) callconv(.c) void {
+fn waitGroupTask(ctx: ?*anyopaque) void {
     const wg_ctx: *WaitGroupCtx = @ptrCast(@alignCast(ctx));
     log.info("[WaitGroup #{}] Started, will sleep {}ms", .{ wg_ctx.id, wg_ctx.delay_ms });
     idf.time.sleepMs(wg_ctx.delay_ms);
     wg_ctx.completed = true;
     log.info("[WaitGroup #{}] Completed!", .{wg_ctx.id});
-    // Note: done() is called by TLS deletion callback, not here
 }
 
 fn testWaitGroupSingle() !void {
     log.info("=== Test 2: WaitGroup single task ===", .{});
 
-    var wg = async_mod.WaitGroup.init(heap.psram);
+    var wg = WG.init(heap.psram);
     defer wg.deinit();
 
     var ctx = WaitGroupCtx{ .id = 1, .delay_ms = 500 };
@@ -93,9 +93,10 @@ fn testWaitGroupSingle() !void {
     const start_time = idf.time.nowMs();
     log.info("Spawning WaitGroup task...", .{});
 
-    try wg.go(heap.iram, "wg_task1", waitGroupTask, &ctx, .{
+    try wg.go("wg_task1", waitGroupTask, &ctx, .{
         .stack_size = 4096,
         .priority = 15,
+        .allocator = heap.iram,
     });
 
     log.info("Waiting for task to complete...", .{});
@@ -106,7 +107,7 @@ fn testWaitGroupSingle() !void {
     log.info("Task completed flag: {}", .{ctx.completed});
 
     if (ctx.completed and elapsed >= 400) {
-        log.info("TEST 2 PASSED: TLS callback correctly triggered done()", .{});
+        log.info("TEST 2 PASSED: WaitGroup correctly waited for task", .{});
     } else {
         log.err("TEST 2 FAILED: completed={}, elapsed={}ms", .{ ctx.completed, elapsed });
     }
@@ -119,7 +120,7 @@ fn testWaitGroupSingle() !void {
 fn testWaitGroupMultiple() !void {
     log.info("=== Test 3: WaitGroup multiple tasks ===", .{});
 
-    var wg = async_mod.WaitGroup.init(heap.psram);
+    var wg = WG.init(heap.psram);
     defer wg.deinit();
 
     var ctx1 = WaitGroupCtx{ .id = 1, .delay_ms = 300 };
@@ -130,17 +131,20 @@ fn testWaitGroupMultiple() !void {
     log.info("Spawning 3 WaitGroup tasks...", .{});
 
     // Spawn all tasks
-    try wg.go(heap.iram, "wg_multi1", waitGroupTask, &ctx1, .{
+    try wg.go("wg_multi1", waitGroupTask, &ctx1, .{
         .stack_size = 4096,
         .priority = 15,
+        .allocator = heap.iram,
     });
-    try wg.go(heap.iram, "wg_multi2", waitGroupTask, &ctx2, .{
+    try wg.go("wg_multi2", waitGroupTask, &ctx2, .{
         .stack_size = 4096,
         .priority = 15,
+        .allocator = heap.iram,
     });
-    try wg.go(heap.iram, "wg_multi3", waitGroupTask, &ctx3, .{
+    try wg.go("wg_multi3", waitGroupTask, &ctx3, .{
         .stack_size = 4096,
         .priority = 15,
+        .allocator = heap.iram,
     });
 
     log.info("All tasks spawned, waiting...", .{});
@@ -162,13 +166,43 @@ fn testWaitGroupMultiple() !void {
 }
 
 // ============================================================================
+// Test 4: CancellationToken
+// ============================================================================
+
+fn testCancellationToken() !void {
+    log.info("=== Test 4: CancellationToken ===", .{});
+
+    var token = cancellation.CancellationToken.init();
+
+    if (token.isCancelled()) {
+        log.err("TEST 4 FAILED: token should not be cancelled initially", .{});
+        return;
+    }
+
+    token.cancel();
+
+    if (!token.isCancelled()) {
+        log.err("TEST 4 FAILED: token should be cancelled after cancel()", .{});
+        return;
+    }
+
+    token.reset();
+
+    if (token.isCancelled()) {
+        log.err("TEST 4 FAILED: token should not be cancelled after reset()", .{});
+        return;
+    }
+
+    log.info("TEST 4 PASSED: CancellationToken works correctly", .{});
+}
+
+// ============================================================================
 // Main entry point
 // ============================================================================
 
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
-    log.info("Async Task Test - TLS Callback Verification", .{});
-    log.info("Build Tag: {s}", .{BUILD_TAG});
+    log.info("Async Framework Test", .{});
     log.info("==========================================", .{});
     log.info("Board:     {s}", .{Board.meta.id});
     log.info("==========================================", .{});
@@ -185,6 +219,12 @@ pub fn run(_: anytype) void {
     log.info("", .{});
 
     // Run tests
+    testCancellationToken() catch |err| {
+        log.err("Test 4 failed: {}", .{err});
+    };
+
+    log.info("", .{});
+
     testFireForget() catch |err| {
         log.err("Test 1 failed: {}", .{err});
     };
