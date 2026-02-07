@@ -237,7 +237,7 @@ pub const SpeakerDriver = struct {
 │  App Code                                               │
 │    gatt_server.handle(svc, char, handler_fn)            │
 ├─────────────────────────────────────────────────────────┤
-│  gatt_server / gatt_client          (lib/bluetooth/)    │
+│  gatt_server / gatt_client       (lib/pkg/bluetooth/)   │
 │    Cross-platform, handler pattern like Go http.Server  │
 │    Each handler runs in a coroutine                     │
 ├─────────────────────────────────────────────────────────┤
@@ -245,7 +245,7 @@ pub const SpeakerDriver = struct {
 │    GAP/GATT-level abstraction boundary                  │
 ├────────────────────┬────────────────────────────────────┤
 │  Pure Zig Host     │  CoreBluetooth wrapper             │
-│  (lib/bluetooth/)  │  (future platform impl)            │
+│(lib/pkg/bluetooth/)│  (future platform impl)            │
 │  HCI → L2CAP → ATT│                                    │
 ├────────────────────┤  (no HCI needed)                   │
 │  HCI trait         │                                    │
@@ -367,7 +367,7 @@ lib/hal/src/
   hci.zig                   -- HCI transport trait (read/write/poll)
   ble.zig                   -- BLE Host trait (GAP/GATT level)
 
-lib/bluetooth/
+lib/pkg/bluetooth/
   src/
     bluetooth.zig            -- root module
     gatt_server.zig          -- GATT server (handler pattern, cross-platform)
@@ -635,9 +635,9 @@ const PollFlags = packed struct {
 };
 ```
 
-#### Phase 2: BLE 协议栈 (`lib/bluetooth/`)
+#### Phase 2: BLE 协议栈 (`lib/pkg/bluetooth/`)
 
-- [ ] **2.1** 创建 `lib/bluetooth/` 模块骨架
+- [ ] **2.1** 创建 `lib/pkg/bluetooth/` 模块骨架
 - [ ] **2.2** HCI 包层 — `host/hci/commands.zig` + `events.zig` + `acl.zig`（编码/解码 HCI 包）
 - [ ] **2.3** L2CAP 层 — `host/l2cap/l2cap.zig`（固定信道 CID 4/5/6，分片/重组）
 - [ ] **2.4** ATT 协议 — `host/att/att.zig`（PDU 编码/解码）
