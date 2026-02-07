@@ -27,7 +27,7 @@ pub const v4 = @import("v4.zig");
 pub const v5 = @import("v5.zig");
 pub const trie = @import("trie.zig");
 pub const mux = @import("mux.zig");
-// pub const client = @import("client.zig");
+pub const client = @import("client.zig");
 // pub const broker = @import("broker.zig");
 
 // Re-export common types
@@ -50,4 +50,5 @@ test {
     _ = v5;
     _ = trie;
     _ = mux;
+    _ = client;
 }
