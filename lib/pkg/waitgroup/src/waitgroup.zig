@@ -103,29 +103,16 @@ pub fn WaitGroup(comptime Rt: type) type {
         /// The task will automatically call wg.done() when it returns.
         pub fn go(self: *Self, name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Rt.Options) !void {
             self.add(1);
-            errdefer self.done(); // rollback if spawn fails
+            errdefer self.done(); // rollback counter if spawn fails
 
-            // We need to pass both the user func/ctx and the WaitGroup pointer.
-            // Use a small wrapper struct allocated... but we can't use allocator here.
-            // Instead, use a comptime closure trick with a static wrapper.
-            //
-            // For the wrapper, we store func+ctx+wg in a GoContext.
-            // Since spawn is fire-and-forget (detached), we need the context to live
-            // until the task runs. We use a pool of contexts.
-            //
-            // Simpler approach: use a single packed context via @ptrCast tricks.
-            // But that's fragile. Let's use a static pool.
-            //
-            // Actually, the cleanest approach for freestanding: encode the WaitGroup
-            // pointer and user ctx into a GoContext stored on the WaitGroup itself
-            // using a bounded pool.
-
-            // For now, use a simple approach: allocate GoContext on a global page allocator.
-            // This works for both std and ESP (FreeRTOS has malloc).
+            // Allocate a GoContext from the static pool to pass wg+func+ctx
+            // to the spawned task. The pool avoids allocator dependency.
             const go_ctx = GoContext.alloc() orelse {
-                self.done(); // rollback
+                self.done(); // rollback counter
                 return error.OutOfMemory;
             };
+            errdefer GoContext.free(go_ctx); // return to pool if spawn fails
+
             go_ctx.* = .{
                 .wg = self,
                 .func = func,
