@@ -1,16 +1,14 @@
 # mqtt0 Integration Tests
 #
-# Test coverage:
-#   - Zig client ↔ Zig broker (MQTT 3.1.1 + 5.0)
-#   - Zig client → Go broker (cross-language)
-#   - Go client → Zig broker (cross-language)
+# bazel test //lib/pkg/mqtt0/test:mqtt0_zig_test     — unit + zig-zig integration
+# bazel test //lib/pkg/mqtt0/test:mqtt0_cross_test   — cross-language (Go ↔ Zig)
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
 # ============================================================================
-# Zig Self-Test (zig client ↔ zig broker, v4 + v5)
+# Zig Tests (unit + zig client ↔ zig broker, v4 + v5)
 # ============================================================================
 
 sh_test(
@@ -19,6 +17,7 @@ sh_test(
     data = [
         "//lib/pkg/mqtt0:mqtt0",
         "//lib/trait:trait",
+        "//lib/platform/std",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
@@ -32,7 +31,7 @@ sh_test(
 )
 
 # ============================================================================
-# Cross-Language Test (requires Go)
+# Cross-Language Tests (Zig ↔ Go, v4 + v5)
 # ============================================================================
 
 sh_test(
@@ -41,17 +40,19 @@ sh_test(
     data = [
         "//lib/pkg/mqtt0:mqtt0",
         "//lib/trait:trait",
-        "//tools/mqtt_server:srcs",
-        "//tools/mqtt_client:srcs",
+        "//lib/platform/std",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
     },
+    # NOTE: Run with: bazel test --test_env=BUILD_WORKSPACE_DIRECTORY=$(pwd) //lib/pkg/mqtt0/test:mqtt0_cross_test
+    # Pre-build Go tools first: cd tools/mqtt_server && go build . && cd ../mqtt_client && go build .
     tags = [
         "integration",
         "requires-network",
         "local",
         "no-sandbox",
+        "manual",  # Requires pre-built Go binaries
     ],
     timeout = "moderate",
 )
@@ -62,5 +63,5 @@ sh_test(
 
 filegroup(
     name = "test_sources",
-    srcs = glob(["*.sh"]),
+    srcs = glob(["**/*"]),
 )
