@@ -1,6 +1,6 @@
 # embed-zig libraries
 #
-# Each library has its own BUILD.bazel with zig_lib() rule.
+# Each library has its own BUILD.bazel with zig_package() macro.
 # See individual lib/*/BUILD.bazel for specific dependencies.
 #
 # Usage in esp_zig_app:

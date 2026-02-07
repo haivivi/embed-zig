@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 # =============================================================================
 # All libraries - used by esp_zig_app for file copying
-# Each library also has zig_lib() rule for dependency resolution (//lib/xxx:xxx)
+# Each library has zig_package() macro for Bazel-native compilation (//lib/xxx:xxx)
 # =============================================================================
 
 filegroup(
