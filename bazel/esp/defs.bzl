@@ -37,7 +37,7 @@ Build:
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
 load("//bazel/esp/partition:table.bzl", "EspPartitionTableInfo")
-load("//bazel/zig:defs.bzl", "ZigLibInfo")
+load("//bazel/zig:defs.bzl", "ZigModuleInfo")
 
 # sdkconfig modules (each corresponds to ESP-IDF components)
 # All modules are independent rules that generate .sdkconfig fragments
@@ -378,12 +378,12 @@ def _esp_zig_app_impl(ctx):
     default_board = boards_list[0]
     
     # Collect Zig library dependencies from deps attribute
-    deps_infos = []  # List of (ZigLibInfo, files)
+    deps_infos = []  # List of (ZigModuleInfo, files)
     deps_files = []  # All dependency source files to copy
     for dep in ctx.attr.deps:
-        if ZigLibInfo in dep:
-            info = dep[ZigLibInfo]
-            files = dep.files.to_list()
+        if ZigModuleInfo in dep:
+            info = dep[ZigModuleInfo]
+            files = info.transitive_srcs.to_list()
             deps_infos.append((info, files))
             deps_files.extend(files)
     
@@ -398,8 +398,8 @@ def _esp_zig_app_impl(ctx):
     app_extra_deps_zon = ""
     
     for info, files in deps_infos:
-        dep_name = info.name
-        dep_path = info.path  # e.g., "lib/hal"
+        dep_name = info.module_name
+        dep_path = info.package_path  # e.g., "lib/hal"
         
         # Detect actual path from files (handles external repository case)
         # For external repos, short_path is like "../embed_zig+/lib/hal/..."
@@ -1056,8 +1056,8 @@ esp_zig_app = rule(
             doc = "Extra C source variables (e.g., I2C_C_SOURCES)",
         ),
         "deps": attr.label_list(
-            providers = [ZigLibInfo],
-            doc = "Zig library dependencies (e.g., //lib/hal, //lib/drivers)",
+            providers = [ZigModuleInfo],
+            doc = "Zig library dependencies (e.g., //lib/hal, //lib/pkg/drivers)",
         ),
         "idf_deps": attr.string_list(
             default = [],
