@@ -1,20 +1,11 @@
-# ESP library - ESP-IDF bindings and implementations
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+# ESP platform — file copying only (compiled via esp_zig_app + CMake, not Bazel-native zig)
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+filegroup(
     name = "esp",
     srcs = glob(["**/*"], exclude = ["idf/**", "impl/**"]) + [
         "//lib/platform/esp/idf",
         "//lib/platform/esp/impl",
-    ],
-    deps = [
-        "//lib/pkg/crypto",
-        "//lib/pkg/dns",
-        "//lib/pkg/drivers",
-        "//lib/hal",
-        "//lib/trait",
     ],
 )
