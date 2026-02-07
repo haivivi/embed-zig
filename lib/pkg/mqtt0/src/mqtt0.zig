@@ -74,6 +74,8 @@ pub fn Broker(comptime Transport: type) type {
 }
 pub const Authenticator = broker.Authenticator;
 pub const AllowAll = broker.AllowAll;
+pub const ConnectCallback = broker.ConnectCallback;
+pub const DisconnectCallback = broker.DisconnectCallback;
 
 // Run all tests
 test {

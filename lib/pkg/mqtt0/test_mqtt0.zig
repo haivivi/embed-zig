@@ -87,7 +87,7 @@ const TestState = struct {
 
 var test_state = TestState{};
 
-fn testHandler(msg: *const mqtt0.Message) anyerror!void {
+fn testHandler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
     const tlen = @min(msg.topic.len, 256);
     @memcpy(test_state.received_topic[0..tlen], msg.topic[0..tlen]);
     test_state.received_topic_len = tlen;

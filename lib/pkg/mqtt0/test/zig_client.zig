@@ -48,7 +48,7 @@ var received_topic_len: usize = 0;
 var received_payload_buf: [256]u8 = undefined;
 var received_payload_len: usize = 0;
 
-fn handler(msg: *const mqtt0.Message) anyerror!void {
+fn handler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
     const tlen = @min(msg.topic.len, 256);
     @memcpy(received_topic_buf[0..tlen], msg.topic[0..tlen]);
     received_topic_len = tlen;

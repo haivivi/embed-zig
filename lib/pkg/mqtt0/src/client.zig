@@ -1,13 +1,21 @@
 //! MQTT Client — connects to a broker, publishes, subscribes, dispatches via Mux.
 //!
-//! Generic over Transport type (anything with send/recv).
-//! Received messages are automatically dispatched through the Mux.
+//! Features:
+//! - MQTT 3.1.1 (v4) and 5.0 (v5) support
+//! - Mux-based message dispatch (handlers registered by topic pattern)
+//! - Session Expiry (v5)
+//! - Write mutex for concurrent publish safety
+//! - Auto keepalive ping
 //!
 //! Usage:
 //!     var mux = try Mux.init(allocator);
 //!     try mux.handleFn("device/+/state", handleState);
 //!
-//!     var client = try Client(Socket).init(&socket, &mux, .{ .client_id = "dev-001" });
+//!     var client = try Client(Socket).init(&socket, &mux, .{
+//!         .client_id = "dev-001",
+//!         .protocol_version = .v5,
+//!         .session_expiry = 3600,
+//!     });
 //!     try client.subscribe(&.{"device/+/state"});
 //!     try client.readLoop(); // blocks, dispatches to mux
 
@@ -18,7 +26,6 @@ const v5 = @import("v5.zig");
 const mux_mod = @import("mux.zig");
 
 const Message = pkt.Message;
-const Handler = mux_mod.Handler;
 const Mux = mux_mod.Mux;
 const ProtocolVersion = pkt.ProtocolVersion;
 
@@ -33,6 +40,8 @@ pub fn Client(comptime Transport: type) type {
             keep_alive: u16 = 60,
             clean_start: bool = true,
             protocol_version: ProtocolVersion = .v4,
+            /// Session Expiry Interval in seconds (v5 only). null = use broker default.
+            session_expiry: ?u32 = null,
         };
 
         transport: *Transport,
@@ -41,6 +50,7 @@ pub fn Client(comptime Transport: type) type {
         connected: bool = false,
         next_packet_id: u16 = 1,
         buf: [8192]u8 = undefined,
+        write_mutex: std.Thread.Mutex = .{},
 
         // ---- Lifecycle ----
 
@@ -68,14 +78,27 @@ pub fn Client(comptime Transport: type) type {
             if (!self.connected) return error.NotConnected;
             const pid = self.nextPid();
 
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             switch (self.config.protocol_version) {
                 .v4 => {
                     const sub = v4.Subscribe{ .packet_id = pid, .topics = topics };
                     const len = try v4.encodeSubscribe(&self.buf, &sub);
                     try pkt.writeAll(self.transport, self.buf[0..len]);
+                },
+                .v5 => {
+                    const len = try v5.encodeSubscribe(&self.buf, pid, topics, &.{});
+                    try pkt.writeAll(self.transport, self.buf[0..len]);
+                },
+            }
 
-                    // Wait for SUBACK
-                    const pkt_len = try pkt.readPacket(self.transport, &self.buf);
+            // Read SUBACK (release write lock, take it back not needed for read)
+            // Note: in a fully concurrent client, reads would be on a separate thread.
+            // For now, subscribe is synchronous.
+            const pkt_len = try pkt.readPacket(self.transport, &self.buf);
+            switch (self.config.protocol_version) {
+                .v4 => {
                     const result = try v4.decodePacket(self.buf[0..pkt_len]);
                     switch (result.packet) {
                         .suback => |sa| {
@@ -88,10 +111,6 @@ pub fn Client(comptime Transport: type) type {
                     }
                 },
                 .v5 => {
-                    const len = try v5.encodeSubscribe(&self.buf, pid, topics, &.{});
-                    try pkt.writeAll(self.transport, self.buf[0..len]);
-
-                    const pkt_len = try pkt.readPacket(self.transport, &self.buf);
                     const result = try v5.decodePacket(self.buf[0..pkt_len]);
                     switch (result.packet) {
                         .suback => |sa| {
@@ -111,6 +130,9 @@ pub fn Client(comptime Transport: type) type {
             if (!self.connected) return error.NotConnected;
             const pid = self.nextPid();
 
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             switch (self.config.protocol_version) {
                 .v4 => {
                     const unsub = v4.Unsubscribe{ .packet_id = pid, .topics = topics };
@@ -126,15 +148,15 @@ pub fn Client(comptime Transport: type) type {
 
         /// Publish a message (QoS 0).
         pub fn publish(self: *Self, topic: []const u8, payload: []const u8) !void {
-            return self.publishMessage(&.{
-                .topic = topic,
-                .payload = payload,
-            });
+            return self.publishMessage(&.{ .topic = topic, .payload = payload });
         }
 
         /// Publish with full message options.
         pub fn publishMessage(self: *Self, msg: *const Message) !void {
             if (!self.connected) return error.NotConnected;
+
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
 
             switch (self.config.protocol_version) {
                 .v4 => {
@@ -161,14 +183,13 @@ pub fn Client(comptime Transport: type) type {
         // ---- Read Loop ----
 
         /// Run the receive loop. Blocks, reads packets, dispatches to mux.
-        /// Returns on disconnect or error.
         pub fn readLoop(self: *Self) !void {
             while (self.connected) {
                 try self.poll();
             }
         }
 
-        /// Read and process a single packet. Blocks until one packet arrives.
+        /// Read and process a single packet.
         pub fn poll(self: *Self) !void {
             const pkt_len = pkt.readPacket(self.transport, &self.buf) catch |err| {
                 self.connected = false;
@@ -179,9 +200,13 @@ pub fn Client(comptime Transport: type) type {
 
         // ---- Keepalive ----
 
-        /// Send PINGREQ.
+        /// Send PINGREQ (thread-safe via write_mutex).
         pub fn ping(self: *Self) !void {
             if (!self.connected) return error.NotConnected;
+
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             const len = switch (self.config.protocol_version) {
                 .v4 => try v4.encodePingReq(&self.buf),
                 .v5 => try v5.encodePingReq(&self.buf),
@@ -189,7 +214,6 @@ pub fn Client(comptime Transport: type) type {
             try pkt.writeAll(self.transport, self.buf[0..len]);
         }
 
-        /// Check if connected.
         pub fn isConnected(self: *const Self) bool {
             return self.connected;
         }
@@ -222,12 +246,18 @@ pub fn Client(comptime Transport: type) type {
                     }
                 },
                 .v5 => {
+                    var props = v5.Properties{};
+                    if (self.config.session_expiry) |se| {
+                        props.session_expiry = se;
+                    }
+
                     const connect = v5.Connect{
                         .client_id = self.config.client_id,
                         .username = self.config.username,
                         .password = self.config.password,
                         .clean_start = self.config.clean_start,
                         .keep_alive = self.config.keep_alive,
+                        .properties = props,
                     };
                     const len = try v5.encodeConnect(&self.buf, &connect);
                     try pkt.writeAll(self.transport, self.buf[0..len]);
@@ -246,6 +276,9 @@ pub fn Client(comptime Transport: type) type {
         }
 
         fn doDisconnect(self: *Self) void {
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             const len = switch (self.config.protocol_version) {
                 .v4 => v4.encodeDisconnect(&self.buf) catch return,
                 .v5 => v5.encodeDisconnect(&self.buf, &.{}) catch return,
@@ -256,37 +289,28 @@ pub fn Client(comptime Transport: type) type {
 
         fn dispatchPacket(self: *Self, data: []const u8) !void {
             const hdr = try pkt.decodeFixedHeader(data);
-
             switch (hdr.packet_type) {
                 .publish => {
                     switch (self.config.protocol_version) {
                         .v4 => {
                             const result = try v4.decodePacket(data);
                             const p = result.packet.publish;
-                            const msg = Message{
-                                .topic = p.topic,
-                                .payload = p.payload,
-                                .retain = p.retain,
-                            };
-                            try self.mux.handleMessage(&msg);
+                            const msg = Message{ .topic = p.topic, .payload = p.payload, .retain = p.retain };
+                            try self.mux.handleMessage(self.config.client_id, &msg);
                         },
                         .v5 => {
                             const result = try v5.decodePacket(data);
                             const p = result.packet.publish;
-                            const msg = Message{
-                                .topic = p.topic,
-                                .payload = p.payload,
-                                .retain = p.retain,
-                            };
-                            try self.mux.handleMessage(&msg);
+                            const msg = Message{ .topic = p.topic, .payload = p.payload, .retain = p.retain };
+                            try self.mux.handleMessage(self.config.client_id, &msg);
                         },
                     }
                 },
-                .pingresp => {}, // Ignore
+                .pingresp => {},
                 .disconnect => {
                     self.connected = false;
                 },
-                else => {}, // Ignore other packets in read loop
+                else => {},
             }
         }
 

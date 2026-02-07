@@ -20,20 +20,20 @@ pub const Handler = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        handleMessage: *const fn (ptr: *anyopaque, msg: *const packet.Message) anyerror!void,
+        handleMessage: *const fn (ptr: *anyopaque, client_id: []const u8, msg: *const packet.Message) anyerror!void,
     };
 
-    pub fn handleMessage(self: Handler, msg: *const packet.Message) !void {
-        return self.vtable.handleMessage(self.ptr, msg);
+    pub fn handleMessage(self: Handler, client_id: []const u8, msg: *const packet.Message) !void {
+        return self.vtable.handleMessage(self.ptr, client_id, msg);
     }
 
-    /// Create Handler from a pointer type that has `handleMessage(*const Message) !void`.
+    /// Create Handler from a pointer type that has `handleMessage([]const u8, *const Message) !void`.
     pub fn from(ptr: anytype) Handler {
         const Ptr = @TypeOf(ptr);
         const impl = struct {
-            fn handleMessage(raw: *anyopaque, msg: *const packet.Message) anyerror!void {
+            fn handleMessage(raw: *anyopaque, client_id: []const u8, msg: *const packet.Message) anyerror!void {
                 const self: Ptr = @ptrCast(@alignCast(raw));
-                return self.handleMessage(msg);
+                return self.handleMessage(client_id, msg);
             }
         };
         return .{
@@ -44,14 +44,17 @@ pub const Handler = struct {
 };
 
 // ============================================================================
-// HandlerFn wrapper — wraps a bare function as a Handler
+// HandlerFn wrapper
 // ============================================================================
 
-const FnHandler = struct {
-    func: *const fn (*const packet.Message) anyerror!void,
+/// Function handler signature: fn(client_id, message) !void
+pub const HandlerFnType = *const fn ([]const u8, *const packet.Message) anyerror!void;
 
-    pub fn handleMessage(self: *const FnHandler, msg: *const packet.Message) anyerror!void {
-        return self.func(msg);
+const FnHandler = struct {
+    func: HandlerFnType,
+
+    pub fn handleMessage(self: *const FnHandler, client_id: []const u8, msg: *const packet.Message) anyerror!void {
+        return self.func(client_id, msg);
     }
 };
 
@@ -62,7 +65,6 @@ const FnHandler = struct {
 pub const Mux = struct {
     allocator: Allocator,
     trie: trie_mod.Trie(Entry),
-    /// Stored FnHandler wrappers (for handleFn lifetime)
     fn_handlers: std.ArrayListUnmanaged(*FnHandler),
     mutex: std.Thread.Mutex,
 
@@ -95,9 +97,9 @@ pub const Mux = struct {
     }
 
     /// Register a function handler (convenience).
-    pub fn handleFn(self: *Mux, pattern: []const u8, f: *const fn (*const packet.Message) anyerror!void) !void {
-        // Allocate a FnHandler so its pointer is stable
+    pub fn handleFn(self: *Mux, pattern: []const u8, f: HandlerFnType) !void {
         const fh = try self.allocator.create(FnHandler);
+        errdefer self.allocator.destroy(fh);
         fh.* = .{ .func = f };
         try self.fn_handlers.append(self.allocator, fh);
 
@@ -105,9 +107,9 @@ pub const Mux = struct {
             .ptr = @ptrCast(fh),
             .vtable = &.{
                 .handleMessage = struct {
-                    fn call(ptr: *anyopaque, msg: *const packet.Message) anyerror!void {
+                    fn call(ptr: *anyopaque, client_id: []const u8, msg: *const packet.Message) anyerror!void {
                         const fh_ptr: *const FnHandler = @ptrCast(@alignCast(ptr));
-                        return fh_ptr.func(msg);
+                        return fh_ptr.func(client_id, msg);
                     }
                 }.call,
             },
@@ -116,14 +118,15 @@ pub const Mux = struct {
     }
 
     /// Dispatch a message to all matching handlers.
-    pub fn handleMessage(self: *Mux, msg: *const packet.Message) !void {
+    /// Holds mutex during dispatch to prevent trie mutation invalidating slices.
+    pub fn handleMessage(self: *Mux, client_id: []const u8, msg: *const packet.Message) !void {
         self.mutex.lock();
-        const entries = self.trie.match(msg.topic);
-        self.mutex.unlock();
+        defer self.mutex.unlock();
 
+        const entries = self.trie.match(msg.topic);
         if (entries) |items| {
             for (items) |entry| {
-                try entry.handler.handleMessage(msg);
+                try entry.handler.handleMessage(client_id, msg);
             }
         }
     }
@@ -134,9 +137,9 @@ pub const Mux = struct {
             .ptr = @ptrCast(self),
             .vtable = &.{
                 .handleMessage = struct {
-                    fn call(ptr: *anyopaque, msg: *const packet.Message) anyerror!void {
+                    fn call(ptr: *anyopaque, client_id: []const u8, msg: *const packet.Message) anyerror!void {
                         const mux: *Mux = @ptrCast(@alignCast(ptr));
-                        return mux.handleMessage(msg);
+                        return mux.handleMessage(client_id, msg);
                     }
                 }.call,
             },
@@ -149,32 +152,22 @@ pub const Mux = struct {
 // ============================================================================
 
 test "Mux basic dispatch" {
-    var called = false;
     const callback = struct {
-        fn handle(_: *const packet.Message) anyerror!void {
-            // Can't capture, but we test that it doesn't crash
-        }
+        fn handle(_: []const u8, _: *const packet.Message) anyerror!void {}
     }.handle;
-    _ = &called;
 
     var mux = try Mux.init(std.testing.allocator);
     defer mux.deinit();
 
     try mux.handleFn("test/+", callback);
 
-    const msg = packet.Message{
-        .topic = "test/hello",
-        .payload = "world",
-    };
-    try mux.handleMessage(&msg);
+    const msg = packet.Message{ .topic = "test/hello", .payload = "world" };
+    try mux.handleMessage("client-1", &msg);
 }
 
 test "Mux wildcard routing" {
-    var count: usize = 0;
-    _ = &count;
-
     const callback = struct {
-        fn handle(_: *const packet.Message) anyerror!void {}
+        fn handle(_: []const u8, _: *const packet.Message) anyerror!void {}
     }.handle;
 
     var mux = try Mux.init(std.testing.allocator);
@@ -183,13 +176,11 @@ test "Mux wildcard routing" {
     try mux.handleFn("device/+/state", callback);
     try mux.handleFn("device/#", callback);
 
-    // This should match "device/+/state"
     const msg1 = packet.Message{ .topic = "device/001/state", .payload = "" };
-    try mux.handleMessage(&msg1);
+    try mux.handleMessage("c1", &msg1);
 
-    // This should match "device/#" only
     const msg2 = packet.Message{ .topic = "device/001/cmd", .payload = "" };
-    try mux.handleMessage(&msg2);
+    try mux.handleMessage("c1", &msg2);
 }
 
 test "Mux as Handler" {
@@ -198,5 +189,5 @@ test "Mux as Handler" {
 
     const h = mux.handler();
     const msg = packet.Message{ .topic = "test", .payload = "" };
-    try h.handleMessage(&msg); // Should not crash (no handlers registered)
+    try h.handleMessage("", &msg);
 }

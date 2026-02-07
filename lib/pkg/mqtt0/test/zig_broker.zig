@@ -30,7 +30,7 @@ const TcpSocket = struct {
 
 var msg_count: usize = 0;
 
-fn handler(msg: *const mqtt0.Message) anyerror!void {
+fn handler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
     msg_count += 1;
     std.debug.print("[BROKER] msg #{d}: topic={s} payload={s}\n", .{
         msg_count,
