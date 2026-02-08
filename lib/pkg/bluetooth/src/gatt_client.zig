@@ -103,10 +103,6 @@ pub const DiscoveredCharacteristic = struct {
     uuid: att.UUID,
 };
 
-// ============================================================================
-// Errors
-// ============================================================================
-
 pub const DiscoveredDescriptor = struct {
     handle: u16,
     uuid: att.UUID,
@@ -220,6 +216,7 @@ pub fn parseDescriptorsFromResponse(resp: *const AttResponse, out: []DiscoveredD
 }
 
 // ============================================================================
+// Errors
 // Errors
 // ============================================================================
 
