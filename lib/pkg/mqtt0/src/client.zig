@@ -141,10 +141,10 @@ pub fn Client(comptime Transport: type) type {
 
         pub fn unsubscribe(self: *Self, topics: []const []const u8) !void {
             if (!self.connected) return error.NotConnected;
-            const pid = self.nextPid();
 
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
+            const pid = self.nextPid();
             const wb = try self.write_buf.acquire(4096);
 
             switch (self.config.protocol_version) {
@@ -245,9 +245,9 @@ pub fn Client(comptime Transport: type) type {
         // ====================================================================
 
         fn doSubscribe(self: *Self, topics: []const []const u8) !void {
-            const pid = self.nextPid();
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
+            const pid = self.nextPid();
             const wb = try self.write_buf.acquire(4096);
 
             switch (self.config.protocol_version) {
