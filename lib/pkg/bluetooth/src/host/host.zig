@@ -592,6 +592,133 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         }
 
         // ================================================================
+        // App API — GATT Service Discovery
+        // ================================================================
+
+        /// Discover primary services on a remote device.
+        /// Sends Read By Group Type Requests iteratively until all services found.
+        /// Returns the number of services written to `out`.
+        pub fn discoverServices(self: *Self, conn_handle: u16, out: []gatt_client.DiscoveredService) gatt_client.Error!usize {
+            var total: usize = 0;
+            var start_handle: u16 = 0x0001;
+
+            while (start_handle <= 0xFFFF and total < out.len) {
+                const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+                // Build Read By Group Type Request: [opcode(1)][start(2)][end(2)][uuid(2)]
+                var pdu: [7]u8 = undefined;
+                pdu[0] = @intFromEnum(att_mod.Opcode.read_by_group_type_request);
+                std.mem.writeInt(u16, pdu[1..3], start_handle, .little);
+                std.mem.writeInt(u16, pdu[3..5], 0xFFFF, .little);
+                std.mem.writeInt(u16, pdu[5..7], att_mod.GATT_PRIMARY_SERVICE_UUID, .little);
+
+                self.sendData(conn_handle, l2cap_mod.CID_ATT, &pdu) catch return error.SendFailed;
+
+                const resp = conn.att_response.recv() orelse return error.Disconnected;
+
+                if (resp.isError()) break; // Attribute Not Found = done
+
+                if (resp.opcode != .read_by_group_type_response) break;
+
+                const count = gatt_client.parseServicesFromResponse(&resp, out[total..]);
+                if (count == 0) break;
+
+                total += count;
+
+                // Next start handle = last service end_handle + 1
+                const last_end = out[total - 1].end_handle;
+                if (last_end == 0xFFFF) break;
+                start_handle = last_end + 1;
+            }
+            return total;
+        }
+
+        /// Discover characteristics within a service handle range.
+        /// Returns the number of characteristics written to `out`.
+        pub fn discoverCharacteristics(
+            self: *Self,
+            conn_handle: u16,
+            start_handle: u16,
+            end_handle: u16,
+            out: []gatt_client.DiscoveredCharacteristic,
+        ) gatt_client.Error!usize {
+            var total: usize = 0;
+            var cur_start = start_handle;
+
+            while (cur_start <= end_handle and total < out.len) {
+                const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+                // Build Read By Type Request: [opcode(1)][start(2)][end(2)][uuid(2)]
+                var pdu: [7]u8 = undefined;
+                pdu[0] = @intFromEnum(att_mod.Opcode.read_by_type_request);
+                std.mem.writeInt(u16, pdu[1..3], cur_start, .little);
+                std.mem.writeInt(u16, pdu[3..5], end_handle, .little);
+                std.mem.writeInt(u16, pdu[5..7], att_mod.GATT_CHARACTERISTIC_UUID, .little);
+
+                self.sendData(conn_handle, l2cap_mod.CID_ATT, &pdu) catch return error.SendFailed;
+
+                const resp = conn.att_response.recv() orelse return error.Disconnected;
+
+                if (resp.isError()) break; // done
+
+                if (resp.opcode != .read_by_type_response) break;
+
+                const count = gatt_client.parseCharsFromResponse(&resp, out[total..]);
+                if (count == 0) break;
+
+                total += count;
+
+                // Next start handle = last char declaration handle + 1
+                const last_decl = out[total - 1].decl_handle;
+                if (last_decl >= end_handle) break;
+                cur_start = last_decl + 1;
+            }
+            return total;
+        }
+
+        /// Discover descriptors (including CCCD) within a handle range.
+        /// Typically called with range [char_value_handle+1, next_char_decl_handle-1].
+        /// Returns the number of descriptors written to `out`.
+        pub fn discoverDescriptors(
+            self: *Self,
+            conn_handle: u16,
+            start_handle: u16,
+            end_handle: u16,
+            out: []gatt_client.DiscoveredDescriptor,
+        ) gatt_client.Error!usize {
+            var total: usize = 0;
+            var cur_start = start_handle;
+
+            while (cur_start <= end_handle and total < out.len) {
+                const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+                // Build Find Information Request: [opcode(1)][start(2)][end(2)]
+                var pdu: [5]u8 = undefined;
+                pdu[0] = @intFromEnum(att_mod.Opcode.find_information_request);
+                std.mem.writeInt(u16, pdu[1..3], cur_start, .little);
+                std.mem.writeInt(u16, pdu[3..5], end_handle, .little);
+
+                self.sendData(conn_handle, l2cap_mod.CID_ATT, &pdu) catch return error.SendFailed;
+
+                const resp = conn.att_response.recv() orelse return error.Disconnected;
+
+                if (resp.isError()) break;
+
+                if (resp.opcode != .find_information_response) break;
+
+                const count = gatt_client.parseDescriptorsFromResponse(&resp, out[total..]);
+                if (count == 0) break;
+
+                total += count;
+
+                const last_handle = out[total - 1].handle;
+                if (last_handle >= end_handle) break;
+                cur_start = last_handle + 1;
+            }
+            return total;
+        }
+
+        // ================================================================
         // Internal: synchronous HCI command (used during start())
         // ================================================================
 

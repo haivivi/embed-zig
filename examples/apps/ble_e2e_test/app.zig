@@ -25,6 +25,7 @@ const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const gatt = bluetooth.gatt_server;
 
+const gatt_client = bluetooth.gatt_client;
 const EspRt = idf.runtime;
 const HciDriver = esp.impl.hci.HciDriver;
 
@@ -283,9 +284,97 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     pass("T14: MTU <= MAX (517)");
     pass("T15: MTU negotiation complete");
 
+    // === Service Discovery ===
+    log.info("--- Service Discovery ---", .{});
+
+    var services: [8]gatt_client.DiscoveredService = undefined;
+    const svc_count = host.discoverServices(conn, &services) catch 0;
+    log.info("Discovered {} services", .{svc_count});
+
+    // Find our test service (0xAA00)
+    var test_svc: ?gatt_client.DiscoveredService = null;
+    for (services[0..svc_count]) |svc| {
+        log.info("  SVC: start=0x{X:0>4} end=0x{X:0>4}", .{ svc.start_handle, svc.end_handle });
+        if (svc.uuid.eql(att.UUID.from16(SVC_UUID))) {
+            test_svc = svc;
+        }
+    }
+
+    if (test_svc == null) {
+        log.err("Test service 0x{X:0>4} not found! Skipping GATT tests", .{SVC_UUID});
+        fail("Service discovery: test service not found");
+        return;
+    }
+    pass("Service discovery: found test service");
+
+    const svc = test_svc.?;
+
+    // Discover characteristics within the test service
+    var chars: [16]gatt_client.DiscoveredCharacteristic = undefined;
+    const char_count = host.discoverCharacteristics(conn, svc.start_handle, svc.end_handle, &chars) catch 0;
+    log.info("Discovered {} characteristics in test service", .{char_count});
+
+    // Map UUIDs to discovered handles
+    var d_read_h: u16 = 0;
+    var d_write_h: u16 = 0;
+    var d_notify_h: u16 = 0;
+    var d_rw_h: u16 = 0;
+
+    for (chars[0..char_count]) |c| {
+        log.info("  CHR: decl=0x{X:0>4} val=0x{X:0>4}", .{ c.decl_handle, c.value_handle });
+        if (c.uuid.eql(att.UUID.from16(CHR_READ_UUID))) d_read_h = c.value_handle;
+        if (c.uuid.eql(att.UUID.from16(CHR_WRITE_UUID))) d_write_h = c.value_handle;
+        if (c.uuid.eql(att.UUID.from16(CHR_NOTIFY_UUID))) d_notify_h = c.value_handle;
+        if (c.uuid.eql(att.UUID.from16(CHR_RW_UUID))) d_rw_h = c.value_handle;
+    }
+
+    if (d_read_h == 0 or d_write_h == 0 or d_notify_h == 0 or d_rw_h == 0) {
+        log.err("Missing characteristics! read=0x{X} write=0x{X} notify=0x{X} rw=0x{X}", .{ d_read_h, d_write_h, d_notify_h, d_rw_h });
+        fail("Service discovery: missing characteristics");
+        return;
+    }
+    pass("Service discovery: all 4 characteristics found");
+
+    // Discover CCCD for notify characteristic
+    // CCCD is between notify value handle and next char (or service end)
+    var d_notify_cccd_h: u16 = 0;
+    {
+        // Find handle range after notify char: [notify_value_handle+1, next_char_decl-1 or svc.end]
+        var next_decl: u16 = svc.end_handle;
+        for (chars[0..char_count]) |c| {
+            if (c.decl_handle > d_notify_h and c.decl_handle < next_decl) {
+                next_decl = c.decl_handle;
+            }
+        }
+        const desc_start = d_notify_h + 1;
+        const desc_end = if (next_decl > d_notify_h) next_decl - 1 else svc.end_handle;
+
+        if (desc_start <= desc_end) {
+            var descs: [8]gatt_client.DiscoveredDescriptor = undefined;
+            const desc_count = host.discoverDescriptors(conn, desc_start, desc_end, &descs) catch 0;
+            for (descs[0..desc_count]) |d| {
+                log.info("  DESC: handle=0x{X:0>4}", .{d.handle});
+                if (d.uuid.eql(att.UUID.from16(0x2902))) {
+                    d_notify_cccd_h = d.handle;
+                }
+            }
+        }
+    }
+
+    if (d_notify_cccd_h == 0) {
+        log.err("CCCD not found for notify char!", .{});
+        fail("Service discovery: CCCD not found");
+        return;
+    }
+    pass("Service discovery: CCCD found");
+
+    log.info("Discovered handles: read=0x{X:0>4} write=0x{X:0>4} notify=0x{X:0>4} cccd=0x{X:0>4} rw=0x{X:0>4}", .{
+        d_read_h, d_write_h, d_notify_h, d_notify_cccd_h, d_rw_h,
+    });
+
     // === G4: GATT Read ===
     // T16: Basic read
-    if (host.gattRead(conn, READ_H)) |data| {
+    if (host.gattRead(conn, d_read_h)) |data| {
         if (data.len == 4 and data[0] == 0xDE and data[1] == 0xAD)
             pass("T16: GATT read basic")
         else
@@ -293,12 +382,12 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T16: GATT read basic");
 
     // T17: Read returns correct length
-    if (host.gattRead(conn, READ_H)) |data| {
+    if (host.gattRead(conn, d_read_h)) |data| {
         if (data.len == 4) pass("T17: Read length=4") else fail("T17: Read length");
     } else |_| fail("T17: Read length");
 
     // T18: Read returns correct data
-    if (host.gattRead(conn, READ_H)) |data| {
+    if (host.gattRead(conn, d_read_h)) |data| {
         if (data.len >= 4 and data[2] == 0xBE and data[3] == 0xEF)
             pass("T18: Read data=0xDEADBEEF")
         else
@@ -308,25 +397,25 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // T19: Multiple sequential reads
     var reads_ok: u32 = 0;
     for (0..5) |_| {
-        if (host.gattRead(conn, READ_H)) |_| {
+        if (host.gattRead(conn, d_read_h)) |_| {
             reads_ok += 1;
         } else |_| {}
     }
     if (reads_ok == 5) pass("T19: 5 sequential reads") else fail("T19: Sequential reads");
 
     // T20: Read notify characteristic
-    if (host.gattRead(conn, NOTIFY_H)) |data| {
+    if (host.gattRead(conn, d_notify_h)) |data| {
         if (data.len == 2 and data[0] == 0xCA) pass("T20: Read notify char") else fail("T20: Read notify char");
     } else |_| fail("T20: Read notify char");
 
     // T21: Read RW characteristic (initially empty)
-    if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattRead(conn, d_rw_h)) |data| {
         if (data.len == 0) pass("T21: Read RW char (empty)") else fail("T21: Read RW char");
     } else |_| fail("T21: Read RW char");
 
     // T22: Read after write (echo test)
-    if (host.gattWrite(conn, RW_H, &[_]u8{ 0x42, 0x43 })) {
-        if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattWrite(conn, d_rw_h, &[_]u8{ 0x42, 0x43 })) {
+        if (host.gattRead(conn, d_rw_h)) |data| {
             if (data.len == 2 and data[0] == 0x42)
                 pass("T22: Write then read back")
             else
@@ -336,39 +425,39 @@ fn runClientTests(host: *BleHost, conn: u16) void {
 
     // === G5: GATT Write ===
     // T23: Write with response
-    if (host.gattWrite(conn, WRITE_H, &[_]u8{ 0x01, 0x02 })) {
+    if (host.gattWrite(conn, d_write_h, &[_]u8{ 0x01, 0x02 })) {
         pass("T23: Write with response");
     } else |_| fail("T23: Write with response");
 
     // T24: Write command (no response)
-    if (host.gattWriteCmd(conn, WRITE_H, &[_]u8{ 0xAA })) {
+    if (host.gattWriteCmd(conn, d_write_h, &[_]u8{ 0xAA })) {
         pass("T24: Write command");
     } else |_| fail("T24: Write command");
 
     // T25: Write larger data
-    if (host.gattWrite(conn, RW_H, &([_]u8{0x55} ** 50))) {
+    if (host.gattWrite(conn, d_rw_h, &([_]u8{0x55} ** 50))) {
         pass("T25: Write 50 bytes");
     } else |_| fail("T25: Write 50 bytes");
 
     // T26: Read back large write
-    if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattRead(conn, d_rw_h)) |data| {
         if (data.len == 50) pass("T26: Read back 50 bytes") else fail("T26: Read back 50 bytes");
     } else |_| fail("T26: Read back 50 bytes");
 
     // T27: Write empty data
-    if (host.gattWrite(conn, RW_H, &[_]u8{})) {
+    if (host.gattWrite(conn, d_rw_h, &[_]u8{})) {
         pass("T27: Write empty");
     } else |_| fail("T27: Write empty");
 
     // T28: Read back empty (should be 0 length)
-    if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattRead(conn, d_rw_h)) |data| {
         if (data.len == 0) pass("T28: Read back empty") else fail("T28: Read back empty");
     } else |_| fail("T28: Read back empty");
 
     // T29: Multiple sequential writes
     var writes_ok: u32 = 0;
     for (0..5) |i| {
-        if (host.gattWrite(conn, RW_H, &[_]u8{@truncate(i)})) {
+        if (host.gattWrite(conn, d_rw_h, &[_]u8{@truncate(i)})) {
             writes_ok += 1;
         } else |_| {}
     }
@@ -377,7 +466,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // T30: Write command flood (10 rapid fire)
     var wcmd_ok: u32 = 0;
     for (0..10) |_| {
-        if (host.gattWriteCmd(conn, WRITE_H, &[_]u8{ 0xFF })) {
+        if (host.gattWriteCmd(conn, d_write_h, &[_]u8{ 0xFF })) {
             wcmd_ok += 1;
         } else |_| {}
     }
@@ -386,7 +475,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // === G6: Notifications ===
     // T31: Subscribe (enable notifications)
     notif_count = 0;
-    if (host.gattSubscribe(conn, NOTIFY_CCCD_H)) {
+    if (host.gattSubscribe(conn, d_notify_cccd_h)) {
         pass("T32: CCCD subscribe");
     } else |_| fail("T32: CCCD subscribe");
 
@@ -406,7 +495,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     if (notif_count >= 3) pass("T36: Notification flood") else fail("T36: Notification flood");
 
     // T37: Unsubscribe
-    if (host.gattUnsubscribe(conn, NOTIFY_CCCD_H)) {
+    if (host.gattUnsubscribe(conn, d_notify_cccd_h)) {
         pass("T37: CCCD unsubscribe");
     } else |_| fail("T37: CCCD unsubscribe");
 
@@ -423,8 +512,8 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // T39: Write pattern and read back
     var pattern: [100]u8 = undefined;
     for (&pattern, 0..) |*b, i| b.* = @truncate(i);
-    if (host.gattWrite(conn, RW_H, &pattern)) {
-        if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattWrite(conn, d_rw_h, &pattern)) {
+        if (host.gattRead(conn, d_rw_h)) |data| {
             if (data.len == 100 and data[0] == 0 and data[99] == 99)
                 pass("T39: 100-byte pattern integrity")
             else
@@ -433,8 +522,8 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T39: Pattern integrity");
 
     // T40: Write single byte
-    if (host.gattWrite(conn, RW_H, &[_]u8{0x42})) {
-        if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattWrite(conn, d_rw_h, &[_]u8{0x42})) {
+        if (host.gattRead(conn, d_rw_h)) |data| {
             if (data.len == 1 and data[0] == 0x42) pass("T40: Single byte integrity") else fail("T40: Single byte");
         } else |_| fail("T40: Single byte");
     } else |_| fail("T40: Single byte");
@@ -442,8 +531,8 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // T41: Write 200 bytes (near max for single ATT PDU with MTU 512)
     var big: [200]u8 = undefined;
     for (&big, 0..) |*b, i| b.* = @truncate(i ^ 0xAA);
-    if (host.gattWrite(conn, RW_H, &big)) {
-        if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattWrite(conn, d_rw_h, &big)) {
+        if (host.gattRead(conn, d_rw_h)) |data| {
             if (data.len == 200 and data[0] == (0 ^ 0xAA) and data[199] == @as(u8, @truncate(199 ^ 0xAA)))
                 pass("T41: 200-byte integrity")
             else
@@ -452,8 +541,8 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T41: 200-byte integrity");
 
     // T42: Overwrite and verify
-    if (host.gattWrite(conn, RW_H, &[_]u8{ 0x11, 0x22 })) {
-        if (host.gattRead(conn, RW_H)) |data| {
+    if (host.gattWrite(conn, d_rw_h, &[_]u8{ 0x11, 0x22 })) {
+        if (host.gattRead(conn, d_rw_h)) |data| {
             if (data.len == 2 and data[0] == 0x11 and data[1] == 0x22)
                 pass("T42: Overwrite verify")
             else
@@ -463,19 +552,19 @@ fn runClientTests(host: *BleHost, conn: u16) void {
 
     // T43: Re-subscribe after unsubscribe
     notif_count = 0;
-    if (host.gattSubscribe(conn, NOTIFY_CCCD_H)) {
+    if (host.gattSubscribe(conn, d_notify_cccd_h)) {
         idf.time.sleepMs(1500);
         while (host.tryNextEvent()) |_| {}
         if (notif_count >= 1) pass("T43: Re-subscribe works") else fail("T43: Re-subscribe");
     } else |_| fail("T43: Re-subscribe");
 
     // T44: Read still works with notifications enabled
-    if (host.gattRead(conn, READ_H)) |data| {
+    if (host.gattRead(conn, d_read_h)) |data| {
         if (data.len == 4) pass("T44: Read during notifications") else fail("T44: Read during notifications");
     } else |_| fail("T44: Read during notifications");
 
     // T45: Write still works with notifications enabled
-    if (host.gattWrite(conn, RW_H, &[_]u8{0x99})) {
+    if (host.gattWrite(conn, d_rw_h, &[_]u8{0x99})) {
         pass("T45: Write during notifications");
     } else |_| fail("T45: Write during notifications");
 
@@ -483,8 +572,8 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     // T46: Rapid read-write cycle
     var cycle_ok: u32 = 0;
     for (0..10) |i| {
-        if (host.gattWrite(conn, RW_H, &[_]u8{@truncate(i)})) {
-            if (host.gattRead(conn, RW_H)) |data| {
+        if (host.gattWrite(conn, d_rw_h, &[_]u8{@truncate(i)})) {
+            if (host.gattRead(conn, d_rw_h)) |data| {
                 if (data.len == 1 and data[0] == @as(u8, @truncate(i))) cycle_ok += 1;
             } else |_| {}
         } else |_| {}
@@ -499,7 +588,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     if (host.getAclCredits() > 0) pass("T48: ACL credits recovered") else fail("T48: ACL credits");
 
     // T49: Unsubscribe before disconnect
-    _ = host.gattUnsubscribe(conn, NOTIFY_CCCD_H) catch {};
+    _ = host.gattUnsubscribe(conn, d_notify_cccd_h) catch {};
     pass("T49: Final unsubscribe");
 
     // T50: Clean disconnect

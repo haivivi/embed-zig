@@ -107,17 +107,127 @@ pub const DiscoveredCharacteristic = struct {
 // Errors
 // ============================================================================
 
+pub const DiscoveredDescriptor = struct {
+    handle: u16,
+    uuid: att.UUID,
+};
+
+// ============================================================================
+// ATT Response Parsers
+// ============================================================================
+
+/// Parse Read By Group Type Response (0x11) → list of services.
+/// Response data (after opcode): [length(1)][data...]
+/// Each entry: [start_handle(2)][end_handle(2)][uuid(length-4 bytes)]
+pub fn parseServicesFromResponse(resp: *const AttResponse, out: []DiscoveredService) usize {
+    if (resp.len < 1) return 0;
+    const entry_len = resp.data[0];
+    if (entry_len < 6) return 0; // at least 2+2+2
+
+    const data = resp.data[1..resp.len];
+    var count: usize = 0;
+    var offset: usize = 0;
+
+    while (offset + entry_len <= data.len and count < out.len) {
+        const start = std.mem.readInt(u16, data[offset..][0..2], .little);
+        const end_h = std.mem.readInt(u16, data[offset + 2 ..][0..2], .little);
+        const uuid_len = entry_len - 4;
+
+        const uuid = if (uuid_len == 2)
+            att.UUID.from16(std.mem.readInt(u16, data[offset + 4 ..][0..2], .little))
+        else if (uuid_len == 16)
+            att.UUID.from128(data[offset + 4 ..][0..16].*)
+        else
+            att.UUID.from16(0);
+
+        out[count] = .{ .start_handle = start, .end_handle = end_h, .uuid = uuid };
+        count += 1;
+        offset += entry_len;
+    }
+    return count;
+}
+
+/// Parse Read By Type Response (0x09) → list of characteristics.
+/// Response data (after opcode): [length(1)][data...]
+/// Each entry: [handle(2)][properties(1)][value_handle(2)][uuid(length-5 bytes)]
+pub fn parseCharsFromResponse(resp: *const AttResponse, out: []DiscoveredCharacteristic) usize {
+    if (resp.len < 1) return 0;
+    const entry_len = resp.data[0];
+    if (entry_len < 7) return 0; // at least 2+1+2+2
+
+    const data = resp.data[1..resp.len];
+    var count: usize = 0;
+    var offset: usize = 0;
+
+    while (offset + entry_len <= data.len and count < out.len) {
+        const decl_handle = std.mem.readInt(u16, data[offset..][0..2], .little);
+        // Characteristic declaration value: [properties(1)][value_handle(2)][uuid...]
+        const properties: att.CharProps = @bitCast(data[offset + 2]);
+        const value_handle = std.mem.readInt(u16, data[offset + 3 ..][0..2], .little);
+        const uuid_len = entry_len - 5;
+
+        const uuid = if (uuid_len == 2)
+            att.UUID.from16(std.mem.readInt(u16, data[offset + 5 ..][0..2], .little))
+        else if (uuid_len == 16)
+            att.UUID.from128(data[offset + 5 ..][0..16].*)
+        else
+            att.UUID.from16(0);
+
+        out[count] = .{
+            .decl_handle = decl_handle,
+            .value_handle = value_handle,
+            .properties = properties,
+            .uuid = uuid,
+        };
+        count += 1;
+        offset += entry_len;
+    }
+    return count;
+}
+
+/// Parse Find Information Response (0x05) → list of descriptors.
+/// Response data (after opcode): [format(1)][data...]
+/// Format 1: [handle(2)][uuid16(2)] pairs
+/// Format 2: [handle(2)][uuid128(16)] pairs
+pub fn parseDescriptorsFromResponse(resp: *const AttResponse, out: []DiscoveredDescriptor) usize {
+    if (resp.len < 1) return 0;
+    const format = resp.data[0];
+
+    const data = resp.data[1..resp.len];
+    var count: usize = 0;
+    var offset: usize = 0;
+
+    if (format == 1) {
+        // 16-bit UUIDs: [handle(2)][uuid16(2)]
+        while (offset + 4 <= data.len and count < out.len) {
+            const handle = std.mem.readInt(u16, data[offset..][0..2], .little);
+            const uuid = att.UUID.from16(std.mem.readInt(u16, data[offset + 2 ..][0..2], .little));
+            out[count] = .{ .handle = handle, .uuid = uuid };
+            count += 1;
+            offset += 4;
+        }
+    } else if (format == 2) {
+        // 128-bit UUIDs: [handle(2)][uuid128(16)]
+        while (offset + 18 <= data.len and count < out.len) {
+            const handle = std.mem.readInt(u16, data[offset..][0..2], .little);
+            const uuid = att.UUID.from128(data[offset + 2 ..][0..16].*);
+            out[count] = .{ .handle = handle, .uuid = uuid };
+            count += 1;
+            offset += 18;
+        }
+    }
+    return count;
+}
+
+// ============================================================================
+// Errors
+// ============================================================================
+
 pub const Error = error{
-    /// ATT error response received
     AttError,
-    /// Request timeout
     Timeout,
-    /// Connection lost
     Disconnected,
-    /// Channel closed
     ChannelClosed,
-    /// Invalid response format
     InvalidResponse,
-    /// Send failed
     SendFailed,
 };

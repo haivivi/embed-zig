@@ -1321,3 +1321,213 @@ test "BLE 5.0: GAP: connect from scanning auto-stops scan" {
     try std.testing.expect(g.nextCommand() != null);
     try std.testing.expect(g.nextCommand() != null);
 }
+
+// ========================================================================
+// GATT Client — Service Discovery (ATT response parsing)
+// ========================================================================
+
+test "GATT Client: parseServicesFromResponse — 16-bit UUID services" {
+    // Simulate Read By Group Type Response data (after opcode):
+    // [length=6][start=0x0001][end=0x0005][uuid16=0x1800]
+    //          [start=0x0006][end=0x000A][uuid16=0x1801]
+    var resp = gatt_client.AttResponse{
+        .opcode = .read_by_group_type_response,
+        .data = undefined,
+        .len = 13, // 1 + 6 + 6
+        .err = null,
+    };
+    resp.data[0] = 6; // entry length
+    // Service 1: Generic Access 0x1800
+    std.mem.writeInt(u16, resp.data[1..3], 0x0001, .little);
+    std.mem.writeInt(u16, resp.data[3..5], 0x0005, .little);
+    std.mem.writeInt(u16, resp.data[5..7], 0x1800, .little);
+    // Service 2: Generic Attribute 0x1801
+    std.mem.writeInt(u16, resp.data[7..9], 0x0006, .little);
+    std.mem.writeInt(u16, resp.data[9..11], 0x000A, .little);
+    std.mem.writeInt(u16, resp.data[11..13], 0x1801, .little);
+
+    var services: [8]gatt_client.DiscoveredService = undefined;
+    const count = gatt_client.parseServicesFromResponse(&resp, &services);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(@as(u16, 0x0001), services[0].start_handle);
+    try std.testing.expectEqual(@as(u16, 0x0005), services[0].end_handle);
+    try std.testing.expect(services[0].uuid.eql(att.UUID.from16(0x1800)));
+    try std.testing.expectEqual(@as(u16, 0x0006), services[1].start_handle);
+    try std.testing.expectEqual(@as(u16, 0x000A), services[1].end_handle);
+    try std.testing.expect(services[1].uuid.eql(att.UUID.from16(0x1801)));
+}
+
+test "GATT Client: parseServicesFromResponse — 128-bit UUID service" {
+    // entry length = 4 + 16 = 20
+    var resp = gatt_client.AttResponse{
+        .opcode = .read_by_group_type_response,
+        .data = undefined,
+        .len = 21, // 1 + 20
+        .err = null,
+    };
+    resp.data[0] = 20; // entry length
+    std.mem.writeInt(u16, resp.data[1..3], 0x0010, .little);
+    std.mem.writeInt(u16, resp.data[3..5], 0x001F, .little);
+    const uuid128 = [16]u8{ 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0 };
+    @memcpy(resp.data[5..21], &uuid128);
+
+    var services: [4]gatt_client.DiscoveredService = undefined;
+    const count = gatt_client.parseServicesFromResponse(&resp, &services);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(u16, 0x0010), services[0].start_handle);
+    try std.testing.expect(services[0].uuid.eql(att.UUID.from128(uuid128)));
+}
+
+test "GATT Client: parseServicesFromResponse — empty response" {
+    var resp = gatt_client.AttResponse{
+        .opcode = .error_response,
+        .data = undefined,
+        .len = 0,
+        .err = .attribute_not_found,
+    };
+    var services: [4]gatt_client.DiscoveredService = undefined;
+    try std.testing.expectEqual(@as(usize, 0), gatt_client.parseServicesFromResponse(&resp, &services));
+}
+
+test "GATT Client: parseCharsFromResponse — 16-bit UUID characteristics" {
+    // Read By Type Response for characteristics:
+    // entry: [decl_handle(2)][props(1)][value_handle(2)][uuid16(2)] = 7 bytes
+    var resp = gatt_client.AttResponse{
+        .opcode = .read_by_type_response,
+        .data = undefined,
+        .len = 15, // 1 + 7 + 7
+        .err = null,
+    };
+    resp.data[0] = 7; // entry length
+    // Char 1: handle=0x0002, props=Read(0x02), value=0x0003, uuid=0xAA01
+    std.mem.writeInt(u16, resp.data[1..3], 0x0002, .little);
+    resp.data[3] = 0x02; // props: Read
+    std.mem.writeInt(u16, resp.data[4..6], 0x0003, .little);
+    std.mem.writeInt(u16, resp.data[6..8], 0xAA01, .little);
+    // Char 2: handle=0x0004, props=Write+Notify(0x18), value=0x0005, uuid=0xAA02
+    std.mem.writeInt(u16, resp.data[8..10], 0x0004, .little);
+    resp.data[10] = 0x18; // props: Write(0x08) + Notify(0x10)
+    std.mem.writeInt(u16, resp.data[11..13], 0x0005, .little);
+    std.mem.writeInt(u16, resp.data[13..15], 0xAA02, .little);
+
+    var chars: [8]gatt_client.DiscoveredCharacteristic = undefined;
+    const count = gatt_client.parseCharsFromResponse(&resp, &chars);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(@as(u16, 0x0002), chars[0].decl_handle);
+    try std.testing.expectEqual(@as(u16, 0x0003), chars[0].value_handle);
+    try std.testing.expect(chars[0].uuid.eql(att.UUID.from16(0xAA01)));
+    try std.testing.expectEqual(@as(u16, 0x0005), chars[1].value_handle);
+    try std.testing.expect(chars[1].properties.notify);
+}
+
+test "GATT Client: parseDescriptorsFromResponse — format 1 (16-bit)" {
+    // Find Information Response, format=1 (16-bit UUIDs):
+    // [format(1)][handle(2)+uuid16(2)]...
+    var resp = gatt_client.AttResponse{
+        .opcode = .find_information_response,
+        .data = undefined,
+        .len = 9, // 1 + 4 + 4
+        .err = null,
+    };
+    resp.data[0] = 1; // format: 16-bit
+    // Descriptor 1: handle=0x0006, CCCD=0x2902
+    std.mem.writeInt(u16, resp.data[1..3], 0x0006, .little);
+    std.mem.writeInt(u16, resp.data[3..5], 0x2902, .little);
+    // Descriptor 2: handle=0x0007, CUD=0x2901
+    std.mem.writeInt(u16, resp.data[5..7], 0x0007, .little);
+    std.mem.writeInt(u16, resp.data[7..9], 0x2901, .little);
+
+    var descs: [8]gatt_client.DiscoveredDescriptor = undefined;
+    const count = gatt_client.parseDescriptorsFromResponse(&resp, &descs);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(@as(u16, 0x0006), descs[0].handle);
+    try std.testing.expect(descs[0].uuid.eql(att.UUID.from16(0x2902)));
+    try std.testing.expectEqual(@as(u16, 0x0007), descs[1].handle);
+    try std.testing.expect(descs[1].uuid.eql(att.UUID.from16(0x2901)));
+}
+
+test "GATT Client: parseDescriptorsFromResponse — format 2 (128-bit)" {
+    // Find Information Response, format=2 (128-bit UUIDs):
+    // [format(1)][handle(2)+uuid128(16)]
+    var resp = gatt_client.AttResponse{
+        .opcode = .find_information_response,
+        .data = undefined,
+        .len = 19, // 1 + 18
+        .err = null,
+    };
+    resp.data[0] = 2; // format: 128-bit
+    std.mem.writeInt(u16, resp.data[1..3], 0x0010, .little);
+    const uuid128 = [16]u8{ 0xAA, 0xBB, 0xCC, 0xDD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    @memcpy(resp.data[3..19], &uuid128);
+
+    var descs: [4]gatt_client.DiscoveredDescriptor = undefined;
+    const count = gatt_client.parseDescriptorsFromResponse(&resp, &descs);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(u16, 0x0010), descs[0].handle);
+    try std.testing.expect(descs[0].uuid.eql(att.UUID.from128(uuid128)));
+}
+
+test "GATT Client: parseServicesFromResponse — output buffer smaller than data" {
+    // 3 services in response but output buffer only fits 1
+    var resp = gatt_client.AttResponse{
+        .opcode = .read_by_group_type_response,
+        .data = undefined,
+        .len = 19, // 1 + 6*3
+        .err = null,
+    };
+    resp.data[0] = 6;
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        const off = 1 + i * 6;
+        std.mem.writeInt(u16, resp.data[off..][0..2], @as(u16, @intCast(i * 5 + 1)), .little);
+        std.mem.writeInt(u16, resp.data[off + 2 ..][0..2], @as(u16, @intCast(i * 5 + 5)), .little);
+        std.mem.writeInt(u16, resp.data[off + 4 ..][0..2], @as(u16, @intCast(0x1800 + i)), .little);
+    }
+
+    var services: [1]gatt_client.DiscoveredService = undefined;
+    const count = gatt_client.parseServicesFromResponse(&resp, &services);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(u16, 0x0001), services[0].start_handle);
+}
+
+test "GATT Client: parseCharsFromResponse — empty response" {
+    var resp = gatt_client.AttResponse{
+        .opcode = .error_response,
+        .data = undefined,
+        .len = 0,
+        .err = .attribute_not_found,
+    };
+    var chars: [4]gatt_client.DiscoveredCharacteristic = undefined;
+    try std.testing.expectEqual(@as(usize, 0), gatt_client.parseCharsFromResponse(&resp, &chars));
+}
+
+test "GATT Client: ATT response roundtrip via fromPdu" {
+    // Build a Read By Group Type Response PDU: [opcode(0x11)][length=6][entry...]
+    var pdu: [14]u8 = undefined;
+    pdu[0] = @intFromEnum(att.Opcode.read_by_group_type_response); // 0x11
+    pdu[1] = 6; // entry length
+    std.mem.writeInt(u16, pdu[2..4], 0x0001, .little);
+    std.mem.writeInt(u16, pdu[4..6], 0x0005, .little);
+    std.mem.writeInt(u16, pdu[6..8], 0x1800, .little);
+    std.mem.writeInt(u16, pdu[8..10], 0x0006, .little);
+    std.mem.writeInt(u16, pdu[10..12], 0x000A, .little);
+    std.mem.writeInt(u16, pdu[12..14], 0x1801, .little);
+
+    const resp = gatt_client.AttResponse.fromPdu(&pdu);
+    try std.testing.expectEqual(att.Opcode.read_by_group_type_response, resp.opcode);
+    try std.testing.expect(!resp.isError());
+
+    var services: [4]gatt_client.DiscoveredService = undefined;
+    const count = gatt_client.parseServicesFromResponse(&resp, &services);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expect(services[0].uuid.eql(att.UUID.from16(0x1800)));
+    try std.testing.expect(services[1].uuid.eql(att.UUID.from16(0x1801)));
+}
+
+test "GATT Client: ATT Error Response fromPdu" {
+    // Error Response: [opcode=0x01][req_opcode=0x10][handle=0x0001][error=0x0A (Attribute Not Found)]
+    const pdu = [_]u8{ 0x01, 0x10, 0x01, 0x00, 0x0A };
+    const resp = gatt_client.AttResponse.fromPdu(&pdu);
+    try std.testing.expect(resp.isError());
+    try std.testing.expectEqual(att.ErrorCode.attribute_not_found, resp.err.?);
+}
