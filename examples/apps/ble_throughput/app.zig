@@ -366,6 +366,40 @@ fn phyName(phy: u8) []const u8 {
     return switch (phy) { 1 => "1M", 2 => "2M", 3 => "Coded", else => "?" };
 }
 
+fn printMemoryReport() void {
+    log.info("", .{});
+    log.info("=== Memory Footprint ===", .{});
+
+    const internal = heap.getInternalStats();
+    const psram_stats = heap.getPsramStats();
+
+    log.info("Internal SRAM:", .{});
+    log.info("  Total:      {} KB", .{internal.total / 1024});
+    log.info("  Free:       {} KB", .{internal.free / 1024});
+    log.info("  Used:       {} KB", .{internal.used / 1024});
+    log.info("  Min free:   {} KB (peak usage = {} KB)", .{
+        internal.min_free / 1024,
+        (internal.total - internal.min_free) / 1024,
+    });
+    log.info("  Largest blk: {} KB", .{internal.largest_block / 1024});
+
+    if (psram_stats.total > 0) {
+        log.info("PSRAM:", .{});
+        log.info("  Total:      {} KB", .{psram_stats.total / 1024});
+        log.info("  Free:       {} KB", .{psram_stats.free / 1024});
+        log.info("  Used:       {} KB", .{psram_stats.used / 1024});
+        log.info("  Min free:   {} KB (peak usage = {} KB)", .{
+            psram_stats.min_free / 1024,
+            (psram_stats.total - psram_stats.min_free) / 1024,
+        });
+    }
+
+    log.info("BLE Stack usage (Internal SRAM): ~{} KB", .{
+        (internal.total - internal.min_free) / 1024,
+    });
+    log.info("========================", .{});
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -414,9 +448,11 @@ pub fn run(_: anytype) void {
         .client => runClient(&host),
     }
 
+    // Memory report
+    printMemoryReport();
+
     log.info("=== DONE ===", .{});
     while (true) {
         idf.time.sleepMs(5000);
-        log.info("uptime={}ms", .{board.uptime()});
     }
 }

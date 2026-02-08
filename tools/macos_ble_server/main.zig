@@ -38,15 +38,12 @@ var rw_len: usize = 0;
 // ============================================================================
 
 fn onRead(
-    svc: [*c]const u8,
+    _: [*c]const u8,
     chr: [*c]const u8,
     out: [*c]u8,
     out_len: *u16,
     max_len: u16,
 ) callconv(.c) void {
-    _ = svc;
-    _ = max_len;
-
     const chr_str = std.mem.span(chr);
 
     if (std.mem.eql(u8, chr_str, CHR_READ_UUID)) {
@@ -73,12 +70,11 @@ fn onRead(
 }
 
 fn onWrite(
-    svc: [*c]const u8,
+    _: [*c]const u8,
     chr: [*c]const u8,
     data: [*c]const u8,
     len: u16,
 ) callconv(.c) void {
-    _ = svc;
     const chr_str = std.mem.span(chr);
 
     if (std.mem.eql(u8, chr_str, CHR_RW_UUID)) {
@@ -98,11 +94,10 @@ fn onWrite(
 }
 
 fn onSubscribe(
-    svc: [*c]const u8,
+    _: [*c]const u8,
     chr: [*c]const u8,
     subscribed: bool,
 ) callconv(.c) void {
-    _ = svc;
     const chr_str = std.mem.span(chr);
     std.debug.print("[subscribe] {s} → {}\n", .{ chr_str, subscribed });
     if (std.mem.eql(u8, chr_str, CHR_NOTIFY_UUID)) {

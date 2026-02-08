@@ -662,6 +662,21 @@ pub fn run(_: anytype) void {
         .client => runClient(&host),
     }
 
+    // Memory report
+    log.info("", .{});
+    log.info("=== Memory Footprint ===", .{});
+    const internal = heap.getInternalStats();
+    const psram_stats = heap.getPsramStats();
+    log.info("Internal SRAM: {} KB used / {} KB total (peak {} KB)", .{
+        internal.used / 1024, internal.total / 1024, (internal.total - internal.min_free) / 1024,
+    });
+    if (psram_stats.total > 0) {
+        log.info("PSRAM: {} KB used / {} KB total (peak {} KB)", .{
+            psram_stats.used / 1024, psram_stats.total / 1024, (psram_stats.total - psram_stats.min_free) / 1024,
+        });
+    }
+    log.info("========================", .{});
+
     log.info("", .{});
     log.info("==========================================", .{});
     log.info("E2E Results: {} passed, {} failed / 60 total", .{ passed, failed });
