@@ -1483,6 +1483,8 @@ def _esp_sdkconfig_impl(ctx):
         module_files.append(ctx.file.crypto)
     if ctx.attr.newlib:
         module_files.append(ctx.file.newlib)
+    if ctx.attr.bt:
+        module_files.append(ctx.file.bt)
     
     # Concatenate all fragments
     cmd = "echo '# Auto-generated sdkconfig' > {out} && cat {files} >> {out}".format(
@@ -1549,6 +1551,10 @@ esp_sdkconfig = rule(
             allow_single_file = True,
             doc = "esp_newlib rule output (nano printf, etc.)",
         ),
+        "bt": attr.label(
+            allow_single_file = True,
+            doc = "esp_bt rule output (Bluetooth controller, VHCI)",
+        ),
     },
     doc = """Concatenate sdkconfig fragments from module rules.
 
@@ -1565,5 +1571,6 @@ Optional:
     - littlefs : esp_littlefs
     - crypto   : esp_crypto
     - newlib   : esp_newlib
+    - bt       : esp_bt
 """,
 )
