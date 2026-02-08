@@ -704,7 +704,7 @@ set -e
 # Args from env (set by CMake via cmake -E env)
 ESP_I=""
 IFS=';' read -ra DIRS <<< "$ESP_INC_DIRS"
-for d in "${DIRS[@]}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
+for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
 
 MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
 MOD_ARGS=$(cat zig_module_args.txt 2>/dev/null | tr '\n' ' ')
