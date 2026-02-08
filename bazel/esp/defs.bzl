@@ -476,35 +476,18 @@ def _esp_zig_app_impl(ctx):
             lib_prefix = parts[0] + "/lib"
             cmake_prefix = parts[0] + "/cmake"
     
-    # Calculate path from app directory to lib directory
-    # app is at $WORK/{app_path}/, lib is at $WORK/../{lib_prefix}/
-    # Need: "../" * (app_path_depth + 1) + lib_prefix_without_leading_dotdot
-    app_depth = len(app_path.split("/"))
-    dotdots_to_work = "../" * app_depth  # from app to $WORK
-    if lib_prefix.startswith("../"):
-        # External lib: lib_prefix = "../embed_zig+/lib"
-        # Path from $WORK to lib = "../embed_zig+/lib"
-        # Total path = dotdots_to_work + lib_prefix = "../../../" + "../embed_zig+/lib"
-        app_to_lib_prefix = dotdots_to_work + lib_prefix
-    else:
-        # Internal lib: lib_prefix = "lib"
-        # Path from $WORK to lib = "lib"
-        # But lib files are copied to $WORK/../lib/ due to short_path behavior
-        # Actually for internal, lib is at $WORK/lib/
-        app_to_lib_prefix = dotdots_to_work + lib_prefix
-    
-    # Build settings - use flag value, or first board in list as default
+    # Build settings
     board_flag = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else ""
     board = board_flag if board_flag else (ctx.attr.boards[0] if ctx.attr.boards else DEFAULT_BOARD)
+    boards_list = ctx.attr.boards if ctx.attr.boards else ["esp32s3_devkit"]
     
-    # Get env file if provided
+    # Get env, sdkconfig, partition, app_config files
     env_file = None
     if ctx.attr.env:
-        env_files = ctx.attr.env.files.to_list()
-        if env_files:
-            env_file = env_files[0]
+        env_files_list = ctx.attr.env.files.to_list()
+        if env_files_list:
+            env_file = env_files_list[0]
     
-    # Get script files
     script_files = ctx.attr._scripts.files.to_list()
     build_sh = None
     for f in script_files:
@@ -512,7 +495,6 @@ def _esp_zig_app_impl(ctx):
             build_sh = f
             break
     
-    # Get sdkconfig file if provided
     sdkconfig_file = None
     sdkconfig_files = []
     if ctx.attr.sdkconfig:
@@ -520,41 +502,33 @@ def _esp_zig_app_impl(ctx):
         if sdkconfig_files:
             sdkconfig_file = sdkconfig_files[0]
     
-    # Get partition table if provided
-    partition_table_info = None
     partition_csv_file = None
     partition_sdkconfig_file = None
     partition_files = []
     if ctx.attr.partition_table:
         if EspPartitionTableInfo in ctx.attr.partition_table:
-            partition_table_info = ctx.attr.partition_table[EspPartitionTableInfo]
-            partition_csv_file = partition_table_info.csv_file
-            partition_sdkconfig_file = partition_table_info.sdkconfig_file
+            pt = ctx.attr.partition_table[EspPartitionTableInfo]
+            partition_csv_file = pt.csv_file
+            partition_sdkconfig_file = pt.sdkconfig_file
             partition_files = [partition_csv_file, partition_sdkconfig_file]
     
-    # Get app_config file if provided (for run_in_psram setting)
     app_config_file = None
     app_config_files = []
-    run_in_psram = False
     if ctx.attr.app_config:
         app_config_files = ctx.attr.app_config.files.to_list()
         if app_config_files:
             app_config_file = app_config_files[0]
-            # We'll pass this to the shell script to parse
-            run_in_psram = True  # Will be determined at runtime from file
     
-    # Generate copy commands
-    app_copy_commands = _generate_copy_commands_preserve_structure(app_files)
+    # Copy commands for CMake / C helper files only (NOT Zig sources)
     cmake_copy_commands = _generate_copy_commands_preserve_structure(cmake_files)
     lib_copy_commands = _generate_copy_commands_preserve_structure(lib_files)
     
-    # ESP-IDF configuration from attributes
+    # ESP-IDF configuration
     requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "driver"
     force_link = "\n        ".join(ctx.attr.force_link) if ctx.attr.force_link else ""
     extra_cmake = "\n".join(ctx.attr.extra_cmake) if ctx.attr.extra_cmake else ""
     extra_c_sources = " ".join(["${" + s + "}" for s in ctx.attr.extra_c_sources]) if ctx.attr.extra_c_sources else ""
     
-    # IDF component manager dependencies
     idf_deps_yml = ""
     for dep in ctx.attr.idf_deps:
         parts = dep.split(":")
@@ -563,71 +537,90 @@ def _esp_zig_app_impl(ctx):
         else:
             idf_deps_yml += '  {}: "*"\n'.format(dep)
     
-    # Board types for generated build.zig (from boards attribute)
-    boards_list = ctx.attr.boards if ctx.attr.boards else ["esp32s3_devkit"]
-    boards_enum_fields = ", ".join(boards_list)
-    default_board = boards_list[0]
+    # =========================================================================
+    # Build Zig module args from ZigModuleInfo (Bazel-native, no build.zig)
+    # =========================================================================
     
-    # Collect Zig library dependencies from deps attribute
-    deps_infos = []  # List of (ZigModuleInfo, files)
-    deps_files = []  # All dependency source files to copy
+    # Collect all deps
+    dep_infos = []
+    all_dep_files = []  # All files needed as Bazel action inputs
     for dep in ctx.attr.deps:
         if ZigModuleInfo in dep:
             info = dep[ZigModuleInfo]
-            files = info.transitive_srcs.to_list()
-            deps_infos.append((info, files))
-            deps_files.extend(files)
+            dep_infos.append(info)
+            all_dep_files.extend(info.transitive_srcs.to_list())
+            all_dep_files.extend(info.transitive_c_inputs.to_list())
+            if info.transitive_lib_as:
+                all_dep_files.extend(info.transitive_lib_as.to_list())
     
-    # Generate copy commands for deps
-    deps_copy_commands = _generate_copy_commands_preserve_structure(deps_files)
+    # Build "app" module: the user's app.zig
+    # App's direct deps = all user-specified deps by module name
+    app_dep_names = [info.module_name for info in dep_infos]
     
-    # Extra lib dependencies for build.zig.zon
-    extra_deps_zon = ""
-    extra_deps_zig_imports = ""
-    extra_deps_zig_decls = ""
-    # For app's build.zig.zon (relative to app directory)
-    app_extra_deps_zon = ""
+    # Encode app module + collect transitive module strings
+    app_module_str = encode_module("app", app_zig.path, app_dep_names)
     
-    for info, files in deps_infos:
-        dep_name = info.module_name
-        dep_path = info.package_path  # e.g., "lib/hal"
-        
-        # Detect actual path from root_source (handles external repository case)
-        # For external repos, short_path is like "../embed_zig+/lib/hal/src/hal.zig"
-        # Use root_source (guaranteed to belong to this module) instead of
-        # transitive_srcs (depset order is unspecified, files[0] may be from a dep)
-        dep_actual_path = dep_path
-        root_short = info.root_source.short_path
-        idx = root_short.rfind(dep_path)
-        if idx != -1:
-            # Check that we found a full path segment
-            is_start_boundary = (idx == 0) or (root_short[idx - 1] == "/")
-            end_idx = idx + len(dep_path)
-            is_end_boundary = (end_idx == len(root_short)) or (root_short[end_idx] == "/")
-            if is_start_boundary and is_end_boundary:
-                path = root_short[:end_idx]
-                dep_actual_path = path[2:] if path.startswith("./") else path
-        
-        # For esp_project/main/build.zig.zon: path relative to esp_project/main/
-        # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_actual_path}/
-        # So path is "../../{dep_actual_path}"
-        extra_deps_zon += '        .{name} = .{{ .path = "../../{path}" }},\n'.format(name = dep_name, path = dep_actual_path)
-        
-        # For app's build.zig.zon: path relative to app directory
-        # app is at $WORK/{app_path}/, lib is at $WORK/{dep_actual_path}/
-        # Calculate relative path from app to dep
-        app_depth = len(app_path.split("/"))
-        dep_rel_path = "../" * app_depth + dep_actual_path
-        app_extra_deps_zon += '        .{name} = .{{ .path = "{path}" }},\n'.format(name = dep_name, path = dep_rel_path)
-        
-        extra_deps_zig_imports += '    root_module.addImport("{name}", {name}_dep.module("{name}"));\n'.format(name = dep_name)
-        extra_deps_zig_decls += '''    const {name}_dep = b.dependency("{name}", .{{
-        .target = target,
-        .optimize = optimize,
-    }});
-'''.format(name = dep_name)
+    all_module_strings = depset(
+        [app_module_str] + [
+            encode_module(
+                info.module_name, info.root_source.path, info.direct_dep_names,
+                c_include_dirs = info.own_c_include_dirs, link_libc = info.own_link_libc,
+            )
+            for info in dep_infos
+        ],
+        transitive = [info.transitive_module_strings for info in dep_infos],
+    )
     
-    # Create wrapper script
+    # Build -M args for all dep modules (same logic as zig_binary)
+    # The "main" module is main.zig (generated at runtime in WORK)
+    # main.zig imports: app, esp (if present)
+    main_dep_names = ["app"]
+    # Check if "esp" is in deps (for the main.zig import)
+    for info in dep_infos:
+        if info.module_name == "esp" and "esp" not in main_dep_names:
+            main_dep_names.append("esp")
+    
+    # Generate the module args as lines (paths use $E/ placeholder for exec-root)
+    zig_mod_lines = []
+    needs_libc = False
+    seen = {"main": True}
+    
+    for encoded in all_module_strings.to_list():
+        mod = decode_module(encoded)
+        if mod.name in seen:
+            continue
+        seen[mod.name] = True
+        
+        for d in mod.dep_names:
+            zig_mod_lines.append("--dep " + d)
+        zig_mod_lines.append("-M{name}=$E/{path}".format(name = mod.name, path = mod.root_path))
+        
+        for inc in mod.c_include_dirs:
+            zig_mod_lines.append("-I $E/" + inc)
+        
+        if mod.link_libc:
+            needs_libc = True
+    
+    # Dep .a libraries for linking
+    dep_lib_a_lines = []
+    for info in dep_infos:
+        if info.transitive_lib_as:
+            for a in info.transitive_lib_as.to_list():
+                dep_lib_a_lines.append("$E/" + a.path)
+    
+    # Main module args (main.zig is generated in WORK, path set at runtime)
+    main_mod_args = ""
+    for d in main_dep_names:
+        main_mod_args += "--dep {} ".format(d)
+    main_mod_args += "-Mmain=$WORK/$ESP_PROJECT_PATH/main/src/main.zig"
+    
+    zig_module_args_str = "\n".join(zig_mod_lines)
+    zig_lib_a_str = "\n".join(dep_lib_a_lines)
+    needs_libc_str = "-lc" if needs_libc else ""
+    
+    # (Old build.zig.zon generation removed — replaced by zig_module_args above)
+    
+    # Create wrapper script — Bazel-native, no build.zig
     build_script = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
     
     script_content = """#!/bin/bash
@@ -636,9 +629,8 @@ export ESP_BAZEL_RUN=1 ESP_BOARD="{board}"
 export ESP_PROJECT_NAME="{project_name}" ESP_BIN_OUT="{bin_out}" ESP_ELF_OUT="{elf_out}"
 export ESP_BOOTLOADER_OUT="{bootloader_out}" ESP_PARTITION_OUT="{partition_out}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
-export ESP_GENERATE_SHELL=1
 export ESP_APP_NAME="{app_name}"
-export ESP_APP_PATH="{app_path}"
+E="$ESP_EXECROOT"
 {env_file_export}
 
 # Load app config if provided (for run_in_psram)
@@ -646,67 +638,15 @@ export ESP_APP_PATH="{app_path}"
 
 WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 
-# Copy files preserving structure
-{app_copy_commands}
+# Copy CMake/C helper files only (Zig sources use exec-root paths)
 {cmake_copy_commands}
 {lib_copy_commands}
-{deps_copy_commands}
 
-# Generate app build.zig.zon with correct relative paths to lib (without fingerprint first)
-cat > "$WORK/{app_path}/build.zig.zon" << 'APPZONEOF'
-.{{
-    .name = .{app_name}_app,
-    .version = "0.1.0",
-    .dependencies = .{{
-        .esp = .{{
-            .path = "{app_to_lib_prefix}/platform/esp",
-        }},
-        .hal = .{{
-            .path = "{app_to_lib_prefix}/hal",
-        }},
-        .drivers = .{{
-            .path = "{app_to_lib_prefix}/pkg/drivers",
-        }},
-        .trait = .{{
-            .path = "{app_to_lib_prefix}/trait",
-        }},
-        .dns = .{{
-            .path = "{app_to_lib_prefix}/pkg/dns",
-        }},
-{app_extra_deps_zon}    }},
-    .paths = .{{
-        "build.zig",
-        "build.zig.zon",
-        "app.zig",
-        "platform.zig",
-        "boards",
-    }},
-}}
-APPZONEOF
-
-# Calculate fingerprint for app build.zig.zon
-cd "$WORK/{app_path}"
-APP_ZIG_OUTPUT=$(HOME="$WORK" "$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" --global-cache-dir "$WORK/.zig-global-cache" 2>&1 || true)
-APP_FINGERPRINT=$(echo "$APP_ZIG_OUTPUT" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
-cd - > /dev/null
-
-if [ -n "$APP_FINGERPRINT" ]; then
-    awk -v fp="$APP_FINGERPRINT" '
-        /\\.version = "0\\.1\\.0",/ {{
-            print
-            print "    .fingerprint = " fp ","
-            next
-        }}
-        {{ print }}
-    ' "$WORK/{app_path}/build.zig.zon" > "$WORK/{app_path}/build.zig.zon.new"
-    mv "$WORK/{app_path}/build.zig.zon.new" "$WORK/{app_path}/build.zig.zon"
-fi
-
-# Generate ESP shell project
+# Generate ESP-IDF project
 export ESP_PROJECT_PATH="esp_project"
 mkdir -p "$WORK/$ESP_PROJECT_PATH/main/src"
 
-# Generate top-level CMakeLists.txt
+# top-level CMakeLists.txt
 cat > "$WORK/$ESP_PROJECT_PATH/CMakeLists.txt" << 'CMAKEOF'
 cmake_minimum_required(VERSION 3.16)
 include(${{CMAKE_CURRENT_SOURCE_DIR}}/../{cmake_prefix}/zig_install.cmake)
@@ -714,28 +654,15 @@ include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
 project({project_name})
 CMAKEOF
 
-# Generate main/CMakeLists.txt
+# main/CMakeLists.txt
 cat > "$WORK/$ESP_PROJECT_PATH/main/CMakeLists.txt" << 'MAINCMAKEOF'
-# Auto-generated ESP-IDF component CMakeLists.txt
-
-# Set _ESP_LIB to the lib directory in the work tree
 get_filename_component(_ESP_LIB "${{CMAKE_CURRENT_SOURCE_DIR}}/../../{lib_prefix}" ABSOLUTE)
-
 {extra_cmake}
-
-if(NOT DEFINED ZIG_BOARD)
-    set(ZIG_BOARD "esp32s3_devkit")
-endif()
-message(STATUS "[{app_name}] Board: ${{ZIG_BOARD}}")
-
 idf_component_register(
     SRCS "src/main.c" {extra_c_sources}
     INCLUDE_DIRS "."
     REQUIRES {requires}
 )
-
-# Call setup functions from included cmake modules (if they exist)
-# This is needed for modules that need to add include directories after registration
 if(COMMAND event_setup_includes)
     event_setup_includes()
 endif()
@@ -745,218 +672,47 @@ endif()
 if(COMMAND net_setup_includes)
     net_setup_includes()
 endif()
-if(COMMAND opus_setup_includes)
-    opus_setup_includes()
-endif()
-
 esp_zig_build(
     FORCE_LINK
         {force_link}
 )
 MAINCMAKEOF
 
-# Generate main/build.zig
-cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig" << 'BUILDZIGEOF'
-const std = @import("std");
+# Write zig module args (Bazel-computed -M flags, $E/ = exec-root)
+cat > "$WORK/$ESP_PROJECT_PATH/main/zig_module_args.txt" << 'ZIGARGSEOF'
+{zig_module_args}
+ZIGARGSEOF
 
-pub fn build(b: *std.Build) void {{
-    const target = b.standardTargetOptions(.{{}});
-    const optimize = b.standardOptimizeOption(.{{}});
-    
-    // Board selection - passed from CMake via -Dboard=<board_name>
-    const board = b.option([]const u8, "board", "Target board") orelse "{default_board}";
+# Write .a library args
+cat > "$WORK/$ESP_PROJECT_PATH/main/zig_lib_a_args.txt" << 'ZIGLAEOF'
+{zig_lib_a_args}
+ZIGLAEOF
 
-    // Convert board string to enum for app dependency
-    const BoardType = enum {{ {boards_enum_fields} }};
-    const board_enum = std.meta.stringToEnum(BoardType, board) orelse {{
-        std.log.err("Unknown board '{{s}}'. Supported boards: {boards_enum_fields}", .{{board}});
-        @panic("Invalid board specified");
-    }};
-    
-    const app_dep = b.dependency("app", .{{
-        .target = target,
-        .optimize = optimize,
-        .board = board_enum,
-    }});
+# Expand $E/ placeholder to actual exec-root path
+sed -i.bak "s|\\$E/|$E/|g" "$WORK/$ESP_PROJECT_PATH/main/zig_module_args.txt"
+sed -i.bak "s|\\$E/|$E/|g" "$WORK/$ESP_PROJECT_PATH/main/zig_lib_a_args.txt"
+rm -f "$WORK/$ESP_PROJECT_PATH/main/"*.bak
 
-    const esp_dep = b.dependency("esp", .{{
-        .target = target,
-        .optimize = optimize,
-    }});
+# Write main module args (main.zig path is in WORK, set at runtime)
+echo '{main_mod_args}' | sed "s|\\$WORK|$WORK|g" > "$WORK/$ESP_PROJECT_PATH/main/zig_main_args.txt"
 
-{extra_deps_zig_decls}
-    const root_module = b.createModule(.{{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    }});
-    root_module.addImport("esp", esp_dep.module("esp"));
-    root_module.addImport("app", app_dep.module("app"));
-{extra_deps_zig_imports}
-
-    const lib = b.addLibrary(.{{
-        .name = "main_zig",
-        .linkage = .static,
-        .root_module = root_module,
-    }});
-
-    // Add ESP-IDF include paths from INCLUDE_DIRS env var (set by CMake)
-    addEspIncludes(b, root_module);
-
-    root_module.addIncludePath(b.path("include"));
-    b.installArtifact(lib);
-}}
-
-fn addEspIncludes(b: *std.Build, module: *std.Build.Module) void {{
-    // 1. From INCLUDE_DIRS env var (set by CMake)
-    const include_dirs = std.process.getEnvVarOwned(b.allocator, "INCLUDE_DIRS") catch "";
-    if (include_dirs.len > 0) {{
-        defer b.allocator.free(include_dirs);
-        var it = std.mem.tokenizeAny(u8, include_dirs, ";");
-        while (it.next()) |dir| {{
-            module.addIncludePath(.{{ .cwd_relative = dir }});
-        }}
-    }}
-
-    // 2. From IDF_PATH env var - add component includes
-    const idf_path = std.process.getEnvVarOwned(b.allocator, "IDF_PATH") catch "";
-    if (idf_path.len > 0) {{
-        defer b.allocator.free(idf_path);
-        addIdfComponentIncludes(b, module, idf_path);
-    }}
-
-    // 3. Toolchain includes (auto-detect version)
-    const home_dir = std.process.getEnvVarOwned(b.allocator, "HOME") catch "";
-    if (home_dir.len > 0) {{
-        defer b.allocator.free(home_dir);
-        addToolchainIncludes(b, module, home_dir);
-    }}
-}}
-
-fn addIdfComponentIncludes(b: *std.Build, module: *std.Build.Module, idf_path: []const u8) void {{
-    const comp = b.pathJoin(&.{{ idf_path, "components" }});
-    var dir = std.fs.cwd().openDir(comp, .{{ .iterate = true }}) catch return;
-    defer dir.close();
-
-    var added_dirs = std.StringHashMap(void).init(b.allocator);
-    defer added_dirs.deinit();
-
-    var walker = dir.walk(b.allocator) catch return;
-    defer walker.deinit();
-
-    while (walker.next() catch null) |entry| {{
-        if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".h")) {{
-            if (std.fs.path.dirname(entry.path)) |parent| {{
-                // Must dupe the key since walker reuses its buffer
-                const key = b.dupe(parent);
-                const gop = added_dirs.getOrPut(key) catch continue;
-                if (!gop.found_existing) {{
-                    module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ comp, parent }}) }});
-                }}
-            }}
-        }}
-    }}
-}}
-
-fn addToolchainIncludes(b: *std.Build, module: *std.Build.Module, home_dir: []const u8) void {{
-    const arch = module.resolved_target.?.result.cpu.arch;
-    const archtools = b.fmt("{{s}}-esp-elf", .{{@tagName(arch)}});
-    const tools_base = b.pathJoin(&.{{ home_dir, ".espressif", "tools", archtools }});
-
-    var tools_dir = std.fs.cwd().openDir(tools_base, .{{ .iterate = true }}) catch return;
-    defer tools_dir.close();
-
-    var version: ?[]const u8 = null;
-    var it = tools_dir.iterate();
-    while (it.next() catch null) |entry| {{
-        if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, "esp-")) {{
-            version = b.dupe(entry.name);
-            break;
-        }}
-    }}
-
-    const ver = version orelse return;
-
-    module.addIncludePath(.{{
-        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, "include" }}),
-    }});
-    module.addSystemIncludePath(.{{
-        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, archtools, "sys-include" }}),
-    }});
-    module.addIncludePath(.{{
-        .cwd_relative = b.pathJoin(&.{{ tools_base, ver, archtools, archtools, "include" }}),
-    }});
-}}
-BUILDZIGEOF
-
-# Generate main/build.zig.zon (without fingerprint first)
-cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
-.{{
-    .name = .{app_name},
-    .version = "0.1.0",
-    .dependencies = .{{
-        .esp = .{{ .path = "../../{lib_prefix}/platform/esp" }},
-        .app = .{{ .path = "../../{app_path}" }},
-{extra_deps_zon}    }},
-    .paths = .{{
-        "build.zig",
-        "build.zig.zon",
-        "src",
-    }},
-}}
-ZONEOF
-
-# Calculate fingerprint by running zig build --fetch to get suggested value
-# Note: --fetch works without a valid build, just needs build.zig.zon to exist
-# Use --cache-dir to avoid "AppDataDirUnavailable" error in Bazel sandbox where $HOME may not be set
-# Calculate fingerprint by running zig build --fetch
-# Set HOME and cache dirs for Bazel sandbox compatibility
-cd "$WORK/$ESP_PROJECT_PATH/main"
-ZIG_OUTPUT=$(HOME="$WORK" "$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" --global-cache-dir "$WORK/.zig-global-cache" 2>&1 || true)
-FINGERPRINT=$(echo "$ZIG_OUTPUT" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
-cd - > /dev/null
-
-if [ -n "$FINGERPRINT" ]; then
-    # Insert fingerprint using awk
-    awk -v fp="$FINGERPRINT" '
-        /\\.version = "0\\.1\\.0",/ {{
-            print
-            print "    .fingerprint = " fp ","
-            next
-        }}
-        {{ print }}
-    ' "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new"
-    mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
-fi
-
-# Generate main/src/main.c
+# main.c
 cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.c" << 'MAINCEOF'
-// Entry point - calls Zig's app_main
 extern void app_main(void);
 MAINCEOF
 
-# Generate main/src/env.zig - dynamic env from env file
-# Parse env file and generate Zig struct
+# env.zig
 ENV_STRUCT_FIELDS=""
 ENV_STRUCT_VALUES=""
-
 if [ -n "$ESP_ENV_FILE" ] && [ -f "$ESP_ENV_FILE" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
-        # Skip comments and empty lines
-        case "$line" in
-            '#'*|"") continue ;;
-        esac
-        # Parse KEY=VALUE or KEY="VALUE" or export KEY=VALUE
-        line="${{line#export }}"  # Remove export prefix if present
+        case "$line" in '#'*|"") continue ;; esac
+        line="${{line#export }}"
         key="${{line%%=*}}"
         value="${{line#*=}}"
-        # Remove quotes from value
         value="${{value#'"'}}"
         value="${{value%'"'}}"
-        # Convert to lowercase for Zig field name
         field=$(echo "$key" | tr '[:upper:]' '[:lower:]')
-        # Add to struct fields and values
         if [ -n "$ENV_STRUCT_FIELDS" ]; then
             ENV_STRUCT_FIELDS="$ENV_STRUCT_FIELDS
     $field: [:0]const u8,"
@@ -968,176 +724,66 @@ if [ -n "$ESP_ENV_FILE" ] && [ -f "$ESP_ENV_FILE" ]; then
         fi
     done < "$ESP_ENV_FILE"
 fi
-
-# Generate env.zig
 cat > "$WORK/$ESP_PROJECT_PATH/main/src/env.zig" << ENVZIGEOF
-//! Application Environment (generated from env file)
-
 pub const Env = struct {{
 $ENV_STRUCT_FIELDS
 }};
-
 pub const env: Env = .{{
 $ENV_STRUCT_VALUES
 }};
 ENVZIGEOF
 
-# Generate main/src/main.zig - unified entry point
-# Check if RUN_APP_IN_PSRAM is set (from app_config)
+# main.zig
 if [ "$RUN_APP_IN_PSRAM" = "y" ]; then
-    # Generate build_options.zig with PSRAM stack size
-    cat > "$WORK/$ESP_PROJECT_PATH/main/src/build_options.zig" << BUILDOPTSEOF
-//! Build-time options generated by Bazel
+    cat > "$WORK/$ESP_PROJECT_PATH/main/src/build_options.zig" << BOOF
 pub const psram_stack_size: usize = $PSRAM_STACK_SIZE;
-BUILDOPTSEOF
-
-    # PSRAM task version - larger stack in PSRAM
+BOOF
     cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
-//! ESP Platform Entry Point (PSRAM Task Mode)
-
 const std = @import("std");
 const esp = @import("esp");
 const app = @import("app");
 const build_options = @import("build_options.zig");
 pub const env_module = @import("env.zig");
-
-const c = @cImport({{
-    @cInclude("sdkconfig.h");
-    @cInclude("freertos/FreeRTOS.h");
-    @cInclude("freertos/task.h");
-    @cInclude("esp_heap_caps.h");
-}});
-
-/// Log level from sdkconfig (CONFIG_LOG_DEFAULT_LEVEL)
-const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4)
-    .debug
-else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3)
-    .info
-else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2)
-    .warn
-else
-    .err;
-
-pub const std_options = std.Options{{
-    .log_level = log_level,
-    .logFn = esp.idf.log.stdLogFn,
-}};
-
-/// PSRAM task stack size (configured via build_options)
+const c = @cImport({{ @cInclude("sdkconfig.h"); @cInclude("freertos/FreeRTOS.h"); @cInclude("freertos/task.h"); @cInclude("esp_heap_caps.h"); }});
+const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
+pub const std_options = std.Options{{ .log_level = log_level, .logFn = esp.idf.log.stdLogFn }};
 const PSRAM_TASK_STACK_SIZE = build_options.psram_stack_size;
 const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
-
-/// Static task control block (in internal RAM for performance)
 var task_tcb: c.StaticTask_t = undefined;
-
-/// Stack buffer allocated in PSRAM
 var psram_stack: ?[*]c.StackType_t = null;
-
-fn appTaskFn(_: ?*anyopaque) callconv(.c) void {{
-    app.run(env_module.env);
-    // Task should not return, but if it does, loop forever
-    while (true) {{
-        c.vTaskDelay(c.portMAX_DELAY);
-    }}
-}}
-
+fn appTaskFn(_: ?*anyopaque) callconv(.c) void {{ app.run(env_module.env); while (true) {{ c.vTaskDelay(c.portMAX_DELAY); }} }}
 export fn app_main() void {{
     std.log.info("Starting app in PSRAM task (stack: {{d}}KB)", .{{PSRAM_TASK_STACK_SIZE / 1024}});
-    
-    // Allocate stack in PSRAM
-    psram_stack = @ptrCast(@alignCast(c.heap_caps_malloc(
-        PSRAM_TASK_STACK_SIZE,
-        c.MALLOC_CAP_SPIRAM,
-    )));
-    
-    if (psram_stack == null) {{
-        std.log.err("Failed to allocate PSRAM stack!", .{{}});
-        // Fallback to direct call
-        app.run(env_module.env);
-        return;
-    }}
-    
-    std.log.info("PSRAM stack allocated at {{*}}", .{{psram_stack}});
-    
-    // Create task with static allocation
-    const task_handle = c.xTaskCreateStatic(
-        appTaskFn,              // Task function
-        "app",                  // Task name
-        PSRAM_TASK_STACK_WORDS, // Stack size in words
-        null,                   // Parameters
-        5,                      // Priority
-        psram_stack.?,          // Stack buffer (in PSRAM)
-        &task_tcb,              // Task control block
-    );
-    
-    if (task_handle == null) {{
-        std.log.err("Failed to create PSRAM task!", .{{}});
-        c.heap_caps_free(psram_stack);
-        // Fallback to direct call
-        app.run(env_module.env);
-        return;
-    }}
-    
-    std.log.info("PSRAM task created successfully", .{{}});
-    // app_main returns, the app task continues running
+    psram_stack = @ptrCast(@alignCast(c.heap_caps_malloc(PSRAM_TASK_STACK_SIZE, c.MALLOC_CAP_SPIRAM)));
+    if (psram_stack == null) {{ std.log.err("PSRAM alloc failed", .{{}}); app.run(env_module.env); return; }}
+    const task_handle = c.xTaskCreateStatic(appTaskFn, "app", PSRAM_TASK_STACK_WORDS, null, 5, psram_stack.?, &task_tcb);
+    if (task_handle == null) {{ std.log.err("Task create failed", .{{}}); c.heap_caps_free(psram_stack); app.run(env_module.env); return; }}
 }}
 MAINZIGEOF
 else
-    # Direct call version - runs in main task
     cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
-//! ESP Platform Entry Point
-
 const std = @import("std");
 const esp = @import("esp");
 const app = @import("app");
 pub const env_module = @import("env.zig");
-
-const c = @cImport({{
-    @cInclude("sdkconfig.h");
-}});
-
-/// Log level from sdkconfig (CONFIG_LOG_DEFAULT_LEVEL)
-const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4)
-    .debug
-else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3)
-    .info
-else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2)
-    .warn
-else
-    .err;
-
-pub const std_options = std.Options{{
-    .log_level = log_level,
-    .logFn = esp.idf.log.stdLogFn,
-}};
-
-export fn app_main() void {{
-    app.run(env_module.env);
-}}
+const c = @cImport({{ @cInclude("sdkconfig.h"); }});
+const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
+pub const std_options = std.Options{{ .log_level = log_level, .logFn = esp.idf.log.stdLogFn }};
+export fn app_main() void {{ app.run(env_module.env); }}
 MAINZIGEOF
 fi
 
-# Generate sdkconfig.defaults
+# sdkconfig
 cat > "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults" << SDKCONFIGEOF
-# Auto-generated sdkconfig defaults
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 SDKCONFIGEOF
-
-# Append partition table sdkconfig if exists
 {partition_sdkconfig_append}
-
-# If no partition table provided, use default single_app_large
 if ! grep -q "CONFIG_PARTITION_TABLE" "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"; then
     echo "CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"
 fi
-
-# Copy partition CSV if custom partition table
 {partition_csv_copy}
-
-# Append user-provided sdkconfig if exists
 {sdkconfig_append}
 
-# Generate idf_component.yml if there are IDF component manager dependencies
 if [ -n "{idf_deps_yml}" ]; then
 cat > "$WORK/$ESP_PROJECT_PATH/main/idf_component.yml" << 'IDFCOMPEOF'
 dependencies:
@@ -1157,28 +803,21 @@ exec bash "{build_sh}"
         zig_dir = zig_bin.dirname if zig_bin else "",
         build_sh = build_sh.path if build_sh else "",
         app_name = app_name,
-        app_path = app_path,
-        app_copy_commands = "\n".join(app_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
-        deps_copy_commands = "\n".join(deps_copy_commands),
-        lib_prefix = lib_prefix,
         cmake_prefix = cmake_prefix,
-        app_to_lib_prefix = app_to_lib_prefix,
+        lib_prefix = lib_prefix,
         requires = requires,
         force_link = force_link,
         extra_cmake = extra_cmake,
         extra_c_sources = extra_c_sources,
-        extra_deps_zon = extra_deps_zon,
-        app_extra_deps_zon = app_extra_deps_zon,
-        extra_deps_zig_imports = extra_deps_zig_imports,
-        extra_deps_zig_decls = extra_deps_zig_decls,
+        zig_module_args = zig_module_args_str,
+        zig_lib_a_args = zig_lib_a_str,
+        main_mod_args = main_mod_args,
         idf_deps_yml = idf_deps_yml,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
         sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
-        boards_enum_fields = boards_enum_fields,
-        default_board = default_board,
     )
     
     ctx.actions.write(
@@ -1187,12 +826,11 @@ exec bash "{build_sh}"
         is_executable = True,
     )
     
-    # Collect all inputs
+    # Collect all inputs — Zig sources via exec-root paths (no copying needed)
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + deps_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
     
-    # Run build
     ctx.actions.run_shell(
         command = build_script.path,
         inputs = inputs,
@@ -1218,6 +856,7 @@ exec bash "{build_sh}"
             partition = depset([partition_file]),
         ),
     ]
+
 
 esp_zig_app = rule(
     implementation = _esp_zig_app_impl,
