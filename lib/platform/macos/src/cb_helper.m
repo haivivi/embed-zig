@@ -150,6 +150,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 @property (nonatomic, strong) dispatch_semaphore_t discoverSem;
 @property (nonatomic, strong) NSData *lastReadValue;
 @property (nonatomic, assign) int lastError;
+@property (nonatomic, assign) BOOL opDone;
 @end
 
 @implementation CBCentralHelper
@@ -254,13 +255,13 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 - (void)peripheral:(CBPeripheral *)peripheral
     didWriteValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
     _lastError = error ? -1 : 0;
-    dispatch_semaphore_signal(_writeSem);
+    _opDone = YES;
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral
     didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
     _lastError = error ? -1 : 0;
-    dispatch_semaphore_signal(_writeSem);
+    _opDone = YES;
 }
 
 @end
@@ -435,9 +436,10 @@ int cb_central_connect(const char *peripheral_uuid) {
     s_central.lastError = 0;
     [s_central.manager connectPeripheral:peripheral options:nil];
 
-    // Wait for connection + service discovery (up to 10s)
-    dispatch_semaphore_wait(s_central.connectSem,
-        dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    // Pump run loop while waiting for connection + service discovery
+    for (int i = 0; i < 100 && !s_central.connectedPeripheral; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
 
     return s_central.connectedPeripheral ? 0 : -3;
 }
@@ -460,8 +462,9 @@ int cb_central_read(const char *svc_uuid, const char *chr_uuid,
     s_central.lastError = 0;
     [s_central.connectedPeripheral readValueForCharacteristic:chr];
 
-    dispatch_semaphore_wait(s_central.readSem,
-        dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    for (int i = 0; i < 50 && !s_central.lastReadValue && s_central.lastError == 0; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
 
     if (s_central.lastError != 0 || !s_central.lastReadValue) return -3;
 
@@ -482,11 +485,13 @@ int cb_central_write(const char *svc_uuid, const char *chr_uuid,
 
     NSData *value = [NSData dataWithBytes:data length:len];
     s_central.lastError = 0;
+    s_central.opDone = NO;
     [s_central.connectedPeripheral writeValue:value forCharacteristic:chr
      type:CBCharacteristicWriteWithResponse];
 
-    dispatch_semaphore_wait(s_central.writeSem,
-        dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    for (int i = 0; i < 50 && !s_central.opDone && s_central.lastError == 0; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
 
     return s_central.lastError;
 }
@@ -513,10 +518,12 @@ int cb_central_subscribe(const char *svc_uuid, const char *chr_uuid) {
     if (!chr) return -2;
 
     s_central.lastError = 0;
+    s_central.opDone = NO;
     [s_central.connectedPeripheral setNotifyValue:YES forCharacteristic:chr];
 
-    dispatch_semaphore_wait(s_central.writeSem,
-        dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    for (int i = 0; i < 50 && !s_central.opDone && s_central.lastError == 0; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
 
     return s_central.lastError;
 }
