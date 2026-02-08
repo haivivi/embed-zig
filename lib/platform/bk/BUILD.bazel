@@ -1,0 +1,32 @@
+package(default_visibility = ["//visibility:public"])
+
+# Direct cross-compilation to ARM Cortex-M33 ELF object
+# Note: -target must come BEFORE -Mroot= for Zig 0.15+
+genrule(
+    name = "bk_zig_arm",
+    srcs = ["src/bk.zig"],
+    outs = ["bk_zig.o"],
+    cmd = """
+        TMPDIR=$$(mktemp -d) && \
+        $(execpath @zig_toolchain//:zig) build-obj \
+            -target thumb-freestanding-eabihf \
+            -mcpu cortex_m33 \
+            -O ReleaseSmall \
+            -fno-stack-check \
+            -Mroot=$(location src/bk.zig) \
+            --cache-dir $$TMPDIR/cache \
+            --global-cache-dir $$TMPDIR/gcache \
+            -femit-bin=$@ && \
+        rm -rf $$TMPDIR
+    """,
+    tools = [
+        "@zig_toolchain//:zig",
+        "@zig_toolchain//:zig_files",
+    ],
+)
+
+# C helper sources (compiled by Armino's GCC)
+filegroup(
+    name = "c_helpers",
+    srcs = ["src/bk_zig_helper.c"],
+)
