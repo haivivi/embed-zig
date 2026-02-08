@@ -1,0 +1,20 @@
+.{
+    .name = .opus_aec_test_app,
+    .version = "0.1.0",
+    .dependencies = .{
+        .esp = .{ .path = "../../../../lib/platform/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .audio = .{ .path = "../../../../lib/pkg/audio" },
+        .channel = .{ .path = "../../../../lib/pkg/channel" },
+        .waitgroup = .{ .path = "../../../../lib/pkg/waitgroup" },
+        .cancellation = .{ .path = "../../../../lib/pkg/cancellation" },
+        .drivers = .{ .path = "../../../../lib/pkg/drivers" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "lichuang_gocool.zig",
+    },
+}
