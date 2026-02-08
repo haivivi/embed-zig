@@ -66,10 +66,11 @@ pub const att = @import("host/att/att.zig");
 // pub const gap = @import("host/gap/gap.zig");
 
 // ============================================================================
-// GATT Server (future)
+// GATT Server
 // ============================================================================
 
-// pub const gatt_server = @import("gatt_server.zig");
+/// GATT Server with handler-based dispatch (Go http.Server pattern)
+pub const gatt_server = @import("gatt_server.zig");
 
 // ============================================================================
 // Host Coordinator (future)
