@@ -181,6 +181,7 @@ function(esp_zig_build)
             "${TARGET_CPU_MODEL}"
             "${ZIG_BUILD_TYPE}"
             "${ZIG_OUTPUT_A}"
+            "${ZIG_INSTALL}/zig"
         BYPRODUCTS ${ZIG_OUTPUT_A}
         VERBATIM
     )
