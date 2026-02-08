@@ -550,9 +550,8 @@ def _zig_static_library_impl(ctx):
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-lib"] + global_pre + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
-    if ctx.attr.pic:
-        cm_args.append("-fPIC")
+    pic_args = ["-fPIC"] if ctx.attr.pic else []
+    cm_args.extend(["build-lib"] + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
