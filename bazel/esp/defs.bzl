@@ -726,7 +726,7 @@ echo "[zig] build-lib target=$ZIG_TARGET_ARCH cpu=$ZIG_CPU ESP_I_count=$(echo $E
 # ESP_I injected per-module (after each -M), not global
 $ZIG_BIN build-lib \
     -lc $MAIN_ARGS $ESP_I $MOD_ARGS $LIB_ARGS \
-    -target $ZIG_TARGET_ARCH -Dcpu=$ZIG_CPU -O$ZIG_OPT \
+    -target $ZIG_TARGET_ARCH -mcpu=$ZIG_CPU -O$ZIG_OPT \
     -freference-trace \
     --cache-dir $(dirname $ZIG_OUT)/../../.zig-cache \
     --global-cache-dir $(dirname $ZIG_OUT)/../../.zig-global-cache \
