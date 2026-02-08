@@ -601,12 +601,10 @@ def _esp_zig_app_impl(ctx):
         if mod.link_libc:
             needs_libc = True
     
-    # Dep .a libraries for linking
+    # NOTE: dep .a libraries are NOT passed for ESP cross-compile.
+    # The Bazel-compiled .a is for HOST (macOS), not xtensa.
+    # Opus C sources are recompiled by zig build-lib for xtensa target.
     dep_lib_a_lines = []
-    for info in dep_infos:
-        if info.transitive_lib_as:
-            for a in info.transitive_lib_as.to_list():
-                dep_lib_a_lines.append("$E/" + a.path)
     
     # Main module args (main.zig is generated in WORK, path set at runtime)
     main_mod_args = ""
