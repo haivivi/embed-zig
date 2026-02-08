@@ -291,3 +291,20 @@ bool bt_helper_has_data(void) {
     portEXIT_CRITICAL(&rx_lock);
     return has;
 }
+
+bool bt_helper_wait_for_data(uint32_t timeout_ms) {
+    /* Fast path */
+    if (bt_helper_has_data()) return true;
+    if (timeout_ms == 0) return false;
+
+    /* Block on semaphore (signaled by VHCI RX callback) */
+    if (rx_sem != NULL) {
+        TickType_t ticks = (timeout_ms == UINT32_MAX)
+            ? portMAX_DELAY
+            : pdMS_TO_TICKS(timeout_ms);
+        xSemaphoreTake(rx_sem, ticks);
+        return bt_helper_has_data();
+    }
+
+    return false;
+}

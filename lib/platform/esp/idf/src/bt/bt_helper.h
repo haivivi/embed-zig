@@ -84,6 +84,16 @@ int bt_helper_recv(uint8_t *buf, uint16_t buf_len);
  */
 bool bt_helper_has_data(void);
 
+/**
+ * @brief Wait until data is available or timeout expires
+ *
+ * Blocks on an internal semaphore signaled by the VHCI RX callback.
+ *
+ * @param timeout_ms  Timeout in milliseconds (0 = non-blocking, portMAX_DELAY = forever)
+ * @return true if data is available, false on timeout
+ */
+bool bt_helper_wait_for_data(uint32_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

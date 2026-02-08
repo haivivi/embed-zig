@@ -26,6 +26,7 @@ set(BT_FORCE_LINK
     bt_helper_send
     bt_helper_recv
     bt_helper_has_data
+    bt_helper_wait_for_data
 )
 
 message(STATUS "[bt] C sources: ${BT_C_SOURCES}")
