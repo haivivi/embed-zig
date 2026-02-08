@@ -1,7 +1,6 @@
 //! Stream adapter for trait.socket
 //!
 //! Provides simple read/write interface for HTTP client.
-//! TLS support is provided by platform-specific implementations (e.g., esp.trait.tls).
 
 const std = @import("std");
 const trait = @import("trait");
@@ -66,17 +65,4 @@ pub fn SocketStream(comptime Socket: type) type {
         }
     };
 }
-
-// =============================================================================
-// TLS Stream Interface
-// =============================================================================
-//
-// TLS 接口定义在 trait.tls 中，包括：
-// - trait.tls.from - TLS 流类型 stub
-// - trait.tls.Options - TLS 配置选项
-// - trait.tls.Error - TLS 错误类型
-//
-// Example usage:
-//   const TlsStream = esp.trait.tls.from;
-//   const HttpClient = http.ClientWithTls(Socket, TlsStream);
 

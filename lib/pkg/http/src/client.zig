@@ -131,8 +131,7 @@ pub fn DefaultHttpClient(comptime Socket: type) type {
 /// HTTP Client - HTTP only, no TLS, no DNS resolver
 /// Use this for simple HTTP requests to IP addresses.
 pub fn Client(comptime Socket: type) type {
-    const socket = trait.socket.from(Socket);
-    return ClientImpl(socket, void, void);
+    return ClientImpl(trait.socket.from(Socket));
 }
 
 // =============================================================================
@@ -355,14 +354,7 @@ fn HttpClientImpl(comptime Socket: type, comptime Crypto: type) type {
 // Client Implementation (HTTP only, no TLS, no DNS)
 // =============================================================================
 
-fn ClientImpl(
-    comptime Socket: type,
-    comptime TlsStreamType: type,
-    comptime ResolverType: type,
-) type {
-    _ = TlsStreamType;
-    _ = ResolverType;
-
+fn ClientImpl(comptime Socket: type) type {
     return struct {
         /// Connection timeout in milliseconds
         timeout_ms: u32 = 30000,
