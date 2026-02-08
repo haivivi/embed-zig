@@ -1,11 +1,11 @@
-//! BLE Full-Duplex Throughput Test — Host API
+//! BLE GATT Duplex Throughput Test — Host API + GATT Server
 //!
-//! Two ESP32-S3 devices: Server (peripheral) + Client (central).
-//! Uses bluetooth.Host with HCI ACL flow control.
+//! Server registers a GATT service with notify + write characteristics.
+//! Client connects, enables notifications, then both flood simultaneously:
+//!   Server → Client: GATT Notifications
+//!   Client → Server: ATT Write Without Response
 //!
-//! Role auto-detected by BD_ADDR:
-//!   98:88:E0:11:xx:xx → Server (peripheral, advertises "ZigBLE")
-//!   98:88:E0:16:xx:xx → Client (central, scans + connects)
+//! Role auto-detected by BD_ADDR.
 
 const std = @import("std");
 const esp = @import("esp");
@@ -19,11 +19,38 @@ const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const hci = bluetooth.hci;
+const gatt = bluetooth.gatt_server;
 
 const EspRt = idf.runtime;
 const WG = waitgroup.WaitGroup(EspRt);
 const HciDriver = esp.impl.hci.HciDriver;
-const BleHost = bluetooth.Host(EspRt, HciDriver, &.{});
+
+// ============================================================================
+// GATT Service Definition (comptime)
+// ============================================================================
+
+/// Custom throughput test service
+const SVC_UUID: u16 = 0xFFE0;
+/// Write characteristic (client → server)
+const CHR_WRITE_UUID: u16 = 0xFFE1;
+/// Notify characteristic (server → client)
+const CHR_NOTIFY_UUID: u16 = 0xFFE2;
+
+const service_table = &[_]gatt.ServiceDef{
+    gatt.Service(SVC_UUID, &[_]gatt.CharDef{
+        gatt.Char(CHR_WRITE_UUID, .{ .write_without_response = true }),
+        gatt.Char(CHR_NOTIFY_UUID, .{ .read = true, .notify = true }),
+    }),
+};
+
+const BleHost = bluetooth.Host(EspRt, HciDriver, service_table);
+const GattType = gatt.GattServer(service_table);
+
+/// Comptime-resolved ATT handles
+const WRITE_VALUE_HANDLE = GattType.getValueHandle(SVC_UUID, CHR_WRITE_UUID);
+const NOTIFY_VALUE_HANDLE = GattType.getValueHandle(SVC_UUID, CHR_NOTIFY_UUID);
+// CCCD handle is always notify_value_handle + 1
+const NOTIFY_CCCD_HANDLE = NOTIFY_VALUE_HANDLE + 1;
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
@@ -34,12 +61,30 @@ const log = Board.log;
 // ============================================================================
 
 const ADV_NAME = "ZigBLE";
-const THROUGHPUT_HANDLE: u16 = 0x0001;
 const ROUND_DURATION_MS: u64 = 10_000;
 const STATS_INTERVAL_MS: u64 = 1_000;
+const PAYLOAD_SIZE: u32 = 244; // fits in one ACL fragment (251 - 4 L2CAP - 3 ATT)
 
 // ============================================================================
-// TX Flood Task
+// Shared stats
+// ============================================================================
+
+var rx_bytes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+var rx_packets: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+// ============================================================================
+// GATT Write Handler (called async by Host for each Write Command)
+// ============================================================================
+
+fn writeHandler(req: *gatt.Request, w: *gatt.ResponseWriter) void {
+    _ = w;
+    // Count incoming bytes
+    _ = rx_bytes.fetchAdd(@intCast(req.data.len), .monotonic);
+    _ = rx_packets.fetchAdd(1, .monotonic);
+}
+
+// ============================================================================
+// TX Flood: send notifications (server) or write commands (client)
 // ============================================================================
 
 const FloodCtx = struct {
@@ -48,48 +93,46 @@ const FloodCtx = struct {
     cancel: cancellation.CancellationToken,
     tx_bytes: std.atomic.Value(u32),
     tx_packets: std.atomic.Value(u32),
-
-    fn init(host: *BleHost, conn_handle: u16) FloodCtx {
-        return .{
-            .host = host,
-            .conn_handle = conn_handle,
-            .cancel = cancellation.CancellationToken.init(),
-            .tx_bytes = std.atomic.Value(u32).init(0),
-            .tx_packets = std.atomic.Value(u32).init(0),
-        };
-    }
+    use_notify: bool, // true = server sends notifications, false = client sends write cmd
 };
 
 fn txFloodTask(raw_ctx: ?*anyopaque) void {
     const ctx: *FloodCtx = @ptrCast(@alignCast(raw_ctx));
 
-    // Payload: ATT Write Without Response, fits in one ACL fragment (251 - 4 L2CAP header = 247 - 3 ATT header = 244)
-    const payload_size: u32 = 244;
-    var att_pdu: [247]u8 = undefined;
-    att_pdu[0] = @intFromEnum(att.Opcode.write_command);
-    std.mem.writeInt(u16, att_pdu[1..3], THROUGHPUT_HANDLE, .little);
-    for (3..3 + payload_size) |i| {
-        att_pdu[i] = @truncate(i);
-    }
+    var payload: [PAYLOAD_SIZE]u8 = undefined;
+    for (&payload, 0..) |*b, i| b.* = @truncate(i);
 
     while (!ctx.cancel.isCancelled()) {
-        // host.sendData → L2CAP fragment → tx_queue → writeLoop → acl_credits.acquire → hci.write
-        ctx.host.sendData(ctx.conn_handle, l2cap.CID_ATT, att_pdu[0 .. 3 + payload_size]) catch break;
-        _ = ctx.tx_bytes.fetchAdd(payload_size, .monotonic);
+        if (ctx.use_notify) {
+            // Server: send GATT notification
+            ctx.host.notify(ctx.conn_handle, NOTIFY_VALUE_HANDLE, &payload) catch break;
+        } else {
+            // Client: send ATT Write Without Response
+            var att_pdu: [3 + PAYLOAD_SIZE]u8 = undefined;
+            att_pdu[0] = @intFromEnum(att.Opcode.write_command);
+            std.mem.writeInt(u16, att_pdu[1..3], WRITE_VALUE_HANDLE, .little);
+            @memcpy(att_pdu[3..][0..PAYLOAD_SIZE], &payload);
+            ctx.host.sendData(ctx.conn_handle, l2cap.CID_ATT, &att_pdu) catch break;
+        }
+        _ = ctx.tx_bytes.fetchAdd(PAYLOAD_SIZE, .monotonic);
         _ = ctx.tx_packets.fetchAdd(1, .monotonic);
     }
 }
 
 // ============================================================================
-// Server (Peripheral)
+// Server
 // ============================================================================
 
 fn runServer(host: *BleHost) void {
-    log.info("=== SERVER (Peripheral) ===", .{});
+    log.info("=== SERVER (Peripheral + GATT) ===", .{});
+    log.info("Service: 0x{X:0>4}", .{SVC_UUID});
+    log.info("  Write char:  handle={} (0x{X:0>4})", .{ WRITE_VALUE_HANDLE, CHR_WRITE_UUID });
+    log.info("  Notify char: handle={} (0x{X:0>4}), CCCD={}", .{ NOTIFY_VALUE_HANDLE, CHR_NOTIFY_UUID, NOTIFY_CCCD_HANDLE });
 
-    const adv_data = [_]u8{
-        0x02, 0x01, 0x06,
-    } ++ [_]u8{ ADV_NAME.len + 1, 0x09 } ++ ADV_NAME.*;
+    // Register write handler
+    host.gatt.handle(SVC_UUID, CHR_WRITE_UUID, writeHandler, null);
+
+    const adv_data = [_]u8{ 0x02, 0x01, 0x06 } ++ [_]u8{ ADV_NAME.len + 1, 0x09 } ++ ADV_NAME.*;
 
     host.startAdvertising(.{
         .interval_min = 0x0020,
@@ -101,23 +144,20 @@ fn runServer(host: *BleHost) void {
     };
     log.info("Advertising \"{s}\"...", .{ADV_NAME});
 
-    // Wait for connection event
     while (host.nextEvent()) |event| {
         switch (event) {
             .connected => |info| {
-                log.info("Connected! handle=0x{X:0>4}, interval={}", .{ info.conn_handle, info.conn_interval });
-                // Server: don't initiate PHY upgrade (client does it)
-                runConnected(host, info.conn_handle, false);
+                log.info("Connected! handle=0x{X:0>4}", .{info.conn_handle});
+                runConnected(host, info.conn_handle, true); // server sends notifications
                 return;
             },
-            .advertising_stopped => log.info("Advertising stopped", .{}),
             else => {},
         }
     }
 }
 
 // ============================================================================
-// Client (Central)
+// Client
 // ============================================================================
 
 fn runClient(host: *BleHost) void {
@@ -138,15 +178,29 @@ fn runClient(host: *BleHost) void {
                         .interval_min = 0x0006,
                         .interval_max = 0x0006,
                     }) catch {
-                        log.err("Failed to initiate connection", .{});
+                        log.err("Failed to connect", .{});
                         return;
                     };
                 }
             },
             .connected => |info| {
-                log.info("Connected! handle=0x{X:0>4}, interval={}", .{ info.conn_handle, info.conn_interval });
-                // Client initiates PHY upgrade
-                runConnected(host, info.conn_handle, true);
+                log.info("Connected! handle=0x{X:0>4}", .{info.conn_handle});
+
+                // Enable notifications by writing CCCD
+                log.info("Enabling notifications (CCCD handle={})...", .{NOTIFY_CCCD_HANDLE});
+                var cccd_pdu: [5]u8 = undefined;
+                cccd_pdu[0] = @intFromEnum(att.Opcode.write_request);
+                std.mem.writeInt(u16, cccd_pdu[1..3], NOTIFY_CCCD_HANDLE, .little);
+                cccd_pdu[3] = 0x01; // notifications enabled
+                cccd_pdu[4] = 0x00;
+                host.sendData(info.conn_handle, l2cap.CID_ATT, &cccd_pdu) catch {};
+
+                // Register write handler for RX counting (client also receives write responses)
+                host.gatt.handle(SVC_UUID, CHR_WRITE_UUID, writeHandler, null);
+
+                idf.time.sleepMs(200); // let CCCD write complete
+
+                runConnected(host, info.conn_handle, false); // client sends write commands
                 return;
             },
             .connection_failed => |status| {
@@ -159,37 +213,31 @@ fn runClient(host: *BleHost) void {
 }
 
 // ============================================================================
-// Connected: DLE + Throughput + PHY upgrade
+// Connected: DLE + Throughput
 // ============================================================================
 
-fn runConnected(host: *BleHost, conn_handle: u16, initiate_phy: bool) void {
-    // DLE negotiation
+fn runConnected(host: *BleHost, conn_handle: u16, is_server: bool) void {
+    // DLE
     host.requestDataLength(conn_handle, 251, 2120) catch {};
-    _ = drainEventsUntil(host, 2000, .data_length_changed);
+    drainEventsFor(host, 1000);
 
     // Round 1: 1M PHY
-    runRound(host, conn_handle, "1M PHY");
+    runRound(host, conn_handle, is_server, "1M PHY");
 
-    // PHY upgrade (only one side)
-    if (initiate_phy) {
+    // PHY upgrade (only client initiates)
+    if (!is_server) {
         host.requestPhyUpdate(conn_handle, 0x02, 0x02) catch {};
     }
-    if (drainEventsUntil(host, 5000, .phy_updated)) {
-        idf.time.sleepMs(200);
-        runRound(host, conn_handle, "2M PHY");
-    } else {
-        log.warn("PHY update not received, skipping 2M round", .{});
-    }
+    drainEventsFor(host, 2000);
+
+    // Round 2: 2M PHY
+    runRound(host, conn_handle, is_server, "2M PHY");
 }
 
-const EventTag = std.meta.Tag(gap.GapEvent);
-
-fn drainEventsUntil(host: *BleHost, timeout_ms: u64, target: EventTag) bool {
-    const deadline = idf.time.nowMs() + timeout_ms;
+fn drainEventsFor(host: *BleHost, ms: u64) void {
+    const deadline = idf.time.nowMs() + ms;
     while (idf.time.nowMs() < deadline) {
         if (host.tryNextEvent()) |evt| {
-            const tag = std.meta.activeTag(evt);
-            // Log interesting events
             switch (evt) {
                 .data_length_changed => |dl| log.info("DLE: TX={}/{}us RX={}/{}us", .{
                     dl.max_tx_octets, dl.max_tx_time, dl.max_rx_octets, dl.max_rx_time,
@@ -199,27 +247,41 @@ fn drainEventsUntil(host: *BleHost, timeout_ms: u64, target: EventTag) bool {
                 }),
                 else => {},
             }
-            if (tag == target) return true;
         } else {
             idf.time.sleepMs(10);
         }
     }
-    return false;
 }
 
 // ============================================================================
 // Throughput Round
 // ============================================================================
 
-fn runRound(host: *BleHost, conn_handle: u16, phy_label: []const u8) void {
+fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []const u8) void {
     log.info("", .{});
-    log.info("=== Throughput: {s} ({} seconds) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
-    log.info("ACL: credits={} max_len={}", .{ host.getAclCredits(), host.getAclMaxLen() });
+    log.info("=== GATT Throughput: {s} ({} sec) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
+    log.info("  {s}: TX via {s}, RX via {s}", .{
+        if (is_server) "Server" else "Client",
+        if (is_server) "Notification" else "Write Cmd",
+        if (is_server) "Write Cmd" else "Notification",
+    });
+    log.info("  ACL credits={}, max_len={}", .{ host.getAclCredits(), host.getAclMaxLen() });
+
+    // Reset RX counters
+    rx_bytes.store(0, .monotonic);
+    rx_packets.store(0, .monotonic);
 
     // Drain stale events
     while (host.tryNextEvent()) |_| {}
 
-    var flood = FloodCtx.init(host, conn_handle);
+    var flood = FloodCtx{
+        .host = host,
+        .conn_handle = conn_handle,
+        .cancel = cancellation.CancellationToken.init(),
+        .tx_bytes = std.atomic.Value(u32).init(0),
+        .tx_packets = std.atomic.Value(u32).init(0),
+        .use_notify = is_server,
+    };
 
     var wg = WG.init(heap.iram);
     defer wg.deinit();
@@ -233,23 +295,25 @@ fn runRound(host: *BleHost, conn_handle: u16, phy_label: []const u8) void {
         return;
     };
 
-    // Stats loop
     const start_time = idf.time.nowMs();
     var last_stats = start_time;
 
     while (idf.time.nowMs() - start_time < ROUND_DURATION_MS) {
         idf.time.sleepMs(100);
-        while (host.tryNextEvent()) |_| {} // drain
+        while (host.tryNextEvent()) |_| {}
 
         const now = idf.time.nowMs();
         if (now - last_stats >= STATS_INTERVAL_MS) {
             const elapsed_s = @as(f32, @floatFromInt(now - start_time)) / 1000.0;
             const tx_b = flood.tx_bytes.load(.monotonic);
-            const tx_p = flood.tx_packets.load(.monotonic);
-            const credits = host.getAclCredits();
+            const rx_b = rx_bytes.load(.monotonic);
             const tx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(tx_b)) / 1024.0 / elapsed_s else 0;
-            log.info("[{d:.0}s] TX: {d:.1} KB/s ({} pkts) | credits={}", .{
-                elapsed_s, tx_kbs, tx_p, credits,
+            const rx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(rx_b)) / 1024.0 / elapsed_s else 0;
+            log.info("[{d:.0}s] TX: {d:.1} KB/s ({} pkts) | RX: {d:.1} KB/s ({} pkts) | credits={}", .{
+                elapsed_s,
+                tx_kbs, flood.tx_packets.load(.monotonic),
+                rx_kbs, rx_packets.load(.monotonic),
+                host.getAclCredits(),
             });
             last_stats = now;
         }
@@ -260,10 +324,13 @@ fn runRound(host: *BleHost, conn_handle: u16, phy_label: []const u8) void {
 
     const total_s = @as(f32, @floatFromInt(ROUND_DURATION_MS)) / 1000.0;
     const tx_b = flood.tx_bytes.load(.monotonic);
-    const tx_p = flood.tx_packets.load(.monotonic);
+    const rx_b = rx_bytes.load(.monotonic);
     log.info("--- {s} Summary ---", .{phy_label});
-    log.info("TX: {d:.1} KB/s avg ({} bytes, {} packets)", .{
-        @as(f32, @floatFromInt(tx_b)) / 1024.0 / total_s, tx_b, tx_p,
+    log.info("TX: {d:.1} KB/s ({} bytes, {} pkts)", .{
+        @as(f32, @floatFromInt(tx_b)) / 1024.0 / total_s, tx_b, flood.tx_packets.load(.monotonic),
+    });
+    log.info("RX: {d:.1} KB/s ({} bytes, {} pkts)", .{
+        @as(f32, @floatFromInt(rx_b)) / 1024.0 / total_s, rx_b, rx_packets.load(.monotonic),
     });
     log.info("", .{});
 }
@@ -278,10 +345,8 @@ fn containsName(ad_data: []const u8, name: []const u8) bool {
         if (ad_data[offset] == 0) break;
         const len = ad_data[offset];
         if (offset + 1 + len > ad_data.len) break;
-        const ad_type = ad_data[offset + 1];
-        if (ad_type == 0x09 or ad_type == 0x08) {
-            const ad_name = ad_data[offset + 2 .. offset + 1 + len];
-            if (std.mem.eql(u8, ad_name, name)) return true;
+        if (ad_data[offset + 1] == 0x09 or ad_data[offset + 1] == 0x08) {
+            if (std.mem.eql(u8, ad_data[offset + 2 .. offset + 1 + len], name)) return true;
         }
         offset += 1 + len;
     }
@@ -289,12 +354,7 @@ fn containsName(ad_data: []const u8, name: []const u8) bool {
 }
 
 fn phyName(phy: u8) []const u8 {
-    return switch (phy) {
-        1 => "1M",
-        2 => "2M",
-        3 => "Coded",
-        else => "?",
-    };
+    return switch (phy) { 1 => "1M", 2 => "2M", 3 => "Coded", else => "?" };
 }
 
 // ============================================================================
@@ -303,7 +363,7 @@ fn phyName(phy: u8) []const u8 {
 
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
-    log.info("BLE Throughput Test (Host API)", .{});
+    log.info("BLE GATT Duplex Throughput (Host API)", .{});
     log.info("==========================================", .{});
 
     var board: Board = undefined;
@@ -313,42 +373,31 @@ pub fn run(_: anytype) void {
     };
     defer board.deinit();
 
-    // Create HCI driver (initializes BLE controller via VHCI)
     log.info("Initializing BLE controller...", .{});
     var hci_driver = HciDriver.init() catch {
         log.err("HCI driver init failed", .{});
         return;
     };
     defer hci_driver.deinit();
-    log.info("BLE controller OK", .{});
 
-    // Create and start Host
     var host = BleHost.init(&hci_driver, heap.psram);
     defer host.deinit();
 
-    host.start(.{
-        .stack_size = 8192,
-        .priority = 20,
-        .allocator = heap.iram,
-    }) catch |err| {
+    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.iram }) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };
     defer host.stop();
 
-    log.info("Host started: ACL slots={} max_len={}", .{ host.acl_max_slots, host.acl_max_len });
+    log.info("Host: ACL slots={} max_len={}", .{ host.acl_max_slots, host.acl_max_len });
 
-    // Detect role from BD_ADDR (read during Host.start)
     const addr = host.getBdAddr();
     log.info("BD_ADDR: {X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}", .{
         addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
     });
 
     const role: enum { server, client } = if (addr[2] == 0x11) .server else .client;
-    log.info("Role: {s}", .{switch (role) {
-        .server => "SERVER (Peripheral)",
-        .client => "CLIENT (Central)",
-    }});
+    log.info("Role: {s}", .{if (role == .server) "SERVER" else "CLIENT"});
     log.info("", .{});
 
     switch (role) {
@@ -359,6 +408,6 @@ pub fn run(_: anytype) void {
     log.info("=== DONE ===", .{});
     while (true) {
         idf.time.sleepMs(5000);
-        log.info("Still alive... uptime={}ms", .{board.uptime()});
+        log.info("uptime={}ms", .{board.uptime()});
     }
 }
