@@ -15,9 +15,9 @@ sh_test(
     name = "mqtt0_zig_test",
     srcs = ["zig_test.sh"],
     data = [
-        "//lib/pkg/mqtt0:mqtt0",
-        "//lib/trait:trait",
-        "//lib/platform/std",
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
+        "//lib/platform/std:srcs",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
@@ -38,9 +38,9 @@ sh_test(
     name = "mqtt0_cross_test",
     srcs = ["cross_test.sh"],
     data = [
-        "//lib/pkg/mqtt0:mqtt0",
-        "//lib/trait:trait",
-        "//lib/platform/std",
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
+        "//lib/platform/std:srcs",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
@@ -65,8 +65,8 @@ sh_test(
     name = "mqtt0_bench",
     srcs = ["bench_test.sh"],
     data = [
-        "//lib/pkg/mqtt0:mqtt0",
-        "//lib/trait:trait",
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",

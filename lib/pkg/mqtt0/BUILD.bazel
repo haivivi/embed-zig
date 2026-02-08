@@ -1,19 +1,12 @@
-# mqtt0 - MQTT 3.1.1 & 5.0 Client and Broker
-#
-# QoS 0 MQTT implementation with:
-# - ServeMux pattern (topic-based handler dispatch)
-# - Both client and broker
-# - Topic trie with +/# wildcards
-# - Generic over transport (TCP, TLS, trait socket)
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "mqtt0",
-    srcs = glob(["**/*"]),
     deps = [
         "//lib/trait",
     ],
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

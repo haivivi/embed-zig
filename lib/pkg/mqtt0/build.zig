@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
 
     // Integration test executable
-    const std_sal_dep = b.dependency("std_sal", .{
+    const std_sal_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     });
     integration_test.root_module.addImport("mqtt0", mqtt0_mod);
     integration_test.root_module.addImport("trait", trait_dep.module("trait"));
-    integration_test.root_module.addImport("std_sal", std_sal_dep.module("std_sal"));
+    integration_test.root_module.addImport("std_impl", std_sal_dep.module("std_impl"));
 
     const run_integration = b.addRunArtifact(integration_test);
     const run_step = b.step("run-test", "Run integration test");
