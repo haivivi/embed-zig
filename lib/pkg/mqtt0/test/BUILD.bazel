@@ -1,0 +1,90 @@
+# mqtt0 Integration Tests
+#
+# bazel test //lib/pkg/mqtt0/test:mqtt0_zig_test     — unit + zig-zig integration
+# bazel test //lib/pkg/mqtt0/test:mqtt0_cross_test   — cross-language (Go ↔ Zig)
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ============================================================================
+# Zig Tests (unit + zig client ↔ zig broker, v4 + v5)
+# ============================================================================
+
+sh_test(
+    name = "mqtt0_zig_test",
+    srcs = ["zig_test.sh"],
+    data = [
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
+        "//lib/platform/std:srcs",
+    ],
+    env = {
+        "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
+    },
+    tags = [
+        "integration",
+        "local",
+        "no-sandbox",
+    ],
+    timeout = "moderate",
+)
+
+# ============================================================================
+# Cross-Language Tests (Zig ↔ Go, v4 + v5)
+# ============================================================================
+
+sh_test(
+    name = "mqtt0_cross_test",
+    srcs = ["cross_test.sh"],
+    data = [
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
+        "//lib/platform/std:srcs",
+    ],
+    env = {
+        "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
+    },
+    # NOTE: Run with: bazel test --test_env=BUILD_WORKSPACE_DIRECTORY=$(pwd) //lib/pkg/mqtt0/test:mqtt0_cross_test
+    # Pre-build Go tools first: cd tools/mqtt_server && go build . && cd ../mqtt_client && go build .
+    tags = [
+        "integration",
+        "requires-network",
+        "local",
+        "no-sandbox",
+        "manual",  # Requires pre-built Go binaries
+    ],
+    timeout = "moderate",
+)
+
+# ============================================================================
+# Benchmarks
+# ============================================================================
+
+sh_test(
+    name = "mqtt0_bench",
+    srcs = ["bench_test.sh"],
+    data = [
+        "//lib/pkg/mqtt0:srcs",
+        "//lib/trait:srcs",
+    ],
+    env = {
+        "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
+    },
+    tags = [
+        "bench",
+        "manual",
+        "local",
+        "no-sandbox",
+    ],
+    timeout = "long",
+)
+
+# ============================================================================
+# Source files
+# ============================================================================
+
+filegroup(
+    name = "test_sources",
+    srcs = glob(["**/*"]),
+)
