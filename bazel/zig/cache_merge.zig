@@ -2,10 +2,16 @@
 ///
 /// Usage: cache_merge <out_cache> [dep_cache...] -- <zig> <args...>
 ///
-/// 1. Creates out_cache/z/ and out_cache/b/ directories
-/// 2. Copies all entries from each dep_cache's z/ and b/ into out_cache
+/// 1. Creates out_cache/{z,b,h,o}/ directories
+/// 2. Copies all entries from each dep_cache's z/, b/, h/, o/ into out_cache
 /// 3. Spawns zig with --cache-dir and --global-cache-dir pointing to out_cache
 /// 4. Propagates zig's exit code
+///
+/// Subdirectories:
+///   z/ — Zig compilation unit cache
+///   b/ — builtin.zig etc.
+///   h/ — C header dependency tracking (@cImport manifest)
+///   o/ — C compilation products (.o files)
 ///
 /// Cache entries are content-addressed (hex hash filenames), so merging
 /// from multiple dep caches never conflicts.
@@ -29,8 +35,8 @@ pub fn main() !void {
     const out_cache = args[1];
     const cwd = fs.cwd();
 
-    // Create output subdirectories
-    inline for (.{ "z", "b" }) |subdir| {
+    // Create output subdirectories (z=zig cache, b=builtin, h=cImport headers, o=C objects)
+    inline for (.{ "z", "b", "h", "o" }) |subdir| {
         const path = try fs.path.join(allocator, &.{ out_cache, subdir });
         cwd.makePath(path) catch |err| {
             std.debug.print("cache_merge: failed to create {s}: {}\n", .{ path, err });
@@ -45,8 +51,8 @@ pub fn main() !void {
             sep_idx += 1;
             break;
         }
-        // Copy entries from this dep cache's z/ and b/ subdirs
-        for ([_][]const u8{ "z", "b" }) |subdir| {
+        // Copy entries from this dep cache's z/, b/, h/, o/ subdirs
+        for ([_][]const u8{ "z", "b", "h", "o" }) |subdir| {
             copyDirEntries(allocator, cwd, args[sep_idx], out_cache, subdir) catch |err| {
                 if (err == error.FileNotFound) continue;
                 std.debug.print("cache_merge: copy {s}/{s} failed: {}\n", .{ args[sep_idx], subdir, err });

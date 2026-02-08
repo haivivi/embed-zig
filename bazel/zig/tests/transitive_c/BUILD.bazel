@@ -1,0 +1,17 @@
+load("//bazel/zig:defs.bzl", "zig_binary")
+
+# Regression test for transitive C include bug:
+# zig_binary depending on a zig_package that uses @cImport.
+#
+# crypto_wrapper uses @cImport("xor.h") + compiles xor.c internally.
+# When cache_merge only copies z/ and b/ (missing h/ and o/), this build
+# fails with "C import failed: 'xor.h' file not found" because the
+# @cImport cache from crypto_wrapper's compilation is not carried over.
+zig_binary(
+    name = "transitive_c",
+    main = "src/main.zig",
+    srcs = ["src/main.zig"],
+    deps = [
+        "//bazel/zig/tests/crypto_wrapper",
+    ],
+)
