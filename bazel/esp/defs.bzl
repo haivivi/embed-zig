@@ -37,7 +37,7 @@ Build:
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
 load("//bazel/esp/partition:table.bzl", "EspPartitionTableInfo")
-load("//bazel/zig:defs.bzl", "ZigModuleInfo")
+load("//bazel/zig:defs.bzl", "ZigModuleInfo", "build_module_args", "collect_deps", "encode_module", "decode_module")
 
 # sdkconfig modules (each corresponds to ESP-IDF components)
 # All modules are independent rules that generate .sdkconfig fragments
@@ -423,7 +423,12 @@ esp_configure = rule(
 # =============================================================================
 
 def _esp_zig_app_impl(ctx):
-    """Build an ESP-IDF project with Zig, generating the ESP shell automatically."""
+    """Build an ESP-IDF project with Zig — Bazel-native module resolution.
+    
+    Uses zig build-lib directly with -M flags from ZigModuleInfo.
+    No build.zig generation. No Zig source copying. CMake only for
+    ESP-IDF framework compilation and linking.
+    """
     
     # Output files
     project_name = ctx.attr.project_name or ctx.label.name
@@ -432,10 +437,18 @@ def _esp_zig_app_impl(ctx):
     bootloader_file = ctx.actions.declare_file("bootloader.bin")
     partition_file = ctx.actions.declare_file("partition-table.bin")
     
-    # Get app files
+    # Get app files (app.zig, platform.zig, board files)
     app_files = ctx.attr.app.files.to_list()
-    app_path = ctx.attr.app.label.package  # e.g., "examples/apps/gpio_button"
-    app_name = ctx.attr.app.label.package.split("/")[-1]  # e.g., "gpio_button"
+    app_name = ctx.attr.app.label.package.split("/")[-1]
+    
+    # Find app.zig root source
+    app_zig = None
+    for f in app_files:
+        if f.basename == "app.zig":
+            app_zig = f
+            break
+    if not app_zig:
+        fail("No app.zig found in app sources")
     
     # Collect cmake module files
     cmake_files = []
@@ -450,14 +463,12 @@ def _esp_zig_app_impl(ctx):
             zig_bin = f
             break
     
-    # Get lib files
+    # Get lib files (C helpers, cmake modules — for CMake side only)
     lib_files = ctx.attr._libs.files.to_list()
     
-    # Detect lib/cmake prefix from files (handles external repo case)
-    # Internal: "lib/esp/..." -> lib_prefix="lib", cmake_prefix="cmake"
-    # External: "../embed_zig+/lib/esp/..." -> lib_prefix="../embed_zig+/lib", cmake_prefix="../embed_zig+/cmake"
-    lib_prefix = "lib"
+    # Detect cmake prefix (handles external repo)
     cmake_prefix = "cmake"
+    lib_prefix = "lib"
     if lib_files:
         first_lib = lib_files[0].short_path
         parts = first_lib.split("/lib/", 1)

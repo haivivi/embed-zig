@@ -953,3 +953,12 @@ def zig_package(
             c_flags = c_flags,
             link_libc = link_libc,
         )
+
+# =============================================================================
+# Public API for esp_zig_app and other consumers
+# =============================================================================
+
+build_module_args = _build_module_args
+collect_deps = _collect_deps
+encode_module = _encode_module
+decode_module = _decode_module
