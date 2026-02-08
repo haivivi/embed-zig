@@ -90,10 +90,12 @@ fn detectRole() !BleRole {
                 addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
             });
 
-            // Detect by OUI prefix
-            if (addr[3] == 0x11 and addr[4] == 0xE0 and addr[5] == 0x98) {
-                // Note: addr is little-endian, so addr[5]=98, addr[4]=E0, addr[3]=11
-                // This is 98:88:E0:11:xx:xx
+            // BD_ADDR from HCI is little-endian:
+            //   addr[0..6] = [52, 5C, 11, E0, 88, 98] for 98:88:E0:11:5C:52
+            // Check byte at index 2 to distinguish devices:
+            //   0x11 → 98:88:E0:11:xx:xx → Server
+            //   0x16 → 98:88:E0:16:xx:xx → Client
+            if (addr[2] == 0x11) {
                 return .server;
             } else {
                 return .client;
@@ -107,10 +109,39 @@ fn detectRole() !BleRole {
 // HCI Helpers (direct HCI for init, before Host starts)
 // ============================================================================
 
+/// Send an HCI command and wait for the matching Command Complete/Status response.
+/// Drains any non-matching events from the queue.
 fn hciSendAndWait(cmd: []const u8, resp_buf: []u8) !usize {
-    _ = bt.send(cmd) catch return error.SendFailed;
-    if (!bt.waitForData(2000)) return error.Timeout;
-    return bt.recv(resp_buf) catch error.RecvFailed;
+    const expected_opcode = @as(u16, cmd[1]) | (@as(u16, cmd[2]) << 8);
+
+    _ = bt.send(cmd) catch |err| {
+        log.err("HCI send failed: {}", .{err});
+        return error.SendFailed;
+    };
+
+    // Wait for matching response (drain non-matching events)
+    const deadline = idf.time.nowMs() + 3000;
+    while (idf.time.nowMs() < deadline) {
+        if (!bt.waitForData(500)) continue;
+
+        const n = bt.recv(resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .command_complete => |cc| {
+                if (cc.opcode == expected_opcode) return n;
+                // Not our command — log and continue
+            },
+            .command_status => |cs| {
+                if (cs.opcode == expected_opcode) return n;
+            },
+            else => {}, // Other events (e.g., connection) — ignore for now
+        }
+    }
+
+    log.err("HCI response timeout for cmd 0x{X:0>4}", .{expected_opcode});
+    return error.Timeout;
 }
 
 // ============================================================================
@@ -225,19 +256,24 @@ fn runClient() void {
             .interval = 0x0010, // 10ms
             .window = 0x0010, // 10ms (continuous)
         });
-        _ = hciSendAndWait(cmd, &resp_buf) catch {
+        const n = hciSendAndWait(cmd, &resp_buf) catch {
             log.err("Failed to set scan params", .{});
             return;
         };
+        log.info("Scan params response: {} bytes", .{n});
     }
+
+    // Small delay to ensure controller processed params
+    idf.time.sleepMs(10);
 
     // Enable scanning
     {
         const cmd = hci_cmds.leSetScanEnable(&cmd_buf, true, true);
-        _ = hciSendAndWait(cmd, &resp_buf) catch {
+        const n = hciSendAndWait(cmd, &resp_buf) catch {
             log.err("Failed to enable scanning", .{});
             return;
         };
+        log.info("Scan enable response: {} bytes", .{n});
     }
 
     log.info("Scanning for \"{s}\"...", .{ADV_NAME});
