@@ -874,8 +874,15 @@ pub fn Broker(comptime Transport: type) type {
 
             const cid = handle.clientId();
 
-            // Remove subscriptions from both normal and shared tries
+            // Remove subscriptions from both normal and shared tries.
+            // Re-check generation under clients_mutex to prevent clearing
+            // a new client's subscriptions if it connected between deactivation
+            // and this point.
             self.clients_mutex.lock();
+            if (handle.generation != expected_gen) {
+                self.clients_mutex.unlock();
+                return;
+            }
             if (self.client_subscriptions.getPtr(cid)) |subs| {
                 self.sub_mutex.lock();
                 for (subs.items) |topic| {
