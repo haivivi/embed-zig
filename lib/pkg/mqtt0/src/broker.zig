@@ -827,6 +827,8 @@ pub fn Broker(comptime Transport: type) type {
             , .{ client_id, username, proto_ver, keep_alive, timestamp }) catch return;
 
             const msg = Message{ .topic = topic, .payload = json };
+            // Dispatch to broker handler AND route to MQTT subscribers
+            self.handler.handleMessage("", &msg) catch {};
             self.routeMessage(&msg, null);
         }
 
@@ -845,6 +847,7 @@ pub fn Broker(comptime Transport: type) type {
             , .{ client_id, username, timestamp }) catch return;
 
             const msg = Message{ .topic = topic, .payload = json };
+            self.handler.handleMessage("", &msg) catch {};
             self.routeMessage(&msg, null);
         }
 

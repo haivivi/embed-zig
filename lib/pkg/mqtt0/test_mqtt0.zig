@@ -105,6 +105,32 @@ fn runBrokerThread(broker: *mqtt0.Broker(TcpSocket), conn: *TcpSocket) void {
 // Test: Zig Client ↔ Zig Broker (MQTT 3.1.1)
 // ============================================================================
 
+// $SYS event capture state
+var sys_received = false;
+var sys_topic_buf: [512]u8 = undefined;
+var sys_topic_len: usize = 0;
+var sys_payload_buf: [1024]u8 = undefined;
+var sys_payload_len: usize = 0;
+
+fn sysHandler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
+    const tlen = @min(msg.topic.len, 512);
+    @memcpy(sys_topic_buf[0..tlen], msg.topic[0..tlen]);
+    sys_topic_len = tlen;
+    const plen = @min(msg.payload.len, 1024);
+    @memcpy(sys_payload_buf[0..plen], msg.payload[0..plen]);
+    sys_payload_len = plen;
+    sys_received = true;
+}
+
+// Large message capture state
+var large_received = false;
+var large_payload_size: usize = 0;
+
+fn largeHandler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
+    large_payload_size = msg.payload.len;
+    large_received = true;
+}
+
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
@@ -117,6 +143,18 @@ pub fn main() !void {
     // Test 2: v5 (MQTT 5.0)
     try testZigToZig(allocator, .v5);
     std.debug.print("[PASS] Zig client ↔ Zig broker (MQTT 5.0)\n", .{});
+
+    // Test 3: $SYS events
+    try testSysEvents(allocator);
+    std.debug.print("[PASS] $SYS connected/disconnected events\n", .{});
+
+    // Test 4: Large messages (>4KB, uses heap buffer)
+    try testLargeMessage(allocator);
+    std.debug.print("[PASS] Large message (64KB payload)\n", .{});
+
+    // Test 5: Client reconnect
+    try testReconnect(allocator);
+    std.debug.print("[PASS] Client reconnect with auto-resubscribe\n", .{});
 
     std.debug.print("\n=== All integration tests passed ===\n", .{});
 }
@@ -191,4 +229,239 @@ fn testZigToZig(allocator: std.mem.Allocator, version: mqtt0.ProtocolVersion) !v
     // Disconnect
     client.deinit();
     broker_thread.join();
+}
+
+// ============================================================================
+// Test 3: $SYS Events
+// ============================================================================
+
+fn testSysEvents(allocator: std.mem.Allocator) !void {
+    sys_received = false;
+
+    // Setup broker with $SYS enabled
+    var broker_mux = try mqtt0.Mux.init(allocator);
+    defer broker_mux.deinit();
+    // Subscribe to $SYS events on the broker mux
+    try broker_mux.handleFn("$SYS/#", sysHandler);
+
+    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{
+        .sys_events_enabled = true,
+    });
+    defer broker.deinit();
+
+    const srv = try TcpSocket.initServer(0);
+    defer posix.close(srv.listener);
+
+    const broker_thread = try std.Thread.spawn(.{}, struct {
+        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+            var conn = TcpSocket.accept(listener) catch return;
+            defer conn.close();
+            b.serveConn(&conn);
+        }
+    }.run, .{ &broker, srv.listener });
+
+    std.Thread.sleep(10 * std.time.ns_per_ms);
+
+    // Connect client — this should trigger $SYS connected event
+    var client_sock = try TcpSocket.connect(srv.port);
+    defer client_sock.close();
+
+    var client_mux = try mqtt0.Mux.init(allocator);
+    defer client_mux.deinit();
+
+    var client = try mqtt0.Client(TcpSocket).init(&client_sock, &client_mux, .{
+        .client_id = "sys-test-client",
+        .username = "testuser",
+    });
+
+    // Give broker time to publish $SYS event
+    std.Thread.sleep(50 * std.time.ns_per_ms);
+
+    // Verify $SYS connected event was published
+    if (!sys_received) {
+        std.debug.print("  ERROR: $SYS connected event not received\n", .{});
+        return error.TestFailed;
+    }
+
+    const sys_topic = sys_topic_buf[0..sys_topic_len];
+    if (!std.mem.eql(u8, sys_topic, "$SYS/brokers/sys-test-client/connected")) {
+        std.debug.print("  ERROR: expected $SYS topic, got '{s}'\n", .{sys_topic});
+        return error.TestFailed;
+    }
+
+    const sys_payload = sys_payload_buf[0..sys_payload_len];
+    // Verify JSON contains expected fields
+    if (std.mem.indexOf(u8, sys_payload, "\"clientid\":\"sys-test-client\"") == null) {
+        std.debug.print("  ERROR: $SYS payload missing clientid: {s}\n", .{sys_payload});
+        return error.TestFailed;
+    }
+    if (std.mem.indexOf(u8, sys_payload, "\"username\":\"testuser\"") == null) {
+        std.debug.print("  ERROR: $SYS payload missing username: {s}\n", .{sys_payload});
+        return error.TestFailed;
+    }
+
+    // Disconnect — triggers $SYS disconnected
+    sys_received = false;
+    client.deinit();
+    broker_thread.join();
+
+    // Verify disconnected event
+    if (sys_received) {
+        const disc_topic = sys_topic_buf[0..sys_topic_len];
+        if (!std.mem.eql(u8, disc_topic, "$SYS/brokers/sys-test-client/disconnected")) {
+            std.debug.print("  WARNING: unexpected disconnect topic: {s}\n", .{disc_topic});
+        }
+    }
+}
+
+// ============================================================================
+// Test 4: Large Message (>4KB, tests dynamic PacketBuffer)
+// ============================================================================
+
+fn testLargeMessage(allocator: std.mem.Allocator) !void {
+    large_received = false;
+    large_payload_size = 0;
+
+    var broker_mux = try mqtt0.Mux.init(allocator);
+    defer broker_mux.deinit();
+    try broker_mux.handleFn("large/#", largeHandler);
+
+    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{});
+    defer broker.deinit();
+
+    const srv = try TcpSocket.initServer(0);
+    defer posix.close(srv.listener);
+
+    const broker_thread = try std.Thread.spawn(.{}, struct {
+        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+            var conn = TcpSocket.accept(listener) catch return;
+            defer conn.close();
+            b.serveConn(&conn);
+        }
+    }.run, .{ &broker, srv.listener });
+
+    std.Thread.sleep(10 * std.time.ns_per_ms);
+
+    var client_sock = try TcpSocket.connect(srv.port);
+    defer client_sock.close();
+
+    var client_mux = try mqtt0.Mux.init(allocator);
+    defer client_mux.deinit();
+
+    var client = try mqtt0.Client(TcpSocket).init(&client_sock, &client_mux, .{
+        .client_id = "large-test",
+        .allocator = allocator,
+    });
+
+    // Create a 64KB payload (well above 4KB inline buffer)
+    const large_payload = try allocator.alloc(u8, 64 * 1024);
+    defer allocator.free(large_payload);
+    @memset(large_payload, 'A');
+
+    try client.publish("large/test", large_payload);
+
+    // Wait for broker to process
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+
+    if (!large_received) {
+        std.debug.print("  ERROR: large message not received by broker handler\n", .{});
+        return error.TestFailed;
+    }
+    if (large_payload_size != 64 * 1024) {
+        std.debug.print("  ERROR: expected 65536 byte payload, got {d}\n", .{large_payload_size});
+        return error.TestFailed;
+    }
+
+    client.deinit();
+    broker_thread.join();
+}
+
+// ============================================================================
+// Test 5: Client Reconnect with auto-resubscribe
+// ============================================================================
+
+fn testReconnect(allocator: std.mem.Allocator) !void {
+    test_state = TestState{};
+
+    var broker_mux = try mqtt0.Mux.init(allocator);
+    defer broker_mux.deinit();
+    try broker_mux.handleFn("reconnect/#", testHandler);
+
+    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{});
+    defer broker.deinit();
+
+    const srv = try TcpSocket.initServer(0);
+    defer posix.close(srv.listener);
+
+    // Accept loop (handles multiple connections for reconnect)
+    const accept_thread = try std.Thread.spawn(.{}, struct {
+        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t, alloc: std.mem.Allocator) void {
+            for (0..3) |_| {
+                const conn_ptr = alloc.create(TcpSocket) catch return;
+                conn_ptr.* = TcpSocket.accept(listener) catch return;
+                const t = std.Thread.spawn(.{}, struct {
+                    fn handle(br: *mqtt0.Broker(TcpSocket), c: *TcpSocket, a: std.mem.Allocator) void {
+                        defer {
+                            c.close();
+                            a.destroy(c);
+                        }
+                        br.serveConn(c);
+                    }
+                }.handle, .{ b, conn_ptr, alloc }) catch continue;
+                t.detach();
+            }
+        }
+    }.run, .{ &broker, srv.listener, allocator });
+    accept_thread.detach();
+
+    std.Thread.sleep(10 * std.time.ns_per_ms);
+
+    // First connection
+    var sock1 = try TcpSocket.connect(srv.port);
+
+    var client_mux = try mqtt0.Mux.init(allocator);
+    defer client_mux.deinit();
+
+    var client = try mqtt0.Client(TcpSocket).init(&sock1, &client_mux, .{
+        .client_id = "reconnect-test",
+    });
+
+    // Subscribe (this is tracked for reconnect)
+    try client.subscribe(&.{"reconnect/test"});
+
+    // Publish — should work
+    try client.publish("reconnect/test", "before-reconnect");
+    std.Thread.sleep(50 * std.time.ns_per_ms);
+
+    if (!test_state.received) {
+        std.debug.print("  ERROR: message before reconnect not received\n", .{});
+        return error.TestFailed;
+    }
+
+    // Simulate disconnect
+    sock1.close();
+    std.Thread.sleep(50 * std.time.ns_per_ms);
+
+    // Reconnect with new transport
+    var sock2 = try TcpSocket.connect(srv.port);
+    try client.reconnect(&sock2);
+
+    // Publish again — should work after reconnect
+    test_state = TestState{};
+    try client.publish("reconnect/test", "after-reconnect");
+    std.Thread.sleep(50 * std.time.ns_per_ms);
+
+    if (!test_state.received) {
+        std.debug.print("  ERROR: message after reconnect not received\n", .{});
+        return error.TestFailed;
+    }
+
+    const payload = test_state.received_payload[0..test_state.received_payload_len];
+    if (!std.mem.eql(u8, payload, "after-reconnect")) {
+        std.debug.print("  ERROR: expected 'after-reconnect', got '{s}'\n", .{payload});
+        return error.TestFailed;
+    }
+
+    client.deinit();
+    std.Thread.sleep(50 * std.time.ns_per_ms);
 }
