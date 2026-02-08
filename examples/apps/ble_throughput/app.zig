@@ -239,10 +239,13 @@ fn runServer() void {
     // Run throughput test
     runThroughputTest(conn_handle, "1M PHY");
 
-    // Upgrade to 2M PHY
-    if (upgradePhy(conn_handle)) {
-        idf.time.sleepMs(500); // Let PHY settle
+    // Server: do NOT initiate PHY upgrade — wait for client to do it
+    log.info("Waiting for client to initiate 2M PHY upgrade...", .{});
+    if (waitForPhyUpdate(conn_handle)) {
+        idf.time.sleepMs(200);
         runThroughputTest(conn_handle, "2M PHY");
+    } else {
+        log.warn("PHY update not received, skipping 2M round", .{});
     }
 
     log.info("=== SERVER DONE ===", .{});
@@ -464,6 +467,45 @@ fn negotiateDle(conn_handle: u16) void {
 // Shared: PHY Upgrade
 // ============================================================================
 
+/// Wait passively for a PHY Update Complete event (server side).
+/// The client initiates the PHY upgrade; the server just observes.
+fn waitForPhyUpdate(conn_handle: u16) bool {
+    _ = conn_handle;
+    var resp_buf: [256]u8 = undefined;
+    const deadline = idf.time.nowMs() + 10000; // 10s timeout
+    while (idf.time.nowMs() < deadline) {
+        if (!bt.waitForData(200)) continue;
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_phy_update_complete => |pu| {
+                if (pu.status.isSuccess()) {
+                    log.info("PHY updated (passive): TX={s}, RX={s}", .{
+                        phyName(pu.tx_phy), phyName(pu.rx_phy),
+                    });
+                    return true;
+                } else {
+                    log.err("PHY update failed (passive): status=0x{X:0>2}", .{@intFromEnum(pu.status)});
+                    return false;
+                }
+            },
+            else => {},
+        }
+    }
+    log.warn("PHY update wait timeout", .{});
+    return false;
+}
+
+fn phyName(phy: u8) []const u8 {
+    return switch (phy) {
+        1 => "1M",
+        2 => "2M",
+        3 => "Coded",
+        else => "?",
+    };
+}
+
 fn upgradePhy(conn_handle: u16) bool {
     log.info("Requesting 2M PHY upgrade...", .{});
     var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
@@ -486,20 +528,8 @@ fn upgradePhy(conn_handle: u16) bool {
         switch (evt) {
             .le_phy_update_complete => |pu| {
                 if (pu.status.isSuccess()) {
-                    const phy_name = switch (pu.tx_phy) {
-                        1 => "1M",
-                        2 => "2M",
-                        3 => "Coded",
-                        else => "Unknown",
-                    };
                     log.info("PHY updated: TX={s}, RX={s}", .{
-                        phy_name,
-                        switch (pu.rx_phy) {
-                            1 => "1M",
-                            2 => "2M",
-                            3 => "Coded",
-                            else => "Unknown",
-                        },
+                        phyName(pu.tx_phy), phyName(pu.rx_phy),
                     });
                     return true;
                 } else {
@@ -700,6 +730,19 @@ fn rxTaskFn(raw_ctx: ?*anyopaque) void {
 fn runThroughputTest(conn_handle: u16, phy_label: []const u8) void {
     log.info("", .{});
     log.info("=== Throughput Test: {s} ({} seconds) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
+
+    // Drain any stale data in ring buffer (NCP events from previous round, etc.)
+    {
+        var drain_buf: [512]u8 = undefined;
+        var drained: u32 = 0;
+        while (bt.hasData()) {
+            _ = bt.recv(&drain_buf) catch break;
+            drained += 1;
+        }
+        if (drained > 0) {
+            log.info("Drained {} stale packets from ring buffer", .{drained});
+        }
+    }
 
     var ctx = ThroughputCtx.init(conn_handle, INITIAL_ACL_SLOTS);
     log.info("TX PDU: {} bytes ATT payload, {} ACL fragments", .{ ATT_PAYLOAD_SIZE, ctx.num_frags });
