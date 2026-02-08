@@ -182,11 +182,21 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
     const Credits = AclCredits(Rt);
     const WG = waitgroup.WaitGroup(Rt);
 
+    const GattServerType = gatt_server.GattServer(service_table);
+
     return struct {
         const Self = @This();
 
         // Callback type for received notifications/indications.
         pub const NotificationFn = *const fn (conn_handle: u16, attr_handle: u16, data: []const u8) void;
+
+        /// Per-connection state. Heap-allocated, managed by connect/disconnect events.
+        pub const ConnectionState = struct {
+            conn_handle: u16,
+            mtu: u16 = att_mod.DEFAULT_MTU,
+            cccd_state: [GattServerType.char_count]u16 = .{0} ** GattServerType.char_count,
+            reassembler: l2cap_mod.Reassembler = .{},
+        };
 
         // ================================================================
         // Core state
@@ -205,7 +215,13 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
 
         gap: gap_mod.Gap = gap_mod.Gap.init(),
         gatt: gatt_server.GattServer(service_table) = gatt_server.GattServer(service_table).init(),
-        reassembler: l2cap_mod.Reassembler = .{},
+
+        // ================================================================
+        // Connection state map: conn_handle → ConnectionState
+        // ================================================================
+
+        connections: std.AutoArrayHashMap(u16, *ConnectionState),
+        allocator: std.mem.Allocator,
 
         // ================================================================
         // Controller info (set during start)
@@ -242,10 +258,17 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 .acl_credits = Credits.init(0),
                 .wg = WG.init(allocator),
                 .cancel = cancellation.CancellationToken.init(),
+                .connections = std.AutoArrayHashMap(u16, *ConnectionState).init(allocator),
+                .allocator = allocator,
             };
         }
 
         pub fn deinit(self: *Self) void {
+            // Free all connection states
+            for (self.connections.values()) |conn| {
+                self.allocator.destroy(conn);
+            }
+            self.connections.deinit();
             self.acl_credits.deinit();
             self.event_queue.deinit();
             self.tx_queue.deinit();
@@ -555,8 +578,29 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             // Flush any commands GAP generated
             self.flushGapCommands() catch {};
 
-            // Deliver GAP events to app
+            // Deliver GAP events to app + manage connection lifecycle
             while (self.gap.pollEvent()) |gap_event| {
+                switch (gap_event) {
+                    .connected => |info| {
+                        // Create per-connection state
+                        const conn = self.allocator.create(ConnectionState) catch {
+                            self.event_queue.trySend(gap_event) catch {};
+                            continue;
+                        };
+                        conn.* = .{ .conn_handle = info.conn_handle };
+                        self.connections.put(info.conn_handle, conn) catch {
+                            self.allocator.destroy(conn);
+                        };
+                    },
+                    .disconnected => |info| {
+                        // Destroy per-connection state
+                        if (self.connections.get(info.conn_handle)) |conn| {
+                            self.allocator.destroy(conn);
+                            _ = self.connections.orderedRemove(info.conn_handle);
+                        }
+                    },
+                    else => {},
+                }
                 self.event_queue.trySend(gap_event) catch {};
             }
         }
@@ -582,7 +626,9 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             if (data.len < acl_payload_start + acl_hdr.data_len) return;
             const acl_payload = data[acl_payload_start..][0..acl_hdr.data_len];
 
-            const sdu = self.reassembler.feed(acl_hdr, acl_payload) orelse return;
+            // Per-connection L2CAP reassembly
+            const conn = self.connections.getPtr(acl_hdr.conn_handle) orelse return;
+            const sdu = conn.*.reassembler.feed(acl_hdr, acl_payload) orelse return;
 
             switch (sdu.cid) {
                 l2cap_mod.CID_ATT => self.handleAttPdu(sdu),
