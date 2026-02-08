@@ -385,6 +385,104 @@ pub fn buildPacket(buf: []u8, packet_type: PacketType, flags: u4, payload: []con
 }
 
 // ============================================================================
+// PacketBuffer — dynamic buffer with small-inline + heap fallback
+// ============================================================================
+
+const Allocator = std.mem.Allocator;
+
+/// Dynamic packet buffer. Uses an inline 4KB buffer for common small packets,
+/// falls back to heap allocation for large packets (up to max_packet_size).
+pub const PacketBuffer = struct {
+    small: [4096]u8 = undefined,
+    heap_buf: ?[]u8 = null,
+    len: usize = 0,
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) PacketBuffer {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *PacketBuffer) void {
+        self.release();
+    }
+
+    /// Get a buffer of at least `size` bytes. Returns a usable slice.
+    pub fn acquire(self: *PacketBuffer, size: usize) ![]u8 {
+        if (size <= self.small.len) {
+            self.len = size;
+            return self.small[0..size];
+        }
+        // Need heap allocation
+        if (self.heap_buf) |hb| {
+            if (hb.len >= size) {
+                self.len = size;
+                return hb[0..size];
+            }
+            self.allocator.free(hb);
+        }
+        const buf = try self.allocator.alloc(u8, size);
+        self.heap_buf = buf;
+        self.len = size;
+        return buf[0..size];
+    }
+
+    /// Release heap buffer (inline buffer is always available).
+    pub fn release(self: *PacketBuffer) void {
+        if (self.heap_buf) |hb| {
+            self.allocator.free(hb);
+            self.heap_buf = null;
+        }
+        self.len = 0;
+    }
+
+    /// Get the current buffer slice (after acquire or readPacket).
+    pub fn slice(self: *PacketBuffer) []u8 {
+        if (self.heap_buf) |hb| {
+            if (self.len > self.small.len) return hb[0..self.len];
+        }
+        return self.small[0..self.len];
+    }
+};
+
+/// Read a complete MQTT packet using PacketBuffer (supports large packets).
+/// Returns the total packet length. Use `pkt_buf.slice()` to access the data.
+pub fn readPacketBuf(transport: anytype, pkt_buf: *PacketBuffer) !usize {
+    // Read first byte into small buffer
+    try readFull(transport, pkt_buf.small[0..1]);
+
+    // Read remaining length (variable int, up to 4 bytes)
+    var remaining_len: u32 = 0;
+    var multiplier: u32 = 1;
+    var header_len: usize = 1;
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        try readFull(transport, pkt_buf.small[header_len .. header_len + 1]);
+        const byte = pkt_buf.small[header_len];
+        header_len += 1;
+        remaining_len += @as(u32, byte & 0x7F) * multiplier;
+        if ((byte & 0x80) == 0) break;
+        multiplier *= 128;
+    }
+
+    const total = header_len + remaining_len;
+
+    // Acquire buffer of the right size
+    const buf = try pkt_buf.acquire(total);
+
+    // Copy header bytes we already read (if we switched to heap)
+    if (total > pkt_buf.small.len) {
+        @memcpy(buf[0..header_len], pkt_buf.small[0..header_len]);
+    }
+
+    // Read remaining payload
+    if (remaining_len > 0) {
+        try readFull(transport, buf[header_len..total]);
+    }
+
+    return total;
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

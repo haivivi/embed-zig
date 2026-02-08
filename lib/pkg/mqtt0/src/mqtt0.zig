@@ -47,6 +47,7 @@ pub const PacketType = packet.PacketType;
 pub const QoS = packet.QoS;
 pub const ReasonCode = packet.ReasonCode;
 pub const ConnectReturnCode = packet.ConnectReturnCode;
+pub const PacketBuffer = packet.PacketBuffer;
 
 // Protocol versions
 pub const v4 = @import("v4.zig");

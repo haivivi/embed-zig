@@ -101,7 +101,8 @@ pub fn Broker(comptime Transport: type) type {
             transport: ?*Transport = null,
             write_mutex: std.Thread.Mutex = .{},
             active: bool = false,
-            generation: u32 = 0, // Incremented on reconnect to detect stale handles
+            generation: u32 = 0,
+            alloc: Allocator = std.heap.page_allocator,
 
             fn clientId(self: *const ClientHandle) []const u8 {
                 return self.client_id_buf[0..self.client_id_len];
@@ -119,13 +120,18 @@ pub fn Broker(comptime Transport: type) type {
                 defer self.write_mutex.unlock();
                 if (!self.active) return;
                 const t = self.transport orelse return;
-                var buf: [8192]u8 = undefined;
+
+                const needed = msg.topic.len + msg.payload.len + 128;
+                var write_pkt_buf = pkt.PacketBuffer.init(self.alloc);
+                defer write_pkt_buf.deinit();
+                const buf = write_pkt_buf.acquire(needed) catch return;
+
                 const pub_pkt = v4.Publish{
                     .topic = msg.topic,
                     .payload = msg.payload,
                     .retain = msg.retain,
                 };
-                const len = v4.encodePublish(&buf, &pub_pkt) catch return;
+                const len = v4.encodePublish(buf, &pub_pkt) catch return;
                 pkt.writeAll(t, buf[0..len]) catch {
                     self.active = false;
                 };
@@ -193,10 +199,11 @@ pub fn Broker(comptime Transport: type) type {
         };
 
         pub const Config = struct {
-            max_packet_size: usize = pkt.max_packet_size,
+            max_packet_size: usize = 2 * 1024 * 1024, // 2MB
             max_topic_alias: u16 = 65535,
             max_topic_length: usize = 256,
             max_subscriptions_per_client: usize = 100,
+            sys_events_enabled: bool = false,
         };
 
         allocator: Allocator,
@@ -288,18 +295,23 @@ pub fn Broker(comptime Transport: type) type {
         // ====================================================================
 
         fn serveConnInner(self: *Self, transport: *Transport) !void {
-            var buf: [8192]u8 = undefined;
-            const first_len = try pkt.readPacket(transport, &buf);
+            var read_buf = pkt.PacketBuffer.init(self.allocator);
+            defer read_buf.deinit();
+            var write_buf = pkt.PacketBuffer.init(self.allocator);
+            defer write_buf.deinit();
+
+            const first_len = try pkt.readPacketBuf(transport, &read_buf);
             if (first_len < 2) return;
-            const version = detectVersion(buf[0..first_len]) catch return;
+            const data = read_buf.slice()[0..first_len];
+            const version = detectVersion(data) catch return;
 
             switch (version) {
-                .v4 => self.handleConnectionV4(transport, &buf, buf[0..first_len]),
-                .v5 => self.handleConnectionV5(transport, &buf, buf[0..first_len]),
+                .v4 => self.handleConnectionV4(transport, &read_buf, &write_buf, data),
+                .v5 => self.handleConnectionV5(transport, &read_buf, &write_buf, data),
             }
         }
 
-        fn handleConnectionV4(self: *Self, transport: *Transport, buf: *[8192]u8, connect_data: []const u8) void {
+        fn handleConnectionV4(self: *Self, transport: *Transport, read_buf: *pkt.PacketBuffer, write_buf: *pkt.PacketBuffer, connect_data: []const u8) void {
             const result = v4.decodePacket(connect_data) catch return;
             const connect = switch (result.packet) {
                 .connect => |c| c,
@@ -307,28 +319,29 @@ pub fn Broker(comptime Transport: type) type {
             };
 
             if (!self.auth.authenticate(connect.client_id, connect.username, connect.password)) {
-                const len = v4.encodeConnAck(buf, &.{ .session_present = false, .return_code = .not_authorized }) catch return;
-                pkt.writeAll(transport, buf[0..len]) catch {};
+                const wb = write_buf.acquire(64) catch return;
+                const len = v4.encodeConnAck(wb, &.{ .session_present = false, .return_code = .not_authorized }) catch return;
+                pkt.writeAll(transport, wb[0..len]) catch {};
                 return;
             }
 
-            const ca_len = v4.encodeConnAck(buf, &.{ .session_present = false, .return_code = .accepted }) catch return;
-            pkt.writeAll(transport, buf[0..ca_len]) catch return;
+            const wb = write_buf.acquire(64) catch return;
+            const ca_len = v4.encodeConnAck(wb, &.{ .session_present = false, .return_code = .accepted }) catch return;
+            pkt.writeAll(transport, wb[0..ca_len]) catch return;
 
-            // Register client
             const handle = self.registerClient(connect.client_id, transport);
-            defer self.cleanupClient(handle);
+            defer self.cleanupClient(handle, connect.username);
 
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(connect.client_id);
 
-            // Set keepalive timeout (1.5x keep_alive)
-            setKeepaliveTimeout(transport, connect.keep_alive);
+            self.publishSysConnected(connect.client_id, connect.username, @intFromEnum(pkt.ProtocolVersion.v4), connect.keep_alive);
 
-            self.clientLoopV4(transport, buf, handle);
+            setKeepaliveTimeout(transport, connect.keep_alive);
+            self.clientLoopV4(transport, read_buf, write_buf, handle);
         }
 
-        fn handleConnectionV5(self: *Self, transport: *Transport, buf: *[8192]u8, connect_data: []const u8) void {
+        fn handleConnectionV5(self: *Self, transport: *Transport, read_buf: *pkt.PacketBuffer, write_buf: *pkt.PacketBuffer, connect_data: []const u8) void {
             const result = v5.decodePacket(connect_data) catch return;
             const connect = switch (result.packet) {
                 .connect => |c| c,
@@ -336,39 +349,39 @@ pub fn Broker(comptime Transport: type) type {
             };
 
             if (!self.auth.authenticate(connect.client_id, connect.username, connect.password)) {
-                const len = v5.encodeConnAck(buf, &.{ .reason_code = .not_authorized }) catch return;
-                pkt.writeAll(transport, buf[0..len]) catch {};
+                const wb = write_buf.acquire(128) catch return;
+                const len = v5.encodeConnAck(wb, &.{ .reason_code = .not_authorized }) catch return;
+                pkt.writeAll(transport, wb[0..len]) catch {};
                 return;
             }
 
-            // Send CONNACK with broker capabilities
-            const ca_len = v5.encodeConnAck(buf, &.{
+            const wb = write_buf.acquire(128) catch return;
+            const ca_len = v5.encodeConnAck(wb, &.{
                 .reason_code = .success,
-                .properties = .{
-                    .topic_alias_maximum = self.config.max_topic_alias,
-                },
+                .properties = .{ .topic_alias_maximum = self.config.max_topic_alias },
             }) catch return;
-            pkt.writeAll(transport, buf[0..ca_len]) catch return;
+            pkt.writeAll(transport, wb[0..ca_len]) catch return;
 
             const handle = self.registerClient(connect.client_id, transport);
-            defer self.cleanupClient(handle);
+            defer self.cleanupClient(handle, connect.username);
 
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(connect.client_id);
 
-            // Set keepalive timeout (1.5x keep_alive)
-            setKeepaliveTimeout(transport, connect.keep_alive);
+            self.publishSysConnected(connect.client_id, connect.username, @intFromEnum(pkt.ProtocolVersion.v5), connect.keep_alive);
 
-            self.clientLoopV5(transport, buf, handle);
+            setKeepaliveTimeout(transport, connect.keep_alive);
+            self.clientLoopV5(transport, read_buf, write_buf, handle);
         }
 
         // ====================================================================
         // Client loops
         // ====================================================================
 
-        fn clientLoopV4(self: *Self, transport: *Transport, buf: *[8192]u8, handle: *ClientHandle) void {
+        fn clientLoopV4(self: *Self, transport: *Transport, read_buf: *pkt.PacketBuffer, write_buf: *pkt.PacketBuffer, handle: *ClientHandle) void {
             while (handle.active) {
-                const pkt_len = pkt.readPacket(transport, buf) catch return;
+                const pkt_len = pkt.readPacketBuf(transport, read_buf) catch return;
+                const buf = read_buf.slice();
                 const hdr = pkt.decodeFixedHeader(buf[0..pkt_len]) catch return;
 
                 switch (hdr.packet_type) {
@@ -390,11 +403,12 @@ pub fn Broker(comptime Transport: type) type {
                                 @as(u8, 0x80);
                             code_count += 1;
                         }
-                        const sa_len = v4.encodeSubAck(buf, &.{
+                        const wb = write_buf.acquire(256) catch continue;
+                        const sa_len = v4.encodeSubAck(wb, &.{
                             .packet_id = pid,
                             .return_codes = codes_buf[0..code_count],
                         }) catch continue;
-                        pkt.writeAll(transport, buf[0..sa_len]) catch return;
+                        pkt.writeAll(transport, wb[0..sa_len]) catch return;
                     },
                     .unsubscribe => {
                         const payload = buf[hdr.header_len..pkt_len];
@@ -403,12 +417,14 @@ pub fn Broker(comptime Transport: type) type {
                         while (it.next() catch null) |topic| {
                             self.handleUnsubscribe(handle, topic);
                         }
-                        const ua_len = v4.encodeUnsubAck(buf, pid) catch continue;
-                        pkt.writeAll(transport, buf[0..ua_len]) catch return;
+                        const wb = write_buf.acquire(64) catch continue;
+                        const ua_len = v4.encodeUnsubAck(wb, pid) catch continue;
+                        pkt.writeAll(transport, wb[0..ua_len]) catch return;
                     },
                     .pingreq => {
-                        const resp_len = v4.encodePingResp(buf) catch continue;
-                        pkt.writeAll(transport, buf[0..resp_len]) catch return;
+                        const wb = write_buf.acquire(4) catch continue;
+                        const resp_len = v4.encodePingResp(wb) catch continue;
+                        pkt.writeAll(transport, wb[0..resp_len]) catch return;
                     },
                     .disconnect => return,
                     else => {},
@@ -416,7 +432,7 @@ pub fn Broker(comptime Transport: type) type {
             }
         }
 
-        fn clientLoopV5(self: *Self, transport: *Transport, buf: *[8192]u8, handle: *ClientHandle) void {
+        fn clientLoopV5(self: *Self, transport: *Transport, read_buf: *pkt.PacketBuffer, write_buf: *pkt.PacketBuffer, handle: *ClientHandle) void {
             // Per-client topic alias map (client→broker direction)
             var topic_aliases = std.AutoHashMap(u16, []const u8).init(self.allocator);
             defer {
@@ -426,19 +442,15 @@ pub fn Broker(comptime Transport: type) type {
             }
 
             while (handle.active) {
-                const pkt_len = pkt.readPacket(transport, buf) catch return;
+                const pkt_len = pkt.readPacketBuf(transport, read_buf) catch return;
+                const buf = read_buf.slice();
                 const hdr = pkt.decodeFixedHeader(buf[0..pkt_len]) catch return;
 
                 switch (hdr.packet_type) {
                     .publish => {
                         const pr = v5.decodePacket(buf[0..pkt_len]) catch continue;
                         const p = pr.packet.publish;
-                        // Resolve topic alias
-                        const topic = self.resolveTopicAlias(
-                            &topic_aliases,
-                            p.topic,
-                            p.properties.topic_alias,
-                        ) orelse continue;
+                        const topic = self.resolveTopicAlias(&topic_aliases, p.topic, p.properties.topic_alias) orelse continue;
                         self.handlePublish(handle.clientId(), topic, p.payload, p.retain);
                     },
                     .subscribe => {
@@ -455,18 +467,19 @@ pub fn Broker(comptime Transport: type) type {
                             const r = pkt.decodeString(payload[off..]) catch break;
                             off += r.len;
                             if (off >= payload.len) break;
-                            off += 1; // subscription options
+                            off += 1;
                             codes[code_count] = if (self.handleSubscribe(handle, r.str))
                                 pkt.ReasonCode.success
                             else
                                 pkt.ReasonCode.not_authorized;
                             code_count += 1;
                         }
-                        const sa_len = v5.encodeSubAck(buf, &.{
+                        const wb = write_buf.acquire(256) catch continue;
+                        const sa_len = v5.encodeSubAck(wb, &.{
                             .packet_id = pid,
                             .reason_codes = codes[0..code_count],
                         }) catch continue;
-                        pkt.writeAll(transport, buf[0..sa_len]) catch return;
+                        pkt.writeAll(transport, wb[0..sa_len]) catch return;
                     },
                     .unsubscribe => {
                         const payload = buf[hdr.header_len..pkt_len];
@@ -485,27 +498,24 @@ pub fn Broker(comptime Transport: type) type {
                             ucodes[ucode_count] = .success;
                             ucode_count += 1;
                         }
-                        // Send v5 UNSUBACK (not yet implemented in v5 codec, send empty)
-                        // For now, send a minimal response
-                        var unsub_buf: [64]u8 = undefined;
-                        // UNSUBACK: fixed header + packet id + properties(0) + reason codes
+                        const wb = write_buf.acquire(128) catch continue;
                         var uo: usize = 0;
-                        unsub_buf[uo] = (@as(u8, @intFromEnum(pkt.PacketType.unsuback)) << 4);
+                        wb[uo] = (@as(u8, @intFromEnum(pkt.PacketType.unsuback)) << 4);
                         uo += 1;
-                        const unsub_remaining: u32 = @truncate(2 + 1 + ucode_count);
-                        uo += pkt.encodeVariableInt(unsub_buf[uo..], unsub_remaining) catch continue;
-                        uo += pkt.encodeU16(unsub_buf[uo..], upid) catch continue;
-                        unsub_buf[uo] = 0; // empty properties
+                        uo += pkt.encodeVariableInt(wb[uo..], @truncate(2 + 1 + ucode_count)) catch continue;
+                        uo += pkt.encodeU16(wb[uo..], upid) catch continue;
+                        wb[uo] = 0;
                         uo += 1;
                         for (ucodes[0..ucode_count]) |rc| {
-                            unsub_buf[uo] = @intFromEnum(rc);
+                            wb[uo] = @intFromEnum(rc);
                             uo += 1;
                         }
-                        pkt.writeAll(transport, unsub_buf[0..uo]) catch return;
+                        pkt.writeAll(transport, wb[0..uo]) catch return;
                     },
                     .pingreq => {
-                        const resp_len = v5.encodePingResp(buf) catch continue;
-                        pkt.writeAll(transport, buf[0..resp_len]) catch return;
+                        const wb = write_buf.acquire(4) catch continue;
+                        const resp_len = v5.encodePingResp(wb) catch continue;
+                        pkt.writeAll(transport, wb[0..resp_len]) catch return;
                     },
                     .disconnect => return,
                     else => {},
@@ -761,7 +771,8 @@ pub fn Broker(comptime Transport: type) type {
             return handle;
         }
 
-        fn cleanupClient(self: *Self, handle: *ClientHandle) void {
+        fn cleanupClient(self: *Self, handle: *ClientHandle, username: []const u8) void {
+            self.publishSysDisconnected(handle.clientId(), username);
             handle.write_mutex.lock();
             handle.active = false;
             handle.transport = null;
@@ -795,6 +806,55 @@ pub fn Broker(comptime Transport: type) type {
                 self.sub_mutex.unlock();
             }
             self.clients_mutex.unlock();
+        }
+
+        // ====================================================================
+        // $SYS Events (EMQX-compatible format)
+        // ====================================================================
+
+        fn publishSysConnected(self: *Self, client_id: []const u8, username: []const u8, proto_ver: u8, keep_alive: u16) void {
+            if (!self.config.sys_events_enabled) return;
+
+            var topic_buf: [320]u8 = undefined;
+            const safe_id = sanitizeForTopic(&topic_buf, client_id);
+            var full_topic: [384]u8 = undefined;
+            const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/connected", .{safe_id}) catch return;
+
+            var json_buf: [1024]u8 = undefined;
+            const timestamp = @divTrunc(std.time.milliTimestamp(), 1000);
+            const json = std.fmt.bufPrint(&json_buf,
+                \\{{"clientid":"{s}","username":"{s}","ipaddress":"","proto_ver":{d},"keepalive":{d},"connected_at":{d}}}
+            , .{ client_id, username, proto_ver, keep_alive, timestamp }) catch return;
+
+            const msg = Message{ .topic = topic, .payload = json };
+            self.routeMessage(&msg, null);
+        }
+
+        fn publishSysDisconnected(self: *Self, client_id: []const u8, username: []const u8) void {
+            if (!self.config.sys_events_enabled) return;
+
+            var topic_buf: [320]u8 = undefined;
+            const safe_id = sanitizeForTopic(&topic_buf, client_id);
+            var full_topic: [384]u8 = undefined;
+            const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/disconnected", .{safe_id}) catch return;
+
+            var json_buf: [512]u8 = undefined;
+            const timestamp = @divTrunc(std.time.milliTimestamp(), 1000);
+            const json = std.fmt.bufPrint(&json_buf,
+                \\{{"clientid":"{s}","username":"{s}","reason":"normal","disconnected_at":{d}}}
+            , .{ client_id, username, timestamp }) catch return;
+
+            const msg = Message{ .topic = topic, .payload = json };
+            self.routeMessage(&msg, null);
+        }
+
+        /// Sanitize clientID for use in topic paths: replace /, +, # with _
+        fn sanitizeForTopic(buf: []u8, client_id: []const u8) []const u8 {
+            const len = @min(client_id.len, buf.len);
+            for (client_id[0..len], 0..) |c, i| {
+                buf[i] = if (c == '/' or c == '+' or c == '#') '_' else c;
+            }
+            return buf[0..len];
         }
 
         // ====================================================================
