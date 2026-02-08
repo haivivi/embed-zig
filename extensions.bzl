@@ -21,18 +21,19 @@ def _opus_repo_impl(ctx):
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
 
+# Public headers (include/opus.h etc.)
 filegroup(
-    name = "opus_public_headers",
-    srcs = glob(["include/*.h"]),
+    name = "headers",
+    srcs = glob(["include/*.h", "src/*.h", "celt/*.h", "silk/*.h"]),
 )
 
+# Core C sources (shared by fixed and float builds)
 filegroup(
-    name = "opus_srcs",
+    name = "core_srcs",
     srcs = glob([
         "src/*.c",
         "celt/*.c",
         "silk/*.c",
-        "silk/fixed/*.c",
     ], exclude = [
         "src/opus_demo.c",
         "src/opus_compare.c",
@@ -42,18 +43,23 @@ filegroup(
         "celt/x86/*.c",
         "silk/arm/*.c",
         "silk/x86/*.c",
+    ]),
+)
+
+# SILK fixed-point sources (for embedded / Xtensa)
+filegroup(
+    name = "fixed_srcs",
+    srcs = glob(["silk/fixed/*.c", "silk/fixed/*.h"], exclude = [
         "silk/fixed/arm/*.c",
         "silk/fixed/x86/*.c",
     ]),
 )
 
+# SILK float sources (for desktop / server)
 filegroup(
-    name = "opus_internal_headers",
-    srcs = glob([
-        "src/*.h",
-        "celt/*.h",
-        "silk/*.h",
-        "silk/fixed/*.h",
+    name = "float_srcs",
+    srcs = glob(["silk/float/*.c", "silk/float/*.h"], exclude = [
+        "silk/float/x86/*.c",
     ]),
 )
 """)

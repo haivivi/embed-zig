@@ -2,18 +2,9 @@ load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# Opus C sources compiled with zig-cc.
-# Headers from @opus are auto-detected as -I paths by zig_package.
 zig_package(
     name = "audio",
     deps = ["//lib/trait"],
-    c_srcs = [
-        "@opus//:opus_srcs",
-        "@opus//:opus_internal_headers",
-        "@opus//:opus_public_headers",
-    ],
-    c_flags = ["-DOPUS_BUILD", "-DHAVE_LRINTF", "-DFIXED_POINT"],
-    link_libc = True,
     test = False,
 )
 

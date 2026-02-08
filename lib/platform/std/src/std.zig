@@ -22,7 +22,9 @@ pub const time = @import("impl/time.zig");
 pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");
 pub const runtime = @import("impl/runtime.zig");
-pub const codec = @import("impl/codec.zig");
+pub const codec = struct {
+    pub const opus = @import("impl/codec/opus.zig");
+};
 
 // Convenience type re-exports
 pub const Mutex = sync.Mutex;

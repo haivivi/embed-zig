@@ -4,7 +4,7 @@
     .fingerprint = 0x1be61c0b5401674a,
     .dependencies = .{
         .trait = .{ .path = "../../trait" },
-        .audio = .{ .path = "../../pkg/audio" },
+        .opus = .{ .path = "../../../third_party/opus" },
     },
     .paths = .{
         "build.zig",

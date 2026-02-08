@@ -10,8 +10,7 @@
 //!   const encoded = try enc.encode(&pcm, 320, &out);
 
 const std = @import("std");
-const audio = @import("audio");
-const opus = audio.opus;
+const opus = @import("opus");
 
 /// Opus encoder satisfying trait.codec.Encoder
 pub const OpusEncoder = struct {
