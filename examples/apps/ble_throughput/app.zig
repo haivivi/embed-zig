@@ -472,7 +472,8 @@ fn negotiateDle(conn_handle: u16) void {
 fn waitForPhyUpdate(conn_handle: u16) bool {
     _ = conn_handle;
     var resp_buf: [256]u8 = undefined;
-    const deadline = idf.time.nowMs() + 10000; // 10s timeout
+    var ncp_collected: u32 = 0;
+    const deadline = idf.time.nowMs() + 10000;
     while (idf.time.nowMs() < deadline) {
         if (!bt.waitForData(200)) continue;
         const n = bt.recv(&resp_buf) catch continue;
@@ -480,9 +481,10 @@ fn waitForPhyUpdate(conn_handle: u16) bool {
         const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
         switch (evt) {
             .le_phy_update_complete => |pu| {
+                pending_ncp_credits += ncp_collected;
                 if (pu.status.isSuccess()) {
-                    log.info("PHY updated (passive): TX={s}, RX={s}", .{
-                        phyName(pu.tx_phy), phyName(pu.rx_phy),
+                    log.info("PHY updated (passive): TX={s}, RX={s} (collected {} NCP credits)", .{
+                        phyName(pu.tx_phy), phyName(pu.rx_phy), ncp_collected,
                     });
                     return true;
                 } else {
@@ -490,10 +492,20 @@ fn waitForPhyUpdate(conn_handle: u16) bool {
                     return false;
                 }
             },
+            .num_completed_packets => |ncp| {
+                var offset: usize = 0;
+                var remaining = ncp.num_handles;
+                while (remaining > 0 and offset + 4 <= ncp.data.len) : (remaining -= 1) {
+                    const count = std.mem.readInt(u16, ncp.data[offset + 2 ..][0..2], .little);
+                    ncp_collected += count;
+                    offset += 4;
+                }
+            },
             else => {},
         }
     }
-    log.warn("PHY update wait timeout", .{});
+    log.warn("PHY update wait timeout (collected {} NCP credits)", .{ncp_collected});
+    pending_ncp_credits += ncp_collected;
     return false;
 }
 
@@ -505,6 +517,10 @@ fn phyName(phy: u8) []const u8 {
         else => "?",
     };
 }
+
+/// Tracks NCP events consumed during PHY/DLE handshakes.
+/// Added back to acl_slots at the start of the next round.
+var pending_ncp_credits: u32 = 0;
 
 fn upgradePhy(conn_handle: u16) bool {
     log.info("Requesting 2M PHY upgrade...", .{});
@@ -518,7 +534,9 @@ fn upgradePhy(conn_handle: u16) bool {
     };
 
     // Wait for PHY Update Complete event
+    // ALSO process NCP events to avoid losing flow control credits
     var resp_buf: [256]u8 = undefined;
+    var ncp_collected: u32 = 0;
     const deadline = idf.time.nowMs() + 5000;
     while (idf.time.nowMs() < deadline) {
         if (!bt.waitForData(100)) continue;
@@ -528,19 +546,32 @@ fn upgradePhy(conn_handle: u16) bool {
         switch (evt) {
             .le_phy_update_complete => |pu| {
                 if (pu.status.isSuccess()) {
-                    log.info("PHY updated: TX={s}, RX={s}", .{
-                        phyName(pu.tx_phy), phyName(pu.rx_phy),
+                    log.info("PHY updated: TX={s}, RX={s} (collected {} NCP credits during handshake)", .{
+                        phyName(pu.tx_phy), phyName(pu.rx_phy), ncp_collected,
                     });
+                    pending_ncp_credits += ncp_collected;
                     return true;
                 } else {
                     log.err("PHY update failed: status=0x{X:0>2}", .{@intFromEnum(pu.status)});
+                    pending_ncp_credits += ncp_collected;
                     return false;
+                }
+            },
+            .num_completed_packets => |ncp| {
+                // Don't lose NCP events during PHY handshake!
+                var offset: usize = 0;
+                var remaining = ncp.num_handles;
+                while (remaining > 0 and offset + 4 <= ncp.data.len) : (remaining -= 1) {
+                    const count = std.mem.readInt(u16, ncp.data[offset + 2 ..][0..2], .little);
+                    ncp_collected += count;
+                    offset += 4;
                 }
             },
             else => {},
         }
     }
-    log.err("PHY update timeout", .{});
+    log.err("PHY update timeout (collected {} NCP credits)", .{ncp_collected});
+    pending_ncp_credits += ncp_collected;
     return false;
 }
 
@@ -744,10 +775,16 @@ fn runThroughputTest(conn_handle: u16, phy_label: []const u8) void {
         }
     }
 
-    var ctx = ThroughputCtx.init(conn_handle, INITIAL_ACL_SLOTS);
+    // Initial slots = base + any NCP credits collected during PHY/DLE handshake
+    const initial_slots = INITIAL_ACL_SLOTS + pending_ncp_credits;
+    pending_ncp_credits = 0;
+
+    var ctx = ThroughputCtx.init(conn_handle, initial_slots);
     log.info("TX PDU: {} bytes ATT payload, {} ACL fragments", .{ ATT_PAYLOAD_SIZE, ctx.num_frags });
     log.info("Architecture: TX task + RX task (dual FreeRTOS tasks)", .{});
-    log.info("HCI ACL flow control: {} initial slots", .{INITIAL_ACL_SLOTS});
+    log.info("HCI ACL flow control: {} initial slots (base {} + {} recovered)", .{
+        initial_slots, INITIAL_ACL_SLOTS, initial_slots - INITIAL_ACL_SLOTS,
+    });
 
     // Spawn TX and RX tasks via WaitGroup
     var wg = WG.init(heap.iram);
