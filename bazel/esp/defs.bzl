@@ -696,6 +696,48 @@ rm -f "$WORK/$ESP_PROJECT_PATH/main/"*.bak
 # Write main module args (main.zig path is in WORK, set at runtime)
 echo '{main_mod_args}' | sed "s|\\$WORK|$WORK|g" > "$WORK/$ESP_PROJECT_PATH/main/zig_main_args.txt"
 
+# Generate zig_build.sh (called by CMake esp_zig_build)
+cat > "$WORK/$ESP_PROJECT_PATH/main/zig_build.sh" << 'ZIGBUILDEOF'
+#!/bin/bash
+set -e
+ESP_INC_DIRS="$1"
+ZIG_TARGET="$2"
+CPU_MODEL="$3"
+BUILD_TYPE="$4"
+OUTPUT_A="$5"
+
+ZIG="$ZIG_INSTALL/zig"
+
+# Build -I flags from ESP-IDF include dirs
+ESP_I=""
+IFS=';' read -ra DIRS <<< "$ESP_INC_DIRS"
+for d in "${{DIRS[@]}}"; do
+    [ -n "$d" ] && ESP_I="$ESP_I -I $d"
+done
+
+# Read Bazel-generated args
+MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
+MOD_ARGS=$(cat zig_module_args.txt 2>/dev/null | tr '\n' ' ')
+LIB_ARGS=$(cat zig_lib_a_args.txt 2>/dev/null | tr '\n' ' ')
+
+echo "[zig] build-lib target=$ZIG_TARGET cpu=$CPU_MODEL"
+$ZIG build-lib \
+    -lc \
+    $ESP_I \
+    $MAIN_ARGS \
+    $MOD_ARGS \
+    $LIB_ARGS \
+    -target $ZIG_TARGET \
+    -Dcpu=$CPU_MODEL \
+    -O$BUILD_TYPE \
+    -freference-trace \
+    --prominent-compile-errors \
+    --cache-dir $(dirname $OUTPUT_A)/../../.zig-cache \
+    --global-cache-dir $(dirname $OUTPUT_A)/../../.zig-global-cache \
+    -femit-bin=$OUTPUT_A
+ZIGBUILDEOF
+chmod +x "$WORK/$ESP_PROJECT_PATH/main/zig_build.sh"
+
 # main.c
 cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.c" << 'MAINCEOF'
 extern void app_main(void);
