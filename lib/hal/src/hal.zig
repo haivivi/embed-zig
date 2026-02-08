@@ -101,6 +101,8 @@ pub const switch_ = @import("switch.zig");
 pub const imu = @import("imu.zig");
 /// Motion detection module (hal.motion.from, hal.motion.is)
 pub const motion = @import("motion.zig");
+/// HCI transport module (hal.hci.from, hal.hci.is)
+pub const hci = @import("hci.zig");
 
 // ============================================================================
 // Common Types
@@ -224,6 +226,17 @@ pub const MotionAxis = motion.Axis;
 /// Motion orientation
 pub const MotionOrientation = motion.Orientation;
 
+// ============================================================================
+// HCI Types
+// ============================================================================
+
+/// HCI poll flags
+pub const HciPollFlags = hci.PollFlags;
+/// HCI packet type indicator
+pub const HciPacketType = hci.PacketType;
+/// HCI transport error
+pub const HciError = hci.Error;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -240,4 +253,5 @@ test {
     _ = @import("switch.zig");
     _ = @import("imu.zig");
     _ = @import("motion.zig");
+    _ = @import("hci.zig");
 }
