@@ -1,0 +1,672 @@
+//! BLE Full-Duplex Throughput Test
+//!
+//! Two ESP32-S3 devices: Server (peripheral) + Client (central).
+//! After GAP connection, both simultaneously flood data and measure throughput.
+//!
+//! Role selection by MAC address prefix:
+//!   98:88:E0:11:xx:xx → Server (peripheral, advertises "ZigBLE")
+//!   98:88:E0:16:xx:xx → Client (central, scans + connects)
+//!
+//! Test flow:
+//! 1. GAP connection at 7.5ms interval
+//! 2. Negotiate: DLE 251, MTU 512 (via ATT Exchange MTU)
+//! 3. Round 1: 10s full-duplex flood at 1M PHY
+//! 4. PHY upgrade to 2M
+//! 5. Round 2: 10s full-duplex flood at 2M PHY
+//! 6. Print comparison summary
+
+const std = @import("std");
+const esp = @import("esp");
+const bluetooth = @import("bluetooth");
+
+const idf = esp.idf;
+const bt = idf.bt;
+const hci_cmds = bluetooth.hci.commands;
+const hci_events = bluetooth.hci.events;
+const hci = bluetooth.hci;
+const gap = bluetooth.gap;
+const att = bluetooth.att;
+const l2cap = bluetooth.l2cap;
+const acl = bluetooth.hci.acl;
+
+const platform = @import("platform.zig");
+const Board = platform.Board;
+const log = Board.log;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Advertising name
+const ADV_NAME = "ZigBLE";
+
+/// ATT handle for throughput data (hardcoded, no GATT discovery needed)
+const THROUGHPUT_HANDLE: u16 = 0x0001;
+
+/// ATT MTU to negotiate
+const TARGET_MTU: u16 = 512;
+
+/// DLE parameters
+const DLE_TX_OCTETS: u16 = 251;
+const DLE_TX_TIME: u16 = 2120;
+
+/// Payload size per ATT PDU: MTU - 3 (ATT header: opcode + handle)
+const ATT_PAYLOAD_SIZE = TARGET_MTU - 3;
+
+/// Duration of each throughput round (milliseconds)
+const ROUND_DURATION_MS: u64 = 10_000;
+
+/// Stats reporting interval (milliseconds)
+const STATS_INTERVAL_MS: u64 = 1_000;
+
+// ============================================================================
+// Role Detection
+// ============================================================================
+
+const BleRole = enum {
+    server, // peripheral, 98:88:E0:11:xx:xx
+    client, // central, 98:88:E0:16:xx:xx
+};
+
+fn detectRole() !BleRole {
+    // Read BD_ADDR via HCI
+    var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+    const cmd = hci_cmds.encode(&cmd_buf, hci_cmds.READ_BD_ADDR, &.{});
+
+    _ = bt.send(cmd) catch return error.SendFailed;
+    if (!bt.waitForData(2000)) return error.Timeout;
+
+    var resp_buf: [256]u8 = undefined;
+    const n = bt.recv(&resp_buf) catch return error.RecvFailed;
+    if (n < 1 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) return error.BadResponse;
+
+    const evt = hci_events.decode(resp_buf[1..n]) orelse return error.DecodeFailed;
+    switch (evt) {
+        .command_complete => |cc| {
+            if (!cc.status.isSuccess() or cc.return_params.len < 6) return error.CommandFailed;
+            const addr = cc.return_params[0..6];
+
+            log.info("BD_ADDR: {X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}", .{
+                addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
+            });
+
+            // Detect by OUI prefix
+            if (addr[3] == 0x11 and addr[4] == 0xE0 and addr[5] == 0x98) {
+                // Note: addr is little-endian, so addr[5]=98, addr[4]=E0, addr[3]=11
+                // This is 98:88:E0:11:xx:xx
+                return .server;
+            } else {
+                return .client;
+            }
+        },
+        else => return error.WrongEvent,
+    }
+}
+
+// ============================================================================
+// HCI Helpers (direct HCI for init, before Host starts)
+// ============================================================================
+
+fn hciSendAndWait(cmd: []const u8, resp_buf: []u8) !usize {
+    _ = bt.send(cmd) catch return error.SendFailed;
+    if (!bt.waitForData(2000)) return error.Timeout;
+    return bt.recv(resp_buf) catch error.RecvFailed;
+}
+
+// ============================================================================
+// Server Role (Peripheral)
+// ============================================================================
+
+fn runServer() void {
+    log.info("=== SERVER (Peripheral) ===", .{});
+
+    // Build advertising data
+    const flags = [_]u8{ 0x02, 0x01, 0x06 }; // LE General Discoverable + BR/EDR Not Supported
+    const name_ad = [_]u8{ ADV_NAME.len + 1, 0x09 } ++ ADV_NAME.*;
+    const adv_data = flags ++ name_ad;
+
+    // Start advertising via raw HCI (before we have a Host)
+    var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+    var resp_buf: [256]u8 = undefined;
+
+    // Set advertising parameters (fast: 20ms interval for quick discovery)
+    {
+        const cmd = hci_cmds.leSetAdvParams(&cmd_buf, .{
+            .interval_min = 0x0020, // 20ms
+            .interval_max = 0x0020,
+            .adv_type = .adv_ind,
+        });
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("Failed to set adv params", .{});
+            return;
+        };
+    }
+
+    // Set advertising data
+    {
+        const cmd = hci_cmds.leSetAdvData(&cmd_buf, &adv_data);
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("Failed to set adv data", .{});
+            return;
+        };
+    }
+
+    // Enable advertising
+    {
+        const cmd = hci_cmds.leSetAdvEnable(&cmd_buf, true);
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("Failed to enable advertising", .{});
+            return;
+        };
+    }
+
+    log.info("Advertising started: \"{s}\"", .{ADV_NAME});
+    log.info("Waiting for connection...", .{});
+
+    // Wait for LE Connection Complete event
+    var conn_handle: u16 = 0;
+    while (true) {
+        if (!bt.waitForData(5000)) {
+            log.info("Still advertising...", .{});
+            continue;
+        }
+
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_connection_complete => |lc| {
+                if (lc.status.isSuccess()) {
+                    conn_handle = lc.conn_handle;
+                    log.info("Connected! handle=0x{X:0>4}, interval={}, role={}", .{
+                        lc.conn_handle,
+                        lc.conn_interval,
+                        lc.role,
+                    });
+                    break;
+                } else {
+                    log.err("Connection failed: status=0x{X:0>2}", .{@intFromEnum(lc.status)});
+                }
+            },
+            else => {},
+        }
+    }
+
+    // Negotiate DLE
+    negotiateDle(conn_handle);
+
+    // Run throughput test
+    runThroughputTest(conn_handle, "1M PHY");
+
+    // Upgrade to 2M PHY
+    if (upgradePhy(conn_handle)) {
+        idf.time.sleepMs(500); // Let PHY settle
+        runThroughputTest(conn_handle, "2M PHY");
+    }
+
+    log.info("=== SERVER DONE ===", .{});
+}
+
+// ============================================================================
+// Client Role (Central)
+// ============================================================================
+
+fn runClient() void {
+    log.info("=== CLIENT (Central) ===", .{});
+
+    var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+    var resp_buf: [256]u8 = undefined;
+
+    // Set scan parameters
+    {
+        const cmd = hci_cmds.leSetScanParams(&cmd_buf, .{
+            .scan_type = 0x01, // active
+            .interval = 0x0010, // 10ms
+            .window = 0x0010, // 10ms (continuous)
+        });
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("Failed to set scan params", .{});
+            return;
+        };
+    }
+
+    // Enable scanning
+    {
+        const cmd = hci_cmds.leSetScanEnable(&cmd_buf, true, true);
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("Failed to enable scanning", .{});
+            return;
+        };
+    }
+
+    log.info("Scanning for \"{s}\"...", .{ADV_NAME});
+
+    // Scan for target device
+    var target_addr: hci.BdAddr = undefined;
+    var target_addr_type: hci.AddrType = .public;
+    var found = false;
+
+    while (!found) {
+        if (!bt.waitForData(5000)) {
+            log.info("Still scanning...", .{});
+            continue;
+        }
+
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_advertising_report => |ar| {
+                if (hci_events.parseAdvReport(ar.data)) |report| {
+                    // Check if name matches
+                    if (containsName(report.data, ADV_NAME)) {
+                        target_addr = report.addr;
+                        target_addr_type = report.addr_type;
+                        found = true;
+                        log.info("Found \"{s}\" at {X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2} (RSSI: {})", .{
+                            ADV_NAME,
+                            report.addr[5], report.addr[4], report.addr[3],
+                            report.addr[2], report.addr[1], report.addr[0],
+                            report.rssi,
+                        });
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    // Stop scanning
+    {
+        const cmd = hci_cmds.leSetScanEnable(&cmd_buf, false, false);
+        _ = hciSendAndWait(cmd, &resp_buf) catch {};
+    }
+
+    // Create connection
+    log.info("Connecting...", .{});
+    {
+        const cmd = hci_cmds.leCreateConnection(&cmd_buf, .{
+            .peer_addr_type = target_addr_type,
+            .peer_addr = target_addr,
+            .conn_interval_min = 0x0006, // 7.5ms
+            .conn_interval_max = 0x0006,
+        });
+        _ = bt.send(cmd) catch {
+            log.err("Failed to send create connection", .{});
+            return;
+        };
+    }
+
+    // Wait for connection
+    var conn_handle: u16 = 0;
+    while (true) {
+        if (!bt.waitForData(10000)) {
+            log.err("Connection timeout", .{});
+            return;
+        }
+
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_connection_complete => |lc| {
+                if (lc.status.isSuccess()) {
+                    conn_handle = lc.conn_handle;
+                    log.info("Connected! handle=0x{X:0>4}, interval={}, role={}", .{
+                        lc.conn_handle,
+                        lc.conn_interval,
+                        lc.role,
+                    });
+                    break;
+                } else {
+                    log.err("Connection failed: status=0x{X:0>2}", .{@intFromEnum(lc.status)});
+                    return;
+                }
+            },
+            else => {},
+        }
+    }
+
+    // Negotiate DLE
+    negotiateDle(conn_handle);
+
+    // Run throughput test
+    runThroughputTest(conn_handle, "1M PHY");
+
+    // Upgrade to 2M PHY
+    if (upgradePhy(conn_handle)) {
+        idf.time.sleepMs(500);
+        runThroughputTest(conn_handle, "2M PHY");
+    }
+
+    log.info("=== CLIENT DONE ===", .{});
+}
+
+// ============================================================================
+// Shared: DLE Negotiation
+// ============================================================================
+
+fn negotiateDle(conn_handle: u16) void {
+    var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+    var resp_buf: [256]u8 = undefined;
+
+    const cmd = hci_cmds.leSetDataLength(&cmd_buf, conn_handle, DLE_TX_OCTETS, DLE_TX_TIME);
+    _ = hciSendAndWait(cmd, &resp_buf) catch {
+        log.warn("DLE negotiation failed", .{});
+        return;
+    };
+
+    // Wait for Data Length Change event
+    const deadline = idf.time.nowMs() + 2000;
+    while (idf.time.nowMs() < deadline) {
+        if (!bt.waitForData(100)) continue;
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_data_length_change => |dl| {
+                log.info("DLE: TX={} bytes/{}us, RX={} bytes/{}us", .{
+                    dl.max_tx_octets, dl.max_tx_time,
+                    dl.max_rx_octets, dl.max_rx_time,
+                });
+                return;
+            },
+            else => {},
+        }
+    }
+    log.warn("DLE change event timeout", .{});
+}
+
+// ============================================================================
+// Shared: PHY Upgrade
+// ============================================================================
+
+fn upgradePhy(conn_handle: u16) bool {
+    log.info("Requesting 2M PHY upgrade...", .{});
+    var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+
+    // Request 2M PHY for both TX and RX
+    const cmd = hci_cmds.leSetPhy(&cmd_buf, conn_handle, 0x00, 0x02, 0x02, 0x0000);
+    _ = bt.send(cmd) catch {
+        log.err("Failed to send PHY request", .{});
+        return false;
+    };
+
+    // Wait for PHY Update Complete event
+    var resp_buf: [256]u8 = undefined;
+    const deadline = idf.time.nowMs() + 5000;
+    while (idf.time.nowMs() < deadline) {
+        if (!bt.waitForData(100)) continue;
+        const n = bt.recv(&resp_buf) catch continue;
+        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+        switch (evt) {
+            .le_phy_update_complete => |pu| {
+                if (pu.status.isSuccess()) {
+                    const phy_name = switch (pu.tx_phy) {
+                        1 => "1M",
+                        2 => "2M",
+                        3 => "Coded",
+                        else => "Unknown",
+                    };
+                    log.info("PHY updated: TX={s}, RX={s}", .{
+                        phy_name,
+                        switch (pu.rx_phy) {
+                            1 => "1M",
+                            2 => "2M",
+                            3 => "Coded",
+                            else => "Unknown",
+                        },
+                    });
+                    return true;
+                } else {
+                    log.err("PHY update failed: status=0x{X:0>2}", .{@intFromEnum(pu.status)});
+                    return false;
+                }
+            },
+            else => {},
+        }
+    }
+    log.err("PHY update timeout", .{});
+    return false;
+}
+
+// ============================================================================
+// Shared: Throughput Test
+// ============================================================================
+
+fn runThroughputTest(conn_handle: u16, phy_label: []const u8) void {
+    log.info("", .{});
+    log.info("=== Throughput Test: {s} ({} seconds) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
+
+    var tx_bytes: u64 = 0;
+    var tx_packets: u64 = 0;
+    var rx_bytes: u64 = 0;
+    var rx_packets: u64 = 0;
+
+    const start_time = idf.time.nowMs();
+    var last_stats_time = start_time;
+
+    // Build a TX payload (fill with pattern)
+    var tx_payload: [ATT_PAYLOAD_SIZE]u8 = undefined;
+    for (&tx_payload, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    // Build ATT Write Without Response PDU
+    var att_pdu: [att.MAX_PDU_LEN]u8 = undefined;
+    att_pdu[0] = @intFromEnum(att.Opcode.write_command); // Write Without Response
+    std.mem.writeInt(u16, att_pdu[1..3], THROUGHPUT_HANDLE, .little);
+    @memcpy(att_pdu[3..][0..ATT_PAYLOAD_SIZE], &tx_payload);
+    const att_pdu_len = 3 + ATT_PAYLOAD_SIZE;
+
+    // Build L2CAP + ACL framed packet for TX
+    // L2CAP header: [length(2)][CID(2)]
+    var l2cap_pkt: [520]u8 = undefined;
+    std.mem.writeInt(u16, l2cap_pkt[0..2], @intCast(att_pdu_len), .little);
+    std.mem.writeInt(u16, l2cap_pkt[2..4], l2cap.CID_ATT, .little);
+    @memcpy(l2cap_pkt[4..][0..att_pdu_len], att_pdu[0..att_pdu_len]);
+    const l2cap_total = 4 + att_pdu_len;
+
+    // Fragment into ACL packets
+    var acl_pkts: [4][acl.MAX_PACKET_LEN]u8 = undefined;
+    var acl_lens: [4]usize = undefined;
+    var num_frags: usize = 0;
+    {
+        var offset: usize = 0;
+        var first = true;
+        while (offset < l2cap_total) {
+            const chunk_len = @min(l2cap_total - offset, DLE_TX_OCTETS);
+            const pb_flag: acl.PBFlag = if (first) .first_auto_flush else .continuing;
+
+            const frag = acl.encode(
+                &acl_pkts[num_frags],
+                conn_handle,
+                pb_flag,
+                l2cap_pkt[offset..][0..chunk_len],
+            );
+            acl_lens[num_frags] = frag.len;
+            num_frags += 1;
+            offset += chunk_len;
+            first = false;
+        }
+    }
+
+    log.info("TX PDU: {} bytes ATT payload, {} ACL fragments", .{ ATT_PAYLOAD_SIZE, num_frags });
+
+    var resp_buf: [512]u8 = undefined;
+
+    while (idf.time.nowMs() - start_time < ROUND_DURATION_MS) {
+        // --- TX: send all fragments of one PDU ---
+        var tx_ok = true;
+        for (0..num_frags) |i| {
+            if (bt.canSend()) {
+                _ = bt.send(acl_pkts[i][0..acl_lens[i]]) catch {
+                    tx_ok = false;
+                    break;
+                };
+            } else {
+                tx_ok = false;
+                break;
+            }
+        }
+        if (tx_ok) {
+            tx_bytes += ATT_PAYLOAD_SIZE;
+            tx_packets += 1;
+        }
+
+        // --- RX: drain all available data ---
+        while (bt.hasData()) {
+            const n = bt.recv(&resp_buf) catch break;
+            if (n == 0) break;
+
+            if (resp_buf[0] == @intFromEnum(hci.PacketType.acl_data) and n > 1) {
+                // Count ACL data received (approximate: count L2CAP payload)
+                const acl_hdr = acl.parseHeader(resp_buf[1..n]) orelse continue;
+                rx_bytes += acl_hdr.data_len;
+                rx_packets += 1;
+            } else if (resp_buf[0] == @intFromEnum(hci.PacketType.event)) {
+                // Handle events (DLE change, PHY update, etc.)
+                if (hci_events.decode(resp_buf[1..n])) |evt| {
+                    switch (evt) {
+                        .le_data_length_change => |dl| {
+                            log.info("  [event] DLE changed: TX={}/{}us RX={}/{}us", .{
+                                dl.max_tx_octets, dl.max_tx_time,
+                                dl.max_rx_octets, dl.max_rx_time,
+                            });
+                        },
+                        .le_phy_update_complete => |pu| {
+                            log.info("  [event] PHY updated: TX={} RX={}", .{ pu.tx_phy, pu.rx_phy });
+                        },
+                        .num_completed_packets => {}, // flow control, ignore for now
+                        else => {},
+                    }
+                }
+            }
+        }
+
+        // --- Stats: print every second ---
+        const now = idf.time.nowMs();
+        if (now - last_stats_time >= STATS_INTERVAL_MS) {
+            const elapsed_s = @as(f32, @floatFromInt(now - start_time)) / 1000.0;
+            const tx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(tx_bytes)) / 1024.0 / elapsed_s else 0;
+            const rx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(rx_bytes)) / 1024.0 / elapsed_s else 0;
+            log.info("[{d:.0}s] TX: {d:.1} KB/s ({} pkts) | RX: {d:.1} KB/s ({} pkts)", .{
+                elapsed_s, tx_kbs, tx_packets, rx_kbs, rx_packets,
+            });
+            last_stats_time = now;
+        }
+
+        // Small yield to avoid starving other tasks
+        idf.time.sleepMs(1);
+    }
+
+    // Final summary
+    const total_s = @as(f32, @floatFromInt(ROUND_DURATION_MS)) / 1000.0;
+    const final_tx_kbs = @as(f32, @floatFromInt(tx_bytes)) / 1024.0 / total_s;
+    const final_rx_kbs = @as(f32, @floatFromInt(rx_bytes)) / 1024.0 / total_s;
+    log.info("--- {s} Summary ---", .{phy_label});
+    log.info("TX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_tx_kbs, tx_bytes, tx_packets });
+    log.info("RX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_rx_kbs, rx_bytes, rx_packets });
+    log.info("", .{});
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Check if AD structures contain a Complete Local Name matching `name`
+fn containsName(ad_data: []const u8, name: []const u8) bool {
+    var offset: usize = 0;
+    while (offset < ad_data.len) {
+        if (ad_data[offset] == 0) break;
+        const len = ad_data[offset];
+        if (offset + 1 + len > ad_data.len) break;
+        const ad_type = ad_data[offset + 1];
+        if (ad_type == 0x09 or ad_type == 0x08) { // Complete or Shortened Local Name
+            const ad_name = ad_data[offset + 2 .. offset + 1 + len];
+            if (std.mem.eql(u8, ad_name, name)) return true;
+        }
+        offset += 1 + len;
+    }
+    return false;
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+pub fn run(_: anytype) void {
+    log.info("==========================================", .{});
+    log.info("BLE Full-Duplex Throughput Test", .{});
+    log.info("==========================================", .{});
+    log.info("Board: {s}", .{Board.meta.id});
+    log.info("==========================================", .{});
+
+    // Initialize board
+    var board: Board = undefined;
+    board.init() catch |err| {
+        log.err("Board init failed: {}", .{err});
+        return;
+    };
+    defer board.deinit();
+
+    // Initialize BLE controller
+    log.info("Initializing BLE controller (VHCI)...", .{});
+    bt.init() catch |err| {
+        log.err("BLE controller init failed: {}", .{err});
+        return;
+    };
+    defer bt.deinit();
+    log.info("BLE controller initialized OK", .{});
+    idf.time.sleepMs(100);
+
+    // HCI Reset
+    {
+        var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+        var resp_buf: [256]u8 = undefined;
+        const cmd = hci_cmds.reset(&cmd_buf);
+        _ = hciSendAndWait(cmd, &resp_buf) catch {
+            log.err("HCI Reset failed", .{});
+            return;
+        };
+        log.info("HCI Reset: OK", .{});
+    }
+
+    // Set Event Masks (enable LE events)
+    {
+        var cmd_buf: [hci_cmds.MAX_CMD_LEN]u8 = undefined;
+        var resp_buf: [256]u8 = undefined;
+        // Enable: Disconnection Complete + LE Meta + Num Completed Packets
+        _ = hciSendAndWait(hci_cmds.setEventMask(&cmd_buf, 0x3DBFF807FFFBFFFF), &resp_buf) catch {};
+        // Enable: Connection Complete + Advertising Report + Connection Update +
+        // Data Length Change + PHY Update Complete
+        _ = hciSendAndWait(hci_cmds.leSetEventMask(&cmd_buf, 0x000000000000097F), &resp_buf) catch {};
+    }
+
+    // Detect role by MAC address
+    const role = detectRole() catch |err| {
+        log.err("Role detection failed: {}", .{err});
+        return;
+    };
+
+    log.info("Role: {s}", .{switch (role) {
+        .server => "SERVER (Peripheral)",
+        .client => "CLIENT (Central)",
+    }});
+    log.info("", .{});
+
+    switch (role) {
+        .server => runServer(),
+        .client => runClient(),
+    }
+
+    // Keep alive
+    while (true) {
+        idf.time.sleepMs(5000);
+        log.info("Still alive... uptime={}ms", .{board.uptime()});
+    }
+}
