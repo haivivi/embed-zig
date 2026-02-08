@@ -23,7 +23,7 @@ const hci = bluetooth.hci;
 const EspRt = idf.runtime;
 const WG = waitgroup.WaitGroup(EspRt);
 const HciDriver = esp.impl.hci.HciDriver;
-const BleHost = bluetooth.Host(EspRt, HciDriver, 4);
+const BleHost = bluetooth.Host(EspRt, HciDriver, &.{});
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! ```
-//! Host(Rt, HciTransport, max_services)
+//! Host(Rt, HciTransport, service_table)
 //! ├── readLoop  (task via WaitGroup.go)
 //! │   ├── hci.poll(.readable) → hci.read()
 //! │   ├── NCP events → acl_credits.release() (flow control)
@@ -41,7 +41,7 @@
 //! ## Lifecycle
 //!
 //! ```zig
-//! var host = Host(Rt, HciDriver, 16).init(&hci_driver, allocator);
+//! var host = Host(Rt, HciDriver, &my_services).init(&hci_driver, allocator);
 //! host.gatt.addService(...);
 //! try host.start(opts);  // HCI Reset + Read Buffer Size + spawn loops
 //! while (host.nextEvent()) |event| { ... }
@@ -167,7 +167,7 @@ fn AclCredits(comptime Rt: type) type {
 // Host
 // ============================================================================
 
-pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_services: usize) type {
+pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_table: []const gatt_server.ServiceDef) type {
     comptime {
         _ = trait.sync.Mutex(Rt.Mutex);
         _ = trait.sync.Condition(Rt.Condition, Rt.Mutex);
@@ -201,7 +201,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
         // ================================================================
 
         gap: gap_mod.Gap = gap_mod.Gap.init(),
-        gatt: gatt_server.GattServer(max_services) = gatt_server.GattServer(max_services).init(),
+        gatt: gatt_server.GattServer(service_table) = gatt_server.GattServer(service_table).init(),
         reassembler: l2cap_mod.Reassembler = .{},
 
         // ================================================================
@@ -723,7 +723,7 @@ test "Host start reads buffer size and initializes credits" {
     var hci_driver = Mock{};
     hci_driver.injectInitSequence();
 
-    const TestHost = Host(TestRt, Mock, 4);
+    const TestHost = Host(TestRt, Mock, &.{});
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
@@ -754,7 +754,7 @@ test "Host writeLoop respects ACL credits" {
     var hci_driver = Mock{};
     hci_driver.injectInitSequence();
 
-    const TestHost = Host(TestRt, Mock, 4);
+    const TestHost = Host(TestRt, Mock, &.{});
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
@@ -785,7 +785,7 @@ test "Host NCP event releases credits" {
     var hci_driver = Mock{};
     hci_driver.injectInitSequence();
 
-    const TestHost = Host(TestRt, Mock, 4);
+    const TestHost = Host(TestRt, Mock, &.{});
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
