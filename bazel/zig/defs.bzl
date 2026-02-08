@@ -551,6 +551,8 @@ def _zig_static_library_impl(ctx):
     cm_args.append("--")
     cm_args.append(zig_bin.path)
     cm_args.extend(["build-lib"] + global_pre + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+    if ctx.attr.pic:
+        cm_args.append("-fPIC")
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
@@ -581,6 +583,10 @@ zig_static_library = rule(
             mandatory = True,
             providers = [ZigModuleInfo],
             doc = "zig_library target to compile",
+        ),
+        "pic": attr.bool(
+            default = False,
+            doc = "Compile with -fPIC (required for linking into shared objects / Go CGo on Linux)",
         ),
         "optimize": attr.string(
             doc = "Optimization mode: Debug, ReleaseFast, ReleaseSafe, ReleaseSmall",
