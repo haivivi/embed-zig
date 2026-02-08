@@ -3,12 +3,10 @@
 //! Supports: LiChuang GoCool (ES7210 ADC + ES8311 DAC + AEC)
 //! Uses AudioSystem for unified mic+speaker with AEC.
 
-const build_options = @import("build_options");
 const hal = @import("hal");
 
-const hw = switch (build_options.board) {
-    .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
-};
+// Board selection — single board, no build_options needed
+const hw = @import("esp/lichuang_gocool.zig");
 
 pub const Hardware = hw.Hardware;
 
