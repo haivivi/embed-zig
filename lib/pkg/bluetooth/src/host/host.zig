@@ -190,11 +190,11 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
         // ================================================================
 
         hci: *HciTransport,
-        tx_queue: TxChannel = TxChannel.init(),
-        event_queue: EventChannel = EventChannel.init(),
-        acl_credits: Credits = Credits.init(0), // initialized in start()
+        tx_queue: TxChannel,
+        event_queue: EventChannel,
+        acl_credits: Credits,
         wg: WG,
-        cancel: cancellation.CancellationToken = cancellation.CancellationToken.init(),
+        cancel: cancellation.CancellationToken,
 
         // ================================================================
         // Protocol layers (owned by readLoop)
@@ -210,6 +210,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
 
         acl_max_len: u16 = 27,  // from LE_Read_Buffer_Size
         acl_max_slots: u16 = 0, // from LE_Read_Buffer_Size
+        bd_addr: hci_mod.BdAddr = .{ 0, 0, 0, 0, 0, 0 }, // from Read_BD_ADDR
 
         // ================================================================
         // Buffers (owned by readLoop)
@@ -225,7 +226,11 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
         pub fn init(hci: *HciTransport, allocator: std.mem.Allocator) Self {
             return .{
                 .hci = hci,
+                .tx_queue = TxChannel.init(),
+                .event_queue = EventChannel.init(),
+                .acl_credits = Credits.init(0),
                 .wg = WG.init(allocator),
+                .cancel = cancellation.CancellationToken.init(),
             };
         }
 
@@ -270,24 +275,33 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
                 if (self.acl_max_slots == 0) self.acl_max_slots = 12; // fallback
             }
 
-            // --- 3. Set Event Mask (enable NCP + LE Meta + Disconnection) ---
+            // --- 3. Read BD_ADDR ---
+            {
+                var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
+                const resp = try self.syncCommandWithResponse(
+                    commands.encode(&cmd_buf, commands.READ_BD_ADDR, &.{}),
+                );
+                if (resp.return_params.len >= 6) {
+                    self.bd_addr = resp.return_params[0..6].*;
+                }
+            }
+
+            // --- 4. Set Event Mask (enable NCP + LE Meta + Disconnection) ---
             {
                 var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
                 try self.syncCommand(commands.setEventMask(&cmd_buf, 0x3DBFF807FFFBFFFF));
             }
 
-            // --- 4. LE Set Event Mask ---
+            // --- 5. LE Set Event Mask ---
             {
                 var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
-                // Enable: Connection Complete, Adv Report, Connection Update,
-                // Data Length Change, PHY Update Complete
                 try self.syncCommand(commands.leSetEventMask(&cmd_buf, 0x000000000000097F));
             }
 
-            // --- 5. Initialize ACL credits ---
+            // --- 6. Initialize ACL credits ---
             self.acl_credits = Credits.init(self.acl_max_slots);
 
-            // --- 6. Spawn loops ---
+            // --- 7. Spawn loops ---
             self.cancel.reset();
             try self.wg.go("ble-read", readLoopEntry, self, opts);
             try self.wg.go("ble-write", writeLoopEntry, self, opts);
@@ -423,6 +437,11 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
 
         pub fn getAclMaxLen(self: *const Self) u16 {
             return self.acl_max_len;
+        }
+
+        /// Get the device BD_ADDR (read during start).
+        pub fn getBdAddr(self: *const Self) hci_mod.BdAddr {
+            return self.bd_addr;
         }
 
         // ================================================================
@@ -664,7 +683,7 @@ fn MockHci() type {
             self.rx_head.store(head + 1, .release);
         }
 
-        /// Inject HCI Reset Command Complete + LE Read Buffer Size response
+        /// Inject full init sequence responses
         pub fn injectInitSequence(self: *Self) void {
             // 1. HCI Reset Command Complete
             self.injectPacket(&[_]u8{
@@ -674,16 +693,21 @@ fn MockHci() type {
             // 2. LE Read Buffer Size Command Complete (ACL_len=251, num=12)
             self.injectPacket(&[_]u8{
                 @intFromEnum(hci_mod.PacketType.event),
-                0x0E, 0x07, 0x01, 0x02, 0x20, 0x00, // CC for 0x2002, status=0
-                0xFB, 0x00, // LE_ACL_Data_Packet_Length = 251
-                12, // Total_Num = 12
+                0x0E, 0x07, 0x01, 0x02, 0x20, 0x00,
+                0xFB, 0x00, 12,
             });
-            // 3. Set Event Mask CC
+            // 3. Read BD_ADDR Command Complete (addr = 98:88:E0:11:5C:52)
+            self.injectPacket(&[_]u8{
+                @intFromEnum(hci_mod.PacketType.event),
+                0x0E, 0x0A, 0x01, 0x09, 0x10, 0x00, // CC for 0x1009, status=0
+                0x52, 0x5C, 0x11, 0xE0, 0x88, 0x98, // BD_ADDR (little-endian)
+            });
+            // 4. Set Event Mask CC
             self.injectPacket(&[_]u8{
                 @intFromEnum(hci_mod.PacketType.event),
                 0x0E, 0x04, 0x01, 0x01, 0x0C, 0x00,
             });
-            // 4. LE Set Event Mask CC
+            // 5. LE Set Event Mask CC
             self.injectPacket(&[_]u8{
                 @intFromEnum(hci_mod.PacketType.event),
                 0x0E, 0x04, 0x01, 0x01, 0x20, 0x00,
@@ -713,8 +737,12 @@ test "Host start reads buffer size and initializes credits" {
     // ACL credits should be initialized
     try std.testing.expectEqual(@as(u32, 12), host.getAclCredits());
 
-    // Commands written: Reset + Read Buffer Size + Set Event Mask + LE Set Event Mask = 4
-    try std.testing.expect(hci_driver.written_count.load(.acquire) >= 4);
+    // BD_ADDR should be read
+    try std.testing.expectEqual(@as(u8, 0x52), host.bd_addr[0]);
+    try std.testing.expectEqual(@as(u8, 0x11), host.bd_addr[2]); // server MAC
+
+    // Commands: Reset + Buffer Size + BD_ADDR + Event Mask + LE Event Mask = 5
+    try std.testing.expect(hci_driver.written_count.load(.acquire) >= 5);
 
     host.stop();
 }
