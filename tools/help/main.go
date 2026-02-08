@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -379,7 +380,10 @@ func targetName(label string) string {
 	if i := strings.LastIndex(label, ":"); i >= 0 {
 		return label[i+1:]
 	}
-	return filepath.Base(label)
+	// Use path.Base (not filepath.Base) — Bazel labels always use forward
+	// slashes regardless of OS. filepath.Base breaks on Windows where
+	// "//" is interpreted as a UNC path prefix.
+	return path.Base(label)
 }
 
 // mergeTargets merges multiple target slices, deduplicating by label.
@@ -413,7 +417,8 @@ func shortenLabel(label string) string {
 		pkg := label[:i]
 		name := label[i+1:]
 		// If name equals the last component of pkg path, omit it.
-		base := filepath.Base(pkg)
+		// Use path.Base — Bazel labels use forward slashes, not OS separators.
+		base := path.Base(pkg)
 		if name == base {
 			return pkg
 		}
@@ -466,8 +471,23 @@ func parseModuleName(content string) string {
 	}
 	block := rest[:end]
 
-	// Find name = "..."
-	nameIdx := strings.Index(block, "name")
+	// Find name = "..." — match 'name' followed by optional spaces and '='
+	// to avoid false matches on substrings like "module_name" or "filename".
+	nameIdx := -1
+	for i := 0; i < len(block)-4; i++ {
+		if block[i:i+4] == "name" {
+			// Check char before is not alphanumeric/underscore (word boundary).
+			if i > 0 && (isWordChar(block[i-1])) {
+				continue
+			}
+			// Check that what follows (after optional spaces) is '='.
+			rest := strings.TrimLeft(block[i+4:], " \t")
+			if len(rest) > 0 && rest[0] == '=' {
+				nameIdx = i
+				break
+			}
+		}
+	}
 	if nameIdx < 0 {
 		return ""
 	}
@@ -482,4 +502,10 @@ func parseModuleName(content string) string {
 		return ""
 	}
 	return after[:q2]
+}
+
+// isWordChar returns true if c is a letter, digit, or underscore.
+func isWordChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') || c == '_'
 }
