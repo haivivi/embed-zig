@@ -343,7 +343,8 @@ pub fn Broker(comptime Transport: type) type {
 
             const handle = self.registerClient(connect.client_id, transport) orelse return;
             handle.setUsername(connect.username);
-            defer self.cleanupClient(handle);
+            const gen = handle.generation;
+            defer self.cleanupClient(handle, gen);
 
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(handle.clientId());
@@ -377,7 +378,8 @@ pub fn Broker(comptime Transport: type) type {
 
             const handle = self.registerClient(connect.client_id, transport) orelse return;
             handle.setUsername(connect.username);
-            defer self.cleanupClient(handle);
+            const gen = handle.generation;
+            defer self.cleanupClient(handle, gen);
 
             if (self.on_connect) |cb| cb(connect.client_id);
             defer if (self.on_disconnect) |cb| cb(handle.clientId());
@@ -628,7 +630,7 @@ pub fn Broker(comptime Transport: type) type {
                 // Shared subscription — add to shared group
                 self.sub_mutex.lock();
                 defer self.sub_mutex.unlock();
-                self.addToSharedGroup(s.group, s.actual_topic, handle);
+                if (!self.addToSharedGroup(s.group, s.actual_topic, handle)) return false;
             } else {
                 // Normal subscription — add to trie
                 self.sub_mutex.lock();
@@ -642,27 +644,37 @@ pub fn Broker(comptime Transport: type) type {
             return true;
         }
 
-        fn addToSharedGroup(self: *Self, group_name: []const u8, actual_topic: []const u8, handle: *ClientHandle) void {
+        fn addToSharedGroup(self: *Self, group_name: []const u8, actual_topic: []const u8, handle: *ClientHandle) bool {
             // Check if shared group already exists for this topic
             if (self.shared_trie.match(actual_topic)) |groups| {
                 for (groups) |sg| {
                     if (std.mem.eql(u8, sg.groupName(), group_name)) {
                         sg.add(self.allocator, handle);
-                        return;
+                        return true;
                     }
                 }
             }
 
             // Create new shared group
-            const sg = self.allocator.create(SharedGroup) catch return;
+            const sg = self.allocator.create(SharedGroup) catch return false;
             sg.* = .{};
             sg.setGroupName(group_name);
             sg.add(self.allocator, handle);
             self.shared_groups.append(self.allocator, sg) catch {
+                sg.deinit(self.allocator);
                 self.allocator.destroy(sg);
-                return;
+                return false;
             };
-            self.shared_trie.insert(actual_topic, sg) catch {};
+            self.shared_trie.insert(actual_topic, sg) catch {
+                // Rollback: remove from shared_groups, destroy
+                if (self.shared_groups.items.len > 0) {
+                    _ = self.shared_groups.pop();
+                }
+                sg.deinit(self.allocator);
+                self.allocator.destroy(sg);
+                return false;
+            };
+            return true;
         }
 
         fn handleUnsubscribe(self: *Self, handle: *ClientHandle, topic: []const u8) void {
@@ -769,9 +781,14 @@ pub fn Broker(comptime Transport: type) type {
             handle.transport = transport;
             handle.active = true;
 
-            const key_dup = self.allocator.dupe(u8, client_id) catch return handle;
+            const key_dup = self.allocator.dupe(u8, client_id) catch {
+                self.allocator.destroy(handle);
+                return null;
+            };
             self.clients.put(key_dup, handle) catch {
                 self.allocator.free(key_dup);
+                self.allocator.destroy(handle);
+                return null;
             };
 
             const key_dup2 = self.allocator.dupe(u8, client_id) catch return handle;
@@ -782,7 +799,11 @@ pub fn Broker(comptime Transport: type) type {
             return handle;
         }
 
-        fn cleanupClient(self: *Self, handle: *ClientHandle) void {
+        fn cleanupClient(self: *Self, handle: *ClientHandle, expected_gen: u32) void {
+            // If generation changed, a new connection took over this handle.
+            // Skip cleanup to avoid disrupting the new connection.
+            if (handle.generation != expected_gen) return;
+
             self.publishSysDisconnected(handle.clientId(), handle.username());
             handle.write_mutex.lock();
             handle.active = false;
