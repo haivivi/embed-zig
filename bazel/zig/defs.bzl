@@ -539,7 +539,10 @@ def _zig_static_library_impl(ctx):
     for inc_dir in info.own_c_include_dirs:
         root_c_args.extend(["-I", inc_dir])
 
-    dep_lib_a_args = [f.path for f in info.transitive_lib_as.to_list()]
+    # Exclude lib's own .a from transitive set — build-lib recompiles from
+    # source, linking its own .a would be circular/redundant.
+    own_a = info.lib_a
+    dep_lib_a_args = [f.path for f in info.transitive_lib_as.to_list() if f != own_a]
 
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <mods> [dep .a] -femit-bin=out.a
     cm_args = [cache_dir.path]
