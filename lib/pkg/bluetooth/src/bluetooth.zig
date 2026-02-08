@@ -74,10 +74,11 @@ pub const gap = @import("host/gap/gap.zig");
 pub const gatt_server = @import("gatt_server.zig");
 
 // ============================================================================
-// Host Coordinator (future)
+// Host Coordinator
 // ============================================================================
 
-// pub const Host = @import("host/host.zig").Host;
+/// BLE Host coordinator (readLoop + writeLoop + tx_queue + dispatch)
+pub const Host = @import("host/host.zig").Host;
 
 // ============================================================================
 // Tests
