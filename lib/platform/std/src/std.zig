@@ -1,7 +1,7 @@
 //! std_impl - Trait implementations using Zig Standard Library
 //!
 //! Platform-independent implementation of trait interfaces using
-//! std.Thread, std.posix, and std.crypto.tls.
+//! std.Thread and std.posix.
 //!
 //! Usage:
 //!   const std_impl = @import("std_impl");
@@ -21,7 +21,6 @@ pub const thread = @import("impl/thread.zig");
 pub const time = @import("impl/time.zig");
 pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");
-pub const tls = @import("impl/tls.zig");
 pub const runtime = @import("impl/runtime.zig");
 
 // Convenience type re-exports

@@ -8,7 +8,6 @@
 //! | Module | Interface | Description |
 //! |--------|-----------|-------------|
 //! | socket | trait.socket | LWIP TCP/UDP sockets |
-//! | tls | trait.tls | mbedTLS encryption |
 //! | time | trait.time | FreeRTOS + esp_timer |
 //! | i2c | trait.i2c | ESP-IDF I2C master |
 //! | log | trait.log | ESP-IDF esp_log |
@@ -53,10 +52,6 @@
 /// Socket implementation (trait.socket)
 pub const socket = @import("socket.zig");
 pub const Socket = socket.Socket;
-
-/// TLS implementation (trait.tls)
-pub const tls = @import("tls.zig");
-pub const TlsStream = tls.TlsStream;
 
 /// Time implementation (trait.time)
 pub const time = @import("time.zig");
