@@ -77,6 +77,7 @@ fn micTask(raw: ?*anyopaque) void {
     var buf: [FRAME_SAMPLES]i16 = undefined;
     var accum: PcmFrame = undefined;
     var accum_n: usize = 0;
+    var frame_count: u32 = 0;
 
     while (!ctx.cancel.isCancelled()) {
         const n_read = ctx.board.audio.readMic(&buf) catch {
@@ -103,7 +104,6 @@ fn micTask(raw: ?*anyopaque) void {
             pos += n;
 
             if (accum_n == FRAME_SAMPLES) {
-                // Non-blocking send — drop frame if channel full
                 ctx.ch.trySend(accum) catch |err| switch (err) {
                     error.Full => {
                         ctx.drops.* += 1;
@@ -113,6 +113,10 @@ fn micTask(raw: ?*anyopaque) void {
                     error.Closed => return,
                 };
                 accum_n = 0;
+                frame_count += 1;
+                if (frame_count % 250 == 1) {
+                    log.info("[mic] frames={}", .{frame_count});
+                }
             }
         }
     }
@@ -170,6 +174,10 @@ fn codecTask(raw: ?*anyopaque) void {
         ctx.metrics.opus_bytes += encoded.len;
         ctx.metrics.enc_us += (t1 - t0);
         ctx.metrics.dec_us += (t2 - t1);
+
+        if (ctx.metrics.frames % 250 == 1) {
+            log.info("[codec] frames={} enc={}us", .{ ctx.metrics.frames, (t1 - t0) });
+        }
     }
     log.info("[codec] task exit", .{});
 }
@@ -269,20 +277,20 @@ pub fn run(_: anytype) void {
     };
 
     wg.go("mic", micTask, @ptrCast(mic_ctx), .{
-        .stack_size = 8192,
-        .priority = 15, // high — never miss I2S data
-        .allocator = heap.iram,
+        .stack_size = 49152,
+        .priority = 15,
+        .allocator = heap.psram,
     }) catch |err| {
         log.err("mic spawn: {}", .{err});
         return;
     };
 
-    platform.time.sleepMs(50); // let mic task start first
+    platform.time.sleepMs(50);
 
     wg.go("codec", codecTask, @ptrCast(codec_ctx), .{
-        .stack_size = 16384,
-        .priority = 10, // lower — can lag behind mic
-        .allocator = heap.iram,
+        .stack_size = 49152,
+        .priority = 10,
+        .allocator = heap.psram,
     }) catch |err| {
         log.err("codec spawn: {}", .{err});
         return;
