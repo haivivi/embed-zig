@@ -298,6 +298,10 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
         /// Handler functions (bound at runtime)
         handlers: [total_chars]?HandlerBinding = .{null} ** total_chars,
 
+        /// CCCD state: notification/indication enabled per characteristic
+        /// Bit 0 = notifications enabled, Bit 1 = indications enabled
+        cccd_state: [total_chars]u16 = .{0} ** total_chars,
+
         /// Negotiated MTU
         mtu: u16 = att.DEFAULT_MTU,
 
@@ -329,6 +333,18 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
             if (char_index < total_chars) {
                 self.handlers[char_index] = .{ .func = func, .ctx = ctx };
             }
+        }
+
+        /// Check if notifications are enabled for a characteristic.
+        pub fn isNotifyEnabled(self: *const Self, comptime svc_uuid16: u16, comptime char_uuid16: u16) bool {
+            const idx = comptime findCharIndex(svc_uuid16, char_uuid16);
+            return (self.cccd_state[idx] & 0x0001) != 0;
+        }
+
+        /// Check if indications are enabled for a characteristic.
+        pub fn isIndicateEnabled(self: *const Self, comptime svc_uuid16: u16, comptime char_uuid16: u16) bool {
+            const idx = comptime findCharIndex(svc_uuid16, char_uuid16);
+            return (self.cccd_state[idx] & 0x0002) != 0;
         }
 
         /// Get the ATT handle for a characteristic value (for notifications).
@@ -410,6 +426,11 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
         fn dispatchWrite(self: *Self, conn_handle: u16, attr_handle: u16, value: []const u8, is_command: bool, buf: *[att.MAX_PDU_LEN]u8) ?[]const u8 {
             inline for (db) |a| {
                 if (a.handle == attr_handle) {
+                    // Check if this is a CCCD attribute
+                    if (a.att_type.eql(att.UUID.from16(att.GATT_CLIENT_CHAR_CONFIG_UUID))) {
+                        return self.handleCccdWrite(a.service_index, attr_handle, value, is_command, buf);
+                    }
+
                     if (a.char_index >= 0) {
                         const idx: usize = @intCast(a.char_index);
                         if (self.handlers[idx]) |binding| {
@@ -424,6 +445,26 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
             if (!is_command) {
                 return att.encodeErrorResponse(buf, .write_request, attr_handle, .attribute_not_found);
             }
+            return null;
+        }
+
+        fn handleCccdWrite(self: *Self, service_index: u16, attr_handle: u16, value: []const u8, is_command: bool, buf: *[att.MAX_PDU_LEN]u8) ?[]const u8 {
+            if (value.len >= 2) {
+                const cccd_val = std.mem.readInt(u16, value[0..2], .little);
+
+                // Find which characteristic this CCCD belongs to.
+                // CCCD follows its characteristic value in the attr table.
+                // Walk backwards to find the preceding char value attr.
+                inline for (db) |a| {
+                    // CCCD handle is always char_value_handle + 1
+                    if (a.char_index >= 0 and a.handle == attr_handle - 1) {
+                        const idx: usize = @intCast(a.char_index);
+                        self.cccd_state[idx] = cccd_val;
+                    }
+                }
+                _ = service_index;
+            }
+            if (!is_command) return att.encodeWriteResponse(buf);
             return null;
         }
 

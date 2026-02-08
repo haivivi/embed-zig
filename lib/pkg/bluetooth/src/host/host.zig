@@ -576,7 +576,82 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             }
         }
 
+        /// ATT PDU context for async handler dispatch.
+        /// Heap-allocated, freed by the handler task after completion.
+        const AttTaskCtx = struct {
+            host: *Self,
+            conn_handle: u16,
+            pdu_data: [att_mod.MAX_PDU_LEN]u8,
+            pdu_len: usize,
+        };
+
         fn handleAttPdu(self: *Self, sdu: l2cap_mod.Sdu) void {
+            // Copy PDU data (sdu.data points into rx_buf which will be reused)
+            if (sdu.data.len > att_mod.MAX_PDU_LEN) return;
+
+            // Try to spawn async handler task
+            const ctx_alloc = self.wg.allocator.create(AttTaskCtx) catch {
+                // Fallback: handle synchronously if allocation fails
+                self.handleAttPduSync(sdu);
+                return;
+            };
+
+            ctx_alloc.* = .{
+                .host = self,
+                .conn_handle = sdu.conn_handle,
+                .pdu_data = undefined,
+                .pdu_len = sdu.data.len,
+            };
+            @memcpy(ctx_alloc.pdu_data[0..sdu.data.len], sdu.data);
+
+            // Spawn handler task (fire-and-forget, no WaitGroup tracking)
+            Rt.spawn("att-handler", attHandlerTask, @ptrCast(ctx_alloc), .{
+                .stack_size = 4096,
+                .priority = 15,
+            }) catch {
+                // Fallback: handle synchronously
+                self.wg.allocator.destroy(ctx_alloc);
+                self.handleAttPduSync(sdu);
+            };
+        }
+
+        fn attHandlerTask(raw_ctx: ?*anyopaque) void {
+            const ctx: *AttTaskCtx = @ptrCast(@alignCast(raw_ctx));
+            const host = ctx.host;
+            const conn_handle = ctx.conn_handle;
+            const pdu_data = ctx.pdu_data[0..ctx.pdu_len];
+
+            // Each handler task gets its own response buffer (on task stack)
+            var resp_buf: [att_mod.MAX_PDU_LEN]u8 = undefined;
+
+            const response = host.gatt.handlePdu(
+                conn_handle,
+                pdu_data,
+                &resp_buf,
+            );
+
+            // Free the context (PDU data copy)
+            host.wg.allocator.destroy(ctx);
+
+            // Send response if any
+            if (response) |resp| {
+                var frag_buf: [acl_mod.LE_MAX_DATA_LEN + l2cap_mod.HEADER_LEN]u8 = undefined;
+                var iter = l2cap_mod.fragmentIterator(
+                    &frag_buf,
+                    resp,
+                    l2cap_mod.CID_ATT,
+                    conn_handle,
+                    host.acl_max_len,
+                );
+
+                while (iter.next()) |frag| {
+                    host.tx_queue.trySend(TxPacket.fromSlice(frag)) catch {};
+                }
+            }
+        }
+
+        /// Synchronous fallback for when async spawn fails.
+        fn handleAttPduSync(self: *Self, sdu: l2cap_mod.Sdu) void {
             const response = self.gatt.handlePdu(
                 sdu.conn_handle,
                 sdu.data,
