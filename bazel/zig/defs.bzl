@@ -192,12 +192,20 @@ def _build_c_asm_args(ctx):
 
     # Collect C and ASM source files
     c_files = []
+    header_dirs = {}
     for src in ctx.attr.c_srcs:
         for f in src.files.to_list():
             inputs.append(f)
             if f.path.endswith(".c"):
                 c_files.append(f)
-            # .h files are inputs (for include resolution) but not compiled
+            elif f.path.endswith(".h"):
+                # Auto-detect include dirs from header file paths.
+                # This enables external repo headers (e.g., @opus) to be found
+                # without hardcoding repo-specific paths in c_includes.
+                dir_path = f.path.rsplit("/", 1)[0] if "/" in f.path else ""
+                if dir_path and dir_path not in header_dirs:
+                    header_dirs[dir_path] = True
+                    pre_args.extend(["-I", dir_path])
 
     asm_files = []
     for src in ctx.attr.asm_srcs:
