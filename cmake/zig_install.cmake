@@ -175,15 +175,16 @@ function(esp_zig_build)
     # ESP-IDF include dirs are passed as $1 argument.
     add_custom_target(zig_build
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMAND bash zig_build.sh
-            "${ESP_INCLUDE_DIRS}"
-            "${ZIG_TARGET}"
-            "${TARGET_CPU_MODEL}"
-            "${ZIG_BUILD_TYPE}"
-            "${ZIG_OUTPUT_A}"
-            "${ZIG_INSTALL}/zig"
+        COMMAND ${CMAKE_COMMAND} -E env
+            "ESP_INC_DIRS=${ESP_INCLUDE_DIRS}"
+            "ZIG_TARGET_ARCH=${ZIG_TARGET}"
+            "ZIG_CPU=${TARGET_CPU_MODEL}"
+            "ZIG_OPT=${ZIG_BUILD_TYPE}"
+            "ZIG_OUT=${ZIG_OUTPUT_A}"
+            "ZIG_BIN=${ZIG_INSTALL}/zig"
+            bash zig_build.sh
         BYPRODUCTS ${ZIG_OUTPUT_A}
-        VERBATIM
+        COMMAND_EXPAND_LISTS
     )
     
     # Link prebuilt Zig .a
