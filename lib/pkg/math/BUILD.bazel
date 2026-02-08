@@ -1,23 +1,7 @@
-load("//bazel/zig:defs.bzl", "zig_lib", "zig_library", "zig_test")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# Legacy rule (for esp_zig_app backward compat)
-zig_lib(
-    name = "math",
-    srcs = glob(["**/*"]),
-)
+zig_package(name = "math")
 
-# Bazel-native rules
-zig_library(
-    name = "math_native",
-    main = "src/math.zig",
-    srcs = glob(["src/**/*.zig"]),
-    module_name = "math",
-)
-
-zig_test(
-    name = "math_test",
-    main = "src/math.zig",
-    srcs = glob(["src/**/*.zig"]),
-)
+filegroup(name = "srcs", srcs = glob(["**/*"]))

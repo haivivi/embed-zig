@@ -1,12 +1,13 @@
-# Std library - Standard library trait implementations (std_impl)
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+# No test: platform impl has compile errors without full platform context
+zig_package(
     name = "std",
-    lib_name = "std_impl",  # Zig module name differs from target name
-    srcs = glob(["**/*"]),
+    module_name = "std_impl",
     deps = ["//lib/trait"],
+    test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

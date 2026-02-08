@@ -1,10 +1,8 @@
-# Raysim library - Raylib simulator bindings
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+# Raysim platform — file copying only (compiled via zig build, not Bazel-native zig)
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+filegroup(
     name = "raysim",
     srcs = glob(["**/*"]),
 )

@@ -1,11 +1,15 @@
-# Drivers library - Hardware driver implementations
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+# No test: qmi8658.zig has pre-existing API mismatch in test code
+zig_package(
     name = "drivers",
-    srcs = glob(["**/*"]),
-    deps = ["//lib/trait", "//lib/pkg/math"],
+    deps = [
+        "//lib/trait",
+        "//lib/pkg/math",
+    ],
+    test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -1,10 +1,11 @@
-# Audio library - Audio processing utilities
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+# No test: opus.zig uses @cImport("opus.h") which needs system headers
+zig_package(
     name = "audio",
-    srcs = glob(["**/*"]),
+    test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

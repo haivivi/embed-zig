@@ -1,11 +1,13 @@
-# Crypto library - Pure Zig cryptographic implementations
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+# No test: suite.zig references HkdfSha384 not available in Xtensa Zig fork
+zig_package(
     name = "crypto",
-    srcs = glob(["**/*"], exclude = ["certs/**"]),
+    main = "src/suite.zig",
     deps = ["//lib/trait"],
+    test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"], exclude = ["certs/**"]))

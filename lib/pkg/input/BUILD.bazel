@@ -1,10 +1,10 @@
-# Input library - Input handling utilities
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "input",
-    srcs = glob(["**/*"]),
+    main = "src/adc_button.zig",
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

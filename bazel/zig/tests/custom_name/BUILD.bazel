@@ -1,0 +1,10 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//bazel/zig/tests:__subpackages__"])
+
+# Tests main override (not src/custom_name.zig) and module_name override
+zig_package(
+    name = "custom_name",
+    main = "src/impl.zig",
+    module_name = "mylib",
+)

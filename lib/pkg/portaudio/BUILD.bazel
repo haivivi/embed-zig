@@ -1,10 +1,11 @@
-# PortAudio library - Audio I/O bindings
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+# No test: portaudio.zig uses @cImport("portaudio.h") which needs system headers
+zig_package(
     name = "portaudio",
-    srcs = glob(["**/*"]),
+    test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -1,28 +1,10 @@
-# Motion detection library
-
-load("//bazel/zig:defs.bzl", "zig_lib", "zig_library", "zig_test")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# Legacy rule (for esp_zig_app backward compat)
-zig_lib(
+zig_package(
     name = "motion",
-    srcs = glob(["**/*"]),
     deps = ["//lib/pkg/math"],
 )
 
-# Bazel-native rules
-zig_library(
-    name = "motion_native",
-    main = "src/motion.zig",
-    srcs = glob(["src/**/*.zig"]),
-    module_name = "motion",
-    deps = ["//lib/pkg/math:math_native"],
-)
-
-zig_test(
-    name = "motion_test",
-    main = "src/motion.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = ["//lib/pkg/math:math_native"],
-)
+filegroup(name = "srcs", srcs = glob(["**/*"]))

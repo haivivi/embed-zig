@@ -1,0 +1,12 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//bazel/zig/tests:__subpackages__"])
+
+zig_package(
+    name = "asm_accel",
+    c_srcs = ["src/fast_add.h"],
+    asm_srcs = ["src/fast_add.S"],
+    c_includes = ["src"],
+    link_libc = True,
+    deps = ["//bazel/zig/tests/base"],
+)

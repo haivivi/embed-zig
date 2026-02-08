@@ -1,8 +1,7 @@
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
-    name = "cancellation",
-    srcs = glob(["**/*"]),
-)
+zig_package(name = "cancellation")
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

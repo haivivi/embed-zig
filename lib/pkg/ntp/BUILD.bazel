@@ -1,14 +1,13 @@
-# NTP library - Cross-platform NTP client
-
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "ntp",
-    srcs = glob(["**/*"]),
     deps = [
         "//lib/platform/std",
         "//lib/trait",
     ],
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
