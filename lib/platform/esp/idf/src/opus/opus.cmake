@@ -164,29 +164,21 @@ set(OPUS_C_SOURCES
     ${OPUS_DIR}/silk/float/wrappers_FLP.c
 )
 
-# Compile flags
-set(OPUS_COMPILE_FLAGS
-    -DOPUS_BUILD
-    -DHAVE_LRINTF
-    -DVAR_ARRAYS
-)
-
-# Apply compile flags to opus sources
-set_source_files_properties(${OPUS_C_SOURCES} PROPERTIES
-    COMPILE_FLAGS "${OPUS_COMPILE_FLAGS}"
-)
-
-# Setup include directories (called after idf_component_register)
+# Setup include directories and compile flags (called after idf_component_register)
 function(opus_setup_includes)
+    message(STATUS "[opus] Adding include dirs to ${COMPONENT_LIB}: ${OPUS_DIR}/include")
+    # PUBLIC so zig compiler also sees the header via INCLUDE_DIRECTORIES
     target_include_directories(${COMPONENT_LIB} PUBLIC
         ${OPUS_DIR}/include
-    )
-    target_include_directories(${COMPONENT_LIB} PRIVATE
         ${OPUS_DIR}
         ${OPUS_DIR}/src
         ${OPUS_DIR}/celt
         ${OPUS_DIR}/silk
         ${OPUS_DIR}/silk/float
+    )
+    # Apply compile flags to opus sources
+    set_source_files_properties(${OPUS_C_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-DOPUS_BUILD -DHAVE_LRINTF -DVAR_ARRAYS"
     )
 endfunction()
 

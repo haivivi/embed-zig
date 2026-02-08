@@ -554,6 +554,9 @@ endif()
 if(COMMAND net_setup_includes)
     net_setup_includes()
 endif()
+if(COMMAND opus_setup_includes)
+    opus_setup_includes()
+endif()
 
 esp_zig_build(
     FORCE_LINK
