@@ -701,10 +701,12 @@ ZIG_BUILD_SH="$WORK/$ESP_PROJECT_PATH/main/zig_build.sh"
 cat > "$ZIG_BUILD_SH" << 'ZIGBUILDEOF'
 #!/bin/bash
 set -e
-# Args from env (set by CMake via cmake -E env)
+# Read ESP-IDF include dirs from file (written by CMake at generate time)
 ESP_I=""
-IFS=';' read -ra DIRS <<< "$ESP_INC_DIRS"
-for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
+if [ -f esp_include_dirs.txt ]; then
+    IFS=';' read -ra DIRS < esp_include_dirs.txt
+    for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
+fi
 
 MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
 MOD_ARGS=$(cat zig_module_args.txt 2>/dev/null | tr '\n' ' ')
