@@ -723,6 +723,52 @@ pub fn build(b: *std.Build) void {{
 {esp_include_all_modules}
         }}
     }}
+    // Also scan IDF_PATH components for all header directories
+    // This catches headers not in INCLUDE_DIRS (like esp_timer.h)
+    const idf_path = std.process.getEnvVarOwned(b.allocator, "IDF_PATH") catch "";
+    if (idf_path.len > 0) {{
+        defer b.allocator.free(idf_path);
+        const comp = b.pathJoin(&.{{ idf_path, "components" }});
+        var dir = std.fs.cwd().openDir(comp, .{{ .iterate = true }}) catch unreachable;
+        defer dir.close();
+        var added = std.StringHashMap(void).init(b.allocator);
+        defer added.deinit();
+        var walker = dir.walk(b.allocator) catch unreachable;
+        defer walker.deinit();
+        while (walker.next() catch null) |entry| {{
+            if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".h")) {{
+                if (std.fs.path.dirname(entry.path)) |parent| {{
+                    const key = b.dupe(parent);
+                    const gop = added.getOrPut(key) catch continue;
+                    if (!gop.found_existing) {{
+                        const ip = std.Build.LazyPath{{ .cwd_relative = b.pathJoin(&.{{ comp, parent }}) }};
+                        root_module.addIncludePath(ip);
+{esp_include_all_modules}
+                    }}
+                }}
+            }}
+        }}
+    }}
+    // Toolchain includes
+    const home_dir = std.process.getEnvVarOwned(b.allocator, "HOME") catch "";
+    if (home_dir.len > 0) {{
+        defer b.allocator.free(home_dir);
+        const arch = root_module.resolved_target.?.result.cpu.arch;
+        const archtools = b.fmt("{{s}}-esp-elf", .{{@tagName(arch)}});
+        const tbase = b.pathJoin(&.{{ home_dir, ".espressif", "tools", archtools }});
+        var td = std.fs.cwd().openDir(tbase, .{{ .iterate = true }}) catch return;
+        defer td.close();
+        var ver: ?[]const u8 = null;
+        var tit = td.iterate();
+        while (tit.next() catch null) |e| {{
+            if (e.kind == .directory and std.mem.startsWith(u8, e.name, "esp-")) {{ ver = b.dupe(e.name); break; }}
+        }}
+        if (ver) |v| {{
+            root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, "include" }}) }});
+            root_module.addSystemIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "sys-include" }}) }});
+            root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "include" }}) }});
+        }}
+    }}
     const lib = b.addLibrary(.{{ .name = "main_zig", .linkage = .static, .root_module = root_module }});
     b.installArtifact(lib);
 }}
