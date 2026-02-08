@@ -2,3 +2,6 @@
 # Note: glob excludes in BUILD.bazel files also handle these
 .zig-cache
 zig-out
+
+# External repo integration tests (separate Bazel workspaces)
+bazel/tests/external_help
