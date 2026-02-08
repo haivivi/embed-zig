@@ -6,6 +6,7 @@ package(default_visibility = ["//visibility:public"])
 # Headers from @opus are auto-detected as -I paths by zig_package.
 zig_package(
     name = "audio",
+    deps = ["//lib/trait"],
     c_srcs = [
         "@opus//:opus_srcs",
         "@opus//:opus_internal_headers",

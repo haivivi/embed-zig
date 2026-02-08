@@ -4,12 +4,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Audio module (opus + ogg bindings)
+    // Trait dependency (for stream.zig codec validation)
+    const trait_dep = b.dependency("trait", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Audio module (opus + ogg bindings + stream loops)
     const audio_module = b.addModule("audio", .{
         .root_source_file = b.path("src/audio.zig"),
         .target = target,
         .optimize = optimize,
     });
+    audio_module.addImport("trait", trait_dep.module("trait"));
 
     // When built as part of ESP-IDF (via esp_zig_app), CMake passes include dirs
     // through the INCLUDE_DIRS env var. The audio module needs these to resolve

@@ -1,6 +1,9 @@
 .{
     .name = "audio",
     .version = "0.1.0",
+    .dependencies = .{
+        .trait = .{ .path = "../../trait" },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
