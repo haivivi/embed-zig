@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
     });
     std_impl_module.addImport("trait", trait_dep.module("trait"));
 
+    // Audio/opus dependency for codec impl
+    const audio_dep = b.dependency("audio", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    std_impl_module.addImport("audio", audio_dep.module("audio"));
+
     const test_step = b.step("test", "Run all unit tests");
 
     // Test modules (no dependencies)
