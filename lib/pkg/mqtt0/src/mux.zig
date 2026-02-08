@@ -117,17 +117,16 @@ pub const Mux = struct {
         try self.handle(pattern, h);
     }
 
-    /// Dispatch a message to all matching handlers.
+    /// Dispatch a message to ALL matching handlers (supports overlapping patterns).
     /// Holds mutex during dispatch to prevent trie mutation invalidating slices.
     pub fn handleMessage(self: *Mux, client_id: []const u8, msg: *const packet.Message) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const entries = self.trie.match(msg.topic);
-        if (entries) |items| {
-            for (items) |entry| {
-                try entry.handler.handleMessage(client_id, msg);
-            }
+        var entries_buf: [64]Entry = undefined;
+        const count = self.trie.matchAll(msg.topic, &entries_buf);
+        for (entries_buf[0..count]) |entry| {
+            try entry.handler.handleMessage(client_id, msg);
         }
     }
 

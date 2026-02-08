@@ -74,14 +74,23 @@ pub fn Trie(comptime T: type) type {
             try self.insertAt(self.root, pattern, value);
         }
 
-        /// Get all values matching a concrete topic (returns first match).
+        /// Get all values matching a concrete topic (first match only, legacy).
         pub fn get(self: *const Self, topic: []const u8) []const T {
             return self.match(topic) orelse &.{};
         }
 
-        /// Match returns the first matching node's values.
+        /// Match returns the first matching node's values (legacy, single pattern).
         pub fn match(self: *const Self, topic: []const u8) ?[]const T {
             return matchNode(self.root, topic);
+        }
+
+        /// Collect ALL values from all matching patterns into result buffer.
+        /// Returns the number of values written. Handles overlapping subscriptions
+        /// (e.g., topic "a/b" matching both "a/+" and "a/#").
+        pub fn matchAll(self: *const Self, topic: []const u8, result: []T) usize {
+            var count: usize = 0;
+            collectAll(self.root, topic, result, &count);
+            return count;
         }
 
         /// Remove values matching predicate from a pattern.
@@ -273,6 +282,46 @@ pub fn Trie(comptime T: type) type {
 
             return null;
         }
+
+        /// Collect values from ALL matching patterns (not just first).
+        fn collectAll(node: *const Node, topic: []const u8, result: []T, count: *usize) void {
+            const sep = std.mem.indexOfScalar(u8, topic, '/');
+            const first = if (sep) |s| topic[0..s] else topic;
+            const rest = if (sep) |s| topic[s + 1 ..] else "";
+            const at_end = rest.len == 0 and sep == null;
+
+            // Exact match
+            if (node.children.get(first)) |child| {
+                if (at_end) {
+                    appendValues(child, result, count);
+                } else {
+                    collectAll(child, rest, result, count);
+                }
+            }
+
+            // Single-level wildcard (+) — also try
+            if (node.match_any) |child| {
+                if (at_end) {
+                    appendValues(child, result, count);
+                } else {
+                    collectAll(child, rest, result, count);
+                }
+            }
+
+            // Multi-level wildcard (#) — always matches remaining
+            if (node.match_all) |child| {
+                appendValues(child, result, count);
+            }
+        }
+
+        fn appendValues(node: *const Node, result: []T, count: *usize) void {
+            for (node.values.items) |v| {
+                if (count.* < result.len) {
+                    result[count.*] = v;
+                    count.* += 1;
+                }
+            }
+        }
     };
 }
 
@@ -410,4 +459,26 @@ test "Trie # must be last" {
     defer trie.deinit();
 
     try std.testing.expectError(Error.InvalidTopic, trie.insert("device/#/state", "bad"));
+}
+
+test "Trie matchAll overlapping patterns" {
+    var trie = try Trie([]const u8).init(std.testing.allocator);
+    defer trie.deinit();
+
+    try trie.insert("device/+/state", "handler-plus");
+    try trie.insert("device/#", "handler-hash");
+
+    // "device/001/state" should match BOTH patterns
+    var result: [8][]const u8 = undefined;
+    const count = trie.matchAll("device/001/state", &result);
+    try std.testing.expectEqual(@as(usize, 2), count);
+
+    // "device/001" should match only "device/#"
+    const count2 = trie.matchAll("device/001", &result);
+    try std.testing.expectEqual(@as(usize, 1), count2);
+    try std.testing.expectEqualStrings("handler-hash", result[0]);
+
+    // "other/001" should match nothing
+    const count3 = trie.matchAll("other/001", &result);
+    try std.testing.expectEqual(@as(usize, 0), count3);
 }

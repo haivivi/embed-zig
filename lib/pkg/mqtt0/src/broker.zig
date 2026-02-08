@@ -767,29 +767,37 @@ pub fn Broker(comptime Transport: type) type {
         fn routeMessage(self: *Self, msg: *const Message, sender: ?*ClientHandle) void {
             self.sub_mutex.lock();
 
-            // Normal subscribers
-            const subscribers = self.subscriptions.match(msg.topic);
+            // Normal subscribers — collect from ALL matching patterns
+            var all_matches: [256]*ClientHandle = undefined;
+            const match_count = self.subscriptions.matchAll(msg.topic, &all_matches);
+
             var handles_buf: [128]*ClientHandle = undefined;
             var handle_count: usize = 0;
-            if (subscribers) |items| {
-                for (items) |h| {
-                    if (sender != null and h == sender.?) continue;
-                    if (handle_count < handles_buf.len) {
-                        handles_buf[handle_count] = h;
-                        handle_count += 1;
+            for (all_matches[0..match_count]) |h| {
+                if (sender != null and h == sender.?) continue;
+                // Dedup: skip if already in handles_buf
+                var dup = false;
+                for (handles_buf[0..handle_count]) |existing| {
+                    if (existing == h) {
+                        dup = true;
+                        break;
                     }
+                }
+                if (!dup and handle_count < handles_buf.len) {
+                    handles_buf[handle_count] = h;
+                    handle_count += 1;
                 }
             }
 
             // Shared subscription groups (round-robin)
-            if (self.shared_trie.match(msg.topic)) |groups| {
-                for (groups) |sg| {
-                    if (sg.nextSubscriber()) |h| {
-                        if (sender != null and h == sender.?) continue;
-                        if (handle_count < handles_buf.len) {
-                            handles_buf[handle_count] = h;
-                            handle_count += 1;
-                        }
+            var shared_matches: [64]*SharedGroup = undefined;
+            const shared_count = self.shared_trie.matchAll(msg.topic, &shared_matches);
+            for (shared_matches[0..shared_count]) |sg| {
+                if (sg.nextSubscriber()) |h| {
+                    if (sender != null and h == sender.?) continue;
+                    if (handle_count < handles_buf.len) {
+                        handles_buf[handle_count] = h;
+                        handle_count += 1;
                     }
                 }
             }
