@@ -394,14 +394,15 @@ def _zig_library_impl(ctx):
     # C/ASM sources
     c_asm = _build_c_asm_args(ctx)
 
-    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <main-M> [c/asm] <dep-M> -femit-bin=out.a
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] [c/asm] <main-M> <dep-M> -femit-bin=out.a
+    # C/ASM source files MUST come BEFORE -M module definitions (zig CLI requirement).
     # pre_args (-lc, -I) are this module's own C/ASM flags only (not transitive — deps' C is in their cache)
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-lib"] + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output_a.path])
+    cm_args.extend(["build-lib"] + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + ["-femit-bin=" + output_a.path])
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
@@ -665,7 +666,7 @@ def _zig_binary_impl(ctx):
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-exe"] + global_pre + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+    cm_args.extend(["build-exe"] + global_pre + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
@@ -780,7 +781,7 @@ def _zig_test_impl(ctx):
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["test"] + global_pre + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + dep_lib_a_args + [
+    cm_args.extend(["test"] + global_pre + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + dep_lib_a_args + [
         "--test-no-exec",
         "-femit-bin=" + test_bin.path,
     ])
