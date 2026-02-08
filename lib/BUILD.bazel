@@ -9,28 +9,37 @@
 package(default_visibility = ["//visibility:public"])
 
 # All source files (used by _libs in esp_zig_app for file copying)
-# Must explicitly reference sub-packages since glob doesn't cross package boundaries
+# Must explicitly reference sub-packages since glob doesn't cross package boundaries.
+#
+# NOTE: zig_package targets provide .a artifacts in DefaultInfo, NOT source files.
+# For ESP builds (which need source files for zig build), we reference filegroup
+# targets that glob source files directly.
 filegroup(
     name = "all_sources",
-    srcs = glob(["*"]) + [  # Files in lib/ root + all libraries
-        "//lib/pkg/audio",
-        "//lib/pkg/crypto",
+    srcs = glob(["*"]) + [
+        "//lib/pkg/audio:srcs",
+        "//lib/pkg/cancellation:srcs",
+        "//lib/pkg/channel:srcs",
+        "//lib/pkg/crypto:srcs",
         "//lib/pkg/crypto/certs:root_cas",
-        "//lib/pkg/dns",
-        "//lib/pkg/drivers",
+        "//lib/pkg/dns:srcs",
+        "//lib/pkg/drivers:srcs",
         "//lib/platform/esp",
         "//lib/platform/esp/idf",
         "//lib/platform/esp/impl",
-        "//lib/hal",
-        "//lib/pkg/http",
-        "//lib/pkg/input",
-        "//lib/pkg/ntp",
-        "//lib/pkg/portaudio",
+        "//lib/hal:srcs",
+        "//lib/pkg/http:srcs",
+        "//lib/pkg/input:srcs",
+        "//lib/pkg/math:srcs",
+        "//lib/pkg/motion:srcs",
+        "//lib/pkg/ntp:srcs",
+        "//lib/pkg/portaudio:srcs",
         "//lib/platform/raysim",
-        "//lib/platform/std",
-        "//lib/pkg/tls",
+        "//lib/platform/std:srcs",
+        "//lib/pkg/tls:srcs",
         "//lib/pkg/tls/test:test_sources",
         "//lib/pkg/tls/test:server_sources",
-        "//lib/trait",
+        "//lib/pkg/waitgroup:srcs",
+        "//lib/trait:srcs",
     ],
 )

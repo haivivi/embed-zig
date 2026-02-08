@@ -6,3 +6,5 @@ zig_package(
     name = "input",
     main = "src/adc_button.zig",
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

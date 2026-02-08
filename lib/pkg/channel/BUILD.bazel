@@ -1,12 +1,13 @@
-load("//bazel/zig:defs.bzl", "zig_lib")
+load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_lib(
+zig_package(
     name = "channel",
-    srcs = glob(["**/*"]),
     deps = [
         "//lib/trait",
         "//lib/platform/std",
     ],
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -11,3 +11,5 @@ zig_package(
     ],
     test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -9,3 +9,5 @@ zig_package(
         "//lib/trait",
     ],
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

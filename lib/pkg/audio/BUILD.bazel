@@ -7,3 +7,5 @@ zig_package(
     name = "audio",
     test = False,
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

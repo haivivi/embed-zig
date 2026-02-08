@@ -14,3 +14,5 @@ zig_static_library(
     name = "hal_a",
     lib = ":hal",
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -401,20 +401,21 @@ def _esp_zig_app_impl(ctx):
         dep_name = info.module_name
         dep_path = info.package_path  # e.g., "lib/hal"
         
-        # Detect actual path from files (handles external repository case)
-        # For external repos, short_path is like "../embed_zig+/lib/hal/..."
+        # Detect actual path from root_source (handles external repository case)
+        # For external repos, short_path is like "../embed_zig+/lib/hal/src/hal.zig"
+        # Use root_source (guaranteed to belong to this module) instead of
+        # transitive_srcs (depset order is unspecified, files[0] may be from a dep)
         dep_actual_path = dep_path
-        if files:
-            first_file = files[0].short_path
-            idx = first_file.rfind(dep_path)
-            if idx != -1:
-                # Check that we found a full path segment
-                is_start_boundary = (idx == 0) or (first_file[idx - 1] == "/")
-                end_idx = idx + len(dep_path)
-                is_end_boundary = (end_idx == len(first_file)) or (first_file[end_idx] == "/")
-                if is_start_boundary and is_end_boundary:
-                    path = first_file[:end_idx]
-                    dep_actual_path = path[2:] if path.startswith("./") else path
+        root_short = info.root_source.short_path
+        idx = root_short.rfind(dep_path)
+        if idx != -1:
+            # Check that we found a full path segment
+            is_start_boundary = (idx == 0) or (root_short[idx - 1] == "/")
+            end_idx = idx + len(dep_path)
+            is_end_boundary = (end_idx == len(root_short)) or (root_short[end_idx] == "/")
+            if is_start_boundary and is_end_boundary:
+                path = root_short[:end_idx]
+                dep_actual_path = path[2:] if path.startswith("./") else path
         
         # For esp_project/main/build.zig.zon: path relative to esp_project/main/
         # esp_project is at $WORK/esp_project/, lib is at $WORK/{dep_actual_path}/

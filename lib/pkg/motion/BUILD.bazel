@@ -6,3 +6,5 @@ zig_package(
     name = "motion",
     deps = ["//lib/pkg/math"],
 )
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
