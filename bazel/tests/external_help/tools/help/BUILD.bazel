@@ -1,0 +1,3 @@
+load("@embed_zig//tools/help:defs.bzl", "help_tool")
+
+help_tool(name = "help")

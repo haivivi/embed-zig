@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "help_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/haivivi/embed-zig/tools/help",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "help_bin",
+    embed = [":help_lib"],
+    visibility = ["//visibility:public"],
+)
+
+# Convenience alias: `bazel run //tools/help`
+alias(
+    name = "help",
+    actual = ":help_bin",
+    visibility = ["//visibility:public"],
+)
