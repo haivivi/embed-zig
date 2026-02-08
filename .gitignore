@@ -29,3 +29,5 @@ pages/api/
 .bazelrc.user
 MODULE.bazel.lockDebug_bk_flash_*.log
 bk_flash_*.log
+Debug_bk_flash_*.log
+MODULE.bazel.lock
