@@ -711,12 +711,21 @@ else
 fi
 
 MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
-MOD_ARGS=$(cat zig_module_args.txt 2>/dev/null | tr '\n' ' ')
+# Inject ESP-IDF includes as per-module -I after each -M definition.
+# Global -I doesn't work with multiple @cImport modules in zig build-lib.
+MOD_ARGS=""
+while IFS= read -r line; do
+    MOD_ARGS="$MOD_ARGS $line"
+    if [[ "$line" == -M* ]]; then
+        MOD_ARGS="$MOD_ARGS $ESP_I"
+    fi
+done < zig_module_args.txt
 LIB_ARGS=$(cat zig_lib_a_args.txt 2>/dev/null | tr '\n' ' ')
 
 echo "[zig] build-lib target=$ZIG_TARGET_ARCH cpu=$ZIG_CPU ESP_I_count=$(echo $ESP_I | tr ' ' '\n' | grep -c '^-I')"
+# ESP_I injected per-module (after each -M), not global
 $ZIG_BIN build-lib \
-    -lc $ESP_I $MAIN_ARGS $MOD_ARGS $LIB_ARGS \
+    -lc $MAIN_ARGS $ESP_I $MOD_ARGS $LIB_ARGS \
     -target $ZIG_TARGET_ARCH -Dcpu=$ZIG_CPU -O$ZIG_OPT \
     -freference-trace \
     --cache-dir $(dirname $ZIG_OUT)/../../.zig-cache \
