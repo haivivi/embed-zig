@@ -81,4 +81,19 @@ pub fn build(b: *std.Build) void {
     if (b.args) |a| run_broker.addArgs(a);
     const run_broker_step = b.step("run-broker", "Run Zig MQTT broker");
     run_broker_step.dependOn(&run_broker.step);
+
+    // Benchmark
+    const bench = b.addExecutable(.{
+        .name = "mqtt0_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    bench.root_module.addImport("mqtt0", mqtt0_mod);
+    const run_bench = b.addRunArtifact(bench);
+    if (b.args) |a| run_bench.addArgs(a);
+    const run_bench_step = b.step("run-bench", "Run benchmarks");
+    run_bench_step.dependOn(&run_bench.step);
 }
