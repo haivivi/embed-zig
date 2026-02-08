@@ -587,18 +587,20 @@ pub fn Broker(comptime Transport: type) type {
         ) ?[]const u8 {
             const alias = alias_opt orelse return if (topic.len > 0) topic else null;
 
-            // Validate alias
             if (alias == 0 or alias > self.config.max_topic_alias) return null;
 
             if (topic.len > 0) {
                 // Topic + alias = update mapping
                 const duped = self.allocator.dupe(u8, topic) catch return null;
-                if (aliases.fetchPut(alias, duped) catch null) |old| {
+                if (aliases.fetchPut(alias, duped) catch {
+                    // fetchPut OOM — free the duped string we just allocated
+                    self.allocator.free(duped);
+                    return null;
+                }) |old| {
                     self.allocator.free(old.value);
                 }
                 return topic;
             } else {
-                // Empty topic = lookup alias
                 return aliases.get(alias);
             }
         }
@@ -857,15 +859,18 @@ pub fn Broker(comptime Transport: type) type {
         }
 
         fn cleanupClient(self: *Self, handle: *ClientHandle, expected_gen: u32) void {
-            // If generation changed, a new connection took over this handle.
-            // Skip cleanup to avoid disrupting the new connection.
-            if (handle.generation != expected_gen) return;
-
-            self.publishSysDisconnected(handle.clientId(), handle.username());
+            // Generation check + deactivation must be atomic under write_mutex
+            // to prevent TOCTOU race with registerClient kick.
             handle.write_mutex.lock();
+            if (handle.generation != expected_gen) {
+                handle.write_mutex.unlock();
+                return; // New connection took over, skip cleanup
+            }
             handle.active = false;
             handle.transport = null;
             handle.write_mutex.unlock();
+
+            self.publishSysDisconnected(handle.clientId(), handle.username());
 
             const cid = handle.clientId();
 
