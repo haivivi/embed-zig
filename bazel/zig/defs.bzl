@@ -68,6 +68,7 @@ ZigModuleInfo = provider(
         "lib_a": "File — The .a library produced by this module (for linking C objects in consumers)",
         "transitive_c_inputs": "depset(File) — Accumulated C/header files from this module and all transitive deps (needed in sandbox for @cImport cache validation)",
         "transitive_lib_as": "depset(File) — Accumulated .a libraries from deps that have C code (for linking)",
+        "own_c_build_args": "list(string) — This module's C compilation args (sources + flags), for cross-compilation in zig_static_library",
     },
 )
 
@@ -460,6 +461,7 @@ def _zig_library_impl(ctx):
             lib_a = output_a if has_c else None,
             transitive_c_inputs = transitive_c_inputs,
             transitive_lib_as = transitive_lib_as,
+            own_c_build_args = c_asm.src_args if has_c else [],
         ),
     ]
 
@@ -576,6 +578,7 @@ def _zig_module_impl(ctx):
             lib_a = None,
             transitive_c_inputs = transitive_c_inputs,
             transitive_lib_as = depset(transitive = [collected.deps_transitive_lib_as]),
+            own_c_build_args = [],
         ),
     ]
 
@@ -651,9 +654,12 @@ def _zig_static_library_impl(ctx):
         all_dep_module_strings = info.transitive_module_strings,
     )
 
-    # Collect dep cache from the lib target
+    is_cross = bool(ctx.attr.target)
+
+    # When cross-compiling, DON'T use dep cache (it has host objects).
+    # Instead, recompile C sources from scratch for the new target.
     dep_cache_dirs = []
-    if info.cache_dir:
+    if not is_cross and info.cache_dir:
         dep_cache_dirs.append(info.cache_dir)
 
     # Per-module -I flags in deps are handled by _build_module_args.
@@ -663,27 +669,32 @@ def _zig_static_library_impl(ctx):
         global_pre.append("-lc")
 
     # Root module's own C flags (include dirs only — C source files are
-    # compiled via cache, not re-passed here)
+    # compiled via cache, not re-passed here... unless cross-compiling)
     root_c_args = []
     for inc_dir in info.own_c_include_dirs:
         root_c_args.extend(["-I", inc_dir])
+
+    # When cross-compiling, add C source files + flags from ZigModuleInfo
+    # (normally these are in the dep cache, but we can't reuse host cache for xtensa)
+    c_build_args = info.own_c_build_args if is_cross else []
 
     # Exclude lib's own .a from transitive set — build-lib recompiles from
     # source, linking its own .a would be circular/redundant.
     own_a = info.lib_a
     dep_lib_a_args = [f.path for f in info.transitive_lib_as.to_list() if f != own_a]
 
-    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <mods> [dep .a] -femit-bin=out.a
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [c_srcs] [global] <mods> [dep .a] -femit-bin=out.a
+    # C source files MUST come BEFORE -M module definitions (zig CLI requirement)
     cm_args = [cache_dir.path]
     for dc in dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
     pic_args = ["-fPIC"] if ctx.attr.pic else []
-    cm_args.extend(["build-lib"] + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+    cm_args.extend(["build-lib"] + c_build_args + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
-    if ctx.attr.target:
+    if is_cross:
         cm_args.extend(["-target", ctx.attr.target])
 
     all_srcs = info.transitive_srcs.to_list()

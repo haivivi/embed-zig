@@ -638,6 +638,24 @@ def _esp_zig_app_impl(ctx):
     # Same but using p2 variable (for IDF component scan section)
     esp_include_all_modules_idf = "\n".join([l.replace("(p)", "(p2)") for l in esp_include_lines])
     
+    # Collect pre-compiled static libraries (.a) for linking
+    static_lib_files = []
+    static_lib_copy_cmds = []
+    static_lib_object_lines = []
+    for lib_target in ctx.attr.static_libs:
+        for f in lib_target.files.to_list():
+            if f.path.endswith(".a"):
+                static_lib_files.append(f)
+                # Copy .a to WORK dir so zig build can access it
+                static_lib_copy_cmds.append(
+                    'cp "$E/{src}" "$WORK/$ESP_PROJECT_PATH/main/{name}"'.format(
+                        src = f.path, name = f.basename))
+                # addObjectFile in build.zig
+                static_lib_object_lines.append(
+                    '    root_module.addObjectFile(.{{ .cwd_relative = "{name}" }});'.format(
+                        name = f.basename))
+    static_lib_object_code = "\n".join(static_lib_object_lines)
+    
     # (Old build.zig.zon generation removed — replaced by zig_module_args above)
     
     # Create wrapper script — Bazel-native, no build.zig
@@ -651,6 +669,8 @@ export ESP_BOOTLOADER_OUT="{bootloader_out}" ESP_PARTITION_OUT="{partition_out}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 export ESP_APP_NAME="{app_name}"
 E="$ESP_EXECROOT"
+# External repo paths (for CMake access to pre-downloaded sources)
+[ -d "$E/external/+audio_libs+opus" ] && export OPUS_ROOT="$E/external/+audio_libs+opus"
 {env_file_export}
 
 # Load app config if provided (for run_in_psram)
@@ -696,7 +716,13 @@ esp_zig_build(
     FORCE_LINK
         {force_link}
 )
+if(COMMAND opus_setup_includes)
+    opus_setup_includes()
+endif()
 MAINCMAKEOF
+
+# Copy pre-compiled static libraries to work dir
+{static_lib_copies}
 
 # Generate build.zig (Bazel-computed modules, absolute paths, no build.zig.zon)
 # $E/ placeholder expanded to exec-root path
@@ -771,6 +797,7 @@ pub fn build(b: *std.Build) void {{
             root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "include" }}) }});
         }}
     }}
+{static_lib_objects}
     const lib = b.addLibrary(.{{ .name = "main_zig", .linkage = .static, .root_module = root_module }});
     b.installArtifact(lib);
 }}
@@ -919,6 +946,8 @@ exec bash "{build_sh}"
         main_imports = main_imports,
         esp_include_all_modules = esp_include_all_modules,
         esp_include_all_modules_idf = esp_include_all_modules_idf,
+        static_lib_copies = "\n".join(static_lib_copy_cmds),
+        static_lib_objects = static_lib_object_code,
         idf_deps_yml = idf_deps_yml,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
@@ -934,7 +963,7 @@ exec bash "{build_sh}"
     # Collect all inputs — Zig sources via exec-root paths (no copying needed)
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
     
     ctx.actions.run_shell(
         command = build_script.path,
@@ -997,6 +1026,11 @@ esp_zig_app = rule(
         "deps": attr.label_list(
             providers = [ZigModuleInfo],
             doc = "Zig library dependencies (e.g., //lib/hal, //lib/pkg/drivers)",
+        ),
+        "static_libs": attr.label_list(
+            allow_files = [".a"],
+            default = [],
+            doc = "Pre-compiled static libraries (.a) to link into the ESP build (e.g., cross-compiled xtensa libs)",
         ),
         "idf_deps": attr.string_list(
             default = [],
