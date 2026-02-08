@@ -510,6 +510,123 @@ Example:
 )
 
 # =============================================================================
+# zig_module — Declaration-only module (no compilation)
+# =============================================================================
+
+def _zig_module_impl(ctx):
+    """Declare a Zig module without compiling it.
+    
+    Provides ZigModuleInfo metadata (name, root_source, deps) without
+    running zig build-lib. Used for modules that can't be compiled in
+    isolation (e.g., ESP platform code that needs ESP-IDF headers from
+    CMake configure).
+    
+    The actual compilation happens downstream (e.g., in esp_zig_app's
+    zig build-lib invocation where all include paths are available).
+    """
+    root_source = ctx.file.main
+    module_name = ctx.attr.module_name if ctx.attr.module_name else ctx.label.name
+    own_srcs = depset(ctx.files.srcs)
+    
+    # Collect dep info (same as zig_library)
+    collected = _collect_deps(own_srcs, ctx.attr.deps)
+    
+    # C include dirs (for per-module -I in downstream builds)
+    pkg = ctx.label.package
+    own_c_include_dirs = []
+    for inc in ctx.attr.c_includes:
+        if inc:
+            own_c_include_dirs.append(pkg + "/" + inc)
+        else:
+            own_c_include_dirs.append(pkg)
+    
+    # Auto-detect include dirs from .h files in c_srcs
+    c_inputs = []
+    header_dirs = {}
+    for src in ctx.attr.c_srcs:
+        for f in src.files.to_list():
+            c_inputs.append(f)
+            if f.path.endswith(".h"):
+                dir_path = f.path.rsplit("/", 1)[0] if "/" in f.path else ""
+                if dir_path and dir_path not in header_dirs:
+                    header_dirs[dir_path] = True
+                    own_c_include_dirs.append(dir_path)
+    
+    transitive_c_inputs = depset(
+        c_inputs,
+        transitive = [collected.deps_transitive_c_inputs],
+    )
+    
+    return [
+        DefaultInfo(files = own_srcs),
+        ZigModuleInfo(
+            module_name = module_name,
+            package_path = ctx.label.package,
+            root_source = root_source,
+            srcs = own_srcs,
+            transitive_srcs = depset(transitive = collected.transitive_src_depsets),
+            direct_dep_names = collected.direct_dep_names,
+            transitive_module_strings = collected.all_dep_module_strings,
+            cache_dir = None,
+            own_c_include_dirs = own_c_include_dirs,
+            own_link_libc = ctx.attr.link_libc,
+            lib_a = None,
+            transitive_c_inputs = transitive_c_inputs,
+            transitive_lib_as = depset(transitive = [collected.deps_transitive_lib_as]),
+        ),
+    ]
+
+zig_module = rule(
+    implementation = _zig_module_impl,
+    attrs = {
+        "srcs": attr.label_list(
+            allow_files = [".zig"],
+            mandatory = True,
+            doc = "Zig source files",
+        ),
+        "main": attr.label(
+            allow_single_file = [".zig"],
+            mandatory = True,
+            doc = "Root source file",
+        ),
+        "module_name": attr.string(
+            doc = "Module name for @import(). Defaults to target name.",
+        ),
+        "deps": attr.label_list(
+            providers = [ZigModuleInfo],
+            doc = "Module dependencies",
+        ),
+        "c_srcs": attr.label_list(
+            allow_files = [".c", ".h"],
+            doc = "C source and header files (for include path detection)",
+        ),
+        "c_includes": attr.string_list(
+            doc = "C include directories relative to package",
+        ),
+        "link_libc": attr.bool(
+            default = False,
+            doc = "Whether this module requires libc",
+        ),
+    },
+    doc = """Declare a Zig module without compiling.
+    
+    Provides ZigModuleInfo for downstream rules but does not run zig build-lib.
+    Used for platform modules that need external headers (ESP-IDF) only available
+    at the final build stage.
+    
+    Example:
+        zig_module(
+            name = "esp",
+            main = "//lib/platform/esp:src/esp.zig",
+            srcs = ["//lib/platform/esp:all_zig_srcs"],
+            c_srcs = ["//lib/platform/esp:c_srcs"],
+            deps = ["//lib/trait", "//lib/hal"],
+            link_libc = True,
+        )
+    """,
+)
+
+# =============================================================================
 # zig_static_library — Compile a zig_library to .a (for C interop)
 # =============================================================================
 

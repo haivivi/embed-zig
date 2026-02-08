@@ -9,8 +9,7 @@
 
 const std = @import("std");
 const esp = @import("esp");
-const audio = @import("audio");
-const opus = audio.opus;
+const opus = @import("opus");
 const channel_mod = @import("channel");
 const waitgroup = @import("waitgroup");
 const cancellation = @import("cancellation");
