@@ -1,0 +1,18 @@
+.{
+    .name = .ble_e2e_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xe2e7e57cafe12345,
+    .dependencies = .{
+        .esp = .{ .path = "../../../../lib/platform/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .bluetooth = .{ .path = "../../../../lib/pkg/bluetooth" },
+        .cancellation = .{ .path = "../../../../lib/pkg/cancellation" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "esp32s3_devkit.zig",
+    },
+}
