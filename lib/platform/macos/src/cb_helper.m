@@ -227,6 +227,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
         NSString *key = [NSString stringWithFormat:@"%@/%@",
             service.UUID.UUIDString, chr.UUID.UUIDString];
         _discoveredChars[key] = chr;
+        fprintf(stderr, "[cb] discovered char key: '%s'\n", key.UTF8String);
     }
     // Check if all services discovered
     BOOL allDone = YES;
@@ -455,8 +456,23 @@ int cb_central_read(const char *svc_uuid, const char *chr_uuid,
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
     NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
+    fprintf(stderr, "[cb] read lookup key: '%s' (have %lu chars)\n",
+            key.UTF8String, (unsigned long)s_central.discoveredChars.count);
     CBCharacteristic *chr = s_central.discoveredChars[key];
-    if (!chr) return -2;
+    if (!chr) {
+        // Try uppercase key
+        NSString *upperKey = [key uppercaseString];
+        chr = s_central.discoveredChars[upperKey];
+        if (!chr) {
+            fprintf(stderr, "[cb] char not found for key '%s' or '%s'\n",
+                    key.UTF8String, upperKey.UTF8String);
+            // Dump all keys
+            for (NSString *k in s_central.discoveredChars) {
+                fprintf(stderr, "[cb]   have key: '%s'\n", k.UTF8String);
+            }
+            return -2;
+        }
+    }
 
     s_central.lastReadValue = nil;
     s_central.lastError = 0;

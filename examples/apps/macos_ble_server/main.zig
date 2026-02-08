@@ -117,9 +117,9 @@ pub fn main() !void {
     std.debug.print("Service 0x{s} added.\n", .{SVC_UUID});
 
     // Start advertising
-    try cb.Peripheral.startAdvertising("ZigBLE-Mac");
-    std.debug.print("Advertising as \"ZigBLE-Mac\"...\n", .{});
-    std.debug.print("Open nRF Connect on your phone and scan!\n", .{});
+    try cb.Peripheral.startAdvertising("ZigE2E");
+    std.debug.print("Advertising as \"ZigE2E\"...\n", .{});
+    std.debug.print("ESP32 client or nRF Connect can scan and connect.\n", .{});
 
     // Main loop
     while (true) {
