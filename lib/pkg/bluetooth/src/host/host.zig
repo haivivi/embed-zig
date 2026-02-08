@@ -84,9 +84,13 @@ pub const TxPacket = struct {
     }
 
     /// Is this an ACL data packet (indicator 0x02)?
-    /// ACL packets consume ACL credits. Commands (0x01) do not.
     pub fn isAclData(self: *const TxPacket) bool {
         return self.len > 0 and self.data[0] == @intFromEnum(hci_mod.PacketType.acl_data);
+    }
+
+    /// Is this an HCI command packet (indicator 0x01)?
+    pub fn isCommand(self: *const TxPacket) bool {
+        return self.len > 0 and self.data[0] == @intFromEnum(hci_mod.PacketType.command);
     }
 };
 
@@ -206,6 +210,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         tx_queue: TxChannel,
         event_queue: EventChannel,
         acl_credits: Credits,
+        cmd_credits: Credits, // HCI command flow control (typically 1 at a time)
         wg: WG,
         cancel: cancellation.CancellationToken,
 
@@ -256,6 +261,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 .tx_queue = TxChannel.init(),
                 .event_queue = EventChannel.init(),
                 .acl_credits = Credits.init(0),
+                .cmd_credits = Credits.init(1), // controller allows 1 command initially
                 .wg = WG.init(allocator),
                 .cancel = cancellation.CancellationToken.init(),
                 .connections = std.AutoArrayHashMap(u16, *ConnectionState).init(allocator),
@@ -269,6 +275,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 self.allocator.destroy(conn);
             }
             self.connections.deinit();
+            self.cmd_credits.deinit();
             self.acl_credits.deinit();
             self.event_queue.deinit();
             self.tx_queue.deinit();
@@ -334,6 +341,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
 
             // --- 6. Initialize ACL credits ---
             self.acl_credits = Credits.init(self.acl_max_slots);
+            self.cmd_credits = Credits.init(1); // reset to 1 for writeLoop
 
             // --- 7. Spawn loops ---
             self.cancel.reset();
@@ -347,6 +355,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             self.tx_queue.close();
             self.event_queue.close();
             self.acl_credits.close();
+            self.cmd_credits.close();
             self.wg.wait();
         }
 
@@ -565,9 +574,20 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
 
             switch (event) {
                 .num_completed_packets => |ncp| {
-                    // HCI flow control: release ACL credits
                     self.handleNcp(ncp);
                     return; // NCP is internal, don't forward to GAP
+                },
+                .command_complete => |cc| {
+                    // Release command credit (controller ready for next command)
+                    if (cc.num_cmd_packets > 0) {
+                        self.cmd_credits.release(cc.num_cmd_packets);
+                    }
+                },
+                .command_status => |cs| {
+                    // Release command credit
+                    if (cs.num_cmd_packets > 0) {
+                        self.cmd_credits.release(cs.num_cmd_packets);
+                    }
                 },
                 else => {},
             }
@@ -781,10 +801,13 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             while (true) {
                 const pkt = self.tx_queue.recv() orelse break;
 
-                // HCI commands (0x01) bypass ACL flow control.
-                // Only ACL data packets (0x02) consume credits.
-                if (pkt.isAclData()) {
-                    if (!self.acl_credits.acquire()) break; // closed = shutdown
+                // HCI flow control:
+                // - Commands (0x01): acquire cmd_credits (wait for Command Complete)
+                // - ACL data (0x02): acquire acl_credits (wait for NCP event)
+                if (pkt.isCommand()) {
+                    if (!self.cmd_credits.acquire()) break;
+                } else if (pkt.isAclData()) {
+                    if (!self.acl_credits.acquire()) break;
                 }
 
                 // Wait for HCI writable
