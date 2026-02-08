@@ -626,19 +626,31 @@ pub fn Broker(comptime Transport: type) type {
             }
             self.clients_mutex.unlock();
 
-            if (shared) |s| {
-                // Shared subscription — add to shared group
+            const trie_ok = if (shared) |s| blk: {
                 self.sub_mutex.lock();
                 defer self.sub_mutex.unlock();
-                if (!self.addToSharedGroup(s.group, s.actual_topic, handle)) return false;
-            } else {
-                // Normal subscription — add to trie
+                break :blk self.addToSharedGroup(s.group, s.actual_topic, handle);
+            } else blk: {
                 self.sub_mutex.lock();
-                self.subscriptions.insert(topic, handle) catch {
-                    self.sub_mutex.unlock();
-                    return false;
-                };
-                self.sub_mutex.unlock();
+                defer self.sub_mutex.unlock();
+                self.subscriptions.insert(topic, handle) catch break :blk false;
+                break :blk true;
+            };
+
+            if (!trie_ok) {
+                // Rollback: remove topic_dup from client_subscriptions
+                self.clients_mutex.lock();
+                if (self.client_subscriptions.getPtr(handle.clientId())) |subs| {
+                    if (subs.items.len > 0) {
+                        const idx = subs.items.len - 1;
+                        if (std.mem.eql(u8, subs.items[idx], topic)) {
+                            const removed = subs.orderedRemove(idx);
+                            self.allocator.free(removed);
+                        }
+                    }
+                }
+                self.clients_mutex.unlock();
+                return false;
             }
 
             return true;
@@ -791,9 +803,21 @@ pub fn Broker(comptime Transport: type) type {
                 return null;
             };
 
-            const key_dup2 = self.allocator.dupe(u8, client_id) catch return handle;
+            const key_dup2 = self.allocator.dupe(u8, client_id) catch {
+                // Rollback: remove from clients map (returns owned key), destroy handle
+                if (self.clients.fetchRemove(client_id)) |kv| {
+                    self.allocator.free(kv.key);
+                }
+                self.allocator.destroy(handle);
+                return null;
+            };
             self.client_subscriptions.put(key_dup2, .empty) catch {
                 self.allocator.free(key_dup2);
+                if (self.clients.fetchRemove(client_id)) |kv| {
+                    self.allocator.free(kv.key);
+                }
+                self.allocator.destroy(handle);
+                return null;
             };
 
             return handle;
