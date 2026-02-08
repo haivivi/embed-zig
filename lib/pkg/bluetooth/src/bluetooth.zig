@@ -60,10 +60,11 @@ pub const l2cap = @import("host/l2cap/l2cap.zig");
 pub const att = @import("host/att/att.zig");
 
 // ============================================================================
-// GAP Layer — Generic Access Profile (future)
+// GAP Layer — Generic Access Profile
 // ============================================================================
 
-// pub const gap = @import("host/gap/gap.zig");
+/// GAP advertising/scanning/connection state machine
+pub const gap = @import("host/gap/gap.zig");
 
 // ============================================================================
 // GATT Server
