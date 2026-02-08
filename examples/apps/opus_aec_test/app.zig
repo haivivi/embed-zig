@@ -8,13 +8,12 @@
 //! I/O never blocked by encode. Channel absorbs timing jitter.
 
 const std = @import("std");
-const esp = @import("esp");
+const idf = @import("idf");
 const opus = @import("opus");
 const channel_mod = @import("channel");
 const waitgroup = @import("waitgroup");
 const cancellation = @import("cancellation");
 
-const idf = esp.idf;
 const heap = idf.heap;
 const EspRt = idf.runtime;
 

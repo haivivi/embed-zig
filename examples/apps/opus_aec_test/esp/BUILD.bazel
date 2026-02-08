@@ -14,21 +14,41 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
-# Per-app ESP platform module (declaration-only, compiled by esp_zig_app)
-# Uses shared source files from lib/platform/esp, with this app's sdkconfig
+# Per-app ESP modules (declaration-only, compiled by zig build-lib in CMake)
 zig_module(
-    name = "esp",
-    main = "//lib/platform/esp:src/esp.zig",
-    srcs = ["//lib/platform/esp:all_zig_srcs"],
-    c_srcs = ["//lib/platform/esp:c_srcs"],
+    name = "idf",
+    main = "//lib/platform/esp/idf:src/idf.zig",
+    srcs = ["//lib/platform/esp/idf:zig_srcs"],
+    c_srcs = ["//lib/platform/esp/idf:c_srcs"],
+    deps = ["//lib/trait"],
+    link_libc = True,
+)
+
+zig_module(
+    name = "impl",
+    main = "//lib/platform/esp/impl:src/impl.zig",
+    srcs = ["//lib/platform/esp/impl:zig_srcs"],
     deps = [
+        ":idf",
         "//lib/trait",
         "//lib/hal",
         "//lib/pkg/drivers",
         "//lib/pkg/math",
         "//lib/pkg/motion",
     ],
-    link_libc = True,
+)
+
+zig_module(
+    name = "board_lichuang_gocool",
+    main = "//lib/platform/esp:src/boards/lichuang_gocool.zig",
+    srcs = ["//lib/platform/esp:src/boards/lichuang_gocool.zig"],
+    module_name = "board_lichuang_gocool",
+    deps = [
+        ":idf",
+        ":impl",
+        "//lib/hal",
+        "//lib/pkg/drivers",
+    ],
 )
 
 esp_zig_app(
@@ -66,7 +86,9 @@ esp_zig_app(
         "WIFI_C_SOURCES",
     ],
     deps = [
-        ":esp",
+        ":idf",
+        ":impl",
+        ":board_lichuang_gocool",
         "//lib/hal",
         "//lib/trait",
         "//lib/pkg/channel",

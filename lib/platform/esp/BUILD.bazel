@@ -16,7 +16,7 @@
 package(default_visibility = ["//visibility:public"])
 
 # Root module source
-exports_files(["src/esp.zig"])
+exports_files(["src/esp.zig"] + glob(["src/boards/*.zig"]))
 
 # All Zig sources (esp + idf + impl + boards)
 filegroup(

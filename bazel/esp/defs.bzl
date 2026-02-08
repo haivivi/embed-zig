@@ -573,12 +573,12 @@ def _esp_zig_app_impl(ctx):
     
     # Build -M args for all dep modules (same logic as zig_binary)
     # The "main" module is main.zig (generated at runtime in WORK)
-    # main.zig imports: app, esp (if present)
+    # main.zig imports: app, idf (for log, sdkconfig)
     main_dep_names = ["app"]
-    # Check if "esp" is in deps (for the main.zig import)
+    # Check if "idf" is in deps (for the main.zig @cImport)
     for info in dep_infos:
-        if info.module_name == "esp" and "esp" not in main_dep_names:
-            main_dep_names.append("esp")
+        if info.module_name == "idf" and "idf" not in main_dep_names:
+            main_dep_names.append("idf")
     
     # Generate the module args as lines (paths use $E/ placeholder for exec-root)
     zig_mod_lines = []
@@ -781,13 +781,13 @@ pub const psram_stack_size: usize = $PSRAM_STACK_SIZE;
 BOOF
     cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
 const std = @import("std");
-const esp = @import("esp");
+const idf = @import("idf");
 const app = @import("app");
 const build_options = @import("build_options.zig");
 pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); @cInclude("freertos/FreeRTOS.h"); @cInclude("freertos/task.h"); @cInclude("esp_heap_caps.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
-pub const std_options = std.Options{{ .log_level = log_level, .logFn = esp.idf.log.stdLogFn }};
+pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
 const PSRAM_TASK_STACK_SIZE = build_options.psram_stack_size;
 const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
 var task_tcb: c.StaticTask_t = undefined;
@@ -804,12 +804,12 @@ MAINZIGEOF
 else
     cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.zig" << 'MAINZIGEOF'
 const std = @import("std");
-const esp = @import("esp");
+const idf = @import("idf");
 const app = @import("app");
 pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
-pub const std_options = std.Options{{ .log_level = log_level, .logFn = esp.idf.log.stdLogFn }};
+pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
 export fn app_main() void {{ app.run(env_module.env); }}
 MAINZIGEOF
 fi

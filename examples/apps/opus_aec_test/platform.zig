@@ -20,7 +20,7 @@ pub fn isRunning() bool {
 // Re-export AudioSystem and PaSwitchDriver
 pub const AudioSystem = hw.AudioSystem;
 pub const PaSwitchDriver = hw.PaSwitchDriver;
-const I2c = hw.idf.I2c;
+const I2c = hw.I2c;
 
 /// Board struct for Opus AEC test
 pub const Board = struct {

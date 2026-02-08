@@ -1,12 +1,11 @@
 //! LiChuang GoCool Board Configuration for Opus AEC Test
-//!
-//! Uses AudioSystem from esp.boards.lichuang_gocool (AEC-enabled)
 
 const std = @import("std");
-const esp = @import("esp");
+const idf = @import("idf");
 const hal = @import("hal");
 
-const board = esp.boards.lichuang_gocool;
+// Board hardware definitions from platform layer
+const board = @import("board_lichuang_gocool");
 
 // ============================================================================
 // Re-export board definitions
@@ -38,7 +37,7 @@ pub const PaSwitchDriver = board.PaSwitchDriver;
 pub const RtcDriver = board.RtcDriver;
 
 // I2C config for shared bus
-pub const idf = esp.idf;
+pub const I2c = idf.I2c;
 pub const i2c_sda = board.i2c_sda;
 pub const i2c_scl = board.i2c_scl;
 pub const i2c_freq_hz = board.i2c_freq_hz;

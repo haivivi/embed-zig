@@ -223,7 +223,7 @@ def _build_c_asm_args(ctx):
         for f in c_files + asm_files:
             src_args.append(f.path)
 
-    return struct(pre_args = pre_args, src_args = src_args, inputs = inputs)
+    return struct(pre_args = pre_args, src_args = src_args, inputs = inputs, header_include_dirs = header_dirs.keys())
 
 # Common C/ASM attributes shared by zig_library, zig_binary, zig_test
 _C_ASM_ATTRS = {
@@ -423,6 +423,9 @@ def _zig_library_impl(ctx):
             own_c_include_dirs.append(pkg + "/" + inc)
         else:
             own_c_include_dirs.append(pkg)
+    # Also include auto-detected dirs from .h files (e.g., @opus external headers)
+    # This ensures transitive C include propagation works for external repos
+    own_c_include_dirs.extend(c_asm.header_include_dirs)
 
     # Transitive C inputs (headers + source files needed in sandbox for
     # @cImport cache manifest validation)
