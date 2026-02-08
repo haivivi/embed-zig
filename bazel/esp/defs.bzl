@@ -706,6 +706,10 @@ ESP_I=""
 if [ -f esp_include_dirs.txt ]; then
     IFS=';' read -ra DIRS < esp_include_dirs.txt
     for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
+    echo "[zig] Found $(echo ${{DIRS[@]}} | wc -w) ESP include dirs"
+else
+    echo "[zig] WARNING: esp_include_dirs.txt not found in $(pwd)"
+    ls -la *.txt 2>/dev/null || echo "[zig] No .txt files"
 fi
 
 MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
