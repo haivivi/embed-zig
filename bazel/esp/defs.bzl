@@ -638,23 +638,23 @@ def _esp_zig_app_impl(ctx):
     # Same but using p2 variable (for IDF component scan section)
     esp_include_all_modules_idf = "\n".join([l.replace("(p)", "(p2)") for l in esp_include_lines])
     
-    # Collect pre-compiled static libraries (.a) for linking
+    # Collect pre-compiled static libraries (.a) for linking at CMake level
+    # (not in build.zig — addObjectFile doesn't embed .a into static lib output)
     static_lib_files = []
     static_lib_copy_cmds = []
-    static_lib_object_lines = []
+    static_lib_link_cmds = []
     for lib_target in ctx.attr.static_libs:
         for f in lib_target.files.to_list():
             if f.path.endswith(".a"):
                 static_lib_files.append(f)
-                # Copy .a to WORK dir so zig build can access it
+                # Copy .a to build dir so CMake can link it
                 static_lib_copy_cmds.append(
                     'cp "$E/{src}" "$WORK/$ESP_PROJECT_PATH/main/{name}"'.format(
                         src = f.path, name = f.basename))
-                # addObjectFile in build.zig
-                static_lib_object_lines.append(
-                    '    root_module.addObjectFile(.{{ .cwd_relative = "{name}" }});'.format(
+                # Link .a via CMake after esp_zig_build
+                static_lib_link_cmds.append(
+                    'target_link_libraries(${{COMPONENT_LIB}} PRIVATE "${{CMAKE_CURRENT_SOURCE_DIR}}/{name}")'.format(
                         name = f.basename))
-    static_lib_object_code = "\n".join(static_lib_object_lines)
     
     # (Old build.zig.zon generation removed — replaced by zig_module_args above)
     
@@ -669,8 +669,7 @@ export ESP_BOOTLOADER_OUT="{bootloader_out}" ESP_PARTITION_OUT="{partition_out}"
 export ZIG_INSTALL="$(pwd)/{zig_dir}" ESP_EXECROOT="$(pwd)"
 export ESP_APP_NAME="{app_name}"
 E="$ESP_EXECROOT"
-# External repo paths (for CMake access to pre-downloaded sources)
-[ -d "$E/external/+audio_libs+opus" ] && export OPUS_ROOT="$E/external/+audio_libs+opus"
+# (External repo paths are handled by Bazel — no CMake access needed)
 {env_file_export}
 
 # Load app config if provided (for run_in_psram)
@@ -716,9 +715,7 @@ esp_zig_build(
     FORCE_LINK
         {force_link}
 )
-if(COMMAND opus_setup_includes)
-    opus_setup_includes()
-endif()
+{static_lib_links}
 MAINCMAKEOF
 
 # Copy pre-compiled static libraries to work dir
@@ -797,7 +794,6 @@ pub fn build(b: *std.Build) void {{
             root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "include" }}) }});
         }}
     }}
-{static_lib_objects}
     const lib = b.addLibrary(.{{ .name = "main_zig", .linkage = .static, .root_module = root_module }});
     b.installArtifact(lib);
 }}
@@ -947,7 +943,7 @@ exec bash "{build_sh}"
         esp_include_all_modules = esp_include_all_modules,
         esp_include_all_modules_idf = esp_include_all_modules_idf,
         static_lib_copies = "\n".join(static_lib_copy_cmds),
-        static_lib_objects = static_lib_object_code,
+        static_lib_links = "\n".join(static_lib_link_cmds),
         idf_deps_yml = idf_deps_yml,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",

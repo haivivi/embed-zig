@@ -683,32 +683,50 @@ def _zig_static_library_impl(ctx):
     own_a = info.lib_a
     dep_lib_a_args = [f.path for f in info.transitive_lib_as.to_list() if f != own_a]
 
-    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [c_srcs] [global] <mods> [dep .a] -femit-bin=out.a
-    # C source files MUST come BEFORE -M module definitions (zig CLI requirement)
-    cm_args = [cache_dir.path]
-    for dc in dep_cache_dirs:
-        cm_args.append(dc.path)
-    cm_args.append("--")
-    cm_args.append(zig_bin.path)
-    pic_args = ["-fPIC"] if ctx.attr.pic else []
-    cm_args.extend(["build-lib"] + c_build_args + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
-    if ctx.attr.optimize:
-        cm_args.extend(["-O", ctx.attr.optimize])
-    if is_cross:
-        cm_args.extend(["-target", ctx.attr.target])
-
     all_srcs = info.transitive_srcs.to_list()
     transitive_c_inputs = info.transitive_c_inputs.to_list()
     dep_lib_as = info.transitive_lib_as.to_list()
 
-    ctx.actions.run(
-        executable = ctx.executable._compile_tool,
-        arguments = cm_args,
-        inputs = all_srcs + zig_files + dep_cache_dirs + transitive_c_inputs + dep_lib_as,
-        outputs = [output, cache_dir],
-        mnemonic = "ZigBuildLib",
-        progress_message = "Compiling Zig static library %s" % ctx.label,
-    )
+    if is_cross:
+        # Cross-compilation: run zig directly (no cache_merge — fresh build, no host cache pollution)
+        # Put -target and -O BEFORE C sources (zig may ignore flags after -cflags --)
+        target_args = ["-target", ctx.attr.target]
+        if ctx.attr.optimize:
+            target_args.extend(["-O", ctx.attr.optimize])
+        for sysdir in ctx.attr.system_include_dirs:
+            target_args.extend(["-isystem", sysdir])
+        zig_args = ["build-lib"] + target_args + c_build_args + global_pre + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path]
+        zig_args.extend(["--cache-dir", cache_dir.path, "--global-cache-dir", cache_dir.path])
+
+        ctx.actions.run(
+            executable = zig_bin,
+            arguments = zig_args,
+            inputs = all_srcs + zig_files + transitive_c_inputs + dep_lib_as,
+            outputs = [output, cache_dir],
+            env = {"HOME": cache_dir.path},  # Prevent zig from using ~/.cache/zig
+            mnemonic = "ZigCrossLib",
+            progress_message = "Cross-compiling Zig static library %s" % ctx.label,
+        )
+    else:
+        # Same-target: use cache_merge for incremental builds
+        cm_args = [cache_dir.path]
+        for dc in dep_cache_dirs:
+            cm_args.append(dc.path)
+        cm_args.append("--")
+        cm_args.append(zig_bin.path)
+        pic_args = ["-fPIC"] if ctx.attr.pic else []
+        cm_args.extend(["build-lib"] + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+        if ctx.attr.optimize:
+            cm_args.extend(["-O", ctx.attr.optimize])
+
+        ctx.actions.run(
+            executable = ctx.executable._compile_tool,
+            arguments = cm_args,
+            inputs = all_srcs + zig_files + dep_cache_dirs + transitive_c_inputs + dep_lib_as,
+            outputs = [output, cache_dir],
+            mnemonic = "ZigBuildLib",
+            progress_message = "Compiling Zig static library %s" % ctx.label,
+        )
 
     return [
         DefaultInfo(files = depset([output])),
@@ -731,7 +749,11 @@ zig_static_library = rule(
             doc = "Optimization mode: Debug, ReleaseFast, ReleaseSafe, ReleaseSmall",
         ),
         "target": attr.string(
-            doc = "Cross-compilation target (e.g., xtensa-esp32s3-none-elf)",
+            doc = "Cross-compilation target (e.g., xtensa-freestanding-none)",
+        ),
+        "system_include_dirs": attr.string_list(
+            default = [],
+            doc = "System include directories (-isystem) for cross-compilation (e.g., newlib headers for xtensa)",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

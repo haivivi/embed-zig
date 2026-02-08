@@ -41,6 +41,5 @@ filegroup(
         "//lib/pkg/tls/test:server_sources",
         "//lib/pkg/waitgroup:srcs",
         "//lib/trait:srcs",
-        "//third_party/opus:srcs",
     ],
 )
