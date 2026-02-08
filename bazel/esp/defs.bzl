@@ -704,7 +704,7 @@ set -e
 # Read ESP-IDF include dirs from file (written by CMake at generate time)
 ESP_I=""
 if [ -f esp_include_dirs.txt ]; then
-    IFS=';' read -ra DIRS < esp_include_dirs.txt
+    IFS=';' read -ra DIRS < esp_include_dirs.txt || true
     for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
     echo "[zig] Found $(echo ${{DIRS[@]}} | wc -w) ESP include dirs"
 else
