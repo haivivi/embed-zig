@@ -103,6 +103,8 @@ pub const imu = @import("imu.zig");
 pub const motion = @import("motion.zig");
 /// HCI transport module (hal.hci.from, hal.hci.is)
 pub const hci = @import("hci.zig");
+/// BLE Host module (hal.ble.from, hal.ble.is)
+pub const ble = @import("ble.zig");
 
 // ============================================================================
 // Common Types
@@ -237,6 +239,21 @@ pub const HciPacketType = hci.PacketType;
 /// HCI transport error
 pub const HciError = hci.Error;
 
+// ============================================================================
+// BLE Types
+// ============================================================================
+
+/// BLE Host state
+pub const BleState = ble.State;
+/// BLE event
+pub const BleEvent = ble.BleEvent;
+/// BLE connection info
+pub const BleConnectionInfo = ble.ConnectionInfo;
+/// BLE advertising config
+pub const BleAdvConfig = ble.AdvConfig;
+/// BLE role
+pub const BleRole = ble.Role;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -254,4 +271,5 @@ test {
     _ = @import("imu.zig");
     _ = @import("motion.zig");
     _ = @import("hci.zig");
+    _ = @import("ble.zig");
 }
