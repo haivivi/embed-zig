@@ -281,7 +281,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime max_service
 
         fn flushGapCommands(self: *Self) !void {
             while (self.gap.nextCommand()) |cmd| {
-                self.tx_queue.send(TxPacket.fromSlice(cmd)) catch return error.QueueClosed;
+                self.tx_queue.send(TxPacket.fromSlice(cmd.slice())) catch return error.QueueClosed;
             }
         }
 

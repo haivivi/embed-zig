@@ -161,7 +161,8 @@ pub fn fragmentIterator(
 /// Accumulates ACL fragments until a complete L2CAP SDU is ready.
 /// One reassembler per connection handle.
 pub const Reassembler = struct {
-    const MAX_SDU_LEN = acl.LE_MAX_DATA_LEN + HEADER_LEN;
+    /// Max SDU size: 512 (ATT MTU) + 4 (L2CAP header) + 4 (margin)
+    const MAX_SDU_LEN = 520;
 
     buf: [MAX_SDU_LEN]u8 = undefined,
     len: usize = 0,
@@ -323,6 +324,60 @@ test "reassemble two fragments" {
 
     try std.testing.expectEqual(CID_ATT, sdu.cid);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02, 0x03, 0x04 }, sdu.data);
+}
+
+test "reassemble three fragments (MTU 512 scenario)" {
+    var reasm = Reassembler{};
+
+    // Simulate a 512-byte ATT payload = 516 bytes with L2CAP header
+    // Fragmented into 3 ACL packets with DLE 251:
+    //   Frag 1: 251 bytes (L2CAP header + 247 bytes data) — first
+    //   Frag 2: 251 bytes (251 bytes data) — continuing
+    //   Frag 3: 14 bytes (remaining data) — continuing
+
+    // Build the full L2CAP SDU: [len=512][CID=0x0004][512 bytes payload]
+    var full_sdu: [516]u8 = undefined;
+    std.mem.writeInt(u16, full_sdu[0..2], 512, .little); // L2CAP length
+    std.mem.writeInt(u16, full_sdu[2..4], CID_ATT, .little); // CID
+    for (0..512) |i| {
+        full_sdu[4 + i] = @truncate(i); // pattern fill
+    }
+
+    // Fragment 1: first 251 bytes
+    const hdr1 = acl.AclHeader{
+        .conn_handle = 0x0040,
+        .pb_flag = .first_auto_flush,
+        .bc_flag = .point_to_point,
+        .data_len = 251,
+    };
+    try std.testing.expect(reasm.feed(hdr1, full_sdu[0..251]) == null);
+
+    // Fragment 2: next 251 bytes
+    const hdr2 = acl.AclHeader{
+        .conn_handle = 0x0040,
+        .pb_flag = .continuing,
+        .bc_flag = .point_to_point,
+        .data_len = 251,
+    };
+    try std.testing.expect(reasm.feed(hdr2, full_sdu[251..502]) == null);
+
+    // Fragment 3: remaining 14 bytes → completes SDU
+    const hdr3 = acl.AclHeader{
+        .conn_handle = 0x0040,
+        .pb_flag = .continuing,
+        .bc_flag = .point_to_point,
+        .data_len = 14,
+    };
+    const sdu = reasm.feed(hdr3, full_sdu[502..516]) orelse {
+        return error.TestUnexpectedResult;
+    };
+
+    try std.testing.expectEqual(@as(u16, 0x0040), sdu.conn_handle);
+    try std.testing.expectEqual(CID_ATT, sdu.cid);
+    try std.testing.expectEqual(@as(usize, 512), sdu.data.len);
+    // Verify first and last payload bytes
+    try std.testing.expectEqual(@as(u8, 0), sdu.data[0]);
+    try std.testing.expectEqual(@as(u8, 0xFF), sdu.data[255]);
 }
 
 test "fragment iterator single fragment" {

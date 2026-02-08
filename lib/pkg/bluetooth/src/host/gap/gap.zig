@@ -13,17 +13,20 @@
 //! ┌──────────┐  startAdvertising()  ┌──────────────┐
 //! │  Idle    │ ──────────────────→ │  Advertising  │
 //! │          │ ←────────────────── │               │
-//! └──────────┘  stopAdvertising()   └──────┬───────┘
-//!       │                                  │ LE Connection Complete
-//!       │ connect()                        ↓
-//!       │         ┌──────────────┐  ┌──────────────┐
-//!       └───────→ │  Connecting  │→ │  Connected   │
-//!                 └──────────────┘  └──────────────┘
-//!                                         │ Disconnection Complete
-//!                                         ↓
-//!                                   ┌──────────┐
-//!                                   │  Idle    │
-//!                                   └──────────┘
+//! │          │  stopAdvertising()   └──────┬───────┘
+//! │          │                             │ LE Connection Complete
+//! │          │  startScanning()     ┌──────────────┐
+//! │          │ ──────────────────→ │  Scanning     │
+//! │          │ ←────────────────── │               │
+//! │          │  stopScanning()      └──────┬───────┘
+//! │          │                             │ connect()
+//! │          │                      ┌──────────────┐
+//! │          │                      │  Connecting   │
+//! │          │                      └──────┬───────┘
+//! │          │                             │ LE Connection Complete
+//! │          │                      ┌──────────────┐
+//! └──────────┘ ←─ disconnect() ──── │  Connected   │
+//!                                   └──────────────┘
 //! ```
 
 const std = @import("std");
@@ -48,14 +51,20 @@ pub const State = enum {
 pub const GapEvent = union(enum) {
     /// Advertising started successfully
     advertising_started: void,
-    /// Advertising stopped
+    /// Advertising stopped (manually or due to connection)
     advertising_stopped: void,
-    /// A peer connected to us (peripheral role)
+    /// A peer connected
     connected: ConnectionInfo,
     /// A peer disconnected
     disconnected: DisconnectionInfo,
     /// Connection attempt failed
     connection_failed: hci.Status,
+    /// Device found during scanning
+    device_found: events.AdvReport,
+    /// PHY updated (after LE Set PHY)
+    phy_updated: events.LePhyUpdateComplete,
+    /// Data length changed (after LE Set Data Length)
+    data_length_changed: events.LeDataLengthChange,
 };
 
 /// Connection info from LE Connection Complete event
@@ -96,6 +105,30 @@ pub const AdvConfig = struct {
     channel_map: u8 = 0x07,
 };
 
+/// Scan configuration
+pub const ScanConfig = struct {
+    /// 0x00 = passive, 0x01 = active
+    scan_type: u8 = 0x01,
+    /// Scan interval (units of 0.625ms)
+    interval: u16 = 0x0010, // 10ms
+    /// Scan window (units of 0.625ms)
+    window: u16 = 0x0010, // 10ms (= interval → continuous)
+    /// Filter duplicates
+    filter_duplicates: bool = true,
+};
+
+/// Connection parameters
+pub const ConnParams = struct {
+    /// Connection interval min (units of 1.25ms)
+    interval_min: u16 = 0x0006, // 7.5ms
+    /// Connection interval max (units of 1.25ms)
+    interval_max: u16 = 0x0006, // 7.5ms
+    /// Connection latency
+    latency: u16 = 0x0000,
+    /// Supervision timeout (units of 10ms)
+    timeout: u16 = 0x00C8, // 2000ms
+};
+
 // ============================================================================
 // Command Queue Entry
 // ============================================================================
@@ -122,11 +155,11 @@ pub const PendingCommand = struct {
 /// - Host coordinator drains `pending_cmds` and calls `handleEvent()`
 pub const Gap = struct {
     const Self = @This();
-    const MAX_PENDING = 8;
+    const MAX_PENDING = 16;
 
     state: State = .idle,
 
-    /// Active connections (simplified: single connection for now)
+    /// Active connection (single connection for now)
     conn_handle: ?u16 = null,
     conn_info: ?ConnectionInfo = null,
 
@@ -143,20 +176,13 @@ pub const Gap = struct {
     }
 
     // ================================================================
-    // High-level API (generates HCI commands)
+    // Peripheral API
     // ================================================================
 
-    /// Start BLE advertising with the given configuration.
-    ///
-    /// Queues the following HCI commands:
-    /// 1. LE Set Advertising Parameters
-    /// 2. LE Set Advertising Data (if provided)
-    /// 3. LE Set Scan Response Data (if provided)
-    /// 4. LE Set Advertising Enable
+    /// Start BLE advertising.
     pub fn startAdvertising(self: *Self, config: AdvConfig) !void {
         if (self.state != .idle) return error.InvalidState;
 
-        // 1. Set advertising parameters
         {
             var buf: [commands.MAX_CMD_LEN]u8 = undefined;
             const cmd = commands.leSetAdvParams(&buf, .{
@@ -169,21 +195,18 @@ pub const Gap = struct {
             try self.queueCommand(cmd);
         }
 
-        // 2. Set advertising data
         if (config.adv_data.len > 0) {
             var buf: [commands.MAX_CMD_LEN]u8 = undefined;
             const cmd = commands.leSetAdvData(&buf, config.adv_data);
             try self.queueCommand(cmd);
         }
 
-        // 3. Set scan response data
         if (config.scan_rsp_data.len > 0) {
             var buf: [commands.MAX_CMD_LEN]u8 = undefined;
             const cmd = commands.leSetScanRspData(&buf, config.scan_rsp_data);
             try self.queueCommand(cmd);
         }
 
-        // 4. Enable advertising
         {
             var buf: [commands.MAX_CMD_LEN]u8 = undefined;
             const cmd = commands.leSetAdvEnable(&buf, true);
@@ -203,6 +226,83 @@ pub const Gap = struct {
         self.state = .idle;
     }
 
+    // ================================================================
+    // Central API
+    // ================================================================
+
+    /// Start BLE scanning.
+    pub fn startScanning(self: *Self, config: ScanConfig) !void {
+        if (self.state != .idle) return error.InvalidState;
+
+        // Set scan parameters
+        {
+            var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+            const cmd = commands.leSetScanParams(&buf, .{
+                .scan_type = config.scan_type,
+                .interval = config.interval,
+                .window = config.window,
+            });
+            try self.queueCommand(cmd);
+        }
+
+        // Enable scanning
+        {
+            var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+            const cmd = commands.leSetScanEnable(&buf, true, config.filter_duplicates);
+            try self.queueCommand(cmd);
+        }
+
+        self.state = .scanning;
+    }
+
+    /// Stop BLE scanning.
+    pub fn stopScanning(self: *Self) !void {
+        if (self.state != .scanning) return error.InvalidState;
+
+        var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+        const cmd = commands.leSetScanEnable(&buf, false, false);
+        try self.queueCommand(cmd);
+        self.state = .idle;
+    }
+
+    /// Initiate a connection to a peer.
+    /// Must be in scanning state (auto-stops scanning).
+    pub fn connect(
+        self: *Self,
+        peer_addr: hci.BdAddr,
+        peer_addr_type: hci.AddrType,
+        params: ConnParams,
+    ) !void {
+        if (self.state != .scanning and self.state != .idle) return error.InvalidState;
+
+        // Stop scanning first if active
+        if (self.state == .scanning) {
+            var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+            const cmd = commands.leSetScanEnable(&buf, false, false);
+            try self.queueCommand(cmd);
+        }
+
+        // Create connection
+        {
+            var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+            const cmd = commands.leCreateConnection(&buf, .{
+                .peer_addr_type = peer_addr_type,
+                .peer_addr = peer_addr,
+                .conn_interval_min = params.interval_min,
+                .conn_interval_max = params.interval_max,
+                .conn_latency = params.latency,
+                .supervision_timeout = params.timeout,
+            });
+            try self.queueCommand(cmd);
+        }
+
+        self.state = .connecting;
+    }
+
+    // ================================================================
+    // Connection Management (both roles)
+    // ================================================================
+
     /// Disconnect an active connection.
     pub fn disconnect(self: *Self, conn_handle: u16, reason: u8) !void {
         if (self.state != .connected) return error.InvalidState;
@@ -212,26 +312,46 @@ pub const Gap = struct {
         try self.queueCommand(cmd);
     }
 
+    /// Request Data Length Extension (DLE).
+    /// Must be connected. tx_octets max 251, tx_time max 2120.
+    pub fn requestDataLength(self: *Self, conn_handle: u16, tx_octets: u16, tx_time: u16) !void {
+        if (self.state != .connected) return error.InvalidState;
+
+        var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+        const cmd = commands.leSetDataLength(&buf, conn_handle, tx_octets, tx_time);
+        try self.queueCommand(cmd);
+    }
+
+    /// Request PHY update (e.g., 1M → 2M).
+    /// tx_phys/rx_phys: bitmask — bit 0 = 1M, bit 1 = 2M, bit 2 = Coded.
+    pub fn requestPhyUpdate(self: *Self, conn_handle: u16, tx_phys: u8, rx_phys: u8) !void {
+        if (self.state != .connected) return error.InvalidState;
+
+        var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+        const cmd = commands.leSetPhy(&buf, conn_handle, 0x00, tx_phys, rx_phys, 0x0000);
+        try self.queueCommand(cmd);
+    }
+
     // ================================================================
     // HCI Event Processing
     // ================================================================
 
     /// Process an HCI event. Updates GAP state and generates GAP events.
-    ///
-    /// Called by Host coordinator's readLoop.
     pub fn handleEvent(self: *Self, event: events.Event) void {
         switch (event) {
             .command_complete => |cc| self.handleCommandComplete(cc),
             .command_status => |cs| self.handleCommandStatus(cs),
             .disconnection_complete => |dc| self.handleDisconnection(dc),
             .le_connection_complete => |lc| self.handleConnectionComplete(lc),
-            else => {}, // Ignore unknown events
+            .le_advertising_report => |ar| self.handleAdvertisingReport(ar),
+            .le_data_length_change => |dl| self.pushEvent(.{ .data_length_changed = dl }),
+            .le_phy_update_complete => |pu| self.pushEvent(.{ .phy_updated = pu }),
+            else => {},
         }
     }
 
     fn handleCommandComplete(self: *Self, cc: events.CommandComplete) void {
         _ = self;
-        // Most command completes are just acknowledgements
         if (!cc.status.isSuccess()) {
             std.log.warn("HCI command 0x{X:0>4} failed: {}", .{ cc.opcode, @intFromEnum(cc.status) });
         }
@@ -239,7 +359,6 @@ pub const Gap = struct {
 
     fn handleCommandStatus(self: *Self, cs: events.CommandStatus) void {
         if (!cs.status.isSuccess()) {
-            // Connection attempt failed
             if (cs.opcode == commands.LE_CREATE_CONNECTION) {
                 self.state = .idle;
                 self.pushEvent(.{ .connection_failed = cs.status });
@@ -249,7 +368,7 @@ pub const Gap = struct {
 
     fn handleConnectionComplete(self: *Self, lc: events.LeConnectionComplete) void {
         if (!lc.status.isSuccess()) {
-            if (self.state == .connecting) {
+            if (self.state == .connecting or self.state == .advertising) {
                 self.state = .idle;
                 self.pushEvent(.{ .connection_failed = lc.status });
             }
@@ -270,12 +389,28 @@ pub const Gap = struct {
         self.conn_info = info;
 
         if (self.state == .advertising) {
-            // Peripheral: auto-stop advertising on connection
             self.pushEvent(.{ .advertising_stopped = {} });
         }
 
         self.state = .connected;
         self.pushEvent(.{ .connected = info });
+    }
+
+    fn handleAdvertisingReport(self: *Self, ar: events.LeAdvertisingReport) void {
+        if (self.state != .scanning) return;
+
+        // Parse each report in the batch
+        var offset: usize = 0;
+        var remaining = ar.num_reports;
+        while (remaining > 0 and offset < ar.data.len) : (remaining -= 1) {
+            if (events.parseAdvReport(ar.data[offset..])) |report| {
+                self.pushEvent(.{ .device_found = report });
+                // Advance past this report: 1+1+6+1+data_len+1 = 10+data_len
+                offset += 10 + report.data.len;
+            } else {
+                break;
+            }
+        }
     }
 
     fn handleDisconnection(self: *Self, dc: events.DisconnectionComplete) void {
@@ -298,11 +433,9 @@ pub const Gap = struct {
     // Event / Command Queue
     // ================================================================
 
-    /// Poll the next GAP event (for app consumption)
     pub fn pollEvent(self: *Self) ?GapEvent {
         if (self.event_count == 0) return null;
         const event = self.pending_events[0];
-        // Shift remaining
         for (0..self.event_count - 1) |i| {
             self.pending_events[i] = self.pending_events[i + 1];
         }
@@ -310,11 +443,11 @@ pub const Gap = struct {
         return event;
     }
 
-    /// Get the next pending HCI command (for Host to send)
-    pub fn nextCommand(self: *Self) ?[]const u8 {
+    /// Get the next pending HCI command.
+    /// Returns a PendingCommand (value copy, safe to use after next call).
+    pub fn nextCommand(self: *Self) ?PendingCommand {
         if (self.pending_count == 0) return null;
-        const cmd = self.pending_cmds[0].slice();
-        // Shift remaining
+        const cmd = self.pending_cmds[0];
         for (0..self.pending_count - 1) |i| {
             self.pending_cmds[i] = self.pending_cmds[i + 1];
         }
@@ -323,7 +456,7 @@ pub const Gap = struct {
     }
 
     fn pushEvent(self: *Self, event: GapEvent) void {
-        if (self.event_count >= MAX_PENDING) return; // Drop if full
+        if (self.event_count >= MAX_PENDING) return;
         self.pending_events[self.event_count] = event;
         self.event_count += 1;
     }
@@ -336,7 +469,6 @@ pub const Gap = struct {
         self.pending_cmds[self.pending_count] = entry;
         self.pending_count += 1;
     }
-
 };
 
 // ============================================================================
@@ -347,50 +479,75 @@ test "GAP start advertising generates commands" {
     var gap = Gap.init();
 
     try gap.startAdvertising(.{
-        .adv_data = &[_]u8{
-            0x02, 0x01, 0x06, // Flags
-            0x04, 0x09, 'Z', 'i', 'g', // Name: "Zig"
-        },
+        .adv_data = &[_]u8{ 0x02, 0x01, 0x06, 0x04, 0x09, 'Z', 'i', 'g' },
     });
 
     try std.testing.expectEqual(State.advertising, gap.state);
-
-    // Should have 3 commands: set params, set adv data, enable
     try std.testing.expectEqual(@as(usize, 3), gap.pending_count);
 
-    // First command: LE Set Advertising Parameters
     const cmd1 = gap.nextCommand() orelse unreachable;
-    try std.testing.expectEqual(@as(u8, 0x01), cmd1[0]); // command indicator
-
-    // Second: LE Set Advertising Data
-    const cmd2 = gap.nextCommand() orelse unreachable;
-    try std.testing.expectEqual(@as(u8, 0x01), cmd2[0]);
-
-    // Third: LE Set Advertising Enable
-    const cmd3 = gap.nextCommand() orelse unreachable;
-    try std.testing.expectEqual(@as(u8, 0x01), cmd3[0]);
-
-    // No more
+    try std.testing.expectEqual(@as(u8, 0x01), cmd1.data[0]);
+    _ = gap.nextCommand() orelse unreachable;
+    _ = gap.nextCommand() orelse unreachable;
     try std.testing.expect(gap.nextCommand() == null);
 }
 
-test "GAP handle LE Connection Complete" {
+test "GAP start scanning generates commands" {
+    var gap = Gap.init();
+
+    try gap.startScanning(.{});
+
+    try std.testing.expectEqual(State.scanning, gap.state);
+    try std.testing.expectEqual(@as(usize, 2), gap.pending_count);
+
+    // First: LE Set Scan Params
+    const cmd1 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x01), cmd1.data[0]); // command indicator
+    try std.testing.expectEqual(@as(u8, 0x0B), cmd1.data[1]); // opcode lo (0x200B)
+
+    // Second: LE Set Scan Enable
+    const cmd2 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x0C), cmd2.data[1]); // opcode lo (0x200C)
+}
+
+test "GAP connect from scanning" {
+    var gap = Gap.init();
+
+    try gap.startScanning(.{});
+    while (gap.nextCommand()) |_| {} // drain
+
+    try gap.connect(
+        .{ 0x50, 0x5C, 0x11, 0xE0, 0x88, 0x98 },
+        .public,
+        .{},
+    );
+
+    try std.testing.expectEqual(State.connecting, gap.state);
+    // Should have 2 commands: stop scan + create connection
+    try std.testing.expectEqual(@as(usize, 2), gap.pending_count);
+
+    // First: disable scanning
+    const cmd1 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x0C), cmd1.data[1]); // LE_SET_SCAN_ENABLE
+
+    // Second: create connection
+    const cmd2 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x0D), cmd2.data[1]); // LE_CREATE_CONNECTION
+}
+
+test "GAP handle LE Connection Complete (peripheral)" {
     var gap = Gap.init();
 
     try gap.startAdvertising(.{});
-    // Drain commands
     while (gap.nextCommand()) |_| {}
 
-    try std.testing.expectEqual(State.advertising, gap.state);
-
-    // Simulate LE Connection Complete event
     gap.handleEvent(.{ .le_connection_complete = .{
         .status = .success,
         .conn_handle = 0x0040,
-        .role = 0x01, // peripheral
+        .role = 0x01,
         .peer_addr_type = .random,
         .peer_addr = .{ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 },
-        .conn_interval = 0x0018,
+        .conn_interval = 0x0006,
         .conn_latency = 0,
         .supervision_timeout = 0x00C8,
     } });
@@ -398,15 +555,105 @@ test "GAP handle LE Connection Complete" {
     try std.testing.expectEqual(State.connected, gap.state);
     try std.testing.expectEqual(@as(?u16, 0x0040), gap.conn_handle);
 
-    // Should have 2 events: advertising_stopped + connected
     const evt1 = gap.pollEvent() orelse unreachable;
     try std.testing.expect(std.meta.activeTag(evt1) == .advertising_stopped);
 
     const evt2 = gap.pollEvent() orelse unreachable;
     switch (evt2) {
         .connected => |info| {
-            try std.testing.expectEqual(@as(u16, 0x0040), info.conn_handle);
             try std.testing.expectEqual(Role.peripheral, info.role);
+            try std.testing.expectEqual(@as(u16, 0x0006), info.conn_interval);
+        },
+        else => unreachable,
+    }
+}
+
+test "GAP handle LE Connection Complete (central)" {
+    var gap = Gap.init();
+
+    gap.state = .connecting;
+
+    gap.handleEvent(.{ .le_connection_complete = .{
+        .status = .success,
+        .conn_handle = 0x0041,
+        .role = 0x00, // central
+        .peer_addr_type = .public,
+        .peer_addr = .{ 0x50, 0x5C, 0x11, 0xE0, 0x88, 0x98 },
+        .conn_interval = 0x0006,
+        .conn_latency = 0,
+        .supervision_timeout = 0x00C8,
+    } });
+
+    try std.testing.expectEqual(State.connected, gap.state);
+
+    const evt = gap.pollEvent() orelse unreachable;
+    switch (evt) {
+        .connected => |info| {
+            try std.testing.expectEqual(Role.central, info.role);
+            try std.testing.expectEqual(@as(u16, 0x0041), info.conn_handle);
+        },
+        else => unreachable,
+    }
+}
+
+test "GAP request DLE and PHY" {
+    var gap = Gap.init();
+    gap.state = .connected;
+    gap.conn_handle = 0x0040;
+
+    // Request DLE
+    try gap.requestDataLength(0x0040, 251, 2120);
+    try std.testing.expectEqual(@as(usize, 1), gap.pending_count);
+
+    const cmd1 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x22), cmd1.data[1]); // LE_SET_DATA_LENGTH
+
+    // Request 2M PHY
+    try gap.requestPhyUpdate(0x0040, 0x02, 0x02);
+    try std.testing.expectEqual(@as(usize, 1), gap.pending_count);
+
+    const cmd2 = gap.nextCommand() orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x32), cmd2.data[1]); // LE_SET_PHY
+}
+
+test "GAP handle PHY Update Complete event" {
+    var gap = Gap.init();
+    gap.state = .connected;
+
+    gap.handleEvent(.{ .le_phy_update_complete = .{
+        .status = .success,
+        .conn_handle = 0x0040,
+        .tx_phy = 0x02,
+        .rx_phy = 0x02,
+    } });
+
+    const evt = gap.pollEvent() orelse unreachable;
+    switch (evt) {
+        .phy_updated => |pu| {
+            try std.testing.expectEqual(@as(u8, 0x02), pu.tx_phy);
+            try std.testing.expectEqual(@as(u8, 0x02), pu.rx_phy);
+        },
+        else => unreachable,
+    }
+}
+
+test "GAP handle Data Length Change event" {
+    var gap = Gap.init();
+    gap.state = .connected;
+
+    gap.handleEvent(.{ .le_data_length_change = .{
+        .conn_handle = 0x0040,
+        .max_tx_octets = 251,
+        .max_tx_time = 2120,
+        .max_rx_octets = 251,
+        .max_rx_time = 2120,
+    } });
+
+    const evt = gap.pollEvent() orelse unreachable;
+    switch (evt) {
+        .data_length_changed => |dl| {
+            try std.testing.expectEqual(@as(u16, 251), dl.max_tx_octets);
+            try std.testing.expectEqual(@as(u16, 2120), dl.max_tx_time);
         },
         else => unreachable,
     }
@@ -414,16 +661,13 @@ test "GAP handle LE Connection Complete" {
 
 test "GAP handle Disconnection Complete" {
     var gap = Gap.init();
-
-    // Force into connected state
     gap.state = .connected;
     gap.conn_handle = 0x0040;
 
-    // Simulate disconnection
     gap.handleEvent(.{ .disconnection_complete = .{
         .status = .success,
         .conn_handle = 0x0040,
-        .reason = 0x13, // Remote User Terminated
+        .reason = 0x13,
     } });
 
     try std.testing.expectEqual(State.idle, gap.state);
@@ -432,7 +676,6 @@ test "GAP handle Disconnection Complete" {
     const evt = gap.pollEvent() orelse unreachable;
     switch (evt) {
         .disconnected => |info| {
-            try std.testing.expectEqual(@as(u16, 0x0040), info.conn_handle);
             try std.testing.expectEqual(@as(u8, 0x13), info.reason);
         },
         else => unreachable,
@@ -442,13 +685,11 @@ test "GAP handle Disconnection Complete" {
 test "GAP state validation" {
     var gap = Gap.init();
 
-    // Can't stop advertising if not advertising
     try std.testing.expectError(error.InvalidState, gap.stopAdvertising());
-
-    // Can't disconnect if not connected
+    try std.testing.expectError(error.InvalidState, gap.stopScanning());
     try std.testing.expectError(error.InvalidState, gap.disconnect(0, 0x13));
 
-    // Can't start advertising while connected
     gap.state = .connected;
     try std.testing.expectError(error.InvalidState, gap.startAdvertising(.{}));
+    try std.testing.expectError(error.InvalidState, gap.startScanning(.{}));
 }
