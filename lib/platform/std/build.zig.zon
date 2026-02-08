@@ -1,7 +1,7 @@
 .{
     .name = .std_impl,
     .version = "0.1.0",
-    .fingerprint = 0x41d635fa08a81a62,
+    .fingerprint = 0x1be61c0bc4cee35e,
     .dependencies = .{
         .trait = .{ .path = "../../trait" },
     },
