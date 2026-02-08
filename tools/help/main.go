@@ -25,12 +25,18 @@ import (
 	"strings"
 )
 
+// target holds a Bazel target label and its inferred language.
+type target struct {
+	label string
+	lang  string // e.g. "Zig", "Go", "C/C++", "Shell", ""
+}
+
 // category groups targets of the same kind.
 type category struct {
 	icon    string
 	title   string
 	hint    string // e.g. "bazel run" or "bazel test"
-	targets []string
+	targets []target
 }
 
 func main() {
@@ -86,88 +92,90 @@ func main() {
 
 // collectAll runs bazel queries and returns categorized results.
 func collectAll() []*category {
-	// Run all queries. Each query returns a list of labels.
+	// Run all queries. Each query returns a list of targets with kind info.
 	// We handle errors gracefully — empty result on failure.
 
 	// Standard binaries (go_binary, cc_binary, etc.)
-	stdBinaries := queryTargets(`kind(".*_binary", //...)`)
+	stdBinaries := queryTargetsWithKind(`kind(".*_binary", //...)`)
 	// Platform-specific runnable targets (esp_flash, esp_zig_app, etc.)
-	espFlash := queryTargets(`kind("esp_flash", //...)`)
+	espFlash := queryTargetsWithKind(`kind("esp_flash", //...)`)
 
 	// Merge all runnable targets.
-	allBinaries := mergeUnique(stdBinaries, espFlash)
+	allBinaries := mergeTargets(stdBinaries, espFlash)
 
-	allTests := queryTargets(`kind(".*_test", //...)`)
-	e2eTargets := queryTargets(`attr(tags, "e2e", //...)`)
-	integrationTargets := queryTargets(`attr(tags, "integration", //...)`)
-	manualTargets := queryTargets(`attr(tags, "manual", //...)`)
-	allLibraries := queryTargets(`kind(".*_library", //...)`)
+	allTests := queryTargetsWithKind(`kind(".*_test", //...)`)
+	e2eTargets := queryTargetsWithKind(`attr(tags, "e2e", //...)`)
+	integrationTargets := queryTargetsWithKind(`attr(tags, "integration", //...)`)
+	manualTargets := queryTargetsWithKind(`attr(tags, "manual", //...)`)
+	allLibraries := queryTargetsWithKind(`kind(".*_library", //...)`)
 
 	// Build sets for exclusion.
-	testSet := toSet(allTests)
-	e2eSet := toSet(e2eTargets)
-	integrationSet := toSet(integrationTargets)
-	manualSet := toSet(manualTargets)
+	testSet := targetLabelSet(allTests)
+	e2eSet := targetLabelSet(e2eTargets)
+	integrationSet := targetLabelSet(integrationTargets)
+	manualSet := targetLabelSet(manualTargets)
 
 	// Tools: binaries under //tools/... or //devops/...
 	toolSet := make(map[string]bool)
 	for _, t := range allBinaries {
-		if isToolTarget(t) {
-			toolSet[t] = true
+		if isToolTarget(t.label) {
+			toolSet[t.label] = true
 		}
 	}
 
 	// Apps: binaries that are not tests, not tools, not manual, not internal.
-	var apps []string
+	var apps []target
 	for _, t := range allBinaries {
-		if !testSet[t] && !toolSet[t] && !manualSet[t] && !isInternalTarget(t) {
+		if !testSet[t.label] && !toolSet[t.label] && !manualSet[t.label] && !isInternalTarget(t.label) {
 			apps = append(apps, t)
 		}
 	}
 
 	// Tests: tests that are not e2e, not integration, not manual.
-	var tests []string
+	var tests []target
 	for _, t := range allTests {
-		if !e2eSet[t] && !integrationSet[t] && !manualSet[t] {
+		if !e2eSet[t.label] && !integrationSet[t.label] && !manualSet[t.label] {
 			tests = append(tests, t)
 		}
 	}
 
 	// E2E + Integration combined.
-	var e2e []string
+	var e2e []target
 	seen := make(map[string]bool)
 	for _, t := range e2eTargets {
-		if !seen[t] {
+		if !seen[t.label] {
 			e2e = append(e2e, t)
-			seen[t] = true
+			seen[t.label] = true
 		}
 	}
 	for _, t := range integrationTargets {
-		if !seen[t] {
+		if !seen[t.label] {
 			e2e = append(e2e, t)
-			seen[t] = true
+			seen[t.label] = true
 		}
 	}
 
 	// Tools list.
-	var tools []string
-	for t := range toolSet {
-		tools = append(tools, t)
+	var tools []target
+	for _, t := range allBinaries {
+		if toolSet[t.label] {
+			tools = append(tools, t)
+		}
 	}
-	sort.Strings(tools)
+	sortTargets(tools)
 
 	// Libraries: filter out build intermediates and internal targets.
-	var libs []string
+	var libs []target
 	for _, t := range allLibraries {
-		if !isInternalLibrary(t) {
+		if !isInternalLibrary(t.label) {
 			libs = append(libs, t)
 		}
 	}
 
-	sort.Strings(apps)
-	sort.Strings(tests)
-	sort.Strings(e2e)
-	sort.Strings(libs)
+	sortTargets(apps)
+	sortTargets(tests)
+	sortTargets(e2e)
+	sortTargets(libs)
 
 	return []*category{
 		{icon: "📦", title: "Apps", hint: "bazel run", targets: apps},
@@ -176,6 +184,13 @@ func collectAll() []*category {
 		{icon: "🔧", title: "Tools", hint: "bazel run", targets: tools},
 		{icon: "📋", title: "Libraries", hint: "", targets: libs},
 	}
+}
+
+// sortTargets sorts targets by label.
+func sortTargets(targets []target) {
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].label < targets[j].label
+	})
 }
 
 // printCategory formats and prints a single category.
@@ -194,7 +209,7 @@ func printCategory(c *category, detailed bool) {
 		// Show compact list, wrapping at 80 chars.
 		line := "  "
 		for _, t := range c.targets {
-			label := shortenLabel(t)
+			label := shortenLabel(t.label)
 			entry := label + "    "
 			if len(line)+len(entry) > 80 && line != "  " {
 				fmt.Println(strings.TrimRight(line, " "))
@@ -210,14 +225,18 @@ func printCategory(c *category, detailed bool) {
 	}
 
 	fmt.Println(header)
-	maxLen := 0
+	maxLabelLen := 0
 	for _, t := range c.targets {
-		if len(t) > maxLen {
-			maxLen = len(t)
+		if len(t.label) > maxLabelLen {
+			maxLabelLen = len(t.label)
 		}
 	}
 	for _, t := range c.targets {
-		fmt.Printf("  %-*s\n", maxLen, t)
+		if t.lang != "" {
+			fmt.Printf("  %-*s  [%s]\n", maxLabelLen, t.label, t.lang)
+		} else {
+			fmt.Printf("  %-*s\n", maxLabelLen, t.label)
+		}
 	}
 	fmt.Println()
 }
@@ -235,16 +254,17 @@ func queryOutputBase() string {
 	return filepath.Join(os.TempDir(), name)
 }
 
-// queryTargets runs a bazel query and returns the list of target labels.
+// queryTargetsWithKind runs a bazel query with --output=label_kind
+// and returns targets with language info inferred from the rule kind.
 // Uses a separate --output_base to avoid lock conflict with `bazel run`.
-func queryTargets(query string) []string {
+func queryTargetsWithKind(query string) []target {
 	wsDir := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
 
 	args := []string{
 		"--output_base=" + queryOutputBase(),
 		"query",
 		query,
-		"--output=label",
+		"--output=label_kind",
 		"--keep_going",
 		"--noshow_progress",
 	}
@@ -255,24 +275,64 @@ func queryTargets(query string) []string {
 	cmd.Stderr = nil // suppress stderr
 	out, err := cmd.Output()
 	if err != nil {
-		// Query might partially fail (e.g., no matches). Return what we got.
 		if len(out) == 0 {
 			return nil
 		}
 	}
-	return parseLabels(string(out))
+	return parseLabelKinds(string(out))
 }
 
-// parseLabels splits bazel query output into label strings.
-func parseLabels(output string) []string {
-	var labels []string
+// parseLabelKinds parses `--output=label_kind` output.
+// Each line looks like: "go_binary rule //tools/help:help_bin"
+func parseLabelKinds(output string) []target {
+	var targets []target
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && strings.HasPrefix(line, "//") {
-			labels = append(labels, line)
+		if line == "" {
+			continue
 		}
+		// Format: "<kind> rule <label>"
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		kind := parts[0]
+		label := strings.TrimSpace(parts[2])
+		if !strings.HasPrefix(label, "//") {
+			continue
+		}
+		targets = append(targets, target{
+			label: label,
+			lang:  langFromKind(kind),
+		})
 	}
-	return labels
+	return targets
+}
+
+// langFromKind infers the programming language from a Bazel rule kind.
+func langFromKind(kind string) string {
+	switch {
+	case strings.HasPrefix(kind, "zig_"):
+		return "Zig"
+	case strings.HasPrefix(kind, "esp_"):
+		return "Zig"
+	case strings.HasPrefix(kind, "go_"):
+		return "Go"
+	case strings.HasPrefix(kind, "cc_"):
+		return "C/C++"
+	case strings.HasPrefix(kind, "rust_"):
+		return "Rust"
+	case strings.HasPrefix(kind, "py_"):
+		return "Python"
+	case strings.HasPrefix(kind, "java_"):
+		return "Java"
+	case strings.HasPrefix(kind, "sh_"):
+		return "Shell"
+	case strings.HasPrefix(kind, "ts_") || strings.HasPrefix(kind, "js_"):
+		return "TypeScript"
+	default:
+		return ""
+	}
 }
 
 // isToolTarget returns true if the target is under //tools/ or //devops/.
@@ -322,26 +382,26 @@ func targetName(label string) string {
 	return filepath.Base(label)
 }
 
-// mergeUnique merges multiple slices, deduplicating.
-func mergeUnique(slices ...[]string) []string {
+// mergeTargets merges multiple target slices, deduplicating by label.
+func mergeTargets(slices ...[]target) []target {
 	seen := make(map[string]bool)
-	var result []string
+	var result []target
 	for _, s := range slices {
-		for _, item := range s {
-			if !seen[item] {
-				seen[item] = true
-				result = append(result, item)
+		for _, t := range s {
+			if !seen[t.label] {
+				seen[t.label] = true
+				result = append(result, t)
 			}
 		}
 	}
 	return result
 }
 
-// toSet converts a slice to a set.
-func toSet(items []string) map[string]bool {
-	m := make(map[string]bool, len(items))
-	for _, item := range items {
-		m[item] = true
+// targetLabelSet extracts labels from targets into a set.
+func targetLabelSet(targets []target) map[string]bool {
+	m := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		m[t.label] = true
 	}
 	return m
 }
