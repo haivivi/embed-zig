@@ -1,6 +1,4 @@
 //! Opus Native Test — encode/decode verification on macOS
-//!
-//! Generates a sine wave, encodes with opus, decodes back, and prints metrics.
 
 const std = @import("std");
 const audio = @import("audio");
@@ -8,106 +6,86 @@ const opus = audio.opus;
 
 const log = std.log.scoped(.opus_test);
 
-const SAMPLE_RATE: i32 = 16000;
-const CHANNELS: i32 = 1;
-const FRAME_DURATION_MS: i32 = 20;
-const FRAME_SAMPLES: usize = @intCast(@divExact(SAMPLE_RATE * FRAME_DURATION_MS, 1000));
+const SAMPLE_RATE: u32 = 16000;
+const CHANNELS: u8 = 1;
+const FRAME_MS: u32 = 20;
+const FRAME_SAMPLES: usize = SAMPLE_RATE * FRAME_MS / 1000; // 320
 const MAX_OPUS_FRAME: usize = 512;
 const NUM_FRAMES: usize = 50;
 
 pub fn main() void {
+    const allocator = std.heap.c_allocator;
+
     log.info("==========================================", .{});
-    log.info("Opus Native Test (macOS)", .{});
+    log.info("Opus Native Test", .{});
     log.info("==========================================", .{});
     log.info("Version: {s}", .{std.mem.span(opus.getVersionString())});
-    log.info("Sample Rate: {}Hz, Frame: {}ms ({} samples)", .{ SAMPLE_RATE, FRAME_DURATION_MS, FRAME_SAMPLES });
+    log.info("Encoder size: {} bytes", .{opus.Encoder.getSize(CHANNELS)});
+    log.info("Decoder size: {} bytes", .{opus.Decoder.getSize(CHANNELS)});
     log.info("==========================================", .{});
 
-    // Initialize encoder
-    var encoder = opus.Encoder.init(SAMPLE_RATE, CHANNELS, .voip) catch |err| {
-        log.err("Encoder init failed: {}", .{err});
+    var encoder = opus.Encoder.init(allocator, SAMPLE_RATE, CHANNELS, .voip) catch |err| {
+        log.err("Encoder init: {}", .{err});
         return;
     };
-    defer encoder.deinit();
+    defer encoder.deinit(allocator);
     encoder.setBitrate(24000) catch {};
     encoder.setComplexity(5) catch {};
     encoder.setSignal(.voice) catch {};
-    log.info("[encoder] Initialized: 24kbps, complexity=5, voip", .{});
+    log.info("[enc] ready: 24kbps complexity=5", .{});
 
-    // Initialize decoder
-    var decoder = opus.Decoder.init(SAMPLE_RATE, CHANNELS) catch |err| {
-        log.err("Decoder init failed: {}", .{err});
+    var decoder = opus.Decoder.init(allocator, SAMPLE_RATE, CHANNELS) catch |err| {
+        log.err("Decoder init: {}", .{err});
         return;
     };
-    defer decoder.deinit();
-    log.info("[decoder] Initialized", .{});
+    defer decoder.deinit(allocator);
+    log.info("[dec] ready", .{});
 
-    // Generate test signal: 440Hz sine wave
-    var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
-    var decoded_buf: [FRAME_SAMPLES]i16 = undefined;
+    var pcm: [FRAME_SAMPLES]i16 = undefined;
+    var decoded: [FRAME_SAMPLES]i16 = undefined;
     var opus_buf: [MAX_OPUS_FRAME]u8 = undefined;
 
-    var total_pcm_bytes: u64 = 0;
-    var total_opus_bytes: u64 = 0;
-    var total_encode_ns: u64 = 0;
-    var total_decode_ns: u64 = 0;
+    var total_pcm: u64 = 0;
+    var total_opus: u64 = 0;
+    var total_enc_ns: u64 = 0;
+    var total_dec_ns: u64 = 0;
     var phase: f32 = 0;
-    const freq: f32 = 440.0;
-    const amplitude: f32 = 8000.0;
-    const phase_inc = freq * 2.0 * std.math.pi / @as(f32, @floatFromInt(SAMPLE_RATE));
+    const phase_inc = 440.0 * 2.0 * std.math.pi / @as(f32, @floatFromInt(SAMPLE_RATE));
 
-    for (0..NUM_FRAMES) |frame_idx| {
-        for (&pcm_buf) |*sample| {
-            sample.* = @intFromFloat(@sin(phase) * amplitude);
+    for (0..NUM_FRAMES) |i| {
+        // Generate 440Hz sine
+        for (&pcm) |*s| {
+            s.* = @intFromFloat(@sin(phase) * 8000.0);
             phase += phase_inc;
             if (phase >= 2.0 * std.math.pi) phase -= 2.0 * std.math.pi;
         }
 
         // Encode
-        var enc_timer = std.time.Timer.start() catch return;
-        const encoded_len = encoder.encode(&pcm_buf, FRAME_SAMPLES, &opus_buf) catch |err| {
-            log.err("Encode error at frame {}: {}", .{ frame_idx, err });
+        var t = std.time.Timer.start() catch return;
+        const encoded = encoder.encode(&pcm, FRAME_SAMPLES, &opus_buf) catch |err| {
+            log.err("encode #{}: {}", .{ i, err });
             return;
         };
-        const enc_elapsed = enc_timer.read();
-        total_encode_ns += enc_elapsed;
+        total_enc_ns += t.read();
 
         // Decode
-        var dec_timer = std.time.Timer.start() catch return;
-        const decoded_samples = decoder.decode(opus_buf[0..encoded_len], FRAME_SAMPLES, &decoded_buf, false) catch |err| {
-            log.err("Decode error at frame {}: {}", .{ frame_idx, err });
+        t = std.time.Timer.start() catch return;
+        const samples = decoder.decode(encoded, &decoded, false) catch |err| {
+            log.err("decode #{}: {}", .{ i, err });
             return;
         };
-        const dec_elapsed = dec_timer.read();
-        total_decode_ns += dec_elapsed;
+        total_dec_ns += t.read();
 
-        total_pcm_bytes += FRAME_SAMPLES * 2;
-        total_opus_bytes += encoded_len;
+        total_pcm += FRAME_SAMPLES * 2;
+        total_opus += encoded.len;
 
-        if (frame_idx == 0 or frame_idx == NUM_FRAMES - 1) {
-            log.info("  Frame {}: encoded={}B, decoded={} samples, enc_us={}, dec_us={}", .{
-                frame_idx,
-                encoded_len,
-                decoded_samples,
-                enc_elapsed / 1000,
-                dec_elapsed / 1000,
-            });
+        if (i == 0 or i == NUM_FRAMES - 1) {
+            log.info("  #{}: enc={}B dec={} samples", .{ i, encoded.len, samples.len });
         }
     }
 
-    // Summary
-    const avg_enc_us = total_encode_ns / NUM_FRAMES / 1000;
-    const avg_dec_us = total_decode_ns / NUM_FRAMES / 1000;
-    const ratio = total_pcm_bytes / total_opus_bytes;
-
     log.info("==========================================", .{});
-    log.info("RESULTS ({} frames, {}ms total)", .{ NUM_FRAMES, NUM_FRAMES * @as(usize, @intCast(FRAME_DURATION_MS)) });
-    log.info("==========================================", .{});
-    log.info("  PCM total:        {} bytes", .{total_pcm_bytes});
-    log.info("  Opus total:       {} bytes", .{total_opus_bytes});
-    log.info("  Compression:      {}:1", .{ratio});
-    log.info("  Avg encode:       {} us/frame", .{avg_enc_us});
-    log.info("  Avg decode:       {} us/frame", .{avg_dec_us});
-    log.info("==========================================", .{});
-    log.info("PASS — opus encode/decode works correctly", .{});
+    log.info("PCM: {} bytes  Opus: {} bytes  Ratio: {}:1", .{ total_pcm, total_opus, total_pcm / total_opus });
+    log.info("Avg encode: {} us  decode: {} us", .{ total_enc_ns / NUM_FRAMES / 1000, total_dec_ns / NUM_FRAMES / 1000 });
+    log.info("PASS", .{});
 }

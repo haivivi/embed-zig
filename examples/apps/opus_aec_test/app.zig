@@ -15,9 +15,10 @@
 const std = @import("std");
 const esp = @import("esp");
 const audio = @import("audio");
-const channel_mod = @import("channel");
-const waitgroup = @import("waitgroup");
-const cancellation = @import("cancellation");
+// Channel/WaitGroup/CancellationToken available for future dual-task version
+// const channel_mod = @import("channel");
+// const waitgroup = @import("waitgroup");
+// const cancellation = @import("cancellation");
 
 const idf = esp.idf;
 const heap = idf.heap;
@@ -50,162 +51,19 @@ const METRIC_INTERVAL_MS: u64 = 5_000; // log metrics every 5s
 // Opus Frame — passed through Channel
 // ============================================================================
 
-const OpusFrame = struct {
-    data: [MAX_OPUS_FRAME]u8,
-    len: usize,
-};
-
-const FrameChannel = channel_mod.Channel(OpusFrame, 8, EspRt);
-const WG = waitgroup.WaitGroup(EspRt);
-
 // ============================================================================
-// Shared Metrics (atomic-safe via single-writer per field)
+// Metrics
 // ============================================================================
 
 const Metrics = struct {
-    // Written by encoder task
     total_encoded: u64 = 0,
     total_pcm_bytes: u64 = 0,
     total_opus_bytes: u64 = 0,
     encode_time_us: u64 = 0,
-    encode_count: u64 = 0,
-    backpressure_count: u64 = 0,
-
-    // Written by decoder task
-    total_decoded: u64 = 0,
     decode_time_us: u64 = 0,
+    encode_count: u64 = 0,
     decode_count: u64 = 0,
 };
-
-// ============================================================================
-// Encoder Task Context
-// ============================================================================
-
-const EncoderCtx = struct {
-    ch: *FrameChannel,
-    board: *Board,
-    cancel: *cancellation.CancellationToken,
-    metrics: *Metrics,
-    encoder: *audio.opus.Encoder,
-};
-
-fn encoderTask(raw: ?*anyopaque) void {
-    const ctx: *EncoderCtx = @ptrCast(@alignCast(raw));
-    log.info("[encoder] Starting opus encoder loop", .{});
-    var encoder = ctx.encoder;
-
-    var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
-    var opus_buf: [MAX_OPUS_FRAME]u8 = undefined;
-    var read_accum: usize = 0;
-    var pcm_accum: [FRAME_SAMPLES]i16 = undefined;
-
-    while (!ctx.cancel.isCancelled()) {
-        // Read mic samples (AEC-processed)
-        const samples_read = ctx.board.audio.readMic(&pcm_buf) catch |err| {
-            log.err("[encoder] Mic read error: {}", .{err});
-            platform.time.sleepMs(10);
-            continue;
-        };
-
-        if (samples_read == 0) {
-            platform.time.sleepMs(1);
-            continue;
-        }
-
-        // Apply gain
-        for (0..samples_read) |i| {
-            const amplified: i32 = @as(i32, pcm_buf[i]) * MIC_GAIN;
-            pcm_buf[i] = @intCast(std.math.clamp(amplified, std.math.minInt(i16), std.math.maxInt(i16)));
-        }
-
-        // Accumulate until we have a full opus frame
-        const to_copy = @min(samples_read, FRAME_SAMPLES - read_accum);
-        @memcpy(pcm_accum[read_accum..][0..to_copy], pcm_buf[0..to_copy]);
-        read_accum += to_copy;
-
-        if (read_accum < FRAME_SAMPLES) continue;
-        read_accum = 0;
-
-        // Encode full frame
-        const t0 = idf.time.nowUs();
-        const encoded_len = encoder.encode(&pcm_accum, FRAME_SAMPLES, &opus_buf) catch |err| {
-            log.err("[encoder] Encode error: {}", .{err});
-            continue;
-        };
-        const t1 = idf.time.nowUs();
-
-        // Update metrics
-        ctx.metrics.total_encoded += 1;
-        ctx.metrics.total_pcm_bytes += PCM_FRAME_BYTES;
-        ctx.metrics.total_opus_bytes += encoded_len;
-        ctx.metrics.encode_time_us += (t1 - t0);
-        ctx.metrics.encode_count += 1;
-
-        // Send to decoder via channel (non-blocking to detect backpressure)
-        var frame: OpusFrame = undefined;
-        @memcpy(frame.data[0..encoded_len], opus_buf[0..encoded_len]);
-        frame.len = encoded_len;
-
-        ctx.ch.trySend(frame) catch |err| switch (err) {
-            error.Closed => break,
-            error.Full => {
-                ctx.metrics.backpressure_count += 1;
-                // Blocking send as fallback
-                ctx.ch.send(frame) catch break;
-            },
-        };
-    }
-
-    log.info("[encoder] Encoder task exiting", .{});
-}
-
-// ============================================================================
-// Decoder Task Context
-// ============================================================================
-
-const DecoderCtx = struct {
-    ch: *FrameChannel,
-    board: *Board,
-    cancel: *cancellation.CancellationToken,
-    metrics: *Metrics,
-    decoder: *audio.opus.Decoder,
-};
-
-fn decoderTask(raw: ?*anyopaque) void {
-    const ctx: *DecoderCtx = @ptrCast(@alignCast(raw));
-    log.info("[decoder] Starting opus decoder loop", .{});
-    var decoder = ctx.decoder;
-
-    var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
-
-    while (!ctx.cancel.isCancelled()) {
-        // Receive opus frame from channel
-        const frame = ctx.ch.recv() orelse break; // channel closed
-
-        // Decode
-        const t0 = idf.time.nowUs();
-        const decoded_samples = decoder.decode(frame.data[0..frame.len], FRAME_SAMPLES, &pcm_buf, false) catch |err| {
-            log.err("[decoder] Decode error: {}", .{err});
-            continue;
-        };
-        const t1 = idf.time.nowUs();
-
-        // Update metrics
-        ctx.metrics.total_decoded += 1;
-        ctx.metrics.decode_time_us += (t1 - t0);
-        ctx.metrics.decode_count += 1;
-
-        // Write to speaker
-        if (decoded_samples > 0) {
-            _ = ctx.board.audio.writeSpeaker(pcm_buf[0..@intCast(decoded_samples)]) catch |err| {
-                log.err("[decoder] Speaker write error: {}", .{err});
-                continue;
-            };
-        }
-    }
-
-    log.info("[decoder] Decoder task exiting", .{});
-}
 
 // ============================================================================
 // Main Entry Point
@@ -257,14 +115,8 @@ pub fn run(_: anytype) void {
     // Setup Channel + Metrics
     // ========================================================================
 
-    var ch = FrameChannel.init();
-    defer ch.deinit();
-
-    var cancel = cancellation.CancellationToken.init();
-    var metrics = Metrics{};
-
     // ========================================================================
-    // Initialize opus encoder/decoder on main task (avoids WDT issues)
+    // Initialize opus encoder/decoder on main task
     // ========================================================================
 
     log.info("Initializing opus encoder...", .{});
@@ -287,49 +139,6 @@ pub fn run(_: anytype) void {
     defer decoder.deinit();
     log.info("Opus decoder ready", .{});
 
-    // ========================================================================
-    // Spawn encoder + decoder tasks
-    // ========================================================================
-
-    var wg = WG.init(heap.psram);
-    defer wg.deinit();
-
-    var enc_ctx = EncoderCtx{
-        .ch = &ch,
-        .board = &board,
-        .cancel = &cancel,
-        .metrics = &metrics,
-        .encoder = &encoder,
-    };
-
-    var dec_ctx = DecoderCtx{
-        .ch = &ch,
-        .board = &board,
-        .cancel = &cancel,
-        .metrics = &metrics,
-        .decoder = &decoder,
-    };
-
-    wg.go("opus-enc", encoderTask, @ptrCast(&enc_ctx), .{
-        .stack_size = 16384,
-        .priority = 5,
-        .allocator = heap.iram,
-    }) catch |err| {
-        log.err("Failed to spawn encoder task: {}", .{err});
-        return;
-    };
-
-    wg.go("opus-dec", decoderTask, @ptrCast(&dec_ctx), .{
-        .stack_size = 16384,
-        .priority = 5,
-        .allocator = heap.iram,
-    }) catch |err| {
-        log.err("Failed to spawn decoder task: {}", .{err});
-        return;
-    };
-
-    platform.time.sleepMs(100);
-
     // Heap after init
     const heap_after_internal = heap.heap_caps_get_free_size(heap.MALLOC_CAP_INTERNAL);
     const heap_after_psram = heap.heap_caps_get_free_size(heap.MALLOC_CAP_SPIRAM);
@@ -342,41 +151,98 @@ pub fn run(_: anytype) void {
         (heap_before_psram - heap_after_psram) / 1024,
     });
 
-    log.info("Tasks started. Running for {}s...", .{TEST_DURATION_MS / 1000});
-    log.info("Speak into the mic — audio should loop through opus codec.", .{});
+    log.info("Running single-task loopback for {}s...", .{TEST_DURATION_MS / 1000});
+    log.info("Speak into the mic — audio loops through opus codec.", .{});
 
     // ========================================================================
-    // Metric reporting loop
+    // Single-task encode/decode loopback (same as aec_test pattern)
     // ========================================================================
 
-    var elapsed_ms: u64 = 0;
-    const interval_ms: u64 = 100;
+    var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
+    var pcm_accum: [FRAME_SAMPLES]i16 = undefined;
+    var decoded_buf: [FRAME_SAMPLES]i16 = undefined;
+    var opus_buf: [MAX_OPUS_FRAME]u8 = undefined;
+    var read_accum: usize = 0;
+
+    var metrics = Metrics{};
+    const start_ms = idf.time.nowMs();
     var last_report_ms: u64 = 0;
 
-    while (elapsed_ms < TEST_DURATION_MS) {
-        platform.time.sleepMs(@intCast(interval_ms));
-        elapsed_ms += interval_ms;
+    while (idf.time.nowMs() - start_ms < TEST_DURATION_MS) {
+        // Read mic (AEC-processed)
+        const samples_read = board.audio.readMic(&pcm_buf) catch |err| {
+            log.err("[mic] Read error: {}", .{err});
+            platform.time.sleepMs(10);
+            continue;
+        };
 
-        if (elapsed_ms - last_report_ms >= METRIC_INTERVAL_MS) {
-            last_report_ms = elapsed_ms;
-            printMetrics(&metrics, elapsed_ms);
+        if (samples_read == 0) {
+            platform.time.sleepMs(1);
+            continue;
+        }
+
+        // Apply gain
+        for (0..samples_read) |i| {
+            const amplified: i32 = @as(i32, pcm_buf[i]) * MIC_GAIN;
+            pcm_buf[i] = @intCast(std.math.clamp(amplified, std.math.minInt(i16), std.math.maxInt(i16)));
+        }
+
+        // Accumulate until full opus frame
+        const to_copy = @min(samples_read, FRAME_SAMPLES - read_accum);
+        @memcpy(pcm_accum[read_accum..][0..to_copy], pcm_buf[0..to_copy]);
+        read_accum += to_copy;
+
+        if (read_accum < FRAME_SAMPLES) continue;
+        read_accum = 0;
+
+        // Encode
+        const t0 = idf.time.nowUs();
+        const encoded_len = encoder.encode(&pcm_accum, FRAME_SAMPLES, &opus_buf) catch |err| {
+            log.err("[enc] Encode error: {}", .{err});
+            continue;
+        };
+        const t1 = idf.time.nowUs();
+
+        // Decode
+        const decoded_samples = decoder.decode(opus_buf[0..encoded_len], FRAME_SAMPLES, &decoded_buf, false) catch |err| {
+            log.err("[dec] Decode error: {}", .{err});
+            continue;
+        };
+        const t2 = idf.time.nowUs();
+
+        // Write to speaker
+        if (decoded_samples > 0) {
+            _ = board.audio.writeSpeaker(decoded_buf[0..@intCast(decoded_samples)]) catch |err| {
+                log.err("[spk] Write error: {}", .{err});
+                continue;
+            };
+        }
+
+        // Update metrics
+        metrics.total_encoded += 1;
+        metrics.total_pcm_bytes += PCM_FRAME_BYTES;
+        metrics.total_opus_bytes += encoded_len;
+        metrics.encode_time_us += (t1 - t0);
+        metrics.decode_time_us += (t2 - t1);
+        metrics.encode_count += 1;
+        metrics.decode_count += 1;
+
+        // Periodic report
+        const now_ms = idf.time.nowMs();
+        if (now_ms - start_ms - last_report_ms >= METRIC_INTERVAL_MS) {
+            last_report_ms = now_ms - start_ms;
+            printMetrics(&metrics, last_report_ms);
         }
     }
 
     // ========================================================================
-    // Shutdown
+    // Final report
     // ========================================================================
 
-    log.info("Test duration reached. Shutting down...", .{});
-    cancel.cancel();
-    ch.close();
-    wg.wait();
-
-    // Final metrics
     log.info("==========================================", .{});
     log.info("FINAL REPORT", .{});
     log.info("==========================================", .{});
-    printMetrics(&metrics, elapsed_ms);
+    printMetrics(&metrics, TEST_DURATION_MS);
 
     const heap_final_internal = heap.heap_caps_get_free_size(heap.MALLOC_CAP_INTERNAL);
     const heap_final_psram = heap.heap_caps_get_free_size(heap.MALLOC_CAP_SPIRAM);
