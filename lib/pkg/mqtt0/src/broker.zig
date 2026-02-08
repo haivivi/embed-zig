@@ -154,6 +154,8 @@ pub fn Broker(comptime Transport: type) type {
         const SharedGroup = struct {
             group_name_buf: [128]u8 = undefined,
             group_name_len: usize = 0,
+            topic_buf: [256]u8 = undefined,
+            topic_len: usize = 0,
             subscribers: std.ArrayListUnmanaged(*ClientHandle) = .empty,
             next_index: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
             mutex: std.Thread.Mutex = .{},
@@ -162,10 +164,20 @@ pub fn Broker(comptime Transport: type) type {
                 return self.group_name_buf[0..self.group_name_len];
             }
 
+            fn actualTopic(self: *const SharedGroup) []const u8 {
+                return self.topic_buf[0..self.topic_len];
+            }
+
             fn setGroupName(self: *SharedGroup, name: []const u8) void {
                 const len = @min(name.len, 128);
                 @memcpy(self.group_name_buf[0..len], name[0..len]);
                 self.group_name_len = len;
+            }
+
+            fn setActualTopic(self: *SharedGroup, t: []const u8) void {
+                const len = @min(t.len, 256);
+                @memcpy(self.topic_buf[0..len], t[0..len]);
+                self.topic_len = len;
             }
 
             fn add(self: *SharedGroup, allocator: Allocator, handle: *ClientHandle) void {
@@ -606,50 +618,65 @@ pub fn Broker(comptime Transport: type) type {
             // ACL check
             if (!self.auth.acl(handle.clientId(), acl_topic, false)) return false;
 
-            // Check subscription limit and track
+            // Check subscription limit and track (dedup: replace existing)
             self.clients_mutex.lock();
             const key = handle.clientId();
+            var is_resub = false;
             if (self.client_subscriptions.getPtr(key)) |subs| {
-                if (subs.items.len >= self.config.max_subscriptions_per_client) {
-                    self.clients_mutex.unlock();
-                    return false;
+                // Check if already subscribed to this topic (MQTT spec: replace)
+                for (subs.items) |existing| {
+                    if (std.mem.eql(u8, existing, topic)) {
+                        is_resub = true;
+                        break;
+                    }
                 }
-                const topic_dup = self.allocator.dupe(u8, topic) catch {
-                    self.clients_mutex.unlock();
-                    return false;
-                };
-                subs.append(self.allocator, topic_dup) catch {
-                    self.allocator.free(topic_dup);
-                    self.clients_mutex.unlock();
-                    return false;
-                };
+                if (!is_resub) {
+                    if (subs.items.len >= self.config.max_subscriptions_per_client) {
+                        self.clients_mutex.unlock();
+                        return false;
+                    }
+                    const topic_dup = self.allocator.dupe(u8, topic) catch {
+                        self.clients_mutex.unlock();
+                        return false;
+                    };
+                    subs.append(self.allocator, topic_dup) catch {
+                        self.allocator.free(topic_dup);
+                        self.clients_mutex.unlock();
+                        return false;
+                    };
+                }
             }
             self.clients_mutex.unlock();
 
             const trie_ok = if (shared) |s| blk: {
                 self.sub_mutex.lock();
                 defer self.sub_mutex.unlock();
+                // addToSharedGroup already deduplicates via sg.add()
                 break :blk self.addToSharedGroup(s.group, s.actual_topic, handle);
             } else blk: {
                 self.sub_mutex.lock();
                 defer self.sub_mutex.unlock();
+                // Remove old entry first to prevent duplicates (MQTT spec: replace)
+                if (is_resub) _ = self.subscriptions.removeValue(topic, handle);
                 self.subscriptions.insert(topic, handle) catch break :blk false;
                 break :blk true;
             };
 
             if (!trie_ok) {
-                // Rollback: remove topic_dup from client_subscriptions
-                self.clients_mutex.lock();
-                if (self.client_subscriptions.getPtr(handle.clientId())) |subs| {
-                    if (subs.items.len > 0) {
-                        const idx = subs.items.len - 1;
-                        if (std.mem.eql(u8, subs.items[idx], topic)) {
-                            const removed = subs.orderedRemove(idx);
-                            self.allocator.free(removed);
+                // Rollback: remove topic_dup from client_subscriptions (only if we added one)
+                if (!is_resub) {
+                    self.clients_mutex.lock();
+                    if (self.client_subscriptions.getPtr(handle.clientId())) |subs| {
+                        if (subs.items.len > 0) {
+                            const idx = subs.items.len - 1;
+                            if (std.mem.eql(u8, subs.items[idx], topic)) {
+                                const removed = subs.orderedRemove(idx);
+                                self.allocator.free(removed);
+                            }
                         }
                     }
+                    self.clients_mutex.unlock();
                 }
-                self.clients_mutex.unlock();
                 return false;
             }
 
@@ -657,13 +684,13 @@ pub fn Broker(comptime Transport: type) type {
         }
 
         fn addToSharedGroup(self: *Self, group_name: []const u8, actual_topic: []const u8, handle: *ClientHandle) bool {
-            // Check if shared group already exists for this topic
-            if (self.shared_trie.match(actual_topic)) |groups| {
-                for (groups) |sg| {
-                    if (std.mem.eql(u8, sg.groupName(), group_name)) {
-                        sg.add(self.allocator, handle);
-                        return true;
-                    }
+            // Check if shared group already exists (exact match on group_name + actual_topic)
+            for (self.shared_groups.items) |sg| {
+                if (std.mem.eql(u8, sg.groupName(), group_name) and
+                    std.mem.eql(u8, sg.actualTopic(), actual_topic))
+                {
+                    sg.add(self.allocator, handle);
+                    return true;
                 }
             }
 
@@ -671,6 +698,7 @@ pub fn Broker(comptime Transport: type) type {
             const sg = self.allocator.create(SharedGroup) catch return false;
             sg.* = .{};
             sg.setGroupName(group_name);
+            sg.setActualTopic(actual_topic);
             sg.add(self.allocator, handle);
             self.shared_groups.append(self.allocator, sg) catch {
                 sg.deinit(self.allocator);
