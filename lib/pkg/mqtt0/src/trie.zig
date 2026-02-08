@@ -149,9 +149,18 @@ pub fn Trie(comptime T: type) type {
                     try self.insertAt(child, rest, value);
                 } else {
                     const child = try Node.init(self.allocator);
-                    // Duplicate the key string so it persists
-                    const key_dup = try self.allocator.dupe(u8, first);
-                    try node.children.put(key_dup, child);
+                    const key_dup = self.allocator.dupe(u8, first) catch |e| {
+                        child.deinit();
+                        self.allocator.destroy(child);
+                        return e;
+                    };
+                    node.children.put(key_dup, child) catch |e| {
+                        self.allocator.free(key_dup);
+                        child.deinit();
+                        self.allocator.destroy(child);
+                        return e;
+                    };
+                    // child is now owned by children map — no errdefer needed
                     try self.insertAt(child, rest, value);
                 }
             }

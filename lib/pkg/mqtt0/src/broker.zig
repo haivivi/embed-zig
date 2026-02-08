@@ -98,6 +98,8 @@ pub fn Broker(comptime Transport: type) type {
         const ClientHandle = struct {
             client_id_buf: [256]u8 = undefined,
             client_id_len: usize = 0,
+            username_buf: [128]u8 = undefined,
+            username_len: usize = 0,
             transport: ?*Transport = null,
             write_mutex: std.Thread.Mutex = .{},
             active: bool = false,
@@ -108,10 +110,20 @@ pub fn Broker(comptime Transport: type) type {
                 return self.client_id_buf[0..self.client_id_len];
             }
 
+            fn username(self: *const ClientHandle) []const u8 {
+                return self.username_buf[0..self.username_len];
+            }
+
             fn setClientId(self: *ClientHandle, id: []const u8) void {
                 const len = @min(id.len, 256);
                 @memcpy(self.client_id_buf[0..len], id[0..len]);
                 self.client_id_len = len;
+            }
+
+            fn setUsername(self: *ClientHandle, name: []const u8) void {
+                const len = @min(name.len, 128);
+                @memcpy(self.username_buf[0..len], name[0..len]);
+                self.username_len = len;
             }
 
             /// Thread-safe write to this client's transport
@@ -329,13 +341,14 @@ pub fn Broker(comptime Transport: type) type {
             const ca_len = v4.encodeConnAck(wb, &.{ .session_present = false, .return_code = .accepted }) catch return;
             pkt.writeAll(transport, wb[0..ca_len]) catch return;
 
-            const handle = self.registerClient(connect.client_id, transport);
-            defer self.cleanupClient(handle, connect.username);
+            const handle = self.registerClient(connect.client_id, transport) orelse return;
+            handle.setUsername(connect.username);
+            defer self.cleanupClient(handle);
 
             if (self.on_connect) |cb| cb(connect.client_id);
-            defer if (self.on_disconnect) |cb| cb(connect.client_id);
+            defer if (self.on_disconnect) |cb| cb(handle.clientId());
 
-            self.publishSysConnected(connect.client_id, connect.username, @intFromEnum(pkt.ProtocolVersion.v4), connect.keep_alive);
+            self.publishSysConnected(handle.clientId(), handle.username(), @intFromEnum(pkt.ProtocolVersion.v4), connect.keep_alive);
 
             setKeepaliveTimeout(transport, connect.keep_alive);
             self.clientLoopV4(transport, read_buf, write_buf, handle);
@@ -362,13 +375,14 @@ pub fn Broker(comptime Transport: type) type {
             }) catch return;
             pkt.writeAll(transport, wb[0..ca_len]) catch return;
 
-            const handle = self.registerClient(connect.client_id, transport);
-            defer self.cleanupClient(handle, connect.username);
+            const handle = self.registerClient(connect.client_id, transport) orelse return;
+            handle.setUsername(connect.username);
+            defer self.cleanupClient(handle);
 
             if (self.on_connect) |cb| cb(connect.client_id);
-            defer if (self.on_disconnect) |cb| cb(connect.client_id);
+            defer if (self.on_disconnect) |cb| cb(handle.clientId());
 
-            self.publishSysConnected(connect.client_id, connect.username, @intFromEnum(pkt.ProtocolVersion.v5), connect.keep_alive);
+            self.publishSysConnected(handle.clientId(), handle.username(), @intFromEnum(pkt.ProtocolVersion.v5), connect.keep_alive);
 
             setKeepaliveTimeout(transport, connect.keep_alive);
             self.clientLoopV5(transport, read_buf, write_buf, handle);
@@ -735,24 +749,22 @@ pub fn Broker(comptime Transport: type) type {
         // Client registration / cleanup
         // ====================================================================
 
-        fn registerClient(self: *Self, client_id: []const u8, transport: *Transport) *ClientHandle {
+        fn registerClient(self: *Self, client_id: []const u8, transport: *Transport) ?*ClientHandle {
             self.clients_mutex.lock();
             defer self.clients_mutex.unlock();
 
             // Check for existing client with same ID (kick old)
             if (self.clients.get(client_id)) |old_handle| {
-                old_handle.active = false; // Signal old client loop to stop
-                // Old cleanup will happen via defer in the old connection's handler
+                old_handle.active = false;
                 old_handle.generation +%= 1;
                 old_handle.transport = transport;
                 old_handle.active = true;
-
                 return old_handle;
             }
 
             // New client
-            const handle = self.allocator.create(ClientHandle) catch return undefined;
-            handle.* = .{};
+            const handle = self.allocator.create(ClientHandle) catch return null;
+            handle.* = .{ .alloc = self.allocator };
             handle.setClientId(client_id);
             handle.transport = transport;
             handle.active = true;
@@ -762,7 +774,6 @@ pub fn Broker(comptime Transport: type) type {
                 self.allocator.free(key_dup);
             };
 
-            // Init subscription tracking
             const key_dup2 = self.allocator.dupe(u8, client_id) catch return handle;
             self.client_subscriptions.put(key_dup2, .empty) catch {
                 self.allocator.free(key_dup2);
@@ -771,8 +782,8 @@ pub fn Broker(comptime Transport: type) type {
             return handle;
         }
 
-        fn cleanupClient(self: *Self, handle: *ClientHandle, username: []const u8) void {
-            self.publishSysDisconnected(handle.clientId(), username);
+        fn cleanupClient(self: *Self, handle: *ClientHandle) void {
+            self.publishSysDisconnected(handle.clientId(), handle.username());
             handle.write_mutex.lock();
             handle.active = false;
             handle.transport = null;
