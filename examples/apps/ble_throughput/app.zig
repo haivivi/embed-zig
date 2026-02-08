@@ -18,9 +18,12 @@
 const std = @import("std");
 const esp = @import("esp");
 const bluetooth = @import("bluetooth");
+const cancellation = @import("cancellation");
+const waitgroup = @import("waitgroup");
 
 const idf = esp.idf;
 const bt = idf.bt;
+const heap = idf.heap;
 const hci_cmds = bluetooth.hci.commands;
 const hci_events = bluetooth.hci.events;
 const hci = bluetooth.hci;
@@ -28,6 +31,9 @@ const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const acl = bluetooth.hci.acl;
+
+const EspRt = idf.runtime;
+const WG = waitgroup.WaitGroup(EspRt);
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
@@ -52,6 +58,9 @@ const DLE_TX_TIME: u16 = 2120;
 
 /// Payload size per ATT PDU: MTU - 3 (ATT header: opcode + handle)
 const ATT_PAYLOAD_SIZE = TARGET_MTU - 3;
+
+/// Initial ACL buffer slots (from LE Read Buffer Size — we got 12 in smoke test)
+const INITIAL_ACL_SLOTS: u32 = 12;
 
 /// Duration of each throughput round (milliseconds)
 const ROUND_DURATION_MS: u64 = 10_000;
@@ -509,139 +518,258 @@ fn upgradePhy(conn_handle: u16) bool {
 // Shared: Throughput Test
 // ============================================================================
 
-fn runThroughputTest(conn_handle: u16, phy_label: []const u8) void {
-    log.info("", .{});
-    log.info("=== Throughput Test: {s} ({} seconds) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
+// ============================================================================
+// Throughput Test Context (shared between TX and RX tasks)
+// ============================================================================
 
-    var tx_bytes: u64 = 0;
-    var tx_packets: u64 = 0;
-    var rx_bytes: u64 = 0;
-    var rx_packets: u64 = 0;
+const ThroughputCtx = struct {
+    conn_handle: u16,
+    cancel: cancellation.CancellationToken,
 
-    const start_time = idf.time.nowMs();
-    var last_stats_time = start_time;
+    // TX stats (written by TX task, read by main) — u32 for Xtensa atomic support
+    tx_bytes: std.atomic.Value(u32),
+    tx_packets: std.atomic.Value(u32),
 
-    // Build a TX payload (fill with pattern)
-    var tx_payload: [ATT_PAYLOAD_SIZE]u8 = undefined;
-    for (&tx_payload, 0..) |*b, i| {
-        b.* = @truncate(i);
-    }
+    // RX stats (written by RX task, read by main)
+    rx_bytes: std.atomic.Value(u32),
+    rx_packets: std.atomic.Value(u32),
 
-    // Build ATT Write Without Response PDU
-    var att_pdu: [att.MAX_PDU_LEN]u8 = undefined;
-    att_pdu[0] = @intFromEnum(att.Opcode.write_command); // Write Without Response
-    std.mem.writeInt(u16, att_pdu[1..3], THROUGHPUT_HANDLE, .little);
-    @memcpy(att_pdu[3..][0..ATT_PAYLOAD_SIZE], &tx_payload);
-    const att_pdu_len = 3 + ATT_PAYLOAD_SIZE;
+    // HCI ACL flow control: available buffer slots in controller
+    // Initialized from LE_Read_Buffer_Size (typically 12)
+    // TX task decrements per ACL fragment sent
+    // RX task increments when Number_of_Completed_Packets event received
+    acl_slots: std.atomic.Value(u32),
 
-    // Build L2CAP + ACL framed packet for TX
-    // L2CAP header: [length(2)][CID(2)]
-    var l2cap_pkt: [520]u8 = undefined;
-    std.mem.writeInt(u16, l2cap_pkt[0..2], @intCast(att_pdu_len), .little);
-    std.mem.writeInt(u16, l2cap_pkt[2..4], l2cap.CID_ATT, .little);
-    @memcpy(l2cap_pkt[4..][0..att_pdu_len], att_pdu[0..att_pdu_len]);
-    const l2cap_total = 4 + att_pdu_len;
+    // NCP events received (diagnostic)
+    ncp_events: std.atomic.Value(u32),
 
-    // Fragment into ACL packets
-    var acl_pkts: [4][acl.MAX_PACKET_LEN]u8 = undefined;
-    var acl_lens: [4]usize = undefined;
-    var num_frags: usize = 0;
-    {
+    // Pre-built ACL fragments for TX
+    acl_pkts: [4][acl.MAX_PACKET_LEN]u8,
+    acl_lens: [4]usize,
+    num_frags: usize,
+
+    fn init(conn_handle: u16, initial_acl_slots: u32) ThroughputCtx {
+        var ctx = ThroughputCtx{
+            .conn_handle = conn_handle,
+            .cancel = cancellation.CancellationToken.init(),
+            .tx_bytes = std.atomic.Value(u32).init(0),
+            .tx_packets = std.atomic.Value(u32).init(0),
+            .rx_bytes = std.atomic.Value(u32).init(0),
+            .rx_packets = std.atomic.Value(u32).init(0),
+            .acl_slots = std.atomic.Value(u32).init(initial_acl_slots),
+            .ncp_events = std.atomic.Value(u32).init(0),
+            .acl_pkts = undefined,
+            .acl_lens = undefined,
+            .num_frags = 0,
+        };
+
+        // Build ATT Write Without Response PDU
+        var att_pdu: [att.MAX_PDU_LEN]u8 = undefined;
+        att_pdu[0] = @intFromEnum(att.Opcode.write_command);
+        std.mem.writeInt(u16, att_pdu[1..3], THROUGHPUT_HANDLE, .little);
+        const att_pdu_len = 3 + ATT_PAYLOAD_SIZE;
+        // Fill payload with pattern
+        for (3..att_pdu_len) |i| {
+            att_pdu[i] = @truncate(i);
+        }
+
+        // Build L2CAP frame
+        var l2cap_pkt: [520]u8 = undefined;
+        std.mem.writeInt(u16, l2cap_pkt[0..2], @intCast(att_pdu_len), .little);
+        std.mem.writeInt(u16, l2cap_pkt[2..4], l2cap.CID_ATT, .little);
+        @memcpy(l2cap_pkt[4..][0..att_pdu_len], att_pdu[0..att_pdu_len]);
+        const l2cap_total = 4 + att_pdu_len;
+
+        // Fragment into ACL packets
         var offset: usize = 0;
         var first = true;
         while (offset < l2cap_total) {
             const chunk_len = @min(l2cap_total - offset, DLE_TX_OCTETS);
             const pb_flag: acl.PBFlag = if (first) .first_auto_flush else .continuing;
-
             const frag = acl.encode(
-                &acl_pkts[num_frags],
+                &ctx.acl_pkts[ctx.num_frags],
                 conn_handle,
                 pb_flag,
                 l2cap_pkt[offset..][0..chunk_len],
             );
-            acl_lens[num_frags] = frag.len;
-            num_frags += 1;
+            ctx.acl_lens[ctx.num_frags] = frag.len;
+            ctx.num_frags += 1;
             offset += chunk_len;
             first = false;
         }
+
+        return ctx;
     }
+};
 
-    log.info("TX PDU: {} bytes ATT payload, {} ACL fragments", .{ ATT_PAYLOAD_SIZE, num_frags });
+// ============================================================================
+// TX Task — runs in its own FreeRTOS task
+// ============================================================================
 
+fn txTaskFn(raw_ctx: ?*anyopaque) void {
+    const ctx: *ThroughputCtx = @ptrCast(@alignCast(raw_ctx));
+
+    while (!ctx.cancel.isCancelled()) {
+        // Send all fragments of one PDU
+        var ok = true;
+        for (0..ctx.num_frags) |i| {
+            // HCI ACL flow control: wait until controller has free buffer slots
+            while (ctx.acl_slots.load(.acquire) == 0 and !ctx.cancel.isCancelled()) {
+                idf.rtos.delayMs(1); // Yield, wait for NCP event to free slots
+            }
+            if (ctx.cancel.isCancelled()) break;
+
+            // Also check VHCI transport readiness
+            while (!bt.canSend() and !ctx.cancel.isCancelled()) {
+                idf.rtos.delayMs(0);
+            }
+            if (ctx.cancel.isCancelled()) break;
+
+            _ = bt.send(ctx.acl_pkts[i][0..ctx.acl_lens[i]]) catch {
+                ok = false;
+                break;
+            };
+
+            // Decrement available ACL slots (one slot per ACL fragment)
+            _ = ctx.acl_slots.fetchSub(1, .release);
+        }
+
+        if (ok) {
+            _ = ctx.tx_bytes.fetchAdd(ATT_PAYLOAD_SIZE, .monotonic);
+            _ = ctx.tx_packets.fetchAdd(1, .monotonic);
+        }
+    }
+}
+
+// ============================================================================
+// RX Task — runs in its own FreeRTOS task
+// ============================================================================
+
+fn rxTaskFn(raw_ctx: ?*anyopaque) void {
+    const ctx: *ThroughputCtx = @ptrCast(@alignCast(raw_ctx));
     var resp_buf: [512]u8 = undefined;
 
-    while (idf.time.nowMs() - start_time < ROUND_DURATION_MS) {
-        // --- TX: send all fragments of one PDU ---
-        var tx_ok = true;
-        for (0..num_frags) |i| {
-            if (bt.canSend()) {
-                _ = bt.send(acl_pkts[i][0..acl_lens[i]]) catch {
-                    tx_ok = false;
-                    break;
-                };
-            } else {
-                tx_ok = false;
-                break;
-            }
-        }
-        if (tx_ok) {
-            tx_bytes += ATT_PAYLOAD_SIZE;
-            tx_packets += 1;
-        }
+    while (!ctx.cancel.isCancelled()) {
+        // Block until data arrives (100ms timeout to check cancel)
+        if (!bt.waitForData(100)) continue;
 
-        // --- RX: drain all available data ---
+        // Drain all available packets
         while (bt.hasData()) {
             const n = bt.recv(&resp_buf) catch break;
             if (n == 0) break;
 
             if (resp_buf[0] == @intFromEnum(hci.PacketType.acl_data) and n > 1) {
-                // Count ACL data received (approximate: count L2CAP payload)
-                const acl_hdr = acl.parseHeader(resp_buf[1..n]) orelse continue;
-                rx_bytes += acl_hdr.data_len;
-                rx_packets += 1;
-            } else if (resp_buf[0] == @intFromEnum(hci.PacketType.event)) {
-                // Handle events (DLE change, PHY update, etc.)
+                // ACL data from remote peer
+                if (acl.parseHeader(resp_buf[1..n])) |acl_hdr| {
+                    _ = ctx.rx_bytes.fetchAdd(acl_hdr.data_len, .monotonic);
+                    _ = ctx.rx_packets.fetchAdd(1, .monotonic);
+                }
+            } else if (resp_buf[0] == @intFromEnum(hci.PacketType.event) and n > 1) {
+                // HCI event — check for Number_of_Completed_Packets
                 if (hci_events.decode(resp_buf[1..n])) |evt| {
                     switch (evt) {
-                        .le_data_length_change => |dl| {
-                            log.info("  [event] DLE changed: TX={}/{}us RX={}/{}us", .{
-                                dl.max_tx_octets, dl.max_tx_time,
-                                dl.max_rx_octets, dl.max_rx_time,
-                            });
+                        .num_completed_packets => |ncp| {
+                            // Parse completed packet counts and free ACL slots
+                            // Format: [num_handles(1)][handle(2)+count(2)] * num_handles
+                            var total_completed: u32 = 0;
+                            var offset: usize = 0;
+                            var remaining = ncp.num_handles;
+                            while (remaining > 0 and offset + 4 <= ncp.data.len) : (remaining -= 1) {
+                                // Skip handle (2 bytes), read count (2 bytes)
+                                const count = std.mem.readInt(u16, ncp.data[offset + 2 ..][0..2], .little);
+                                total_completed += count;
+                                offset += 4;
+                            }
+                            if (total_completed > 0) {
+                                _ = ctx.acl_slots.fetchAdd(total_completed, .release);
+                                _ = ctx.ncp_events.fetchAdd(1, .monotonic);
+                            }
                         },
-                        .le_phy_update_complete => |pu| {
-                            log.info("  [event] PHY updated: TX={} RX={}", .{ pu.tx_phy, pu.rx_phy });
-                        },
-                        .num_completed_packets => {}, // flow control, ignore for now
-                        else => {},
+                        else => {}, // Other events silently consumed
                     }
                 }
             }
         }
+    }
+}
 
-        // --- Stats: print every second ---
+// ============================================================================
+// Throughput Test — spawns TX + RX as separate FreeRTOS tasks
+// ============================================================================
+
+fn runThroughputTest(conn_handle: u16, phy_label: []const u8) void {
+    log.info("", .{});
+    log.info("=== Throughput Test: {s} ({} seconds) ===", .{ phy_label, ROUND_DURATION_MS / 1000 });
+
+    var ctx = ThroughputCtx.init(conn_handle, INITIAL_ACL_SLOTS);
+    log.info("TX PDU: {} bytes ATT payload, {} ACL fragments", .{ ATT_PAYLOAD_SIZE, ctx.num_frags });
+    log.info("Architecture: TX task + RX task (dual FreeRTOS tasks)", .{});
+    log.info("HCI ACL flow control: {} initial slots", .{INITIAL_ACL_SLOTS});
+
+    // Spawn TX and RX tasks via WaitGroup
+    var wg = WG.init(heap.iram);
+    defer wg.deinit();
+
+    wg.go("ble-tx", txTaskFn, &ctx, .{
+        .stack_size = 8192,
+        .priority = 18,
+        .allocator = heap.iram,
+    }) catch {
+        log.err("Failed to spawn TX task", .{});
+        return;
+    };
+
+    wg.go("ble-rx", rxTaskFn, &ctx, .{
+        .stack_size = 8192,
+        .priority = 19, // RX slightly higher priority than TX
+        .allocator = heap.iram,
+    }) catch {
+        log.err("Failed to spawn RX task", .{});
+        ctx.cancel.cancel();
+        wg.wait();
+        return;
+    };
+
+    // Main thread: print stats every second, then stop after duration
+    const start_time = idf.time.nowMs();
+    var last_stats_time = start_time;
+
+    while (idf.time.nowMs() - start_time < ROUND_DURATION_MS) {
+        idf.time.sleepMs(100);
+
         const now = idf.time.nowMs();
         if (now - last_stats_time >= STATS_INTERVAL_MS) {
             const elapsed_s = @as(f32, @floatFromInt(now - start_time)) / 1000.0;
-            const tx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(tx_bytes)) / 1024.0 / elapsed_s else 0;
-            const rx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(rx_bytes)) / 1024.0 / elapsed_s else 0;
-            log.info("[{d:.0}s] TX: {d:.1} KB/s ({} pkts) | RX: {d:.1} KB/s ({} pkts)", .{
-                elapsed_s, tx_kbs, tx_packets, rx_kbs, rx_packets,
+            const tx_b = ctx.tx_bytes.load(.monotonic);
+            const tx_p = ctx.tx_packets.load(.monotonic);
+            const rx_b = ctx.rx_bytes.load(.monotonic);
+            const rx_p = ctx.rx_packets.load(.monotonic);
+            const tx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(tx_b)) / 1024.0 / elapsed_s else 0;
+            const rx_kbs = if (elapsed_s > 0) @as(f32, @floatFromInt(rx_b)) / 1024.0 / elapsed_s else 0;
+            const slots = ctx.acl_slots.load(.monotonic);
+            const ncps = ctx.ncp_events.load(.monotonic);
+            log.info("[{d:.0}s] TX: {d:.1} KB/s ({} pkts) | RX: {d:.1} KB/s ({} pkts) | slots={} ncp={}", .{
+                elapsed_s, tx_kbs, tx_p, rx_kbs, rx_p, slots, ncps,
             });
             last_stats_time = now;
         }
-
-        // Small yield to avoid starving other tasks
-        idf.time.sleepMs(1);
     }
+
+    // Stop tasks
+    ctx.cancel.cancel();
+    wg.wait();
 
     // Final summary
     const total_s = @as(f32, @floatFromInt(ROUND_DURATION_MS)) / 1000.0;
-    const final_tx_kbs = @as(f32, @floatFromInt(tx_bytes)) / 1024.0 / total_s;
-    const final_rx_kbs = @as(f32, @floatFromInt(rx_bytes)) / 1024.0 / total_s;
+    const tx_b = ctx.tx_bytes.load(.monotonic);
+    const tx_p = ctx.tx_packets.load(.monotonic);
+    const rx_b = ctx.rx_bytes.load(.monotonic);
+    const rx_p = ctx.rx_packets.load(.monotonic);
+    const final_tx_kbs = @as(f32, @floatFromInt(tx_b)) / 1024.0 / total_s;
+    const final_rx_kbs = @as(f32, @floatFromInt(rx_b)) / 1024.0 / total_s;
     log.info("--- {s} Summary ---", .{phy_label});
-    log.info("TX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_tx_kbs, tx_bytes, tx_packets });
-    log.info("RX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_rx_kbs, rx_bytes, rx_packets });
+    log.info("TX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_tx_kbs, tx_b, tx_p });
+    log.info("RX: {d:.1} KB/s avg ({} bytes, {} packets)", .{ final_rx_kbs, rx_b, rx_p });
     log.info("", .{});
 }
 
