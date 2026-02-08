@@ -1,7 +1,45 @@
-# ESP platform — file copying only (compiled via esp_zig_app + CMake, not Bazel-native zig)
+# ESP platform — source files only
+#
+# This package does NOT compile as a standalone zig_library.
+# Each app creates its own "esp" zig_library with app-specific sdkconfig.h:
+#
+#   esp_configure(name = "config", sdkconfig = "...")
+#   zig_library(
+#       name = "esp",
+#       main = "//lib/platform/esp:src/esp.zig",
+#       srcs = ["//lib/platform/esp:all_zig_srcs"],
+#       c_srcs = ["//lib/platform/esp/idf:c_srcs", ":config"],
+#       deps = ["//lib/trait", "//lib/hal", "//lib/pkg/drivers"],
+#       link_libc = True,
+#   )
 
 package(default_visibility = ["//visibility:public"])
 
+# Root module source
+exports_files(["src/esp.zig"])
+
+# All Zig sources (esp + idf + impl + boards)
+filegroup(
+    name = "all_zig_srcs",
+    srcs = glob(["src/**/*.zig"]) + [
+        "//lib/platform/esp/idf:zig_srcs",
+        "//lib/platform/esp/impl:zig_srcs",
+    ],
+)
+
+# C sources from idf (re-export for convenience)
+filegroup(
+    name = "c_srcs",
+    srcs = ["//lib/platform/esp/idf:c_srcs"],
+)
+
+# CMake files from idf (for esp_zig_app extra_cmake)
+filegroup(
+    name = "cmake_files",
+    srcs = ["//lib/platform/esp/idf:cmake_files"],
+)
+
+# All files (backward compat for _libs filegroup)
 filegroup(
     name = "esp",
     srcs = glob(["**/*"], exclude = ["idf/**", "impl/**"]) + [

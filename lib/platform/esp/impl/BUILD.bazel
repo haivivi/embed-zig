@@ -1,22 +1,19 @@
-# ESP trait + hal implementations
+# ESP trait + hal implementations — source files only
+#
+# Compiled as part of per-app esp zig_library (needs sdkconfig.h from idf).
 
 package(default_visibility = ["//visibility:public"])
 
-# Default target: all files (for zig_lib deps)
+filegroup(
+    name = "zig_srcs",
+    srcs = glob(["src/**/*.zig"]),
+)
+
+# All files (backward compat)
 filegroup(
     name = "impl",
     srcs = glob(
         ["**/*"],
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
-)
-
-# Legacy target (for backward compatibility)
-filegroup(
-    name = "impl_sources",
-    srcs = glob(
-        ["**/*.zig", "**/*.zon"],
-        allow_empty = True,
         exclude = [".zig-cache/**", "zig-out/**"],
     ),
 )
