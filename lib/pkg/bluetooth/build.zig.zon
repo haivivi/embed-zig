@@ -1,0 +1,11 @@
+.{
+    .name = .bluetooth,
+    .version = "0.1.0",
+    .fingerprint = 0xb1e57ac4deaf1234,
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
