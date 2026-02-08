@@ -76,6 +76,8 @@ pub const Bandwidth = enum(c_int) {
 pub const Encoder = struct {
     handle: *c.OpusEncoder,
     mem: []align(16) u8,
+    sample_rate: u32,
+    channels: u8,
 
     const Self = @This();
 
@@ -93,7 +95,13 @@ pub const Encoder = struct {
         const handle: *c.OpusEncoder = @ptrCast(mem.ptr);
         try checkError(c.opus_encoder_init(handle, @intCast(sample_rate), @intCast(channels), @intFromEnum(application)));
 
-        return .{ .handle = handle, .mem = mem };
+        return .{ .handle = handle, .mem = mem, .sample_rate = sample_rate, .channels = channels };
+    }
+
+    /// Samples per frame for a given duration (ms).
+    /// Common: 20ms @ 16kHz = 320 samples.
+    pub fn frameSizeForMs(self: *const Self, ms: u32) u32 {
+        return self.sample_rate * ms / 1000;
     }
 
     /// Free encoder memory.
@@ -154,6 +162,8 @@ pub const Encoder = struct {
 pub const Decoder = struct {
     handle: *c.OpusDecoder,
     mem: []align(16) u8,
+    sample_rate: u32,
+    channels: u8,
 
     const Self = @This();
 
@@ -171,7 +181,12 @@ pub const Decoder = struct {
         const handle: *c.OpusDecoder = @ptrCast(mem.ptr);
         try checkError(c.opus_decoder_init(handle, @intCast(sample_rate), @intCast(channels)));
 
-        return .{ .handle = handle, .mem = mem };
+        return .{ .handle = handle, .mem = mem, .sample_rate = sample_rate, .channels = channels };
+    }
+
+    /// Samples per frame for a given duration (ms).
+    pub fn frameSizeForMs(self: *const Self, ms: u32) u32 {
+        return self.sample_rate * ms / 1000;
     }
 
     /// Free decoder memory.
