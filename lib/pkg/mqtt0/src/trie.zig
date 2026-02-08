@@ -89,6 +89,26 @@ pub fn Trie(comptime T: type) type {
             return removeAt(self.root, pattern, predicate);
         }
 
+        /// Remove values matching a contextual predicate (supports pointer comparison).
+        pub fn removeCtx(
+            self: *Self,
+            pattern: []const u8,
+            ctx: *anyopaque,
+            predicate: *const fn (*anyopaque, T) bool,
+        ) bool {
+            return removeAtCtx(self.root, pattern, ctx, predicate);
+        }
+
+        /// Remove a specific value by equality (pointer comparison for pointer types).
+        pub fn removeValue(self: *Self, pattern: []const u8, value: T) bool {
+            return self.removeCtx(pattern, @ptrCast(@constCast(&value)), struct {
+                fn pred(raw_ctx: *anyopaque, v: T) bool {
+                    const expected: *const T = @ptrCast(@alignCast(raw_ctx));
+                    return v == expected.*;
+                }
+            }.pred);
+        }
+
         // ====================================================================
         // Private
         // ====================================================================
@@ -135,6 +155,43 @@ pub fn Trie(comptime T: type) type {
                     try self.insertAt(child, rest, value);
                 }
             }
+        }
+
+        fn removeAtCtx(node: *Node, pattern: []const u8, ctx: *anyopaque, predicate: *const fn (*anyopaque, T) bool) bool {
+            if (pattern.len == 0) {
+                const before = node.values.items.len;
+                var i: usize = 0;
+                while (i < node.values.items.len) {
+                    if (predicate(ctx, node.values.items[i])) {
+                        _ = node.values.orderedRemove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+                return node.values.items.len < before;
+            }
+            const sep = std.mem.indexOfScalar(u8, pattern, '/');
+            const first = if (sep) |s| pattern[0..s] else pattern;
+            const rest = if (sep) |s| pattern[s + 1 ..] else "";
+            if (std.mem.eql(u8, first, "+")) {
+                if (node.match_any) |child| return removeAtCtx(child, rest, ctx, predicate);
+            } else if (std.mem.eql(u8, first, "#")) {
+                if (node.match_all) |child| {
+                    const before = child.values.items.len;
+                    var i: usize = 0;
+                    while (i < child.values.items.len) {
+                        if (predicate(ctx, child.values.items[i])) {
+                            _ = child.values.orderedRemove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    return child.values.items.len < before;
+                }
+            } else {
+                if (node.children.get(first)) |child| return removeAtCtx(child, rest, ctx, predicate);
+            }
+            return false;
         }
 
         fn removeAt(node: *Node, pattern: []const u8, predicate: *const fn (T) bool) bool {

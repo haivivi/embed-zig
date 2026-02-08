@@ -468,6 +468,41 @@ pub fn Broker(comptime Transport: type) type {
                         }) catch continue;
                         pkt.writeAll(transport, buf[0..sa_len]) catch return;
                     },
+                    .unsubscribe => {
+                        const payload = buf[hdr.header_len..pkt_len];
+                        var uoff: usize = 0;
+                        const upid = pkt.decodeU16(payload[uoff..]) catch continue;
+                        uoff += 2;
+                        const upr = v5.decodeProperties(payload[uoff..]) catch continue;
+                        uoff += upr.len;
+
+                        var ucodes: [64]pkt.ReasonCode = undefined;
+                        var ucode_count: usize = 0;
+                        while (uoff < payload.len) {
+                            const r = pkt.decodeString(payload[uoff..]) catch break;
+                            uoff += r.len;
+                            self.handleUnsubscribe(handle, r.str);
+                            ucodes[ucode_count] = .success;
+                            ucode_count += 1;
+                        }
+                        // Send v5 UNSUBACK (not yet implemented in v5 codec, send empty)
+                        // For now, send a minimal response
+                        var unsub_buf: [64]u8 = undefined;
+                        // UNSUBACK: fixed header + packet id + properties(0) + reason codes
+                        var uo: usize = 0;
+                        unsub_buf[uo] = (@as(u8, @intFromEnum(pkt.PacketType.unsuback)) << 4);
+                        uo += 1;
+                        const unsub_remaining: u32 = @truncate(2 + 1 + ucode_count);
+                        uo += pkt.encodeVariableInt(unsub_buf[uo..], unsub_remaining) catch continue;
+                        uo += pkt.encodeU16(unsub_buf[uo..], upid) catch continue;
+                        unsub_buf[uo] = 0; // empty properties
+                        uo += 1;
+                        for (ucodes[0..ucode_count]) |rc| {
+                            unsub_buf[uo] = @intFromEnum(rc);
+                            uo += 1;
+                        }
+                        pkt.writeAll(transport, unsub_buf[0..uo]) catch return;
+                    },
                     .pingreq => {
                         const resp_len = v5.encodePingResp(buf) catch continue;
                         pkt.writeAll(transport, buf[0..resp_len]) catch return;
@@ -611,7 +646,6 @@ pub fn Broker(comptime Transport: type) type {
             const shared = parseSharedTopic(topic);
 
             if (shared) |s| {
-                // Remove from shared group
                 self.sub_mutex.lock();
                 if (self.shared_trie.match(s.actual_topic)) |groups| {
                     for (groups) |sg| {
@@ -623,13 +657,9 @@ pub fn Broker(comptime Transport: type) type {
                 }
                 self.sub_mutex.unlock();
             } else {
-                // Remove from normal trie
+                // Remove only this client's subscription (pointer comparison)
                 self.sub_mutex.lock();
-                _ = self.subscriptions.remove(topic, &struct {
-                    fn pred(_: *ClientHandle) bool {
-                        return true;
-                    }
-                }.pred);
+                _ = self.subscriptions.removeValue(topic, handle);
                 self.sub_mutex.unlock();
             }
 
@@ -746,7 +776,6 @@ pub fn Broker(comptime Transport: type) type {
                 for (subs.items) |topic| {
                     const shared = parseSharedTopic(topic);
                     if (shared) |s| {
-                        // Remove from shared group
                         if (self.shared_trie.match(s.actual_topic)) |groups| {
                             for (groups) |sg| {
                                 if (std.mem.eql(u8, sg.groupName(), s.group)) {
@@ -756,12 +785,8 @@ pub fn Broker(comptime Transport: type) type {
                             }
                         }
                     } else {
-                        // Remove from normal trie
-                        _ = self.subscriptions.remove(topic, &struct {
-                            fn pred(_: *ClientHandle) bool {
-                                return true;
-                            }
-                        }.pred);
+                        // Pointer comparison: only remove this client's entry
+                        _ = self.subscriptions.removeValue(topic, handle);
                     }
                     self.allocator.free(topic);
                 }
