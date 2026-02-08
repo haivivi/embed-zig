@@ -239,6 +239,186 @@ esp_idf_app = rule(
 )
 
 # =============================================================================
+# esp_configure - Run CMake configure to generate sdkconfig.h + extract include dirs
+# =============================================================================
+
+def _esp_configure_impl(ctx):
+    """Run ESP-IDF CMake configure to generate sdkconfig.h.
+    
+    Creates a minimal ESP-IDF project, runs idf.py set-target + reconfigure,
+    and outputs the generated config directory (containing sdkconfig.h).
+    
+    This is a per-app target — different apps with different sdkconfig get
+    different configure outputs. The output is cached by Bazel.
+    """
+    
+    # Output: directory containing sdkconfig.h
+    config_dir = ctx.actions.declare_directory(ctx.label.name + "_config")
+    # Output: file listing all IDF include directories (one per line)
+    include_dirs_file = ctx.actions.declare_file(ctx.label.name + "_include_dirs.txt")
+    
+    # Get sdkconfig file
+    sdkconfig_file = ctx.file.sdkconfig
+    
+    # Get chip from sdkconfig content (parsed at execution time)
+    # IDF component manager dependencies
+    idf_deps_yml = ""
+    for dep in ctx.attr.idf_deps:
+        parts = dep.split(":")
+        if len(parts) == 2:
+            idf_deps_yml += '  {}: "{}"\n'.format(parts[0], parts[1])
+        else:
+            idf_deps_yml += '  {}: "*"\n'.format(dep)
+    
+    # ESP-IDF requires
+    requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "freertos"
+    
+    # Script files for common.sh
+    script_files = ctx.attr._scripts.files.to_list()
+    
+    # Build the configure script
+    configure_script = ctx.actions.declare_file(ctx.label.name + "_configure.sh")
+    
+    script_content = """#!/bin/bash
+set -e
+export ESP_BAZEL_RUN=1
+
+# Setup
+WORK=$(mktemp -d) && trap "rm -rf $WORK" EXIT
+mkdir -p "$WORK/project/main"
+
+# Generate minimal CMakeLists.txt
+cat > "$WORK/project/CMakeLists.txt" << 'EOF'
+cmake_minimum_required(VERSION 3.16)
+include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
+project(esp_configure)
+EOF
+
+# Generate main component
+cat > "$WORK/project/main/CMakeLists.txt" << 'EOF'
+idf_component_register(
+    SRCS "main.c"
+    REQUIRES {requires}
+)
+EOF
+
+cat > "$WORK/project/main/main.c" << 'EOF'
+void app_main(void) {{}}
+EOF
+
+# Generate idf_component.yml if needed
+{idf_component_yml}
+
+# Copy sdkconfig
+cp "{sdkconfig_path}" "$WORK/project/sdkconfig.defaults"
+
+# Source common functions and setup IDF
+source "{common_sh}"
+setup_home
+setup_idf_env
+
+if ! command -v idf.py &> /dev/null; then
+    echo "[esp_configure] Error: idf.py not found"
+    exit 1
+fi
+
+# Extract chip type from sdkconfig
+cd "$WORK/project"
+ESP_CHIP=$(grep -E '^CONFIG_IDF_TARGET=' sdkconfig.defaults | sed 's/CONFIG_IDF_TARGET="\\(.*\\)"/\\1/' | head -1)
+if [ -z "$ESP_CHIP" ]; then
+    echo "[esp_configure] Error: CONFIG_IDF_TARGET not found"
+    exit 1
+fi
+echo "[esp_configure] Chip: $ESP_CHIP"
+
+# Run configure only (no build)
+idf.py set-target "$ESP_CHIP"
+idf.py reconfigure
+
+# Copy generated config directory (contains sdkconfig.h)
+cp -r "$WORK/project/build/config/." "{config_dir}"
+
+# Extract include directories from CMake
+# Parse compile_commands.json or use cmake --build to get includes
+# Simpler: list the standard IDF component include paths
+echo "[esp_configure] Extracting include directories..."
+cat > "{include_dirs_file}" << 'IDEOF'
+IDEOF
+
+# Get include dirs from the CMake cache
+cmake -L "$WORK/project/build" 2>/dev/null | grep -E '_INCLUDE_DIRS|_DIR' | while IFS='=' read -r key value; do
+    echo "$value" >> "{include_dirs_file}"
+done
+
+# Also add the standard paths that are always needed
+echo "{config_dir}" >> "{include_dirs_file}"
+echo "$IDF_PATH/components/esp_common/include" >> "{include_dirs_file}"
+echo "$IDF_PATH/components/esp_system/include" >> "{include_dirs_file}"
+
+echo "[esp_configure] Done. Config at {config_dir}"
+""".format(
+        requires = requires,
+        sdkconfig_path = sdkconfig_file.path,
+        config_dir = config_dir.path,
+        include_dirs_file = include_dirs_file.path,
+        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        idf_component_yml = """
+cat > "$WORK/project/main/idf_component.yml" << 'COMPEOF'
+dependencies:
+{deps}COMPEOF
+""".format(deps = idf_deps_yml) if idf_deps_yml else "",
+    )
+    
+    ctx.actions.write(
+        output = configure_script,
+        content = script_content,
+        is_executable = True,
+    )
+    
+    ctx.actions.run_shell(
+        command = configure_script.path,
+        inputs = [sdkconfig_file, configure_script] + script_files,
+        outputs = [config_dir, include_dirs_file],
+        execution_requirements = {
+            "local": "1",
+            "requires-network": "1",
+        },
+        mnemonic = "EspConfigure",
+        progress_message = "ESP-IDF configure %s" % ctx.label,
+        use_default_shell_env = True,
+    )
+    
+    return [DefaultInfo(files = depset([config_dir, include_dirs_file]))]
+
+esp_configure = rule(
+    implementation = _esp_configure_impl,
+    attrs = {
+        "sdkconfig": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "sdkconfig target (from esp_sdkconfig rule)",
+        ),
+        "requires": attr.string_list(
+            default = ["freertos"],
+            doc = "ESP-IDF component requirements for configure",
+        ),
+        "idf_deps": attr.string_list(
+            default = [],
+            doc = "IDF component manager dependencies",
+        ),
+        "_scripts": attr.label(
+            default = _SCRIPTS_LABEL,
+        ),
+    },
+    doc = """Run ESP-IDF CMake configure to generate sdkconfig.h.
+    
+    Per-app target. Output is a directory containing sdkconfig.h and
+    a file listing IDF include directories. Used by zig_library for
+    lib/platform/esp/idf compilation.
+    """,
+)
+
+# =============================================================================
 # esp_zig_app - Build ESP-IDF project from app (generates shell automatically)
 # =============================================================================
 
