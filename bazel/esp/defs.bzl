@@ -716,7 +716,7 @@ MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
 MOD_ARGS=$(cat zig_module_args.txt 2>/dev/null | tr '\n' ' ')
 LIB_ARGS=$(cat zig_lib_a_args.txt 2>/dev/null | tr '\n' ' ')
 
-echo "[zig] build-lib target=$ZIG_TARGET_ARCH cpu=$ZIG_CPU"
+echo "[zig] build-lib target=$ZIG_TARGET_ARCH cpu=$ZIG_CPU ESP_I_len=${#ESP_I}"
 $ZIG_BIN build-lib \
     -lc $ESP_I $MAIN_ARGS $MOD_ARGS $LIB_ARGS \
     -target $ZIG_TARGET_ARCH -Dcpu=$ZIG_CPU -O$ZIG_OPT \
