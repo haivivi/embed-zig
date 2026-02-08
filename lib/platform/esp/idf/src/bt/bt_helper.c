@@ -22,6 +22,7 @@
 #include <string.h>
 #include "esp_bt.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -185,12 +186,21 @@ int bt_helper_init(void) {
     rx_tail = 0;
     portEXIT_CRITICAL(&rx_lock);
 
+    /* Memory tracking: measure controller cost */
+    size_t free_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "Internal SRAM before controller: %u KB free", (unsigned)(free_before / 1024));
+
     /* 1. Release classic BT memory (we only use BLE) */
     ret = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "BT mem release failed: %s", esp_err_to_name(ret));
         return -1;
     }
+
+    size_t free_after_release = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "Internal SRAM after classic BT release: %u KB free (+%u KB recovered)",
+        (unsigned)(free_after_release / 1024),
+        (unsigned)((free_after_release - free_before) / 1024));
 
     /* 2. Initialize controller with default config */
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -200,6 +210,11 @@ int bt_helper_init(void) {
         return -2;
     }
 
+    size_t free_after_init = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "Internal SRAM after controller init: %u KB free (-%u KB)",
+        (unsigned)(free_after_init / 1024),
+        (unsigned)((free_after_release - free_after_init) / 1024));
+
     /* 3. Enable controller in BLE mode */
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret != ESP_OK) {
@@ -207,6 +222,11 @@ int bt_helper_init(void) {
         esp_bt_controller_deinit();
         return -3;
     }
+
+    size_t free_after_enable = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    ESP_LOGI(TAG, "Internal SRAM after controller enable: %u KB free (-%u KB)",
+        (unsigned)(free_after_enable / 1024),
+        (unsigned)((free_after_init - free_after_enable) / 1024));
 
     /* 4. Register VHCI callbacks */
     ret = esp_vhci_host_register_callback(&vhci_callbacks);
@@ -217,7 +237,11 @@ int bt_helper_init(void) {
         return -4;
     }
 
+    size_t free_final = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     ESP_LOGI(TAG, "BLE controller initialized (VHCI mode)");
+    ESP_LOGI(TAG, "Controller total cost: %u KB Internal SRAM",
+        (unsigned)((free_after_release - free_final) / 1024));
+
     return 0;
 }
 
