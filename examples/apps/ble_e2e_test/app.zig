@@ -309,7 +309,10 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     var chars: [16]gatt_client.DiscoveredCharacteristic = undefined;
     const char_count = host.discoverCharacteristics(conn, svc.start_handle, svc.end_handle, &chars) catch 0;
     log.info("Discovered {} chars in 0xAA00", .{char_count});
-    if (char_count == 4) pass("T19: Exactly 4 characteristics") else fail("T19: Expected 4 chars, got " ++ "");
+    if (char_count == 4) pass("T19: Exactly 4 characteristics") else {
+        log.err("T19: Expected 4 chars, got {}", .{char_count});
+        fail("T19: Characteristic count mismatch");
+    }
 
     // T20-T23: Each characteristic UUID discovered correctly
     var d_read_h: u16 = 0;
