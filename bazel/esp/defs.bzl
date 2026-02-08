@@ -635,6 +635,8 @@ def _esp_zig_app_impl(ctx):
         seen2[mod.name] = True
         esp_include_lines.append("            {name}_mod.addIncludePath(p);".format(name = mod.name))
     esp_include_all_modules = "\n".join(esp_include_lines)
+    # Same but using p2 variable (for IDF component scan section)
+    esp_include_all_modules_idf = "\n".join([l.replace("(p)", "(p2)") for l in esp_include_lines])
     
     # (Old build.zig.zon generation removed — replaced by zig_module_args above)
     
@@ -741,9 +743,9 @@ pub fn build(b: *std.Build) void {{
                     const key = b.dupe(parent);
                     const gop = added.getOrPut(key) catch continue;
                     if (!gop.found_existing) {{
-                        const ip = std.Build.LazyPath{{ .cwd_relative = b.pathJoin(&.{{ comp, parent }}) }};
-                        root_module.addIncludePath(ip);
-{esp_include_all_modules}
+                        const p2 = std.Build.LazyPath{{ .cwd_relative = b.pathJoin(&.{{ comp, parent }}) }};
+                        root_module.addIncludePath(p2);
+{esp_include_all_modules_idf}
                     }}
                 }}
             }}
@@ -916,6 +918,7 @@ exec bash "{build_sh}"
         build_zig_body = build_zig_body,
         main_imports = main_imports,
         esp_include_all_modules = esp_include_all_modules,
+        esp_include_all_modules_idf = esp_include_all_modules_idf,
         idf_deps_yml = idf_deps_yml,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
