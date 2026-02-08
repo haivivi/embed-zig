@@ -78,8 +78,14 @@ var rx_packets: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
 fn writeHandler(req: *gatt.Request, w: *gatt.ResponseWriter) void {
     _ = w;
-    // Count incoming bytes
+    // Count incoming write bytes (server RX)
     _ = rx_bytes.fetchAdd(@intCast(req.data.len), .monotonic);
+    _ = rx_packets.fetchAdd(1, .monotonic);
+}
+
+/// Notification received callback (client RX)
+fn notificationCallback(_: u16, _: u16, data: []const u8) void {
+    _ = rx_bytes.fetchAdd(@intCast(data.len), .monotonic);
     _ = rx_packets.fetchAdd(1, .monotonic);
 }
 
@@ -185,6 +191,9 @@ fn runClient(host: *BleHost) void {
             },
             .connected => |info| {
                 log.info("Connected! handle=0x{X:0>4}", .{info.conn_handle});
+
+                // Register notification callback for RX counting
+                host.setNotificationCallback(notificationCallback);
 
                 // Enable notifications by writing CCCD
                 log.info("Enabling notifications (CCCD handle={})...", .{NOTIFY_CCCD_HANDLE});

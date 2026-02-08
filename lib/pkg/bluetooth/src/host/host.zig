@@ -185,6 +185,9 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
     return struct {
         const Self = @This();
 
+        // Callback type for received notifications/indications.
+        pub const NotificationFn = *const fn (conn_handle: u16, attr_handle: u16, data: []const u8) void;
+
         // ================================================================
         // Core state
         // ================================================================
@@ -211,6 +214,14 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         acl_max_len: u16 = 27,  // from LE_Read_Buffer_Size
         acl_max_slots: u16 = 0, // from LE_Read_Buffer_Size
         bd_addr: hci_mod.BdAddr = .{ 0, 0, 0, 0, 0, 0 }, // from Read_BD_ADDR
+
+        // ================================================================
+        // Callbacks
+        // ================================================================
+
+        /// Notification/Indication received callback (set by app).
+        /// Called from readLoop when a Notification (0x1B) or Indication (0x1D) arrives.
+        on_notification: ?NotificationFn = null,
 
         // ================================================================
         // Buffers (owned by readLoop)
@@ -439,9 +450,14 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             return self.acl_max_len;
         }
 
-        /// Get the device BD_ADDR (read during start).
         pub fn getBdAddr(self: *const Self) hci_mod.BdAddr {
             return self.bd_addr;
+        }
+
+        /// Set callback for received notifications (0x1B) and indications (0x1D).
+        /// The callback is invoked from readLoop context.
+        pub fn setNotificationCallback(self: *Self, cb: NotificationFn) void {
+            self.on_notification = cb;
         }
 
         // ================================================================
@@ -586,7 +602,41 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         };
 
         fn handleAttPdu(self: *Self, sdu: l2cap_mod.Sdu) void {
-            // Copy PDU data (sdu.data points into rx_buf which will be reused)
+            if (sdu.data.len == 0) return;
+
+            // Intercept Notification (0x1B) and Indication (0x1D) before GATT dispatch
+            const opcode = sdu.data[0];
+            if (opcode == @intFromEnum(att_mod.Opcode.handle_value_notification) or
+                opcode == @intFromEnum(att_mod.Opcode.handle_value_indication))
+            {
+                // Parse: [opcode(1)][attr_handle(2)][value...]
+                if (sdu.data.len >= 3) {
+                    const attr_handle = std.mem.readInt(u16, sdu.data[1..3], .little);
+                    const value = if (sdu.data.len > 3) sdu.data[3..] else &[_]u8{};
+
+                    if (self.on_notification) |cb| {
+                        cb(sdu.conn_handle, attr_handle, value);
+                    }
+
+                    // For Indication, auto-send Confirmation (0x1E)
+                    if (opcode == @intFromEnum(att_mod.Opcode.handle_value_indication)) {
+                        const confirm = [_]u8{@intFromEnum(att_mod.Opcode.handle_value_confirmation)};
+                        var frag_buf: [acl_mod.LE_MAX_DATA_LEN + l2cap_mod.HEADER_LEN]u8 = undefined;
+                        var iter = l2cap_mod.fragmentIterator(
+                            &frag_buf,
+                            &confirm,
+                            l2cap_mod.CID_ATT,
+                            sdu.conn_handle,
+                            self.acl_max_len,
+                        );
+                        while (iter.next()) |frag| {
+                            self.tx_queue.trySend(TxPacket.fromSlice(frag)) catch {};
+                        }
+                    }
+                }
+                return; // Don't pass to GATT server
+            }
+
             if (sdu.data.len > att_mod.MAX_PDU_LEN) return;
 
             // Try to spawn async handler task
