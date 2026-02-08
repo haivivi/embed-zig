@@ -580,8 +580,13 @@ def _esp_zig_app_impl(ctx):
         if info.module_name == "idf" and "idf" not in main_dep_names:
             main_dep_names.append("idf")
     
-    # Generate the module args as lines (paths use $E/ placeholder for exec-root)
-    zig_mod_lines = []
+    # Generate build.zig content from ZigModuleInfo
+    # Each module: createModule + addIncludePath (for @cImport) + addImport (deps)
+    # Paths use $E/ placeholder, expanded to exec-root at runtime
+    
+    build_zig_modules = []  # Lines for module creation
+    build_zig_imports = []  # Lines for addImport
+    build_zig_includes = []  # Lines for addIncludePath (per-module C headers)
     needs_libc = False
     seen = {"main": True}
     
@@ -591,30 +596,45 @@ def _esp_zig_app_impl(ctx):
             continue
         seen[mod.name] = True
         
-        for d in mod.dep_names:
-            zig_mod_lines.append("--dep " + d)
-        zig_mod_lines.append("-M{name}=$E/{path}".format(name = mod.name, path = mod.root_path))
+        # createModule
+        build_zig_modules.append(
+            '    const {name}_mod = b.createModule(.{{ .root_source_file = .{{ .cwd_relative = "$E/{path}" }}, .target = target, .optimize = optimize }});'.format(
+                name = mod.name, path = mod.root_path)
+        )
         
+        # addIncludePath for C headers (per-module, for @cImport)
         for inc in mod.c_include_dirs:
-            zig_mod_lines.append("-I $E/" + inc)
+            build_zig_includes.append(
+                '    {name}_mod.addIncludePath(.{{ .cwd_relative = "$E/{inc}" }});'.format(name = mod.name, inc = inc)
+            )
+        
+        # addImport for Zig deps
+        for dep_name in mod.dep_names:
+            build_zig_imports.append(
+                '    {name}_mod.addImport("{dep}", {dep}_mod);'.format(name = mod.name, dep = dep_name)
+            )
         
         if mod.link_libc:
             needs_libc = True
     
-    # NOTE: dep .a libraries are NOT passed for ESP cross-compile.
-    # The Bazel-compiled .a is for HOST (macOS), not xtensa.
-    # Opus C sources are recompiled by zig build-lib for xtensa target.
-    dep_lib_a_lines = []
-    
-    # Main module args (main.zig is generated in WORK, path set at runtime)
-    main_mod_args = ""
+    # Main module imports
+    main_imports = ""
     for d in main_dep_names:
-        main_mod_args += "--dep {} ".format(d)
-    main_mod_args += "-Mmain=$WORK/esp_project/main/src/main.zig"
+        main_imports += '    root_module.addImport("{name}", {name}_mod);\n'.format(name = d)
     
-    zig_module_args_str = "\n".join(zig_mod_lines)
-    zig_lib_a_str = "\n".join(dep_lib_a_lines)
-    needs_libc_str = "-lc" if needs_libc else ""
+    build_zig_body = "\n".join(build_zig_modules + build_zig_includes + build_zig_imports)
+    
+    # ESP-IDF include dirs need to be added to every module with @cImport
+    # Generate the addIncludePath calls for each module inside the INCLUDE_DIRS loop
+    esp_include_lines = []
+    seen2 = {"main": True}
+    for encoded in all_module_strings.to_list():
+        mod = decode_module(encoded)
+        if mod.name in seen2:
+            continue
+        seen2[mod.name] = True
+        esp_include_lines.append("            {name}_mod.addIncludePath(p);".format(name = mod.name))
+    esp_include_all_modules = "\n".join(esp_include_lines)
     
     # (Old build.zig.zon generation removed — replaced by zig_module_args above)
     
@@ -676,62 +696,60 @@ esp_zig_build(
 )
 MAINCMAKEOF
 
-# Write zig module args (Bazel-computed -M flags, $E/ = exec-root)
-cat > "$WORK/$ESP_PROJECT_PATH/main/zig_module_args.txt" << 'ZIGARGSEOF'
-{zig_module_args}
-ZIGARGSEOF
+# Generate build.zig (Bazel-computed modules, absolute paths, no build.zig.zon)
+# $E/ placeholder expanded to exec-root path
+cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig" << 'BUILDZIGEOF'
+const std = @import("std");
+pub fn build(b: *std.Build) void {{
+    const target = b.standardTargetOptions(.{{}});
+    const optimize = b.standardOptimizeOption(.{{}});
+    // Dep modules (from Bazel ZigModuleInfo)
+{build_zig_body}
+    // Root module (main.zig, generated)
+    const root_module = b.createModule(.{{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target, .optimize = optimize, .link_libc = true,
+    }});
+{main_imports}
+    // ESP-IDF include paths (from INCLUDE_DIRS env var, set by CMake)
+    // Added to EVERY module that might have @cImport
+    const include_dirs_str = std.process.getEnvVarOwned(b.allocator, "INCLUDE_DIRS") catch "";
+    if (include_dirs_str.len > 0) {{
+        defer b.allocator.free(include_dirs_str);
+        var it = std.mem.tokenizeAny(u8, include_dirs_str, ";");
+        while (it.next()) |dir| {{
+            const p = std.Build.LazyPath{{ .cwd_relative = dir }};
+            root_module.addIncludePath(p);
+{esp_include_all_modules}
+        }}
+    }}
+    const lib = b.addLibrary(.{{ .name = "main_zig", .linkage = .static, .root_module = root_module }});
+    b.installArtifact(lib);
+}}
+BUILDZIGEOF
 
-# Write .a library args
-cat > "$WORK/$ESP_PROJECT_PATH/main/zig_lib_a_args.txt" << 'ZIGLAEOF'
-{zig_lib_a_args}
-ZIGLAEOF
+# Expand $E/ placeholder to actual exec-root path in build.zig
+sed -i.bak "s|\\$E/|$E/|g" "$WORK/$ESP_PROJECT_PATH/main/build.zig"
+rm -f "$WORK/$ESP_PROJECT_PATH/main/build.zig.bak"
 
-# Expand $E/ placeholder to actual exec-root path
-sed -i.bak "s|\\$E/|$E/|g" "$WORK/$ESP_PROJECT_PATH/main/zig_module_args.txt"
-sed -i.bak "s|\\$E/|$E/|g" "$WORK/$ESP_PROJECT_PATH/main/zig_lib_a_args.txt"
-rm -f "$WORK/$ESP_PROJECT_PATH/main/"*.bak
-
-# Write main module args (main.zig path is in WORK, set at runtime)
-echo '{main_mod_args}' | sed "s|\\$WORK|$WORK|g" > "$WORK/$ESP_PROJECT_PATH/main/zig_main_args.txt"
-
-# Generate zig_build.sh (called by CMake esp_zig_build)
-ZIG_BUILD_SH="$WORK/$ESP_PROJECT_PATH/main/zig_build.sh"
-cat > "$ZIG_BUILD_SH" << 'ZIGBUILDEOF'
-#!/bin/bash
-set -e
-# Read ESP-IDF include dirs from file (written by CMake at generate time)
-ESP_I=""
-if [ -f esp_include_dirs.txt ]; then
-    IFS=';' read -ra DIRS < esp_include_dirs.txt || true
-    for d in "${{DIRS[@]}}"; do [ -n "$d" ] && ESP_I="$ESP_I -I $d"; done
-    echo "[zig] Found $(echo ${{DIRS[@]}} | wc -w) ESP include dirs"
-else
-    echo "[zig] WARNING: esp_include_dirs.txt not found in $(pwd)"
-    ls -la *.txt 2>/dev/null || echo "[zig] No .txt files"
+# Minimal build.zig.zon (no deps, absolute paths used in build.zig)
+cat > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" << 'ZONEOF'
+.{{
+    .name = .{app_name},
+    .version = "0.1.0",
+    .paths = .{{ "build.zig", "build.zig.zon", "src" }},
+}}
+ZONEOF
+# Get fingerprint
+cd "$WORK/$ESP_PROJECT_PATH/main"
+ZIG_FP=$(HOME="$WORK" "$ZIG_INSTALL/zig" build --fetch --cache-dir "$WORK/.zig-cache" --global-cache-dir "$WORK/.zig-global-cache" 2>&1 || true)
+FP=$(echo "$ZIG_FP" | grep -o "suggested value: 0x[0-9a-f]*" | grep -o "0x[0-9a-f]*" || echo "")
+cd - > /dev/null
+if [ -n "$FP" ]; then
+    awk -v fp="$FP" '/\\.version = "0\\.1\\.0",/ {{ print; print "    .fingerprint = " fp ","; next }} {{ print }}' \
+        "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new"
+    mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
 fi
-
-MAIN_ARGS=$(cat zig_main_args.txt 2>/dev/null || echo "")
-# Inject ESP-IDF includes as per-module -I after each -M definition.
-# Global -I doesn't work with multiple @cImport modules in zig build-lib.
-MOD_ARGS=""
-while IFS= read -r line; do
-    MOD_ARGS="$MOD_ARGS $line"
-    if [[ "$line" == -M* ]]; then
-        MOD_ARGS="$MOD_ARGS $ESP_I"
-    fi
-done < zig_module_args.txt
-LIB_ARGS=$(cat zig_lib_a_args.txt 2>/dev/null | tr '\n' ' ')
-
-echo "[zig] build-lib target=$ZIG_TARGET_ARCH cpu=$ZIG_CPU ESP_I_count=$(echo $ESP_I | tr ' ' '\n' | grep -c '^-I')"
-# ESP_I injected per-module (after each -M), not global
-$ZIG_BIN build-lib \
-    -lc $MAIN_ARGS $ESP_I $MOD_ARGS $LIB_ARGS \
-    -target $ZIG_TARGET_ARCH -mcpu=$ZIG_CPU -O$ZIG_OPT \
-    -freference-trace \
-    --cache-dir $(dirname $ZIG_OUT)/../../.zig-cache \
-    --global-cache-dir $(dirname $ZIG_OUT)/../../.zig-global-cache \
-    -femit-bin=$ZIG_OUT
-ZIGBUILDEOF
 chmod +x "$WORK/$ESP_PROJECT_PATH/main/zig_build.sh"
 
 # main.c
@@ -849,9 +867,9 @@ exec bash "{build_sh}"
         force_link = force_link,
         extra_cmake = extra_cmake,
         extra_c_sources = extra_c_sources,
-        zig_module_args = zig_module_args_str,
-        zig_lib_a_args = zig_lib_a_str,
-        main_mod_args = main_mod_args,
+        build_zig_body = build_zig_body,
+        main_imports = main_imports,
+        esp_include_all_modules = esp_include_all_modules,
         idf_deps_yml = idf_deps_yml,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
