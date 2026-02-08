@@ -86,23 +86,13 @@ const EncoderCtx = struct {
     board: *Board,
     cancel: *cancellation.CancellationToken,
     metrics: *Metrics,
+    encoder: *audio.opus.Encoder,
 };
 
 fn encoderTask(raw: ?*anyopaque) void {
     const ctx: *EncoderCtx = @ptrCast(@alignCast(raw));
-    log.info("[encoder] Starting opus encoder task", .{});
-
-    var encoder = audio.opus.Encoder.init(SAMPLE_RATE, CHANNELS, .voip) catch |err| {
-        log.err("[encoder] Failed to init opus encoder: {}", .{err});
-        return;
-    };
-    defer encoder.deinit();
-
-    encoder.setBitrate(OPUS_BITRATE) catch {};
-    encoder.setComplexity(OPUS_COMPLEXITY) catch {};
-    encoder.setSignal(.voice) catch {};
-
-    log.info("[encoder] Opus encoder ready: {}bps, complexity={}", .{ OPUS_BITRATE, OPUS_COMPLEXITY });
+    log.info("[encoder] Starting opus encoder loop", .{});
+    var encoder = ctx.encoder;
 
     var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
     var opus_buf: [MAX_OPUS_FRAME]u8 = undefined;
@@ -178,19 +168,13 @@ const DecoderCtx = struct {
     board: *Board,
     cancel: *cancellation.CancellationToken,
     metrics: *Metrics,
+    decoder: *audio.opus.Decoder,
 };
 
 fn decoderTask(raw: ?*anyopaque) void {
     const ctx: *DecoderCtx = @ptrCast(@alignCast(raw));
-    log.info("[decoder] Starting opus decoder task", .{});
-
-    var decoder = audio.opus.Decoder.init(SAMPLE_RATE, CHANNELS) catch |err| {
-        log.err("[decoder] Failed to init opus decoder: {}", .{err});
-        return;
-    };
-    defer decoder.deinit();
-
-    log.info("[decoder] Opus decoder ready", .{});
+    log.info("[decoder] Starting opus decoder loop", .{});
+    var decoder = ctx.decoder;
 
     var pcm_buf: [FRAME_SAMPLES]i16 = undefined;
 
@@ -280,6 +264,30 @@ pub fn run(_: anytype) void {
     var metrics = Metrics{};
 
     // ========================================================================
+    // Initialize opus encoder/decoder on main task (avoids WDT issues)
+    // ========================================================================
+
+    log.info("Initializing opus encoder...", .{});
+    var encoder = audio.opus.Encoder.init(SAMPLE_RATE, CHANNELS, .voip) catch |err| {
+        log.err("Failed to init opus encoder: {}", .{err});
+        return;
+    };
+    defer encoder.deinit();
+
+    encoder.setBitrate(OPUS_BITRATE) catch {};
+    encoder.setComplexity(OPUS_COMPLEXITY) catch {};
+    encoder.setSignal(.voice) catch {};
+    log.info("Opus encoder ready: {}bps, complexity={}", .{ OPUS_BITRATE, OPUS_COMPLEXITY });
+
+    log.info("Initializing opus decoder...", .{});
+    var decoder = audio.opus.Decoder.init(SAMPLE_RATE, CHANNELS) catch |err| {
+        log.err("Failed to init opus decoder: {}", .{err});
+        return;
+    };
+    defer decoder.deinit();
+    log.info("Opus decoder ready", .{});
+
+    // ========================================================================
     // Spawn encoder + decoder tasks
     // ========================================================================
 
@@ -291,6 +299,7 @@ pub fn run(_: anytype) void {
         .board = &board,
         .cancel = &cancel,
         .metrics = &metrics,
+        .encoder = &encoder,
     };
 
     var dec_ctx = DecoderCtx{
@@ -298,11 +307,12 @@ pub fn run(_: anytype) void {
         .board = &board,
         .cancel = &cancel,
         .metrics = &metrics,
+        .decoder = &decoder,
     };
 
     wg.go("opus-enc", encoderTask, @ptrCast(&enc_ctx), .{
         .stack_size = 16384,
-        .priority = 15,
+        .priority = 5,
         .allocator = heap.iram,
     }) catch |err| {
         log.err("Failed to spawn encoder task: {}", .{err});
@@ -311,12 +321,14 @@ pub fn run(_: anytype) void {
 
     wg.go("opus-dec", decoderTask, @ptrCast(&dec_ctx), .{
         .stack_size = 16384,
-        .priority = 15,
+        .priority = 5,
         .allocator = heap.iram,
     }) catch |err| {
         log.err("Failed to spawn decoder task: {}", .{err});
         return;
     };
+
+    platform.time.sleepMs(100);
 
     // Heap after init
     const heap_after_internal = heap.heap_caps_get_free_size(heap.MALLOC_CAP_INTERNAL);

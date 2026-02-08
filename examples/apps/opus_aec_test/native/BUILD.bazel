@@ -1,0 +1,49 @@
+# Opus Native Test — run on macOS to verify encode/decode
+#
+# Uses zig build directly (not zig_binary) because the Espressif zig fork
+# doesn't support C source files with -M module syntax.
+#
+# Build: bazel build //examples/apps/opus_aec_test/native:test
+# Run:   bazel run //examples/apps/opus_aec_test/native:test
+
+load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Build using zig build (handles C source compilation via addCSourceFiles)
+genrule(
+    name = "build_test",
+    srcs = [
+        "main.zig",
+        "build.zig",
+        "build.zig.zon",
+        "//lib/pkg/audio:srcs",
+        "@opus//:opus_srcs",
+        "@opus//:opus_internal_headers",
+        "@opus//:opus_public_headers",
+    ],
+    outs = ["opus_test"],
+    cmd = """
+        ZIG=$$(ls external/+zig_toolchain+zig_toolchain/zig)
+        # Copy sources preserving structure
+        WORK=$$(mktemp -d)
+        trap "rm -rf $$WORK" EXIT
+        for f in $(SRCS); do
+            mkdir -p "$$WORK/$$(dirname $$f)"
+            cp "$$f" "$$WORK/$$f"
+        done
+        cd "$$WORK/examples/apps/opus_aec_test/native"
+        HOME="$$WORK" "$$WORK/$$ZIG" build -Doptimize=ReleaseFast \
+            --cache-dir "$$WORK/.zig-cache" --global-cache-dir "$$WORK/.zig-global" \
+            --prefix "$$WORK/out" 2>&1
+        cp "$$WORK/out/bin/opus_test" "$(OUTS)"
+    """,
+    tools = ["@zig_toolchain//:zig_files"],
+    local = True,
+)
+
+native_binary(
+    name = "test",
+    src = ":build_test",
+    out = "run_opus_test",
+)
