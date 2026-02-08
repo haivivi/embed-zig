@@ -106,14 +106,16 @@ pub fn Client(comptime Transport: type) type {
             self.connected = false;
             try self.doConnect();
 
-            // Re-subscribe all tracked topics
-            if (self.subscriptions.items.len > 0) {
+            // Re-subscribe all tracked topics (batch 64 at a time)
+            var offset: usize = 0;
+            while (offset < self.subscriptions.items.len) {
                 var topics_buf: [64][]const u8 = undefined;
-                const count = @min(self.subscriptions.items.len, 64);
-                for (self.subscriptions.items[0..count], 0..) |*entry, i| {
+                const batch_end = @min(offset + 64, self.subscriptions.items.len);
+                for (self.subscriptions.items[offset..batch_end], 0..) |*entry, i| {
                     topics_buf[i] = entry.topic();
                 }
-                self.doSubscribe(topics_buf[0..count]) catch {};
+                self.doSubscribe(topics_buf[0 .. batch_end - offset]) catch {};
+                offset = batch_end;
             }
         }
 

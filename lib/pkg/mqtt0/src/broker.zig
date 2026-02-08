@@ -789,13 +789,17 @@ pub fn Broker(comptime Transport: type) type {
                 }
             }
 
-            // Shared subscription groups (round-robin)
+            // Shared subscription groups (round-robin, with dedup)
             var shared_matches: [64]*SharedGroup = undefined;
             const shared_count = self.shared_trie.matchAll(msg.topic, &shared_matches);
             for (shared_matches[0..shared_count]) |sg| {
                 if (sg.nextSubscriber()) |h| {
                     if (sender != null and h == sender.?) continue;
-                    if (handle_count < handles_buf.len) {
+                    var dup = false;
+                    for (handles_buf[0..handle_count]) |existing| {
+                        if (existing == h) { dup = true; break; }
+                    }
+                    if (!dup and handle_count < handles_buf.len) {
                         handles_buf[handle_count] = h;
                         handle_count += 1;
                     }
