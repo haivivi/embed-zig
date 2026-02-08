@@ -180,14 +180,14 @@ pub fn Broker(comptime Transport: type) type {
                 self.topic_len = len;
             }
 
-            fn add(self: *SharedGroup, allocator: Allocator, handle: *ClientHandle) void {
+            fn add(self: *SharedGroup, allocator: Allocator, handle: *ClientHandle) bool {
                 self.mutex.lock();
                 defer self.mutex.unlock();
-                // Check if already subscribed
                 for (self.subscribers.items) |s| {
-                    if (s == handle) return;
+                    if (s == handle) return true; // already subscribed
                 }
-                self.subscribers.append(allocator, handle) catch {};
+                self.subscribers.append(allocator, handle) catch return false;
+                return true;
             }
 
             fn removeByHandle(self: *SharedGroup, handle: *ClientHandle) void {
@@ -689,8 +689,7 @@ pub fn Broker(comptime Transport: type) type {
                 if (std.mem.eql(u8, sg.groupName(), group_name) and
                     std.mem.eql(u8, sg.actualTopic(), actual_topic))
                 {
-                    sg.add(self.allocator, handle);
-                    return true;
+                    return sg.add(self.allocator, handle);
                 }
             }
 
@@ -699,7 +698,11 @@ pub fn Broker(comptime Transport: type) type {
             sg.* = .{};
             sg.setGroupName(group_name);
             sg.setActualTopic(actual_topic);
-            sg.add(self.allocator, handle);
+            if (!sg.add(self.allocator, handle)) {
+                sg.deinit(self.allocator);
+                self.allocator.destroy(sg);
+                return false;
+            }
             self.shared_groups.append(self.allocator, sg) catch {
                 sg.deinit(self.allocator);
                 self.allocator.destroy(sg);
@@ -807,10 +810,12 @@ pub fn Broker(comptime Transport: type) type {
 
             // Check for existing client with same ID (kick old)
             if (self.clients.get(client_id)) |old_handle| {
+                old_handle.write_mutex.lock();
                 old_handle.active = false;
                 old_handle.generation +%= 1;
                 old_handle.transport = transport;
                 old_handle.active = true;
+                old_handle.write_mutex.unlock();
                 return old_handle;
             }
 
