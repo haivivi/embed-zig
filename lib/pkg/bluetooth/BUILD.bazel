@@ -1,23 +1,15 @@
-load("//bazel/zig:defs.bzl", "zig_lib", "zig_library", "zig_test")
+load("//bazel/zig:defs.bzl", "zig_lib")
 
 package(default_visibility = ["//visibility:public"])
 
-# Legacy rule (for esp_zig_app backward compat)
 zig_lib(
     name = "bluetooth",
     srcs = glob(["**/*"]),
-)
-
-# Bazel-native rules
-zig_library(
-    name = "bluetooth_native",
-    main = "src/bluetooth.zig",
-    srcs = glob(["src/**/*.zig"]),
-    module_name = "bluetooth",
-)
-
-zig_test(
-    name = "bluetooth_test",
-    main = "src/bluetooth.zig",
-    srcs = glob(["src/**/*.zig"]),
+    deps = [
+        "//lib/trait",
+        "//lib/pkg/channel",
+        "//lib/pkg/waitgroup",
+        "//lib/pkg/cancellation",
+        "//lib/platform/std",
+    ],
 )
