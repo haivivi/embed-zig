@@ -1107,3 +1107,217 @@ test "BLE 5.0: GAP: DLE event forwarded" {
     const evt = g.pollEvent() orelse unreachable;
     try std.testing.expect(std.meta.activeTag(evt) == .data_length_changed);
 }
+
+// ============================================================================
+// BLE 4.2: DLE Edge Cases
+// ============================================================================
+
+test "BLE 4.2: DLE: max TX octets is 251 (Vol 6 Part B 4.5.10)" {
+    try std.testing.expectEqual(@as(u16, 251), acl.LE_MAX_DATA_LEN);
+}
+
+test "BLE 4.2: DLE: max TX time is 2120us for 1M PHY" {
+    // 251 bytes * 8 bits/byte = 2008 bits + 112 bits overhead = 2120us at 1M
+    var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+    const pkt = commands.leSetDataLength(&buf, 0x0040, 251, 2120);
+    try std.testing.expectEqual(@as(u8, 0xFB), pkt[6]); // 251 lo
+    try std.testing.expectEqual(@as(u8, 0x48), pkt[8]); // 2120 lo = 0x48
+    try std.testing.expectEqual(@as(u8, 0x08), pkt[9]); // 2120 hi = 0x08
+}
+
+test "BLE 4.2: DLE: default data length is 27" {
+    try std.testing.expectEqual(@as(u16, 27), acl.LE_DEFAULT_DATA_LEN);
+}
+
+test "BLE 4.2: DLE: L2CAP fragment with default MTU 27" {
+    var sdu_buf: [acl.LE_MAX_DATA_LEN + l2cap.HEADER_LEN]u8 = undefined;
+    // 20 bytes payload → 24 with L2CAP header → fits in one 27-byte fragment
+    var iter = l2cap.fragmentIterator(&sdu_buf, &([_]u8{0xAA} ** 20), l2cap.CID_ATT, 0x40, 27);
+    try std.testing.expect(iter.next() != null);
+    try std.testing.expect(iter.next() == null);
+}
+
+test "BLE 4.2: DLE: L2CAP fragment exceeding default MTU needs 2 fragments" {
+    var sdu_buf: [acl.LE_MAX_DATA_LEN + l2cap.HEADER_LEN]u8 = undefined;
+    // 30 bytes payload → 34 with L2CAP header → 2 fragments at MTU 27
+    var iter = l2cap.fragmentIterator(&sdu_buf, &([_]u8{0xBB} ** 30), l2cap.CID_ATT, 0x40, 27);
+    const f1 = iter.next() orelse unreachable;
+    try std.testing.expect(f1.len > 0);
+    try std.testing.expect(iter.next() != null); // second fragment
+    try std.testing.expect(iter.next() == null); // done
+}
+
+test "BLE 4.2: DLE: L2CAP reassembly handles DLE 251 single fragment" {
+    var reasm = l2cap.Reassembler{};
+    // 200-byte SDU → 204 with header → fits in one 251-byte DLE fragment
+    var full: [204]u8 = undefined;
+    std.mem.writeInt(u16, full[0..2], 200, .little);
+    std.mem.writeInt(u16, full[2..4], l2cap.CID_ATT, .little);
+    for (4..204) |i| full[i] = @truncate(i);
+
+    const hdr = acl.AclHeader{ .conn_handle = 0x40, .pb_flag = .first_auto_flush, .bc_flag = .point_to_point, .data_len = 204 };
+    const sdu = reasm.feed(hdr, &full) orelse unreachable;
+    try std.testing.expectEqual(@as(usize, 200), sdu.data.len);
+}
+
+test "BLE 4.2: DLE: Data Length Change with asymmetric TX/RX" {
+    const raw = [_]u8{ 0x3E, 0x0B, 0x07, 0x40, 0x00, 0xFB, 0x00, 0x48, 0x08, 0x1B, 0x00, 0x48, 0x01 };
+    const evt = events.decode(&raw) orelse unreachable;
+    switch (evt) {
+        .le_data_length_change => |dl| {
+            try std.testing.expectEqual(@as(u16, 251), dl.max_tx_octets);
+            try std.testing.expectEqual(@as(u16, 27), dl.max_rx_octets); // remote hasn't upgraded
+        },
+        else => unreachable,
+    }
+}
+
+test "BLE 4.2: DLE: MTU 512 ATT payload fits in 3 DLE fragments" {
+    // ATT payload 509 bytes + L2CAP header 4 = 513 bytes
+    // 513 / 251 = 2.04 → 3 fragments (251 + 251 + 11)
+    var sdu_buf: [acl.LE_MAX_DATA_LEN + l2cap.HEADER_LEN]u8 = undefined;
+    var iter = l2cap.fragmentIterator(&sdu_buf, &([_]u8{0xCC} ** 247), l2cap.CID_ATT, 0x40, 251);
+    // 247 + 4 header = 251 → exactly 1 fragment
+    try std.testing.expect(iter.next() != null);
+    try std.testing.expect(iter.next() == null);
+}
+
+test "BLE 4.2: DLE: MTU exchange to 512" {
+    const S = gatt.GattServer(&.{ gatt.Service(0x180D, &.{ gatt.Char(0x2A37, .{ .read = true }) }) });
+    var server = S.init();
+    var req: [3]u8 = undefined;
+    req[0] = 0x02; // Exchange MTU Request
+    std.mem.writeInt(u16, req[1..3], 512, .little);
+    var resp: [att.MAX_PDU_LEN]u8 = undefined;
+    const r = server.handlePdu(0x40, &req, &resp) orelse unreachable;
+    try std.testing.expectEqual(@as(u8, 0x03), r[0]);
+    try std.testing.expectEqual(@as(u16, 512), server.mtu);
+}
+
+test "BLE 4.2: DLE: MTU exchange clamped to MAX_MTU" {
+    const S = gatt.GattServer(&.{ gatt.Service(0x180D, &.{ gatt.Char(0x2A37, .{ .read = true }) }) });
+    var server = S.init();
+    var req: [3]u8 = undefined;
+    req[0] = 0x02;
+    std.mem.writeInt(u16, req[1..3], 9999, .little); // way over max
+    var resp: [att.MAX_PDU_LEN]u8 = undefined;
+    _ = server.handlePdu(0x40, &req, &resp);
+    try std.testing.expectEqual(att.MAX_MTU, server.mtu); // clamped to 517
+}
+
+test "BLE 4.2: DLE: MTU exchange minimum is DEFAULT_MTU" {
+    const S = gatt.GattServer(&.{ gatt.Service(0x180D, &.{ gatt.Char(0x2A37, .{ .read = true }) }) });
+    var server = S.init();
+    var req: [3]u8 = undefined;
+    req[0] = 0x02;
+    std.mem.writeInt(u16, req[1..3], 10, .little); // below minimum
+    var resp: [att.MAX_PDU_LEN]u8 = undefined;
+    _ = server.handlePdu(0x40, &req, &resp);
+    try std.testing.expectEqual(att.DEFAULT_MTU, server.mtu); // clamped to 23
+}
+
+// ============================================================================
+// BLE 5.0: PHY Edge Cases
+// ============================================================================
+
+test "BLE 5.0: PHY: all_phys=0 means both TX and RX specified" {
+    var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+    const pkt = commands.leSetPhy(&buf, 0x0040, 0x00, 0x02, 0x02, 0x0000);
+    try std.testing.expectEqual(@as(u8, 0x00), pkt[6]); // all_phys
+    try std.testing.expectEqual(@as(u8, 0x02), pkt[7]); // tx_phys = 2M
+    try std.testing.expectEqual(@as(u8, 0x02), pkt[8]); // rx_phys = 2M
+}
+
+test "BLE 5.0: PHY: all_phys=3 means no preference" {
+    var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+    const pkt = commands.leSetPhy(&buf, 0x0040, 0x03, 0x00, 0x00, 0x0000);
+    try std.testing.expectEqual(@as(u8, 0x03), pkt[6]); // no TX/RX preference
+}
+
+test "BLE 5.0: PHY: tx_phys bitmask 0x01=1M, 0x02=2M, 0x04=Coded" {
+    var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+    // Request both 1M and 2M
+    const pkt = commands.leSetPhy(&buf, 0x0040, 0x00, 0x03, 0x03, 0x0000);
+    try std.testing.expectEqual(@as(u8, 0x03), pkt[7]); // 1M+2M
+}
+
+test "BLE 5.0: PHY: PHY Update Complete with Coded PHY" {
+    const raw = [_]u8{ 0x3E, 0x06, 0x0C, 0x00, 0x40, 0x00, 0x03, 0x03 };
+    const evt = events.decode(&raw) orelse unreachable;
+    switch (evt) {
+        .le_phy_update_complete => |pu| {
+            try std.testing.expectEqual(@as(u8, 3), pu.tx_phy); // Coded
+            try std.testing.expectEqual(@as(u8, 3), pu.rx_phy);
+        },
+        else => unreachable,
+    }
+}
+
+test "BLE 5.0: PHY: asymmetric PHY (TX=2M, RX=1M)" {
+    const raw = [_]u8{ 0x3E, 0x06, 0x0C, 0x00, 0x40, 0x00, 0x02, 0x01 };
+    const evt = events.decode(&raw) orelse unreachable;
+    switch (evt) {
+        .le_phy_update_complete => |pu| {
+            try std.testing.expectEqual(@as(u8, 2), pu.tx_phy);
+            try std.testing.expectEqual(@as(u8, 1), pu.rx_phy);
+        },
+        else => unreachable,
+    }
+}
+
+test "BLE 5.0: PHY: Set Default PHY with all options" {
+    var buf: [commands.MAX_CMD_LEN]u8 = undefined;
+    const pkt = commands.leSetDefaultPhy(&buf, 0x00, 0x07, 0x07); // 1M+2M+Coded
+    try std.testing.expectEqual(@as(u8, 0x07), pkt[5]); // tx = all PHYs
+    try std.testing.expectEqual(@as(u8, 0x07), pkt[6]); // rx = all PHYs
+}
+
+test "BLE 5.0: PHY: GAP rejects PHY update when not connected" {
+    var g = gap.Gap.init();
+    try std.testing.expectError(error.InvalidState, g.requestPhyUpdate(0x0040, 0x02, 0x02));
+}
+
+test "BLE 5.0: PHY: GAP rejects DLE when not connected" {
+    var g = gap.Gap.init();
+    try std.testing.expectError(error.InvalidState, g.requestDataLength(0x0040, 251, 2120));
+}
+
+test "BLE 5.0: GAP: device_found event from advertising report" {
+    var g = gap.Gap.init();
+    try g.startScanning(.{});
+    while (g.nextCommand()) |_| {}
+
+    // Simulate advertising report
+    const report_data = [_]u8{ 0x00, 0x00, 0x50, 0x5C, 0x11, 0xE0, 0x88, 0x98, 0x03, 0x02, 0x01, 0x06, 0xC0 };
+    g.handleEvent(.{ .le_advertising_report = .{ .num_reports = 1, .data = &report_data } });
+
+    const evt = g.pollEvent() orelse unreachable;
+    try std.testing.expect(std.meta.activeTag(evt) == .device_found);
+}
+
+test "BLE 5.0: GAP: advertising report ignored when not scanning" {
+    var g = gap.Gap.init();
+    // Not scanning — should not generate device_found
+    const report_data = [_]u8{ 0x00, 0x00, 0x50, 0x5C, 0x11, 0xE0, 0x88, 0x98, 0x03, 0x02, 0x01, 0x06, 0xC0 };
+    g.handleEvent(.{ .le_advertising_report = .{ .num_reports = 1, .data = &report_data } });
+    try std.testing.expect(g.pollEvent() == null);
+}
+
+test "BLE 5.0: GAP: connect from idle state" {
+    var g = gap.Gap.init();
+    try g.connect(.{ 0, 0, 0, 0, 0, 0 }, .public, .{});
+    try std.testing.expectEqual(gap.State.connecting, g.state);
+    // Should have: create connection command
+    try std.testing.expect(g.nextCommand() != null);
+}
+
+test "BLE 5.0: GAP: connect from scanning auto-stops scan" {
+    var g = gap.Gap.init();
+    try g.startScanning(.{});
+    while (g.nextCommand()) |_| {} // drain scan commands
+
+    try g.connect(.{ 0, 0, 0, 0, 0, 0 }, .public, .{});
+    // Should have: stop scan + create connection = 2 commands
+    try std.testing.expect(g.nextCommand() != null);
+    try std.testing.expect(g.nextCommand() != null);
+}
