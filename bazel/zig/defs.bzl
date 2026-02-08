@@ -638,7 +638,7 @@ def _zig_binary_impl(ctx):
     # Deps' -I flags are emitted per-module by _build_module_args.
     # Deps' .a libraries are passed for linking C objects.
     global_pre = []
-    if ctx.attr.link_libc or mods.deps_link_libc:
+    if mods.deps_link_libc and not ctx.attr.link_libc:
         global_pre.append("-lc")
 
     # Collect dep .a libraries for linking (provides C symbols like xor_bytes)
@@ -753,7 +753,7 @@ def _zig_test_impl(ctx):
 
     # Same logic as zig_binary: per-module -I in deps, global -lc, dep .a for linking
     global_pre = []
-    if ctx.attr.link_libc or mods.deps_link_libc:
+    if mods.deps_link_libc and not ctx.attr.link_libc:
         global_pre.append("-lc")
 
     dep_lib_a_args = [f.path for f in collected.deps_transitive_lib_as.to_list()]
