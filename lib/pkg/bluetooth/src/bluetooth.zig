@@ -53,10 +53,11 @@ pub const hci = @import("host/hci/hci.zig");
 pub const l2cap = @import("host/l2cap/l2cap.zig");
 
 // ============================================================================
-// ATT Layer — Attribute Protocol (future)
+// ATT Layer — Attribute Protocol
 // ============================================================================
 
-// pub const att = @import("host/att/att.zig");
+/// ATT PDU codec + attribute database
+pub const att = @import("host/att/att.zig");
 
 // ============================================================================
 // GAP Layer — Generic Access Profile (future)
