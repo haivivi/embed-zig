@@ -750,7 +750,7 @@ if [ -n "$FP" ]; then
         "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon" > "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new"
     mv "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon.new" "$WORK/$ESP_PROJECT_PATH/main/build.zig.zon"
 fi
-chmod +x "$WORK/$ESP_PROJECT_PATH/main/zig_build.sh"
+# (zig_build.sh removed — now using zig build with generated build.zig)
 
 # main.c
 cat > "$WORK/$ESP_PROJECT_PATH/main/src/main.c" << 'MAINCEOF'
