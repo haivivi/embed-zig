@@ -63,8 +63,6 @@ ZigModuleInfo = provider(
         "direct_dep_names": "list(string) — Names of direct module dependencies",
         "transitive_module_strings": "depset(string) — Encoded module records for all transitive deps (O(1) merge per layer)",
         "cache_dir": "File (TreeArtifact) — accumulated zig cache (own + deps)",
-        "transitive_c_inputs": "depset(File) — C/ASM/header files needed transitively for compilation",
-        "transitive_c_pre_args": "list(string) — C global flags (-lc, -I) accumulated from transitive deps",
     },
 )
 
@@ -222,15 +220,11 @@ def _collect_deps(own_srcs, deps):
         dep_cache_dirs: list(File)
         transitive_src_depsets: list(depset) — own_srcs + all deps' transitive_srcs
         all_dep_module_strings: depset(string) — encoded module records for all deps
-        transitive_c_input_depsets: list(depset) — C/ASM inputs from all deps
-        transitive_c_pre_args: list(string) — C global flags from all deps
     """
     direct_dep_infos = []
     direct_dep_names = []
     transitive_src_depsets = [own_srcs]
     dep_cache_dirs = []
-    transitive_c_input_depsets = []
-    transitive_c_pre_args = []
 
     for dep in deps:
         info = dep[ZigModuleInfo]
@@ -239,9 +233,6 @@ def _collect_deps(own_srcs, deps):
         transitive_src_depsets.append(info.transitive_srcs)
         if info.cache_dir:
             dep_cache_dirs.append(info.cache_dir)
-        if info.transitive_c_inputs:
-            transitive_c_input_depsets.append(info.transitive_c_inputs)
-        transitive_c_pre_args.extend(info.transitive_c_pre_args)
 
     direct_dep_strings = [
         _encode_module(info.module_name, info.root_source.path, info.direct_dep_names)
@@ -257,8 +248,6 @@ def _collect_deps(own_srcs, deps):
         dep_cache_dirs = dep_cache_dirs,
         transitive_src_depsets = transitive_src_depsets,
         all_dep_module_strings = all_dep_module_strings,
-        transitive_c_input_depsets = transitive_c_input_depsets,
-        transitive_c_pre_args = transitive_c_pre_args,
     )
 
 # =============================================================================
@@ -340,25 +329,21 @@ def _zig_library_impl(ctx):
     # C/ASM sources
     c_asm = _build_c_asm_args(ctx)
 
-    # Merge own C/ASM pre_args with transitive dep C pre_args
-    all_c_pre_args = collected.transitive_c_pre_args + c_asm.pre_args
-
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <main-M> [c/asm] <dep-M> -femit-bin=out.a
-    # pre_args (-lc, -I) go before -M; src_args (source files) go after main module's -M
+    # pre_args (-lc, -I) are this module's own C/ASM flags only (not transitive — deps' C is in their cache)
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-lib"] + all_c_pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output_a.path])
+    cm_args.extend(["build-lib"] + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output_a.path])
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
-    all_c_inputs = depset(c_asm.inputs, transitive = collected.transitive_c_input_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs + all_c_inputs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [output_a, cache_dir],
         mnemonic = "ZigLibCompile",
         progress_message = "Compiling Zig library %s" % ctx.label,
@@ -375,8 +360,6 @@ def _zig_library_impl(ctx):
             direct_dep_names = collected.direct_dep_names,
             transitive_module_strings = collected.all_dep_module_strings,
             cache_dir = cache_dir,
-            transitive_c_inputs = depset(c_asm.inputs, transitive = collected.transitive_c_input_depsets),
-            transitive_c_pre_args = all_c_pre_args,
         ),
     ]
 
@@ -546,28 +529,25 @@ def _zig_binary_impl(ctx):
     # C/ASM sources
     c_asm = _build_c_asm_args(ctx)
 
-    # Merge own C/ASM pre_args with transitive dep C pre_args
-    all_c_pre_args = collected.transitive_c_pre_args + c_asm.pre_args
-
     # cache_merge <out_cache> [dep_caches...] -- <zig> build-exe [global] <main-M> [c/asm] <dep-M>
+    # pre_args are this binary's own C/ASM flags only (deps' C is in their cache)
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-exe"] + all_c_pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output.path])
+    cm_args.extend(["build-exe"] + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
-    all_c_inputs = depset(c_asm.inputs, transitive = collected.transitive_c_input_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs + all_c_inputs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [output, cache_dir],
         mnemonic = "ZigBuildExe",
         progress_message = "Compiling Zig binary %s" % ctx.label,
@@ -653,16 +633,14 @@ def _zig_test_impl(ctx):
     # C/ASM sources
     c_asm = _build_c_asm_args(ctx)
 
-    # Merge own C/ASM pre_args with transitive dep C pre_args
-    all_c_pre_args = collected.transitive_c_pre_args + c_asm.pre_args
-
     # cache_merge <out_cache> [dep_caches...] -- <zig> test [global] <main-M> [c/asm] <dep-M>
+    # pre_args are this test's own C/ASM flags only (deps' C is in their cache)
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["test"] + all_c_pre_args + mods.main + c_asm.src_args + mods.deps + [
+    cm_args.extend(["test"] + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + [
         "--test-no-exec",
         "-femit-bin=" + test_bin.path,
     ])
@@ -672,12 +650,11 @@ def _zig_test_impl(ctx):
         cm_args.extend(["-target", ctx.attr.target])
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
-    all_c_inputs = depset(c_asm.inputs, transitive = collected.transitive_c_input_depsets).to_list()
 
     ctx.actions.run(
         executable = ctx.executable._compile_tool,
         arguments = cm_args,
-        inputs = all_srcs + zig_files + collected.dep_cache_dirs + all_c_inputs,
+        inputs = all_srcs + zig_files + collected.dep_cache_dirs + c_asm.inputs,
         outputs = [test_bin, cache_dir],
         mnemonic = "ZigTestCompile",
         progress_message = "Compiling Zig tests %s" % ctx.label,

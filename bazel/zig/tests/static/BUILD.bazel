@@ -1,7 +1,14 @@
 load("//bazel/zig:defs.bzl", "zig_static_library")
 
-# Compile math_utils (zig_library) into a .a static library
+# Pure Zig: zig_static_library from math_utils (no C sources) — should always work
 zig_static_library(
     name = "math_utils_a",
     lib = "//bazel/zig/tests/math_utils",
+)
+
+# Zig + C: zig_static_library from crypto_wrapper (has C sources + transitive deps)
+# Tests that transitive_c_pre_args (-lc, -I) and transitive_c_inputs are propagated
+zig_static_library(
+    name = "crypto_wrapper_a",
+    lib = "//bazel/zig/tests/crypto_wrapper",
 )
