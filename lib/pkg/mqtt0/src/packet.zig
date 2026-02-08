@@ -445,8 +445,9 @@ pub const PacketBuffer = struct {
 };
 
 /// Read a complete MQTT packet using PacketBuffer (supports large packets).
+/// `max_size`: maximum allowed packet size (0 = no limit). Returns error.PacketTooLarge if exceeded.
 /// Returns the total packet length. Use `pkt_buf.slice()` to access the data.
-pub fn readPacketBuf(transport: anytype, pkt_buf: *PacketBuffer) !usize {
+pub fn readPacketBuf(transport: anytype, pkt_buf: *PacketBuffer, max_size_opt: usize) !usize {
     // Read first byte into small buffer
     try readFull(transport, pkt_buf.small[0..1]);
 
@@ -465,6 +466,9 @@ pub fn readPacketBuf(transport: anytype, pkt_buf: *PacketBuffer) !usize {
     }
 
     const total = header_len + remaining_len;
+
+    // Enforce max packet size (prevents OOM DoS)
+    if (max_size_opt > 0 and total > max_size_opt) return error.PacketTooLarge;
 
     // Acquire buffer of the right size
     const buf = try pkt_buf.acquire(total);

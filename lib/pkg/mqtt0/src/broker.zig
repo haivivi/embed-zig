@@ -324,7 +324,7 @@ pub fn Broker(comptime Transport: type) type {
             var write_buf = pkt.PacketBuffer.init(self.allocator);
             defer write_buf.deinit();
 
-            const first_len = try pkt.readPacketBuf(transport, &read_buf);
+            const first_len = try pkt.readPacketBuf(transport, &read_buf, self.config.max_packet_size);
             if (first_len < 2) return;
             const data = read_buf.slice()[0..first_len];
             const version = detectVersion(data) catch return;
@@ -408,7 +408,7 @@ pub fn Broker(comptime Transport: type) type {
 
         fn clientLoopV4(self: *Self, transport: *Transport, read_buf: *pkt.PacketBuffer, write_buf: *pkt.PacketBuffer, handle: *ClientHandle) void {
             while (handle.active) {
-                const pkt_len = pkt.readPacketBuf(transport, read_buf) catch return;
+                const pkt_len = pkt.readPacketBuf(transport, read_buf, self.config.max_packet_size) catch return;
                 const buf = read_buf.slice();
                 const hdr = pkt.decodeFixedHeader(buf[0..pkt_len]) catch return;
 
@@ -470,7 +470,7 @@ pub fn Broker(comptime Transport: type) type {
             }
 
             while (handle.active) {
-                const pkt_len = pkt.readPacketBuf(transport, read_buf) catch return;
+                const pkt_len = pkt.readPacketBuf(transport, read_buf, self.config.max_packet_size) catch return;
                 const buf = read_buf.slice();
                 const hdr = pkt.decodeFixedHeader(buf[0..pkt_len]) catch return;
 

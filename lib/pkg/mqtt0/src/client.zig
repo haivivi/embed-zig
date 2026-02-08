@@ -214,7 +214,7 @@ pub fn Client(comptime Transport: type) type {
         }
 
         pub fn poll(self: *Self) !void {
-            const pkt_len = pkt.readPacketBuf(self.transport, &self.read_buf) catch |err| {
+            const pkt_len = pkt.readPacketBuf(self.transport, &self.read_buf, 0) catch |err| {
                 self.connected = false;
                 return err;
             };
@@ -263,7 +263,7 @@ pub fn Client(comptime Transport: type) type {
             }
 
             // Read SUBACK
-            const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf);
+            const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf, 0);
             const buf = self.read_buf.slice()[0..pkt_len];
             switch (self.config.protocol_version) {
                 .v4 => {
@@ -306,7 +306,7 @@ pub fn Client(comptime Transport: type) type {
                     });
                     try pkt.writeAll(self.transport, wb[0..len]);
 
-                    const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf);
+                    const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf, 0);
                     const result = try v4.decodePacket(self.read_buf.slice()[0..pkt_len]);
                     switch (result.packet) {
                         .connack => |ca| {
@@ -330,7 +330,7 @@ pub fn Client(comptime Transport: type) type {
                     });
                     try pkt.writeAll(self.transport, wb[0..len]);
 
-                    const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf);
+                    const pkt_len = try pkt.readPacketBuf(self.transport, &self.read_buf, 0);
                     const result = try v5.decodePacket(self.read_buf.slice()[0..pkt_len]);
                     switch (result.packet) {
                         .connack => |ca| {
