@@ -73,6 +73,9 @@ pub const gap = @import("host/gap/gap.zig");
 /// GATT Server with handler-based dispatch (Go http.Server pattern)
 pub const gatt_server = @import("gatt_server.zig");
 
+/// GATT Client types (ATT response, discovery results, errors)
+pub const gatt_client = @import("gatt_client.zig");
+
 // ============================================================================
 // Host Coordinator
 // ============================================================================

@@ -62,6 +62,7 @@ const l2cap_mod = @import("l2cap/l2cap.zig");
 const att_mod = @import("att/att.zig");
 const gap_mod = @import("gap/gap.zig");
 const gatt_server = @import("../gatt_server.zig");
+const gatt_client = @import("../gatt_client.zig");
 
 // ============================================================================
 // TX Packet
@@ -194,12 +195,28 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // Callback type for received notifications/indications.
         pub const NotificationFn = *const fn (conn_handle: u16, attr_handle: u16, data: []const u8) void;
 
+        // Channel for ATT response delivery (1 pending request per connection)
+        const ResponseChannel = channel.Channel(gatt_client.AttResponse, 1, Rt);
+
         /// Per-connection state. Heap-allocated, managed by connect/disconnect events.
         pub const ConnectionState = struct {
             conn_handle: u16,
             mtu: u16 = att_mod.DEFAULT_MTU,
             cccd_state: [GattServerType.char_count]u16 = .{0} ** GattServerType.char_count,
             reassembler: l2cap_mod.Reassembler = .{},
+            /// Channel for pending ATT request → response delivery (GATT Client)
+            att_response: ResponseChannel,
+
+            pub fn init(conn_handle: u16) ConnectionState {
+                return .{
+                    .conn_handle = conn_handle,
+                    .att_response = ResponseChannel.init(),
+                };
+            }
+
+            pub fn deinit(self: *ConnectionState) void {
+                self.att_response.deinit();
+            }
         };
 
         // ================================================================
@@ -270,8 +287,8 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         }
 
         pub fn deinit(self: *Self) void {
-            // Free all connection states
             for (self.connections.values()) |conn| {
+                conn.deinit();
                 self.allocator.destroy(conn);
             }
             self.connections.deinit();
@@ -493,6 +510,88 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         }
 
         // ================================================================
+        // App API — GATT Client (async request/response)
+        // ================================================================
+
+        /// Read a remote attribute (blocks until response).
+        pub fn gattRead(self: *Self, conn_handle: u16, attr_handle: u16) gatt_client.Error![]const u8 {
+            const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+            // Build Read Request PDU
+            var pdu: [3]u8 = undefined;
+            pdu[0] = @intFromEnum(att_mod.Opcode.read_request);
+            std.mem.writeInt(u16, pdu[1..3], attr_handle, .little);
+
+            // Send via L2CAP
+            self.sendData(conn_handle, l2cap_mod.CID_ATT, &pdu) catch return error.SendFailed;
+
+            // Wait for response (blocks)
+            const resp = conn.att_response.recv() orelse return error.Disconnected;
+            if (resp.isError()) return error.AttError;
+            return resp.payload();
+        }
+
+        /// Write to a remote attribute with response (blocks until Write Response).
+        pub fn gattWrite(self: *Self, conn_handle: u16, attr_handle: u16, value: []const u8) gatt_client.Error!void {
+            const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+            // Build Write Request PDU
+            var pdu: [att_mod.MAX_PDU_LEN]u8 = undefined;
+            pdu[0] = @intFromEnum(att_mod.Opcode.write_request);
+            std.mem.writeInt(u16, pdu[1..3], attr_handle, .little);
+            const n = @min(value.len, att_mod.MAX_PDU_LEN - 3);
+            @memcpy(pdu[3..][0..n], value[0..n]);
+
+            self.sendData(conn_handle, l2cap_mod.CID_ATT, pdu[0 .. 3 + n]) catch return error.SendFailed;
+
+            const resp = conn.att_response.recv() orelse return error.Disconnected;
+            if (resp.isError()) return error.AttError;
+        }
+
+        /// Write without response (fire-and-forget, does not block).
+        pub fn gattWriteCmd(self: *Self, conn_handle: u16, attr_handle: u16, value: []const u8) gatt_client.Error!void {
+            var pdu: [att_mod.MAX_PDU_LEN]u8 = undefined;
+            pdu[0] = @intFromEnum(att_mod.Opcode.write_command);
+            std.mem.writeInt(u16, pdu[1..3], attr_handle, .little);
+            const n = @min(value.len, att_mod.MAX_PDU_LEN - 3);
+            @memcpy(pdu[3..][0..n], value[0..n]);
+
+            self.sendData(conn_handle, l2cap_mod.CID_ATT, pdu[0 .. 3 + n]) catch return error.SendFailed;
+        }
+
+        /// Subscribe to notifications (write CCCD = 0x0001).
+        pub fn gattSubscribe(self: *Self, conn_handle: u16, cccd_handle: u16) gatt_client.Error!void {
+            return self.gattWrite(conn_handle, cccd_handle, &.{ 0x01, 0x00 });
+        }
+
+        /// Unsubscribe from notifications (write CCCD = 0x0000).
+        pub fn gattUnsubscribe(self: *Self, conn_handle: u16, cccd_handle: u16) gatt_client.Error!void {
+            return self.gattWrite(conn_handle, cccd_handle, &.{ 0x00, 0x00 });
+        }
+
+        /// Exchange ATT MTU (client-initiated, blocks until response).
+        pub fn gattExchangeMtu(self: *Self, conn_handle: u16, client_mtu: u16) gatt_client.Error!u16 {
+            const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
+
+            var pdu: [3]u8 = undefined;
+            pdu[0] = @intFromEnum(att_mod.Opcode.exchange_mtu_request);
+            std.mem.writeInt(u16, pdu[1..3], client_mtu, .little);
+
+            self.sendData(conn_handle, l2cap_mod.CID_ATT, &pdu) catch return error.SendFailed;
+
+            const resp = conn.att_response.recv() orelse return error.Disconnected;
+            if (resp.isError()) return error.AttError;
+
+            // Response data: [server_mtu(2)]
+            if (resp.len >= 2) {
+                const server_mtu = std.mem.readInt(u16, resp.data[0..2], .little);
+                conn.mtu = @max(att_mod.DEFAULT_MTU, @min(client_mtu, server_mtu));
+                return conn.mtu;
+            }
+            return att_mod.DEFAULT_MTU;
+        }
+
+        // ================================================================
         // Internal: synchronous HCI command (used during start())
         // ================================================================
 
@@ -602,19 +701,19 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             while (self.gap.pollEvent()) |gap_event| {
                 switch (gap_event) {
                     .connected => |info| {
-                        // Create per-connection state
                         const conn = self.allocator.create(ConnectionState) catch {
                             self.event_queue.trySend(gap_event) catch {};
                             continue;
                         };
-                        conn.* = .{ .conn_handle = info.conn_handle };
+                        conn.* = ConnectionState.init(info.conn_handle);
                         self.connections.put(info.conn_handle, conn) catch {
                             self.allocator.destroy(conn);
                         };
                     },
                     .disconnected => |info| {
-                        // Destroy per-connection state
                         if (self.connections.get(info.conn_handle)) |conn| {
+                            conn.att_response.close(); // wake any blocked gattRead/Write
+                            conn.deinit();
                             self.allocator.destroy(conn);
                             _ = self.connections.orderedRemove(info.conn_handle);
                         }
@@ -667,6 +766,23 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             pdu_len: usize,
         };
 
+        /// Check if an ATT opcode is a Response (routed to GATT Client).
+        fn isAttResponse(opcode: u8) bool {
+            return switch (@as(att_mod.Opcode, @enumFromInt(opcode))) {
+                .error_response,
+                .exchange_mtu_response,
+                .find_information_response,
+                .find_by_type_value_response,
+                .read_by_type_response,
+                .read_response,
+                .read_blob_response,
+                .read_by_group_type_response,
+                .write_response,
+                => true,
+                else => false,
+            };
+        }
+
         fn handleAttPdu(self: *Self, sdu: l2cap_mod.Sdu) void {
             if (sdu.data.len == 0) return;
 
@@ -703,9 +819,17 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 return; // Don't pass to GATT server
             }
 
+            // Route ATT Responses to GATT Client (pending request channel)
+            if (isAttResponse(opcode)) {
+                if (self.connections.get(sdu.conn_handle)) |conn| {
+                    conn.att_response.trySend(gatt_client.AttResponse.fromPdu(sdu.data)) catch {};
+                }
+                return; // Responses don't go to GATT server
+            }
+
             if (sdu.data.len > att_mod.MAX_PDU_LEN) return;
 
-            // Try to spawn async handler task
+            // ATT Requests → GATT server handler (async dispatch)
             const ctx_alloc = self.wg.allocator.create(AttTaskCtx) catch {
                 // Fallback: handle synchronously if allocation fails
                 self.handleAttPduSync(sdu);
