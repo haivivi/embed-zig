@@ -320,8 +320,11 @@ fn runClient() void {
         _ = hciSendAndWait(cmd, &resp_buf) catch {};
     }
 
-    // Create connection
-    log.info("Connecting...", .{});
+    // Create connection (2-phase: Command Status → LE Connection Complete)
+    log.info("Connecting to {X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}...", .{
+        target_addr[5], target_addr[4], target_addr[3],
+        target_addr[2], target_addr[1], target_addr[0],
+    });
     {
         const cmd = hci_cmds.leCreateConnection(&cmd_buf, .{
             .peer_addr_type = target_addr_type,
@@ -335,34 +338,66 @@ fn runClient() void {
         };
     }
 
-    // Wait for connection
-    var conn_handle: u16 = 0;
-    while (true) {
-        if (!bt.waitForData(10000)) {
-            log.err("Connection timeout", .{});
+    // Phase 1: wait for Command Status (acknowledges the command)
+    {
+        const deadline = idf.time.nowMs() + 3000;
+        var got_status = false;
+        while (idf.time.nowMs() < deadline and !got_status) {
+            if (!bt.waitForData(500)) continue;
+            const n = bt.recv(&resp_buf) catch continue;
+            if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+            const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+            switch (evt) {
+                .command_status => |cs| {
+                    if (cs.opcode == hci_cmds.LE_CREATE_CONNECTION) {
+                        if (cs.status.isSuccess()) {
+                            log.info("Connection initiated (Command Status OK)", .{});
+                            got_status = true;
+                        } else {
+                            log.err("Create Connection rejected: status=0x{X:0>2}", .{@intFromEnum(cs.status)});
+                            return;
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+        if (!got_status) {
+            log.err("Command Status timeout for LE Create Connection", .{});
             return;
         }
+    }
 
-        const n = bt.recv(&resp_buf) catch continue;
-        if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
-
-        const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
-        switch (evt) {
-            .le_connection_complete => |lc| {
-                if (lc.status.isSuccess()) {
-                    conn_handle = lc.conn_handle;
-                    log.info("Connected! handle=0x{X:0>4}, interval={}, role={}", .{
-                        lc.conn_handle,
-                        lc.conn_interval,
-                        lc.role,
-                    });
-                    break;
-                } else {
-                    log.err("Connection failed: status=0x{X:0>2}", .{@intFromEnum(lc.status)});
-                    return;
-                }
-            },
-            else => {},
+    // Phase 2: wait for LE Connection Complete event
+    var conn_handle: u16 = 0;
+    {
+        const deadline = idf.time.nowMs() + 10000;
+        while (idf.time.nowMs() < deadline) {
+            if (!bt.waitForData(500)) continue;
+            const n = bt.recv(&resp_buf) catch continue;
+            if (n < 2 or resp_buf[0] != @intFromEnum(hci.PacketType.event)) continue;
+            const evt = hci_events.decode(resp_buf[1..n]) orelse continue;
+            switch (evt) {
+                .le_connection_complete => |lc| {
+                    if (lc.status.isSuccess()) {
+                        conn_handle = lc.conn_handle;
+                        log.info("Connected! handle=0x{X:0>4}, interval={}, role={}", .{
+                            lc.conn_handle,
+                            lc.conn_interval,
+                            lc.role,
+                        });
+                        break;
+                    } else {
+                        log.err("Connection failed: status=0x{X:0>2}", .{@intFromEnum(lc.status)});
+                        return;
+                    }
+                },
+                else => {},
+            }
+        }
+        if (conn_handle == 0) {
+            log.err("LE Connection Complete timeout", .{});
+            return;
         }
     }
 
