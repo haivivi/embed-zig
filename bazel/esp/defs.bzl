@@ -731,7 +731,6 @@ $ZIG build-lib \
     -Dcpu=$CPU_MODEL \
     -O$BUILD_TYPE \
     -freference-trace \
-    --prominent-compile-errors \
     --cache-dir $(dirname $OUTPUT_A)/../../.zig-cache \
     --global-cache-dir $(dirname $OUTPUT_A)/../../.zig-global-cache \
     -femit-bin=$OUTPUT_A
