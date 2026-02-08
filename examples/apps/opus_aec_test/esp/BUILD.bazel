@@ -20,7 +20,6 @@ zig_module(
     main = "//lib/platform/esp/idf:src/idf.zig",
     srcs = ["//lib/platform/esp/idf:zig_srcs"],
     c_srcs = ["//lib/platform/esp/idf:c_srcs"],
-    deps = ["//lib/trait"],
     link_libc = True,
 )
 
