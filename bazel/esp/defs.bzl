@@ -612,7 +612,7 @@ def _esp_zig_app_impl(ctx):
     main_mod_args = ""
     for d in main_dep_names:
         main_mod_args += "--dep {} ".format(d)
-    main_mod_args += "-Mmain=$WORK/$ESP_PROJECT_PATH/main/src/main.zig"
+    main_mod_args += "-Mmain=$WORK/esp_project/main/src/main.zig"
     
     zig_module_args_str = "\n".join(zig_mod_lines)
     zig_lib_a_str = "\n".join(dep_lib_a_lines)
