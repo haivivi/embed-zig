@@ -90,4 +90,5 @@ pub const Host = @import("host/host.zig").Host;
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
+    _ = @import("ble_test.zig");
 }
