@@ -32,12 +32,18 @@ filegroup(
         "src/*.c",
         "celt/*.c",
         "silk/*.c",
-        "silk/float/*.c",
+        "silk/fixed/*.c",
     ], exclude = [
         "src/opus_demo.c",
         "src/opus_compare.c",
         "src/repacketizer_demo.c",
         "celt/opus_custom_demo.c",
+        "celt/arm/*.c",
+        "celt/x86/*.c",
+        "silk/arm/*.c",
+        "silk/x86/*.c",
+        "silk/fixed/arm/*.c",
+        "silk/fixed/x86/*.c",
     ]),
 )
 
@@ -47,7 +53,7 @@ filegroup(
         "src/*.h",
         "celt/*.h",
         "silk/*.h",
-        "silk/float/*.h",
+        "silk/fixed/*.h",
     ]),
 )
 """)

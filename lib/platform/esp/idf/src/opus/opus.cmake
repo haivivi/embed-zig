@@ -1,7 +1,7 @@
 # Opus codec CMake configuration for ESP-IDF
 #
 # Downloads upstream libopus 1.5.2 source and compiles with ESP-IDF toolchain.
-# Float mode (not fixed-point) — ESP32-S3 has single-precision FPU.
+# FIXED_POINT mode — avoids double-precision float, much faster on Xtensa.
 # DNN/OSCE/DRED disabled for minimal binary size.
 
 set(OPUS_VERSION "1.5.2")
@@ -133,35 +133,30 @@ set(OPUS_C_SOURCES
     ${OPUS_DIR}/silk/tables_pulses_per_block.c
     ${OPUS_DIR}/silk/VAD.c
     ${OPUS_DIR}/silk/VQ_WMat_EC.c
-    # silk/float/
-    ${OPUS_DIR}/silk/float/apply_sine_window_FLP.c
-    ${OPUS_DIR}/silk/float/autocorrelation_FLP.c
-    ${OPUS_DIR}/silk/float/burg_modified_FLP.c
-    ${OPUS_DIR}/silk/float/bwexpander_FLP.c
-    ${OPUS_DIR}/silk/float/corrMatrix_FLP.c
-    ${OPUS_DIR}/silk/float/encode_frame_FLP.c
-    ${OPUS_DIR}/silk/float/energy_FLP.c
-    ${OPUS_DIR}/silk/float/find_LPC_FLP.c
-    ${OPUS_DIR}/silk/float/find_LTP_FLP.c
-    ${OPUS_DIR}/silk/float/find_pitch_lags_FLP.c
-    ${OPUS_DIR}/silk/float/find_pred_coefs_FLP.c
-    ${OPUS_DIR}/silk/float/inner_product_FLP.c
-    ${OPUS_DIR}/silk/float/k2a_FLP.c
-    ${OPUS_DIR}/silk/float/LPC_analysis_filter_FLP.c
-    ${OPUS_DIR}/silk/float/LPC_inv_pred_gain_FLP.c
-    ${OPUS_DIR}/silk/float/LTP_analysis_filter_FLP.c
-    ${OPUS_DIR}/silk/float/LTP_scale_ctrl_FLP.c
-    ${OPUS_DIR}/silk/float/noise_shape_analysis_FLP.c
-    ${OPUS_DIR}/silk/float/pitch_analysis_core_FLP.c
-    ${OPUS_DIR}/silk/float/process_gains_FLP.c
-    ${OPUS_DIR}/silk/float/regularize_correlations_FLP.c
-    ${OPUS_DIR}/silk/float/residual_energy_FLP.c
-    ${OPUS_DIR}/silk/float/scale_copy_vector_FLP.c
-    ${OPUS_DIR}/silk/float/scale_vector_FLP.c
-    ${OPUS_DIR}/silk/float/schur_FLP.c
-    ${OPUS_DIR}/silk/float/sort_FLP.c
-    ${OPUS_DIR}/silk/float/warped_autocorrelation_FLP.c
-    ${OPUS_DIR}/silk/float/wrappers_FLP.c
+    # silk/fixed/ (FIXED_POINT — no float, faster on Xtensa)
+    ${OPUS_DIR}/silk/fixed/apply_sine_window_FIX.c
+    ${OPUS_DIR}/silk/fixed/autocorr_FIX.c
+    ${OPUS_DIR}/silk/fixed/burg_modified_FIX.c
+    ${OPUS_DIR}/silk/fixed/corrMatrix_FIX.c
+    ${OPUS_DIR}/silk/fixed/encode_frame_FIX.c
+    ${OPUS_DIR}/silk/fixed/find_LPC_FIX.c
+    ${OPUS_DIR}/silk/fixed/find_LTP_FIX.c
+    ${OPUS_DIR}/silk/fixed/find_pitch_lags_FIX.c
+    ${OPUS_DIR}/silk/fixed/find_pred_coefs_FIX.c
+    ${OPUS_DIR}/silk/fixed/k2a_FIX.c
+    ${OPUS_DIR}/silk/fixed/k2a_Q16_FIX.c
+    ${OPUS_DIR}/silk/fixed/LTP_analysis_filter_FIX.c
+    ${OPUS_DIR}/silk/fixed/LTP_scale_ctrl_FIX.c
+    ${OPUS_DIR}/silk/fixed/noise_shape_analysis_FIX.c
+    ${OPUS_DIR}/silk/fixed/pitch_analysis_core_FIX.c
+    ${OPUS_DIR}/silk/fixed/process_gains_FIX.c
+    ${OPUS_DIR}/silk/fixed/regularize_correlations_FIX.c
+    ${OPUS_DIR}/silk/fixed/residual_energy_FIX.c
+    ${OPUS_DIR}/silk/fixed/residual_energy16_FIX.c
+    ${OPUS_DIR}/silk/fixed/schur_FIX.c
+    ${OPUS_DIR}/silk/fixed/schur64_FIX.c
+    ${OPUS_DIR}/silk/fixed/vector_ops_FIX.c
+    ${OPUS_DIR}/silk/fixed/warped_autocorrelation_FIX.c
 )
 
 # Setup include directories and compile flags (called after idf_component_register)
@@ -174,11 +169,11 @@ function(opus_setup_includes)
         ${OPUS_DIR}/src
         ${OPUS_DIR}/celt
         ${OPUS_DIR}/silk
-        ${OPUS_DIR}/silk/float
+        ${OPUS_DIR}/silk/fixed
     )
-    # Apply compile flags to opus sources
+    # Apply compile flags to opus sources (FIXED_POINT for Xtensa)
     set_source_files_properties(${OPUS_C_SOURCES} PROPERTIES
-        COMPILE_FLAGS "-DOPUS_BUILD -DHAVE_LRINTF -DVAR_ARRAYS"
+        COMPILE_FLAGS "-DOPUS_BUILD -DHAVE_LRINTF -DVAR_ARRAYS -DFIXED_POINT"
     )
 endfunction()
 

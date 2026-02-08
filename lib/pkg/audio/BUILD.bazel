@@ -12,7 +12,7 @@ zig_package(
         "@opus//:opus_internal_headers",
         "@opus//:opus_public_headers",
     ],
-    c_flags = ["-DOPUS_BUILD", "-DHAVE_LRINTF"],
+    c_flags = ["-DOPUS_BUILD", "-DHAVE_LRINTF", "-DFIXED_POINT"],
     link_libc = True,
     test = False,
 )
