@@ -292,13 +292,13 @@ fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []cons
         .use_notify = is_server,
     };
 
-    var wg = WG.init(heap.iram);
+    var wg = WG.init(heap.psram);
     defer wg.deinit();
 
     wg.go("tx-flood", txFloodTask, &flood, .{
         .stack_size = 8192,
         .priority = 18,
-        .allocator = heap.iram,
+        .allocator = heap.psram,
     }) catch {
         log.err("Failed to spawn TX task", .{});
         return;
@@ -426,7 +426,8 @@ pub fn run(_: anytype) void {
     var host = BleHost.init(&hci_driver, heap.psram);
     defer host.deinit();
 
-    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.iram }) catch |err| {
+    // Use PSRAM for BLE task stacks — saves ~16KB Internal SRAM
+    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.psram }) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };

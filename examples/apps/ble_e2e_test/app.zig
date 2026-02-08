@@ -642,7 +642,8 @@ pub fn run(_: anytype) void {
     var host = BleHost.init(&hci_driver, heap.psram);
     defer host.deinit();
 
-    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.iram }) catch |err| {
+    // Use PSRAM for BLE task stacks — saves ~16KB Internal SRAM
+    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.psram }) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };
