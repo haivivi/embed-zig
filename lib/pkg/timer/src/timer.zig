@@ -52,14 +52,12 @@ pub fn TimerService(comptime Rt: type) type {
         const Self = @This();
 
         const TimerEntry = struct {
-            handle: TimerHandle,
             fire_at: u64,
             callback: Callback,
             ctx: ?*anyopaque,
-            cancelled: bool,
         };
 
-        const EntryList = std.ArrayListAligned(TimerEntry, null);
+        const TimerMap = std.AutoHashMap(u64, TimerEntry);
 
         const PendingFire = struct {
             callback: Callback,
@@ -67,7 +65,7 @@ pub fn TimerService(comptime Rt: type) type {
         };
         const FireList = std.ArrayListAligned(PendingFire, null);
 
-        timers: EntryList,
+        timers: TimerMap,
         allocator: std.mem.Allocator,
         current_time: u64,
         next_id: u64,
@@ -76,7 +74,7 @@ pub fn TimerService(comptime Rt: type) type {
         /// Initialize timer service.
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
-                .timers = .{},
+                .timers = TimerMap.init(allocator),
                 .allocator = allocator,
                 .current_time = 0,
                 .next_id = 1,
@@ -85,7 +83,7 @@ pub fn TimerService(comptime Rt: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            self.timers.deinit(self.allocator);
+            self.timers.deinit();
             self.mutex.deinit();
         }
 
@@ -94,33 +92,26 @@ pub fn TimerService(comptime Rt: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const handle = TimerHandle{ .id = self.next_id };
+            const id = self.next_id;
             self.next_id += 1;
 
-            self.timers.append(self.allocator, .{
-                .handle = handle,
+            self.timers.put(id, .{
                 .fire_at = self.current_time + delay_ms,
                 .callback = callback,
                 .ctx = ctx,
-                .cancelled = false,
             }) catch return TimerHandle.null_handle;
 
-            return handle;
+            return .{ .id = id };
         }
 
-        /// Cancel a scheduled timer.
+        /// Cancel a scheduled timer. O(1) lookup.
         pub fn cancel(self: *Self, handle: TimerHandle) void {
             if (!handle.isValid()) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            for (self.timers.items) |*entry| {
-                if (entry.handle.id == handle.id) {
-                    entry.cancelled = true;
-                    return;
-                }
-            }
+            _ = self.timers.remove(handle.id);
         }
 
         /// Get the current time in milliseconds.
@@ -138,22 +129,27 @@ pub fn TimerService(comptime Rt: type) type {
             self.current_time += delta_ms;
             const now = self.current_time;
 
-            // Collect callbacks to fire (release lock before firing)
+            // Collect expired timer ids and callbacks (release lock before firing)
             var to_fire: FireList = .{};
             defer to_fire.deinit(self.allocator);
 
-            var i: usize = 0;
-            while (i < self.timers.items.len) {
-                const entry = &self.timers.items[i];
-                if (!entry.cancelled and entry.fire_at <= now) {
+            var expired_ids: std.ArrayListAligned(u64, null) = .{};
+            defer expired_ids.deinit(self.allocator);
+
+            var it = self.timers.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.fire_at <= now) {
                     to_fire.append(self.allocator, .{
-                        .callback = entry.callback,
-                        .ctx = entry.ctx,
+                        .callback = entry.value_ptr.callback,
+                        .ctx = entry.value_ptr.ctx,
                     }) catch {};
-                    _ = self.timers.swapRemove(i);
-                } else {
-                    i += 1;
+                    expired_ids.append(self.allocator, entry.key_ptr.*) catch {};
                 }
+            }
+
+            // Remove expired entries
+            for (expired_ids.items) |id| {
+                _ = self.timers.remove(id);
             }
 
             self.mutex.unlock();
@@ -166,16 +162,11 @@ pub fn TimerService(comptime Rt: type) type {
             return to_fire.items.len;
         }
 
-        /// Get the number of pending (non-cancelled) timers.
+        /// Get the number of pending timers.
         pub fn pendingCount(self: *Self) usize {
             self.mutex.lock();
             defer self.mutex.unlock();
-
-            var count: usize = 0;
-            for (self.timers.items) |entry| {
-                if (!entry.cancelled) count += 1;
-            }
-            return count;
+            return self.timers.count();
         }
     };
 }
