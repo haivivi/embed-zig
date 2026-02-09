@@ -1,7 +1,6 @@
 //! Session management for transport phase.
 
 const std = @import("std");
-const crypto = std.crypto;
 const mem = std.mem;
 const time = std.time;
 const Mutex = std.Thread.Mutex;
@@ -211,11 +210,10 @@ pub fn SessionMod(comptime Crypto: type) type {
     };
 }
 
-/// Generates a random session index.
-pub fn generateIndex() u32 {
-    var buf: [4]u8 = undefined;
-    crypto.random.bytes(&buf);
-    return mem.readInt(u32, &buf, .little);
+/// Creates a session index from 4 random bytes.
+/// The caller is responsible for providing cryptographic random bytes.
+pub fn generateIndexFromBytes(random_bytes: [4]u8) u32 {
+    return mem.readInt(u32, &random_bytes, .little);
 }
 
 // Tests
@@ -292,12 +290,15 @@ test "state" {
     try testing.expectError(SessionError.NotEstablished, sessions.alice.encrypt("test", &ct));
 }
 
-test "generate index" {
+test "generate index from bytes" {
     var indices = std.AutoHashMap(u32, void).init(testing.allocator);
     defer indices.deinit();
 
-    for (0..1000) |_| {
-        try indices.put(generateIndex(), {});
+    for (0..1000) |i| {
+        var bytes: [4]u8 = undefined;
+        std.crypto.random.bytes(&bytes);
+        _ = i;
+        try indices.put(generateIndexFromBytes(bytes), {});
     }
 
     try testing.expect(indices.count() > 900);

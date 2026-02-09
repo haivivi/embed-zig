@@ -40,6 +40,5 @@ pub const Pattern = noise.Pattern;
 // pub const dnsmgr_mod = @import("dnsmgr/mod.zig");
 
 test {
-    std.testing.refAllDecls(@This());
     _ = noise;
 }

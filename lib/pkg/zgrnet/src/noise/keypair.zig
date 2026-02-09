@@ -87,10 +87,16 @@ pub fn KeyPair(comptime Crypto: type) type {
 
         const Self = @This();
 
-        /// Generates a new random key pair.
+        /// Generates a new random key pair using std.crypto.random.
+        /// Not available on freestanding; use fromSeed() with platform RNG.
         pub fn generate() Self {
             var seed: [32]u8 = undefined;
-            crypto.random.bytes(&seed);
+            std.crypto.random.bytes(&seed);
+            return fromSeed(seed);
+        }
+
+        /// Creates a key pair from a 32-byte seed (deterministic).
+        pub fn fromSeed(seed: [32]u8) Self {
             const kp = X.KeyPair.generateDeterministic(seed) catch {
                 return Self{ .private = Key.zero, .public = Key.zero };
             };

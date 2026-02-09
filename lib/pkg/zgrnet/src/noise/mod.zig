@@ -87,7 +87,8 @@ pub const Pattern = handshake_mod.Pattern;
 pub const Error = handshake_mod.Error;
 
 test {
-    std.testing.refAllDecls(@This());
+    // Don't use refAllDecls — it forces analysis of generate()/generateIndex()
+    // which use std.crypto.random (unavailable on freestanding).
     _ = keypair_mod;
     _ = cipher_mod;
     _ = crypto_mod;
