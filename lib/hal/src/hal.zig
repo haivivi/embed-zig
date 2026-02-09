@@ -105,6 +105,8 @@ pub const motion = @import("motion.zig");
 pub const hci = @import("hci.zig");
 /// BLE Host module (hal.ble.from, hal.ble.is)
 pub const ble = @import("ble.zig");
+/// Timer module (hal.timer.from, hal.timer.is)
+pub const timer = @import("timer.zig");
 
 // ============================================================================
 // Common Types
@@ -243,6 +245,19 @@ pub const HciError = hci.Error;
 // BLE Types
 // ============================================================================
 
+// ============================================================================
+// Timer Types
+// ============================================================================
+
+/// Timer handle for cancellation
+pub const TimerHandle = timer.TimerHandle;
+/// Timer callback type (same as spawner.TaskFn)
+pub const TimerCallback = timer.Callback;
+
+// ============================================================================
+// BLE Types
+// ============================================================================
+
 /// BLE Host state
 pub const BleState = ble.State;
 /// BLE event
@@ -272,4 +287,5 @@ test {
     _ = @import("motion.zig");
     _ = @import("hci.zig");
     _ = @import("ble.zig");
+    _ = @import("timer.zig");
 }
