@@ -622,7 +622,18 @@ def _esp_zig_app_impl(ctx):
     for d in main_dep_names:
         main_imports += '    root_module.addImport("{name}", {name}_mod);\n'.format(name = d)
     
-    build_zig_body = "\n".join(build_zig_modules + build_zig_includes + build_zig_imports)
+    # build_options module: provides BoardType enum and selected board
+    # Used by platform.zig for board selection at compile time
+    board_enum_fields = ", ".join(boards_list)
+    build_options_lines = [
+        "    // build_options module (BoardType enum + selected board)",
+        "    const board_options = b.addOptions();",
+        "    const BoardType = enum { " + board_enum_fields + " };",
+        "    board_options.addOption(BoardType, \"board\", ." + board + ");",
+        "    app_mod.addOptions(\"build_options\", board_options);",
+    ]
+    
+    build_zig_body = "\n".join(build_zig_modules + build_zig_includes + build_zig_imports + build_options_lines)
     
     # ESP-IDF include dirs need to be added to every module with @cImport
     # Generate the addIncludePath calls for each module inside the INCLUDE_DIRS loop

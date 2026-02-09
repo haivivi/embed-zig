@@ -2,6 +2,7 @@
 
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_module")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -10,6 +11,28 @@ filegroup(
     srcs = [
         "//examples/apps/tcp_speed_test:app_srcs",
     ] + glob(["**/*"]),
+)
+
+zig_module(
+    name = "idf",
+    main = "//lib/platform/esp/idf:src/idf.zig",
+    srcs = ["//lib/platform/esp/idf:zig_srcs"],
+    c_srcs = ["//lib/platform/esp/idf:c_srcs"],
+    link_libc = True,
+)
+
+zig_module(
+    name = "impl",
+    main = "//lib/platform/esp/impl:src/impl.zig",
+    srcs = ["//lib/platform/esp/impl:zig_srcs"],
+    deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
+)
+
+zig_module(
+    name = "esp",
+    main = "//lib/platform/esp:src/esp.zig",
+    srcs = ["//lib/platform/esp:all_zig_srcs"],
+    deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
 )
 
 # Environment from command line
@@ -38,7 +61,8 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
-    deps = ["//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [":idf", ":esp",
+ "//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
     env = ":env",

@@ -30,6 +30,13 @@ zig_module(
     name = "impl",
     main = "//lib/platform/esp/impl:src/impl.zig",
     srcs = ["//lib/platform/esp/impl:zig_srcs"],
+    deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
+)
+
+zig_module(
+    name = "esp",
+    main = "//lib/platform/esp:src/esp.zig",
+    srcs = ["//lib/platform/esp:all_zig_srcs"],
     deps = [
         ":idf",
         "//lib/trait",
@@ -37,19 +44,6 @@ zig_module(
         "//lib/pkg/drivers",
         "//lib/pkg/math",
         "//lib/pkg/motion",
-    ],
-)
-
-zig_module(
-    name = "board_lichuang_gocool",
-    main = "//lib/platform/esp:src/boards/lichuang_gocool.zig",
-    srcs = ["//lib/platform/esp:src/boards/lichuang_gocool.zig"],
-    module_name = "board_lichuang_gocool",
-    deps = [
-        ":idf",
-        ":impl",
-        "//lib/hal",
-        "//lib/pkg/drivers",
     ],
 )
 
@@ -99,8 +93,7 @@ esp_zig_app(
     ],
     deps = [
         ":idf",
-        ":impl",
-        ":board_lichuang_gocool",
+        ":esp",
         "//lib/hal",
         "//lib/trait",
         "//lib/pkg/channel",
