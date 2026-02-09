@@ -1,12 +1,12 @@
 //! Board Configuration - WiFi DNS Lookup (Event-Driven)
 
 const hal = @import("hal");
-const dns = @import("dns");
 const build_options = @import("build_options");
 
-/// Hardware implementation (exported for access to crypto types like CaStore)
-pub const hw = switch (build_options.board) {
+const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
+    else => @compileError("unsupported board for wifi_dns_lookup"),
 };
 
 const spec = struct {
@@ -26,17 +26,6 @@ const spec = struct {
 
     // Socket trait (for DNS resolver)
     pub const socket = hw.socket;
-
-    // Crypto suite (mbedTLS-based, for TLS)
-    pub const crypto = hw.crypto;
 };
 
 pub const Board = hal.Board(spec);
-
-// ============================================================================
-// DNS Resolver with TLS (for DoH)
-// ============================================================================
-
-/// DNS Resolver using mbedTLS crypto suite for DoH
-/// Uses ESP hardware RNG via Crypto.Rng
-pub const DnsResolver = dns.ResolverWithTls(hw.socket, hw.crypto, hw.Rt, void);

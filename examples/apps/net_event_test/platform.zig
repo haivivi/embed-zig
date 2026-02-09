@@ -1,20 +1,14 @@
 //! Board Configuration - Net Event Test
 //!
-//! This app tests the Net HAL event system through board.nextEvent().
-//!
-//! Test targets:
-//! - lib/esp/src/idf/net/netif_helper.c (IP_EVENT handling, event queue)
-//! - lib/esp/src/idf/net/netif.zig (pollEvent, eventInit)
-//! - lib/esp/src/impl/net.zig (NetDriver implementation)
-//! - lib/hal/src/net.zig (HAL wrapper)
-//! - lib/hal/src/board.zig (event integration)
+//! Tests WiFi and Net HAL event systems through board.nextEvent().
 
 const hal = @import("hal");
 const build_options = @import("build_options");
-const idf = @import("esp");
 
 const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
+    else => @compileError("unsupported board for net_event_test"),
 };
 
 const spec = struct {
@@ -30,12 +24,12 @@ const spec = struct {
     pub const wifi = hal.wifi.from(hw.wifi_spec);
 
     // Net HAL - provides IP layer events (dhcp_bound, ip_lost, etc.)
-    // THIS IS THE PRIMARY TARGET OF THIS TEST
     pub const net = hal.net.from(hw.net_spec);
 };
 
 pub const Board = hal.Board(spec);
 
-/// Static net functions for querying network interfaces
-/// These are convenience functions that don't require an instance
-pub const net_impl = idf.impl.net;
+/// Net query functions (optional, platform-specific)
+/// ESP provides list/get/getDns; BK does not yet.
+pub const has_net_query = @hasDecl(hw, "net_query");
+pub const net_query = if (has_net_query) hw.net_query else void;

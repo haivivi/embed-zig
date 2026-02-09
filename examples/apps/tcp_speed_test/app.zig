@@ -9,13 +9,12 @@
 //!   cd tools/echo_server && go run main.go -tcp-port 9080
 
 const std = @import("std");
+const trait = @import("trait");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
-
-const esp = @import("esp");
-const idf = esp.idf;
+const Socket = trait.socket.from(Board.socket);
 
 /// Test configuration
 const TestConfig = struct {
@@ -56,7 +55,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     log.info("", .{});
     log.info("=== Round {}/{} ===", .{ round + 1, config.rounds });
 
-    var sock = idf.net.socket.Socket.tcp() catch |err| {
+    var sock = Socket.tcp() catch |err| {
         log.err("Socket create failed: {}", .{err});
         return null;
     };

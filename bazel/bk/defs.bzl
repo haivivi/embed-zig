@@ -164,6 +164,7 @@ export BK_KCONFIG_AP="{kconfig_ap}"
 export BK_KCONFIG_CP="{kconfig_cp}"
 export BK_MODULES="{modules}"
 export BK_APP_ZIG="{app_zig}"
+export BK_ENV_FILE="{env_file}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -180,8 +181,12 @@ exec bash "$E/{build_sh}"
         kconfig_cp = ctx.file.kconfig_cp.path if ctx.file.kconfig_cp else "",
         modules = " ".join(module_entries),
         app_zig = app_zig.path if app_zig else "",
+        env_file = ctx.file.env.path if ctx.file.env else "",
         build_sh = build_sh.path if build_sh else "",
     )
+
+    # Add env file to inputs
+    env_files = [ctx.file.env] if ctx.file.env else []
 
     ctx.actions.write(
         output = wrapper,
@@ -197,7 +202,7 @@ exec bash "$E/{build_sh}"
         kconfig_files.append(ctx.file.kconfig_cp)
 
     # All inputs
-    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -267,6 +272,10 @@ bk_zig_app = rule(
             default = False,
             doc = "True = cross-platform app (generates main.zig bridge, app.zig becomes 'app' module). " +
                   "False = BK-only app (app.zig exports zig_main directly).",
+        ),
+        "env": attr.label(
+            allow_single_file = True,
+            doc = "Environment file with KEY=VALUE pairs (WIFI_SSID, WIFI_PASSWORD, etc.)",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

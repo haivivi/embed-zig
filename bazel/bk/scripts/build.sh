@@ -37,17 +37,38 @@ compile_zig_lib() {
 
     mkdir -p "$OUT_DIR"
 
-    # For cross-platform apps (BK_APP_ZIG set): generate main.zig bridge
+    # For cross-platform apps (BK_APP_ZIG set): generate env.zig + main.zig bridge
     local ROOT_ZIG="$E/$APP_ZIG"
     if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+        # Generate env.zig from env file
+        {
+            echo 'pub const Env = struct {'
+            if [ -n "$BK_ENV_FILE" ] && [ -f "$E/$BK_ENV_FILE" ]; then
+                while IFS='=' read -r key value || [ -n "$key" ]; do
+                    key=$(echo "$key" | tr -d '"' | tr -d ' ')
+                    value=$(echo "$value" | tr -d '"')
+                    [ -z "$key" ] && continue
+                    [[ "$key" == \#* ]] && continue
+                    local field=$(echo "$key" | tr '[:upper:]' '[:lower:]')
+                    echo "    ${field}: []const u8 = \"${value}\","
+                done < "$E/$BK_ENV_FILE"
+            fi
+            echo '};'
+            echo 'pub const env = Env{};'
+        } > "$OUT_DIR/env.zig"
+
+        # Generate main.zig bridge
         cat > "$OUT_DIR/main.zig" << 'MAINEOF'
 const app = @import("app");
+const env_module = @import("env");
+const impl = @import("bk");
+pub const std_options = @import("std").Options{ .logFn = impl.impl.stdLogFn };
 export fn zig_main() callconv(.c) void {
-    app.run(.{});
+    app.run(env_module.env);
 }
 MAINEOF
         ROOT_ZIG="$OUT_DIR/main.zig"
-        echo "[bk_build] Generated main.zig bridge (cross-platform mode)"
+        echo "[bk_build] Generated main.zig + env.zig (cross-platform mode)"
     fi
 
     # Generate build.zig dynamically with all dep modules
@@ -104,6 +125,11 @@ OPTEOF
             echo '        .optimize = optimize,'
             echo '    });'
             echo '    app_mod.addImport("build_options", build_options_mod);'
+            echo "    const env_mod = b.createModule(.{"
+            echo "        .root_source_file = .{ .cwd_relative = \"$OUT_DIR/env.zig\" },"
+            echo '        .target = target,'
+            echo '        .optimize = optimize,'
+            echo '    });'
         fi
         echo ''
 
@@ -149,6 +175,7 @@ OPTEOF
         done
         if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
             echo '    root_mod.addImport("app", app_mod);'
+            echo '    root_mod.addImport("env", env_mod);'
         fi
         echo ''
 

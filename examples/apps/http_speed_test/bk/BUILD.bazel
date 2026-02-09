@@ -1,15 +1,33 @@
-load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_zig_app")
+load("//bazel:env.bzl", "make_env_file")
+load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+
 package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = ["//examples/apps/http_speed_test:app_srcs"] + glob(["**/*"]),
+)
+
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
+    defaults = {"TEST_SERVER_PORT": "8080"},
+)
+
 bk_modules()
+
 bk_zig_app(
     name = "app",
-    ap = "app.zig",
+    ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk"],
+    deps = [":bk", "//lib/hal", "//lib/trait"],
+    cross_platform = True,
+    env = ":env",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",
         "//lib/platform/bk/armino:c_helpers_socket",
     ],
 )
+
 bk_flash(name = "flash", app = ":app")

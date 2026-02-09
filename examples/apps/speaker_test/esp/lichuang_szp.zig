@@ -73,3 +73,12 @@ pub const speaker_spec = struct {
         .sample_rate = Hardware.sample_rate,
     };
 };
+
+pub const spec = struct {
+    pub const meta = .{ .id = Hardware.name };
+    pub const rtc = hal.rtc.reader.from(rtc_spec);
+    pub const log = std.log.scoped(.app);
+    pub const time = board.time;
+    pub const speaker = hal.mono_speaker.from(speaker_spec);
+    pub const pa_switch = hal.switch_.from(pa_switch_spec);
+};

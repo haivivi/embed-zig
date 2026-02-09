@@ -172,40 +172,33 @@ pub fn PwmLedDriver(comptime pwm_channel: u32, comptime period_us: u32) type {
 pub const SpeakerDriver = struct {
     const Self = @This();
 
-    speaker: ?armino.speaker.Speaker = null,
+    speaker: armino.speaker.Speaker = .{},
+    initialized: bool = false,
 
     pub fn init() !Self {
-        return .{};
-    }
-
-    /// Initialize speaker with audio config.
-    /// shared_i2c and shared_i2s are ignored on BK (onboard DAC, no external bus).
-    pub fn initWithShared(self: *Self, _: anytype, _: anytype) !void {
+        var self = Self{};
         self.speaker = armino.speaker.Speaker.init(
             audio.sample_rate,
             audio.channels,
             audio.bits,
             audio.dig_gain,
         ) catch return error.InitFailed;
+        self.initialized = true;
+        return self;
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.speaker) |*s| {
-            s.deinit();
+        if (self.initialized) {
+            self.speaker.deinit();
+            self.initialized = false;
         }
-        self.speaker = null;
     }
 
     pub fn write(self: *Self, buffer: []const i16) !usize {
-        if (self.speaker) |*s| {
-            return s.write(buffer);
-        }
-        return error.NotInitialized;
+        return self.speaker.write(buffer);
     }
 
-    pub fn setVolume(self: *Self, volume: u8) !void {
-        _ = self;
-        _ = volume;
+    pub fn setVolume(_: *Self, _: u8) !void {
         // BK onboard DAC has fixed gain set at init time
     }
 };
@@ -214,7 +207,7 @@ pub const SpeakerDriver = struct {
 pub const PaSwitchDriver = struct {
     const Self = @This();
 
-    pub fn init(_: anytype) !Self {
+    pub fn init() !Self {
         return .{};
     }
 

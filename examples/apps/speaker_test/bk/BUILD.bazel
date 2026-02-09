@@ -1,11 +1,20 @@
-load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_zig_app")
+load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+
 package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = ["//examples/apps/speaker_test:app_srcs"] + glob(["**/*"]),
+)
+
 bk_modules()
+
 bk_zig_app(
     name = "app",
-    ap = "app.zig",
+    ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk"],
+    deps = [":bk", "//lib/hal", "//lib/trait"],
+    cross_platform = True,
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_speaker",
@@ -14,4 +23,5 @@ bk_zig_app(
     base_project = "audio_player_example",
     kconfig_ap = "//examples/bk:bk7258_audio",
 )
+
 bk_flash(name = "flash", app = ":app")

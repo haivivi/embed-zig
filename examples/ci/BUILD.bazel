@@ -86,6 +86,37 @@ esp_board_build(name = "wifi_dns_lookup_esp32s3_devkit", target = "//examples/ap
 esp_board_build(name = "wifi_scan_test_esp32s3_devkit", target = "//examples/apps/wifi_scan_test/esp:app", board = "esp32s3_devkit")
 
 # =============================================================================
+# BK7258 targets (no transition needed — single board)
+# =============================================================================
+
+# --- gpio_button: bk7258 ---
+alias(name = "gpio_button_bk7258", actual = "//examples/apps/gpio_button/bk:app")
+
+# --- pwm_fade: bk7258 ---
+alias(name = "pwm_fade_bk7258", actual = "//examples/apps/pwm_fade/bk:app")
+
+# --- speaker_test: bk7258 ---
+alias(name = "speaker_test_bk7258", actual = "//examples/apps/speaker_test/bk:app")
+
+# --- wifi_dns_lookup: bk7258 (needs env) ---
+alias(name = "wifi_dns_lookup_bk7258", actual = "//examples/apps/wifi_dns_lookup/bk:app")
+
+# --- ntp_test: bk7258 (needs env) ---
+alias(name = "ntp_test_bk7258", actual = "//examples/apps/ntp_test/bk:app")
+
+# --- net_event_test: bk7258 (needs env) ---
+alias(name = "net_event_test_bk7258", actual = "//examples/apps/net_event_test/bk:app")
+
+# --- http_speed_test: bk7258 (needs env) ---
+alias(name = "http_speed_test_bk7258", actual = "//examples/apps/http_speed_test/bk:app")
+
+# --- tcp_speed_test: bk7258 (needs env) ---
+alias(name = "tcp_speed_test_bk7258", actual = "//examples/apps/tcp_speed_test/bk:app")
+
+# --- hello_bk: bk7258 (BK-only) ---
+alias(name = "hello_bk_bk7258", actual = "//examples/apps/hello_bk/bk:app")
+
+# =============================================================================
 # Aggregate target
 # =============================================================================
 
@@ -125,5 +156,15 @@ filegroup(
         ":tls_speed_test_esp32s3_devkit",
         ":wifi_dns_lookup_esp32s3_devkit",
         ":wifi_scan_test_esp32s3_devkit",
+        # BK7258
+        ":gpio_button_bk7258",
+        ":pwm_fade_bk7258",
+        ":speaker_test_bk7258",
+        ":hello_bk_bk7258",
+        ":wifi_dns_lookup_bk7258",
+        ":ntp_test_bk7258",
+        ":net_event_test_bk7258",
+        ":http_speed_test_bk7258",
+        ":tcp_speed_test_bk7258",
     ],
 )
