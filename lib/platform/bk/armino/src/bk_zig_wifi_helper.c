@@ -186,7 +186,16 @@ int bk_zig_wifi_sta_connect(const char *ssid, const char *password) {
 }
 
 int bk_zig_wifi_sta_disconnect(void) {
-    return bk_wifi_sta_disconnect();
+    bk_err_t ret = bk_wifi_sta_disconnect();
+    /* Armino's bk_wifi_sta_disconnect() does NOT post EVENT_WIFI_STA_DISCONNECTED.
+     * We push it manually so Zig's event loop gets notified. */
+    if (ret == BK_OK) {
+        bk_zig_event_t ev = {0};
+        ev.type = EVT_DISCONNECTED;
+        push_event(ev);
+        BK_LOGI(TAG, "event: STA disconnected (manual)\r\n");
+    }
+    return ret;
 }
 
 /* ========================================================================

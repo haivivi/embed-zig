@@ -159,6 +159,7 @@ export BK_KCONFIG_CP="{kconfig_cp}"
 export BK_MODULES="{modules}"
 export BK_APP_ZIG="{app_zig}"
 export BK_ENV_FILE="{env_file}"
+export ARMINO_PATH="{armino_path}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -176,6 +177,7 @@ exec bash "$E/{build_sh}"
         modules = " ".join(module_entries),
         app_zig = app_zig.path if app_zig else "",
         env_file = ctx.file.env.path if ctx.file.env else "",
+        armino_path = ctx.attr._armino_path[BuildSettingInfo].value if ctx.attr._armino_path and BuildSettingInfo in ctx.attr._armino_path else "",
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -272,6 +274,9 @@ bk_zig_app = rule(
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
         ),
+        "_armino_path": attr.label(
+            default = Label("//bazel:armino_path"),
+        ),
     },
     doc = "Build a BK7258 Zig app — dual target: AP (user code) + CP (boot/BLE)",
 )
@@ -294,6 +299,7 @@ def _bk_flash_impl(ctx):
 
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "115200"
+    bk_loader = ctx.attr._bk_loader_path[BuildSettingInfo].value if ctx.attr._bk_loader_path and BuildSettingInfo in ctx.attr._bk_loader_path else ""
     script_files = ctx.attr._scripts.files.to_list()
 
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
@@ -307,8 +313,11 @@ if [ ! -d "$RUNFILES" ]; then
     RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 fi
 
+BK_LOADER="{bk_loader}"
 source "$RUNFILES/{common_sh}"
-find_bk_loader
+if [ -z "$BK_LOADER" ] || [ ! -x "$BK_LOADER" ]; then
+    find_bk_loader
+fi
 detect_bk_port "{port}" "bk_flash" || exit 1
 
 # Kill any process using the port
@@ -319,6 +328,7 @@ if lsof "$PORT" >/dev/null 2>&1; then
 fi
 
 echo "[bk_flash] Flashing $RUNFILES/{bin} to $PORT at {baud} baud..."
+echo "[bk_flash] bk_loader: $BK_LOADER"
 "$BK_LOADER" download \\
     -p "$PORT" \\
     -b {baud} \\
@@ -332,6 +342,7 @@ echo "[bk_flash] Done!"
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
         baud = baud,
+        bk_loader = bk_loader,
         bin = bin_file.short_path,
     )
 
@@ -361,6 +372,9 @@ bk_flash = rule(
         ),
         "_baud": attr.label(
             default = Label("//bazel:baud"),
+        ),
+        "_bk_loader_path": attr.label(
+            default = Label("//bazel:bk_loader_path"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,

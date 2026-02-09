@@ -24,6 +24,10 @@ pub const WifiDriver = struct {
 
     initialized: bool = false,
     connected: bool = false,
+    /// Track rapid disconnects to detect connection_failed (armino has no such event)
+    disconnect_count: u8 = 0,
+    last_disconnect_ms: u64 = 0,
+    connecting: bool = false,
 
     pub fn init() !Self {
         armino.wifi.init() catch return error.InitFailed;
@@ -37,7 +41,8 @@ pub const WifiDriver = struct {
 
     /// Non-blocking connect
     pub fn connect(self: *Self, ssid: []const u8, password: []const u8) void {
-        _ = self;
+        self.connecting = true;
+        self.disconnect_count = 0;
         var ssid_buf: [33:0]u8 = @splat(0);
         var pass_buf: [65:0]u8 = @splat(0);
         const sl = @min(ssid.len, 32);
@@ -49,6 +54,8 @@ pub const WifiDriver = struct {
 
     pub fn disconnect(self: *Self) void {
         self.connected = false;
+        self.connecting = false;
+        self.disconnect_count = 0;
         armino.wifi.disconnect() catch {};
     }
 
@@ -57,11 +64,36 @@ pub const WifiDriver = struct {
     }
 
     /// Poll events via shared dispatcher (avoids dual-poll from same C queue).
+    /// Detects connection_failed from rapid disconnects (armino quirk).
     pub fn pollEvent(self: *Self) ?WifiEvent {
         const event = @import("event_dispatch.zig").popWifi() orelse return null;
         switch (event) {
-            .connected => self.connected = true,
-            .disconnected => self.connected = false,
+            .connected => {
+                self.connected = true;
+                self.connecting = false;
+                self.disconnect_count = 0;
+            },
+            .disconnected => {
+                self.connected = false;
+                // If we're in connecting state and get rapid disconnects,
+                // it means auth failed (armino doesn't have connection_failed event)
+                if (self.connecting) {
+                    const now = armino.time.nowMs();
+                    if (now - self.last_disconnect_ms < 10000) {
+                        self.disconnect_count += 1;
+                    } else {
+                        self.disconnect_count = 1;
+                    }
+                    self.last_disconnect_ms = now;
+
+                    // 3+ rapid disconnects while connecting = auth failed
+                    if (self.disconnect_count >= 3) {
+                        self.connecting = false;
+                        self.disconnect_count = 0;
+                        return .{ .connection_failed = .auth_failed };
+                    }
+                }
+            },
             else => {},
         }
         return event;
