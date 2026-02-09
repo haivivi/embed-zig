@@ -2,13 +2,11 @@
 # mic -> AEC -> opus encode -> Channel -> opus decode -> speaker
 # Board: lichuang_gocool
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
-load("//bazel/zig:defs.bzl", "zig_module", "zig_static_library")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_static_library")
+load("@esp_sysroot//:defs.bzl", "NEWLIB_INCLUDE")
 
 package(default_visibility = ["//visibility:public"])
-
-# ESP-IDF newlib headers (needed for cross-compiling C code that uses libc)
-_NEWLIB_INCLUDE = "/Users/idy/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/xtensa-esp-elf/include"
 
 filegroup(
     name = "srcs",
@@ -18,35 +16,6 @@ filegroup(
 )
 
 # Per-app ESP modules (declaration-only, compiled by zig build in CMake)
-zig_module(
-    name = "idf",
-    main = "//lib/platform/esp/idf:src/idf.zig",
-    srcs = ["//lib/platform/esp/idf:zig_srcs"],
-    c_srcs = ["//lib/platform/esp/idf:c_srcs"],
-    link_libc = True,
-)
-
-zig_module(
-    name = "impl",
-    main = "//lib/platform/esp/impl:src/impl.zig",
-    srcs = ["//lib/platform/esp/impl:zig_srcs"],
-    deps = [":idf", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
-)
-
-zig_module(
-    name = "esp",
-    main = "//lib/platform/esp:src/esp.zig",
-    srcs = ["//lib/platform/esp:all_zig_srcs"],
-    deps = [
-        ":idf", ":impl",
-        "//lib/trait",
-        "//lib/hal",
-        "//lib/pkg/drivers",
-        "//lib/pkg/math",
-        "//lib/pkg/motion",
-    ],
-)
-
 # Cross-compile opus for xtensa — same zig_library definition as host,
 # just different target + newlib system headers
 zig_static_library(
@@ -54,8 +23,10 @@ zig_static_library(
     lib = "//third_party/opus:opus_fixed",
     target = "xtensa-freestanding-none",
     optimize = "ReleaseSafe",
-    system_include_dirs = [_NEWLIB_INCLUDE],
+    system_include_dirs = [NEWLIB_INCLUDE],
 )
+
+esp_modules()
 
 esp_zig_app(
     name = "app",

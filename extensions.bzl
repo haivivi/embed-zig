@@ -197,3 +197,50 @@ def _zig_toolchain_ext_impl(ctx):
 zig_toolchain = module_extension(
     implementation = _zig_toolchain_ext_impl,
 )
+
+# =============================================================================
+# ESP Sysroot (auto-detect newlib headers for cross-compilation)
+# =============================================================================
+
+def _esp_sysroot_impl(ctx):
+    """Auto-detect ESP-IDF toolchain newlib headers."""
+    home = ctx.os.environ.get("HOME", "")
+    espressif_dir = home + "/.espressif/tools/xtensa-esp-elf"
+
+    # Find the latest installed version
+    result = ctx.execute(["ls", espressif_dir])
+    newlib_include = ""
+    if result.return_code == 0:
+        versions = sorted(result.stdout.strip().split("\n"), reverse = True)
+        for v in versions:
+            if v.startswith("esp-"):
+                candidate = espressif_dir + "/" + v + "/xtensa-esp-elf/xtensa-esp-elf/include"
+                check = ctx.execute(["test", "-d", candidate])
+                if check.return_code == 0:
+                    newlib_include = candidate
+                    break
+
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+# Auto-detected newlib include path: {path}
+NEWLIB_INCLUDE = "{path}"
+""".format(path = newlib_include))
+
+    ctx.file("defs.bzl", """
+# Auto-detected ESP newlib include path for cross-compilation
+NEWLIB_INCLUDE = "{path}"
+""".format(path = newlib_include))
+
+_esp_sysroot_repo = repository_rule(
+    implementation = _esp_sysroot_impl,
+    environ = ["HOME"],
+)
+
+def _esp_sysroot_ext_impl(ctx):
+    """Module extension for ESP sysroot detection."""
+    _esp_sysroot_repo(name = "esp_sysroot")
+
+esp_sysroot = module_extension(
+    implementation = _esp_sysroot_ext_impl,
+)

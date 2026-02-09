@@ -1,7 +1,7 @@
 # ADC Button - ESP Platform
 
 load("//bazel:env.bzl", "make_env_file")
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_sdkconfig", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_sdkconfig", "esp_zig_app")
 load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
 load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
@@ -13,7 +13,6 @@ load("//bazel/esp/partition:entry.bzl", "esp_partition_entry")
 load("//bazel/esp/partition:table.bzl", "esp_partition_table")
 load("//bazel/esp/partition:nvs.bzl", "esp_nvs_string", "esp_nvs_u8", "esp_nvs_bool", "esp_nvs_image")
 load("//bazel/esp/partition:spiffs.bzl", "esp_spiffs_image")
-load("//bazel/zig:defs.bzl", "zig_module")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -208,27 +207,7 @@ filegroup(
     ),
 )
 
-zig_module(
-    name = "idf",
-    main = "//lib/platform/esp/idf:src/idf.zig",
-    srcs = ["//lib/platform/esp/idf:zig_srcs"],
-    c_srcs = ["//lib/platform/esp/idf:c_srcs"],
-    link_libc = True,
-)
-
-zig_module(
-    name = "impl",
-    main = "//lib/platform/esp/impl:src/impl.zig",
-    srcs = ["//lib/platform/esp/impl:zig_srcs"],
-    deps = [":idf", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
-)
-
-zig_module(
-    name = "esp",
-    main = "//lib/platform/esp:src/esp.zig",
-    srcs = ["//lib/platform/esp:all_zig_srcs"],
-    deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
-)
+esp_modules()
 
 esp_zig_app(
     name = "app",

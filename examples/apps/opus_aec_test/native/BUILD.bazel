@@ -6,8 +6,6 @@
 # Build: bazel build //examples/apps/opus_aec_test/native:test
 # Run:   bazel run //examples/apps/opus_aec_test/native:test
 
-load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
-
 package(default_visibility = ["//visibility:public"])
 
 # Build using zig build (handles C source compilation via addCSourceFiles)
@@ -25,7 +23,6 @@ genrule(
     outs = ["opus_test"],
     cmd = """
         ZIG=$$(ls external/+zig_toolchain+zig_toolchain/zig)
-        # Copy sources preserving structure
         WORK=$$(mktemp -d)
         trap "rm -rf $$WORK" EXIT
         for f in $(SRCS); do
@@ -36,14 +33,10 @@ genrule(
         HOME="$$WORK" "$$WORK/$$ZIG" build -Doptimize=ReleaseFast \
             --cache-dir "$$WORK/.zig-cache" --global-cache-dir "$$WORK/.zig-global" \
             --prefix "$$WORK/out" 2>&1
-        cp "$$WORK/out/bin/opus_test" "$(OUTS)"
+        cp "$$WORK/out/bin/opus_test" "$@"
+        chmod +x "$@"
     """,
     tools = ["@zig_toolchain//:zig_files"],
     local = True,
-)
-
-native_binary(
-    name = "test",
-    src = ":build_test",
-    out = "run_opus_test",
+    executable = True,
 )

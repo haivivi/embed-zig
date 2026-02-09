@@ -489,7 +489,7 @@ zig_library = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -759,7 +759,7 @@ zig_static_library = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -877,7 +877,7 @@ zig_binary = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -1000,7 +1000,7 @@ zig_test = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),

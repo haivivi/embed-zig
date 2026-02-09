@@ -1,7 +1,6 @@
 # LED Strip Animation - ESP Platform
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
-load("//bazel/zig:defs.bzl", "zig_module")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,9 +11,8 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
-zig_module(name = "idf", main = "//lib/platform/esp/idf:src/idf.zig", srcs = ["//lib/platform/esp/idf:zig_srcs"], c_srcs = ["//lib/platform/esp/idf:c_srcs"], link_libc = True)
-zig_module(name = "impl", main = "//lib/platform/esp/impl:src/impl.zig", srcs = ["//lib/platform/esp/impl:zig_srcs"], deps = [":idf", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion", "//lib/pkg/waitgroup", "//lib/pkg/channel", "//lib/pkg/cancellation"])
-zig_module(name = "esp", main = "//lib/platform/esp:src/esp.zig", srcs = ["//lib/platform/esp:all_zig_srcs"], deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"])
+
+esp_modules()
 
 esp_zig_app(
     name = "app",

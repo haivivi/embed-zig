@@ -37,7 +37,7 @@ Build:
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/esp:settings.bzl", "DEFAULT_BOARD", "DEFAULT_CHIP")
 load("//bazel/esp/partition:table.bzl", "EspPartitionTableInfo")
-load("//bazel/zig:defs.bzl", "ZigModuleInfo", "build_module_args", "collect_deps", "encode_module", "decode_module")
+load("//bazel/zig:defs.bzl", "ZigModuleInfo", "build_module_args", "collect_deps", "encode_module", "decode_module", "zig_module")
 
 # sdkconfig modules (each corresponds to ESP-IDF components)
 # All modules are independent rules that generate .sdkconfig fragments
@@ -55,6 +55,59 @@ load("//bazel/esp/sdkconfig:newlib.bzl", "esp_newlib")
 load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/esp/sdkconfig:validate.bzl", "esp_validate")
 load("//bazel:env.bzl", "make_env_file")
+
+# =============================================================================
+# esp_modules — Create standard ESP platform zig_modules (idf, impl, esp)
+# =============================================================================
+
+def esp_modules():
+    """Create the standard ESP platform zig_module declarations.
+
+    Creates 3 targets: :idf, :impl, :esp
+    These are required by esp_zig_app and should be in every ESP app's BUILD.bazel.
+
+    Usage:
+        load("//bazel/esp:defs.bzl", "esp_modules", "esp_zig_app")
+        esp_modules()
+        esp_zig_app(name = "app", deps = [":idf", ":esp", ...], ...)
+    """
+    zig_module(
+        name = "idf",
+        main = Label("//lib/platform/esp/idf:src/idf.zig"),
+        srcs = [Label("//lib/platform/esp/idf:zig_srcs")],
+        c_srcs = [Label("//lib/platform/esp/idf:c_srcs")],
+        link_libc = True,
+    )
+    zig_module(
+        name = "impl",
+        main = Label("//lib/platform/esp/impl:src/impl.zig"),
+        srcs = [Label("//lib/platform/esp/impl:zig_srcs")],
+        deps = [
+            ":idf",
+            Label("//lib/trait"),
+            Label("//lib/hal"),
+            Label("//lib/pkg/drivers"),
+            Label("//lib/pkg/math"),
+            Label("//lib/pkg/motion"),
+            Label("//lib/pkg/waitgroup"),
+            Label("//lib/pkg/channel"),
+            Label("//lib/pkg/cancellation"),
+        ],
+    )
+    zig_module(
+        name = "esp",
+        main = Label("//lib/platform/esp:src/esp.zig"),
+        srcs = [Label("//lib/platform/esp:all_zig_srcs")],
+        deps = [
+            ":idf",
+            ":impl",
+            Label("//lib/trait"),
+            Label("//lib/hal"),
+            Label("//lib/pkg/drivers"),
+            Label("//lib/pkg/math"),
+            Label("//lib/pkg/motion"),
+        ],
+    )
 
 # Labels relative to this repository (works when used from external repos)
 _LIBS_LABEL = Label("//:all_libs")
@@ -228,7 +281,7 @@ esp_idf_app = rule(
             doc = "App files from embed-zig examples",
         ),
         "_board": attr.label(
-            default = "//bazel:board",
+            default = Label("//bazel:board"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -1076,7 +1129,7 @@ esp_zig_app = rule(
             default = _LIBS_LABEL,
         ),
         "_board": attr.label(
-            default = "//bazel:board",
+            default = Label("//bazel:board"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -1305,13 +1358,13 @@ esp_flash = rule(
             doc = "Partition table with data bins to flash. Optional.",
         ),
         "_board": attr.label(
-            default = "//bazel:board",
+            default = Label("//bazel:board"),
         ),
         "_port": attr.label(
-            default = "//bazel:port",
+            default = Label("//bazel:port"),
         ),
         "_baud": attr.label(
-            default = "//bazel:baud",
+            default = Label("//bazel:baud"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -1417,10 +1470,10 @@ esp_monitor = rule(
     executable = True,
     attrs = {
         "_board": attr.label(
-            default = "//bazel:board",
+            default = Label("//bazel:board"),
         ),
         "_port": attr.label(
-            default = "//bazel:port",
+            default = Label("//bazel:port"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
