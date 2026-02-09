@@ -58,6 +58,12 @@ filegroup(
     srcs = ["src/bk_zig_kvs_helper.c"],
 )
 
+# ADC helper (SARADC)
+filegroup(
+    name = "c_helpers_adc",
+    srcs = ["src/bk_zig_adc_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",
