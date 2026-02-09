@@ -356,7 +356,7 @@ APEOF
 cat > "$PROJECT_DIR/ap/CMakeLists.txt" << APCMAKEOF
 set(incs .)
 set(srcs ap_main.c $C_HELPER_SRCS)
-set(priv_req driver lwip_intf_v2_1 $BK_AP_REQUIRES)
+set(priv_req driver lwip_intf_v2_1 psa_mbedtls $BK_AP_REQUIRES)
 armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
 target_link_libraries(\${COMPONENT_LIB} INTERFACE -Wl,--whole-archive \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a -Wl,--no-whole-archive)
 target_link_options(\${COMPONENT_LIB} INTERFACE $BK_FORCE_LINK)

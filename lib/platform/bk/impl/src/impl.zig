@@ -14,6 +14,8 @@ pub const stdLogFn = log.stdLogFn;
 pub const time = @import("time.zig");
 pub const Time = time.Time;
 
+pub const crypto = @import("crypto/suite.zig");
+
 // ============================================================================
 // hal implementations (Drivers)
 // ============================================================================
