@@ -13,7 +13,15 @@ const posix = std.posix;
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
 
-const Noise = zgrnet.noise.Protocol(crypto_suite);
+/// Desktop Crypto: Suite + std.crypto.random for RNG.
+const DesktopCrypto = struct {
+    pub const Blake2s256 = crypto_suite.Blake2s256;
+    pub const ChaCha20Poly1305 = crypto_suite.ChaCha20Poly1305;
+    pub const X25519 = crypto_suite.X25519;
+    pub const Rng = crypto_suite.Rng;
+};
+
+const Noise = zgrnet.noise.Protocol(DesktopCrypto);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const msg = zgrnet.noise.message;
@@ -55,7 +63,9 @@ pub fn main() !void {
     std.debug.print("\n", .{});
 
     // Generate keypair
-    const local_kp = KP.generate();
+    var seed: [32]u8 = undefined;
+    DesktopCrypto.Rng.fill(&seed);
+    const local_kp = KP.fromSeed(seed);
     std.debug.print("Local public key:  {s}...\n", .{&local_kp.public.shortHex()});
 
     // Parse peer address
