@@ -34,18 +34,16 @@ find_bk_loader() {
     echo "[bk] bk_loader: $BK_LOADER"
 }
 
-# Detect serial port for BK7258
+# Detect serial port for BK7258 — port MUST be explicitly set
 detect_bk_port() {
     local port_config="$1"
     local context="$2"
 
     if [ -n "$port_config" ]; then
         export PORT="$port_config"
-    elif [ -e "/dev/cu.usbserial-130" ]; then
-        export PORT="/dev/cu.usbserial-130"
     else
-        echo "[$context] Error: No BK serial port found"
-        echo "[$context] Set --//bazel:port=/dev/cu.usbserial-XXX"
+        echo "[$context] Error: port not specified"
+        echo "[$context] Usage: bazel run //xxx:flash --//bazel:port=/dev/cu.usbserial-XXX"
         return 1
     fi
     echo "[$context] Port: $PORT"
