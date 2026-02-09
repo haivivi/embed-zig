@@ -43,6 +43,7 @@ pub const AddressError = address.AddressError;
 pub const crypto_mod = @import("crypto.zig");
 pub const tag_size = crypto_mod.tag_size;
 pub const hash_size = crypto_mod.hash_size;
+pub const CipherSuite = crypto_mod.CipherSuite;
 
 // Generic module references (for advanced usage)
 pub const cipher_mod = @import("cipher.zig");
@@ -52,12 +53,17 @@ pub const session_mod = @import("session.zig");
 
 /// Instantiate the full Noise Protocol for a given Crypto implementation.
 ///
-/// The Crypto type must provide Blake2s256, ChaCha20Poly1305, and X25519,
-/// conforming to trait.crypto interface.
+/// Default cipher suite is ChaChaPoly_BLAKE2s. Use ProtocolWithSuite for
+/// alternative suites (e.g., AESGCM_SHA256 for ESP32 hardware acceleration).
 pub fn Protocol(comptime Crypto: type) type {
-    const hs = handshake_mod.Handshake(Crypto);
-    const st = state_mod.State(Crypto);
-    const sess = session_mod.SessionMod(Crypto);
+    return ProtocolWithSuite(Crypto, .ChaChaPoly_BLAKE2s);
+}
+
+/// Instantiate the Noise Protocol with a specific cipher suite.
+pub fn ProtocolWithSuite(comptime Crypto: type, comptime suite: CipherSuite) type {
+    const hs = handshake_mod.Handshake(Crypto, suite);
+    const st = state_mod.State(Crypto, suite);
+    const sess = session_mod.SessionMod(Crypto, suite);
 
     return struct {
         // Crypto-dependent types

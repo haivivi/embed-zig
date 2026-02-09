@@ -11,10 +11,10 @@ const key_size = keypair.key_size;
 const hash_size = crypto_mod.hash_size;
 const tag_size = crypto_mod.tag_size;
 
-/// Instantiate state types for a given Crypto implementation.
-pub fn State(comptime Crypto: type) type {
-    const cipher = @import("cipher.zig").Cipher(Crypto);
-    const c = crypto_mod.CryptoMod(Crypto);
+/// Instantiate state types for a given Crypto implementation and cipher suite.
+pub fn State(comptime Crypto: type, comptime suite: crypto_mod.CipherSuite) type {
+    const cipher = @import("cipher.zig").Cipher(Crypto, suite);
+    const c = crypto_mod.CryptoMod(Crypto, suite);
 
     return struct {
         /// Manages encryption for one direction of communication.
@@ -133,7 +133,7 @@ pub fn State(comptime Crypto: type) type {
 
 // Tests
 const TestCrypto = @import("test_crypto.zig");
-const TestState = State(TestCrypto);
+const TestState = State(TestCrypto, .ChaChaPoly_BLAKE2s);
 const TestCipherState = TestState.CipherState;
 const TestSymmetricState = TestState.SymmetricState;
 

@@ -17,21 +17,38 @@ const log = Board.log;
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
 
-/// ESP32-specific Crypto: uses crypto Suite for algorithms but
-/// replaces Rng with ESP hardware random number generator.
-const EspCrypto = struct {
+/// ESP32-specific Crypto with hardware RNG.
+/// Uses pure Zig crypto (Blake2s, ChaCha20, X25519) + ESP hardware RNG.
+const EspCryptoChacha = struct {
     pub const Blake2s256 = crypto_suite.Blake2s256;
     pub const ChaCha20Poly1305 = crypto_suite.ChaCha20Poly1305;
     pub const X25519 = crypto_suite.X25519;
-    pub const Rng = struct {
-        pub fn fill(buf: []u8) void {
-            const esp_mod2 = @import("esp");
-            esp_mod2.idf.random.fill(buf);
-        }
-    };
+    pub const Rng = EspRng;
 };
 
-const Noise = zgrnet.noise.Protocol(EspCrypto);
+/// ESP32-specific Crypto with hardware AES-GCM acceleration.
+/// Uses ESP mbedTLS for AES-GCM (HW accel) + pure Zig SHA-256.
+const EspCryptoAesGcm = struct {
+    pub const Sha256 = crypto_suite.Sha256;
+    pub const Aes256Gcm = @import("esp").impl.crypto.Suite.Aes256Gcm;
+    pub const X25519 = crypto_suite.X25519;
+    pub const Rng = EspRng;
+};
+
+const EspRng = struct {
+    pub fn fill(buf: []u8) void {
+        const esp_mod2 = @import("esp");
+        esp_mod2.idf.random.fill(buf);
+    }
+};
+
+/// Toggle this to switch cipher suites for benchmarking.
+const use_aesgcm = true;
+
+const Noise = if (use_aesgcm)
+    zgrnet.noise.ProtocolWithSuite(EspCryptoAesGcm, .AESGCM_SHA256)
+else
+    zgrnet.noise.Protocol(EspCryptoChacha);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const tag_size = zgrnet.tag_size;
@@ -91,9 +108,9 @@ pub fn run(env: anytype) void {
 
     if (!got_ip) return;
 
-    // Generate keypair using ESP hardware RNG (via EspCrypto.Rng)
+    // Generate keypair using ESP hardware RNG
     var seed: [32]u8 = undefined;
-    EspCrypto.Rng.fill(&seed);
+    EspRng.fill(&seed);
     const local_kp = KP.fromSeed(seed);
     log.info("Local public key: {s}...", .{&local_kp.public.shortHex()});
     log.info("Listening on UDP :{d}", .{listen_port});

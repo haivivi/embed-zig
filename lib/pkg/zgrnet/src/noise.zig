@@ -27,6 +27,7 @@ pub const key_size = noise.key_size;
 pub const tag_size = noise.tag_size;
 pub const hash_size = noise.hash_size;
 pub const Pattern = noise.Pattern;
+pub const CipherSuite = noise.CipherSuite;
 
 test {
     _ = noise;

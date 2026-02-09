@@ -49,9 +49,9 @@ pub const SessionConfig = struct {
     now_ns: u64 = 0,
 };
 
-/// Instantiate session for a given Crypto implementation.
-pub fn SessionMod(comptime Crypto: type) type {
-    const cipher = @import("cipher.zig").Cipher(Crypto);
+/// Instantiate session for a given Crypto implementation and cipher suite.
+pub fn SessionMod(comptime Crypto: type, comptime suite: crypto_mod.CipherSuite) type {
+    const cipher = @import("cipher.zig").Cipher(Crypto, suite);
 
     return struct {
         /// An established Noise session with a peer.
@@ -198,8 +198,8 @@ pub fn generateIndexFromBytes(random_bytes: [4]u8) u32 {
 // Tests
 const testing = std.testing;
 const TestCrypto = @import("test_crypto.zig");
-const TestSession = SessionMod(TestCrypto).Session;
-const c = crypto_mod.CryptoMod(TestCrypto);
+const TestSession = SessionMod(TestCrypto, .ChaChaPoly_BLAKE2s).Session;
+const c = crypto_mod.CryptoMod(TestCrypto, .ChaChaPoly_BLAKE2s);
 
 fn createTestSessions() struct { alice: TestSession, bob: TestSession } {
     const send_key = Key.fromBytes(c.hash(&.{"send key"}));

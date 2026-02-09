@@ -69,10 +69,11 @@ pub const Error = error{
     LowOrderPoint,
 };
 
-/// Instantiate handshake types for a given Crypto implementation.
-pub fn Handshake(comptime Crypto: type) type {
+/// Instantiate handshake types for a given Crypto implementation and cipher suite.
+pub fn Handshake(comptime Crypto: type, comptime suite: crypto_mod.CipherSuite) type {
     const KP = keypair_mod.KeyPair(Crypto);
-    const state_mod = @import("state.zig").State(Crypto);
+    const c = crypto_mod.CryptoMod(Crypto, suite);
+    const state_mod = @import("state.zig").State(Crypto, suite);
     const CipherState = state_mod.CipherState;
     const SymmetricState = state_mod.SymmetricState;
 
@@ -107,7 +108,7 @@ pub fn Handshake(comptime Crypto: type) type {
 
                 // Build protocol name
                 var protocol_buf: [64]u8 = undefined;
-                const protocol_name = std.fmt.bufPrint(&protocol_buf, "Noise_{s}_25519_ChaChaPoly_BLAKE2s", .{config.pattern.name()}) catch unreachable;
+                const protocol_name = std.fmt.bufPrint(&protocol_buf, "Noise_{s}_25519_{s}", .{ config.pattern.name(), c.suite_name }) catch unreachable;
 
                 var ss = SymmetricState.init(protocol_name);
 
@@ -355,7 +356,7 @@ pub fn Handshake(comptime Crypto: type) type {
 
 // Tests
 const TestCrypto = @import("test_crypto.zig");
-const TestHS = Handshake(TestCrypto);
+const TestHS = Handshake(TestCrypto, .ChaChaPoly_BLAKE2s);
 const TestKP = keypair_mod.KeyPair(TestCrypto);
 const TestHandshakeState = TestHS.HandshakeState;
 

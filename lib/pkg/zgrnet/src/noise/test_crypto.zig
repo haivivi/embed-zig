@@ -41,6 +41,44 @@ pub const ChaCha20Poly1305 = struct {
     }
 };
 
+pub const Sha256 = struct {
+    pub const digest_length = 32;
+    pub const block_length = 64;
+
+    inner: std.crypto.hash.sha2.Sha256,
+
+    pub fn init() @This() {
+        return .{ .inner = std.crypto.hash.sha2.Sha256.init(.{}) };
+    }
+    pub fn update(self: *@This(), data: []const u8) void {
+        self.inner.update(data);
+    }
+    pub fn final(self: *@This()) [32]u8 {
+        var out: [32]u8 = undefined;
+        self.inner.final(&out);
+        return out;
+    }
+    pub fn hash(data: []const u8, out: *[32]u8, opts: anytype) void {
+        _ = opts;
+        std.crypto.hash.sha2.Sha256.hash(data, out, .{});
+    }
+};
+
+pub const Aes128Gcm = struct {
+    pub const key_length = 16;
+    pub const nonce_length = 12;
+    pub const tag_length = 16;
+
+    const Aead = std.crypto.aead.aes_gcm.Aes128Gcm;
+
+    pub fn encryptStatic(ct: []u8, tag: *[16]u8, pt: []const u8, aad: []const u8, nonce: [12]u8, key: [16]u8) void {
+        Aead.encrypt(ct[0..pt.len], tag, pt, aad, nonce, key);
+    }
+    pub fn decryptStatic(pt: []u8, ct: []const u8, tag: [16]u8, aad: []const u8, nonce: [12]u8, key: [16]u8) error{AuthenticationFailed}!void {
+        Aead.decrypt(pt[0..ct.len], ct, tag, aad, nonce, key) catch return error.AuthenticationFailed;
+    }
+};
+
 pub const Rng = struct {
     pub fn fill(buf: []u8) void {
         std.crypto.random.bytes(buf);

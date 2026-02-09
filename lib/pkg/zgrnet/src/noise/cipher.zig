@@ -13,9 +13,15 @@ const keypair = @import("keypair.zig");
 pub const Key = keypair.Key;
 pub const key_size = keypair.key_size;
 
+const crypto_mod = @import("crypto.zig");
+const CipherSuite = crypto_mod.CipherSuite;
+
 /// Instantiate cipher operations for a given Crypto implementation.
-pub fn Cipher(comptime Crypto: type) type {
-    const Aead = Crypto.ChaCha20Poly1305;
+pub fn Cipher(comptime Crypto: type, comptime suite: CipherSuite) type {
+    const Aead = switch (suite) {
+        .ChaChaPoly_BLAKE2s => Crypto.ChaCha20Poly1305,
+        .AESGCM_SHA256 => Crypto.Aes256Gcm,
+    };
 
     return struct {
         /// AEAD tag size (Poly1305).
@@ -93,7 +99,7 @@ pub fn Cipher(comptime Crypto: type) type {
 // =============================================================================
 
 const TestCrypto = @import("test_crypto.zig");
-const TestCipher = Cipher(TestCrypto);
+const TestCipher = Cipher(TestCrypto, .ChaChaPoly_BLAKE2s);
 
 test "encrypt decrypt roundtrip" {
     const key = [_]u8{0} ** key_size;

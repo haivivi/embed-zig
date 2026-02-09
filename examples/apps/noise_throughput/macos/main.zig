@@ -13,15 +13,23 @@ const posix = std.posix;
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
 
-/// Desktop Crypto: Suite + std.crypto.random for RNG.
+/// Desktop Crypto with all algorithms for both cipher suites.
 const DesktopCrypto = struct {
     pub const Blake2s256 = crypto_suite.Blake2s256;
+    pub const Sha256 = crypto_suite.Sha256;
     pub const ChaCha20Poly1305 = crypto_suite.ChaCha20Poly1305;
+    pub const Aes256Gcm = crypto_suite.Aes256Gcm;
     pub const X25519 = crypto_suite.X25519;
     pub const Rng = crypto_suite.Rng;
 };
 
-const Noise = zgrnet.noise.Protocol(DesktopCrypto);
+/// Toggle this to match ESP32 side.
+const use_aesgcm = true;
+
+const Noise = if (use_aesgcm)
+    zgrnet.noise.ProtocolWithSuite(DesktopCrypto, .AESGCM_SHA256)
+else
+    zgrnet.noise.Protocol(DesktopCrypto);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const msg = zgrnet.noise.message;
