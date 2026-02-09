@@ -55,13 +55,19 @@ pub const Key = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("{s}", .{fmt.fmtSliceHexLower(&self.data)});
+        for (self.data) |byte| {
+            try writer.print("{x:0>2}", .{byte});
+        }
     }
 
     /// Returns short hex representation (first 8 chars).
     pub fn shortHex(self: Key) [8]u8 {
         var buf: [8]u8 = undefined;
-        _ = fmt.bufPrint(&buf, "{s}", .{fmt.fmtSliceHexLower(self.data[0..4])}) catch unreachable;
+        const hex_chars = "0123456789abcdef";
+        for (self.data[0..4], 0..) |byte, i| {
+            buf[i * 2] = hex_chars[byte >> 4];
+            buf[i * 2 + 1] = hex_chars[byte & 0x0f];
+        }
         return buf;
     }
 

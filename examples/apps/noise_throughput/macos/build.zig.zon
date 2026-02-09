@@ -1,0 +1,14 @@
+.{
+    .name = .noise_throughput_macos,
+    .version = "0.1.0",
+    .fingerprint = 0x5c8aeb6a0630e620,
+    .dependencies = .{
+        .crypto = .{ .path = "../../../../lib/pkg/crypto" },
+        .zgrnet = .{ .path = "../../../../lib/pkg/zgrnet" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}

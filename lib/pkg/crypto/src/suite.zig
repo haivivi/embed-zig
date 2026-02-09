@@ -33,7 +33,9 @@ fn HashWrapper(comptime StdHash: type) type {
         }
 
         pub fn final(self: *@This()) [digest_length]u8 {
-            return self.inner.finalResult();
+            var out: [digest_length]u8 = undefined;
+            self.inner.final(&out);
+            return out;
         }
 
         pub fn hash(data: []const u8, out: *[digest_length]u8, opts: anytype) void {
