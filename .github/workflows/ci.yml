@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel-repo
+            ~/.cache/bazel-disk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'extensions.bzl') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      - name: Build Zig rules tests
+        run: bazel build --config=ci //bazel/zig/tests/...
+
+      - name: Test Zig rules
+        run: bazel test --config=ci //bazel/zig/tests/...
+
+      - name: Build cross-platform libraries
+        run: |
+          bazel build --config=ci \
+            //lib/trait \
+            //lib/hal \
+            //lib/pkg/channel \
+            //lib/pkg/waitgroup \
+            //lib/pkg/cancellation \
+            //lib/platform/std
+
+      - name: Test cross-platform libraries
+        run: |
+          bazel test --config=ci \
+            //lib/trait:trait_test \
+            //lib/pkg/channel:channel_test \
+            //lib/pkg/waitgroup:waitgroup_test \
+            //lib/pkg/cancellation:cancellation_test \
+            //lib/platform/std:std_test
