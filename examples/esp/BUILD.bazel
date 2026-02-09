@@ -152,7 +152,7 @@ esp_lwip(
     tcp_recvmbox_size = 64,
 )
 
-# High throughput LWIP - for speed tests (same as lwip, kept for future tuning)
+# High throughput LWIP - for speed tests
 esp_lwip(
     name = "lwip_fast",
     tcpip_task_stack_size = 8192,
@@ -160,7 +160,8 @@ esp_lwip(
     max_active_tcp = 16,
     tcp_snd_buf_default = 65535,
     tcp_wnd_default = 65535,
-    tcp_recvmbox_size = 64,  # Keep 64, higher values break tcp mbox
+    tcp_recvmbox_size = 64,
+    udp_recvmbox_size = 64,  # Larger UDP queue for throughput
 )
 
 # =============================================================================

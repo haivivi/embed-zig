@@ -24,7 +24,7 @@ const DesktopCrypto = struct {
 };
 
 /// Toggle this to match ESP32 side.
-const use_aesgcm = true;
+const use_aesgcm = false;
 
 const Noise = if (use_aesgcm)
     zgrnet.noise.ProtocolWithSuite(DesktopCrypto, .AESGCM_SHA256)
@@ -86,6 +86,11 @@ pub fn main() !void {
     // Set recv timeout (5s)
     const timeout = posix.timeval{ .sec = 5, .usec = 0 };
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout));
+
+    // Increase socket buffer sizes for throughput
+    const buf_size: u32 = 256 * 1024; // 256KB
+    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVBUF, std.mem.asBytes(&buf_size));
+    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.SNDBUF, std.mem.asBytes(&buf_size));
 
     const dest_addr: *const posix.sockaddr = @ptrCast(&peer_addr.any);
     const dest_len = peer_addr.getOsSockLen();
@@ -161,7 +166,7 @@ pub fn main() !void {
     // ========================================================================
     // Phase 3: Throughput test
     // ========================================================================
-    const chunk_size: usize = 1024; // 1KB chunks (UDP-friendly)
+    const chunk_size: usize = 1024; // 1KB chunks
     const num_chunks = total_bytes / chunk_size;
 
     // Prepare test data
@@ -170,46 +175,43 @@ pub fn main() !void {
         b.* = @intCast(i % 256);
     }
 
+    // Set short recv timeout for pipelined receive (100ms)
+    const short_timeout = posix.timeval{ .sec = 0, .usec = 100_000 };
+
     var total_throughput: u64 = 0;
 
     for (0..rounds) |round| {
-        std.debug.print("Round {d}/{d}: sending {d} KB ({d} chunks x {d}B)...\n", .{ round + 1, rounds, total_kb, num_chunks, chunk_size });
+        std.debug.print("Round {d}/{d}: {d} KB pipelined ({d} x {d}B)...\n", .{ round + 1, rounds, total_kb, num_chunks, chunk_size });
 
         const start = std.time.nanoTimestamp();
-        var bytes_sent: usize = 0;
 
+        // Phase 1: Send all packets (pipelined, no waiting)
         for (0..num_chunks) |_| {
-            // Encrypt
             var ciphertext: [chunk_size + tag_size]u8 = undefined;
             send_cs.encrypt(&plaintext, "", &ciphertext);
-
-            // Send
-            _ = posix.sendto(sock, &ciphertext, 0, dest_addr, dest_len) catch {
-                std.debug.print("  Send failed\n", .{});
-                continue;
-            };
-            bytes_sent += chunk_size;
-
-            // Receive echo
-            var echo_buf: [chunk_size + tag_size]u8 = undefined;
-            const echo_len = posix.recvfrom(sock, &echo_buf, 0, null, null) catch {
-                std.debug.print("  Echo timeout\n", .{});
-                continue;
-            };
-
-            // Decrypt echo
-            var decrypted: [chunk_size]u8 = undefined;
-            recv_cs.decrypt(echo_buf[0..echo_len], "", &decrypted) catch {
-                std.debug.print("  Decrypt failed\n", .{});
-                continue;
-            };
+            _ = posix.sendto(sock, &ciphertext, 0, dest_addr, dest_len) catch continue;
         }
 
+        // Phase 2: Receive all echoes
+        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&short_timeout));
+        var echoes_received: usize = 0;
+        var recv_buf: [chunk_size + tag_size]u8 = undefined;
+        while (echoes_received < num_chunks) {
+            const echo_len = posix.recvfrom(sock, &recv_buf, 0, null, null) catch break;
+            var decrypted: [chunk_size]u8 = undefined;
+            recv_cs.decrypt(recv_buf[0..echo_len], "", &decrypted) catch continue;
+            echoes_received += 1;
+        }
+        // Restore long timeout
+        const long_timeout = posix.timeval{ .sec = 5, .usec = 0 };
+        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&long_timeout));
+
+        const bytes_total = num_chunks * chunk_size + echoes_received * chunk_size;
         const elapsed_ns = std.time.nanoTimestamp() - start;
         const elapsed_ms = @as(u64, @intCast(elapsed_ns)) / 1_000_000;
-        const throughput_kbps = if (elapsed_ms > 0) (bytes_sent * 2 * 1000) / elapsed_ms / 1024 else 0;
+        const throughput_kbps = if (elapsed_ms > 0) (bytes_total * 1000) / elapsed_ms / 1024 else 0;
 
-        std.debug.print("  Time: {d}ms, Throughput: {d} KB/s (bidirectional)\n", .{ elapsed_ms, throughput_kbps });
+        std.debug.print("  Sent: {d}, Echoes: {d}/{d}, Time: {d}ms, Throughput: {d} KB/s\n", .{ num_chunks, echoes_received, num_chunks, elapsed_ms, throughput_kbps });
         total_throughput += throughput_kbps;
     }
 

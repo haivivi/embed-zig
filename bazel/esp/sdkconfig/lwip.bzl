@@ -26,6 +26,11 @@ def _esp_lwip_impl(ctx):
     lines.append("CONFIG_LWIP_TCP_OVERSIZE_MSS=y")
     lines.append("CONFIG_LWIP_TCP_HIGH_SPEED_RETRANSMISSION=y")
     
+    # UDP
+    lines.append("")
+    lines.append("# UDP")
+    lines.append("CONFIG_LWIP_UDP_RECVMBOX_SIZE={}".format(ctx.attr.udp_recvmbox_size))
+
     # DNS
     lines.append("")
     lines.append("# DNS")
@@ -78,6 +83,12 @@ esp_lwip = rule(
             doc = """CONFIG_LWIP_TCP_ACCEPTMBOX_SIZE
             TCP 接受连接邮箱队列深度 (for servers)
             Typical: 6""",
+        ),
+        "udp_recvmbox_size": attr.int(
+            default = 6,
+            doc = """CONFIG_LWIP_UDP_RECVMBOX_SIZE
+            UDP 接收邮箱队列深度
+            Typical: 6 (default), 32-64 (high throughput)""",
         ),
     },
     doc = """LWIP 网络栈配置""",

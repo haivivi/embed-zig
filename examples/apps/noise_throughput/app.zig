@@ -43,7 +43,7 @@ const EspRng = struct {
 };
 
 /// Toggle this to switch cipher suites for benchmarking.
-const use_aesgcm = true;
+const use_aesgcm = false;
 
 const Noise = if (use_aesgcm)
     zgrnet.noise.ProtocolWithSuite(EspCryptoAesGcm, .AESGCM_SHA256)
@@ -56,6 +56,10 @@ const key_size = zgrnet.key_size;
 
 const listen_port: u16 = 9999;
 const max_packet: usize = 2048;
+/// Chunk size near MTU for optimal UDP throughput.
+/// MTU=1500, IP=20, UDP=8, so max UDP payload=1472.
+/// Minus 16-byte AEAD tag = 1456 max plaintext.
+const default_chunk_size: usize = 1400;
 
 pub fn run(env: anytype) void {
     log.info("==========================================", .{});
