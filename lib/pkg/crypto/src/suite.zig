@@ -47,6 +47,8 @@ pub const Sha256 = HashWrapper(std.crypto.hash.sha2.Sha256);
 pub const Sha384 = HashWrapper(std.crypto.hash.sha2.Sha384);
 pub const Sha512 = HashWrapper(std.crypto.hash.sha2.Sha512);
 pub const Sha1 = HashWrapper(std.crypto.hash.Sha1);
+pub const Blake2s256 = HashWrapper(std.crypto.hash.blake2.Blake2s256);
+pub const Blake2b512 = HashWrapper(std.crypto.hash.blake2.Blake2b512);
 
 // ============================================================================
 // AEAD - Wrapper for encryptStatic/decryptStatic interface
@@ -294,6 +296,7 @@ fn HmacWrapper(comptime StdHmac: type) type {
 pub const HmacSha256 = HmacWrapper(std.crypto.auth.hmac.sha2.HmacSha256);
 pub const HmacSha384 = HmacWrapper(std.crypto.auth.hmac.sha2.HmacSha384);
 pub const HmacSha512 = HmacWrapper(std.crypto.auth.hmac.sha2.HmacSha512);
+pub const HmacBlake2s256 = HmacWrapper(std.crypto.auth.hmac.Hmac(std.crypto.hash.blake2.Blake2s256));
 
 // ============================================================================
 // Digital Signatures
@@ -471,6 +474,8 @@ test "Suite passes crypto trait validation" {
         .sha384 = true,
         .sha512 = true,
         .sha1 = true,
+        .blake2s = true,
+        .blake2b = true,
         // AEAD
         .aes_128_gcm = true,
         .aes_256_gcm = true,
