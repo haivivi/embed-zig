@@ -131,6 +131,7 @@ fn rwHandler(req: *gatt.Request, w: *gatt.ResponseWriter) void {
 var notif_count: u32 = 0;
 var notif_data: [256]u8 = undefined;
 var notif_len: usize = 0;
+var read_buf: [512]u8 = undefined; // shared buffer for gattRead
 
 fn onNotification(_: u16, _: u16, data: []const u8) void {
     const n = @min(data.len, notif_data.len);
@@ -377,18 +378,18 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     });
 
     // === G5: GATT Read (T26-T32) ===
-    if (host.gattRead(conn, d_read_h)) |data| {
+    if (host.gattRead(conn, d_read_h, &read_buf)) |data| {
         if (data.len == 4 and data[0] == 0xDE and data[1] == 0xAD)
             pass("T26: Read basic → 0xDEAD..")
         else
             fail("T26: Read basic");
     } else |_| fail("T26: Read basic");
 
-    if (host.gattRead(conn, d_read_h)) |data| {
+    if (host.gattRead(conn, d_read_h, &read_buf)) |data| {
         if (data.len == 4) pass("T27: Read length=4") else fail("T27: Read length");
     } else |_| fail("T27: Read length");
 
-    if (host.gattRead(conn, d_read_h)) |data| {
+    if (host.gattRead(conn, d_read_h, &read_buf)) |data| {
         if (data.len >= 4 and data[2] == 0xBE and data[3] == 0xEF)
             pass("T28: Read data=0xDEADBEEF")
         else
@@ -397,20 +398,20 @@ fn runClientTests(host: *BleHost, conn: u16) void {
 
     var reads_ok: u32 = 0;
     for (0..5) |_| {
-        if (host.gattRead(conn, d_read_h)) |_| { reads_ok += 1; } else |_| {}
+        if (host.gattRead(conn, d_read_h, &read_buf)) |_| { reads_ok += 1; } else |_| {}
     }
     if (reads_ok == 5) pass("T29: 5 sequential reads") else fail("T29: Sequential reads");
 
-    if (host.gattRead(conn, d_notify_h)) |data| {
+    if (host.gattRead(conn, d_notify_h, &read_buf)) |data| {
         if (data.len == 2 and data[0] == 0xCA) pass("T30: Read notify char → 0xCAFE") else fail("T30: Read notify char");
     } else |_| fail("T30: Read notify char");
 
-    if (host.gattRead(conn, d_rw_h)) |data| {
+    if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
         if (data.len == 0) pass("T31: Read RW char (initially empty)") else fail("T31: Read RW char");
     } else |_| fail("T31: Read RW char");
 
     if (host.gattWrite(conn, d_rw_h, &[_]u8{ 0x42, 0x43 })) {
-        if (host.gattRead(conn, d_rw_h)) |data| {
+        if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
             if (data.len == 2 and data[0] == 0x42)
                 pass("T32: Write then read back")
             else
@@ -431,7 +432,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
         pass("T35: Write 50 bytes");
     } else |_| fail("T35: Write 50 bytes");
 
-    if (host.gattRead(conn, d_rw_h)) |data| {
+    if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
         if (data.len == 50) pass("T36: Read back 50 bytes") else fail("T36: Read back 50 bytes");
     } else |_| fail("T36: Read back 50 bytes");
 
@@ -439,7 +440,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
         pass("T37: Write empty data");
     } else |_| fail("T37: Write empty");
 
-    if (host.gattRead(conn, d_rw_h)) |data| {
+    if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
         if (data.len == 0) pass("T38: Read back empty") else fail("T38: Read back empty");
     } else |_| fail("T38: Read back empty");
 
@@ -504,7 +505,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     var pattern: [100]u8 = undefined;
     for (&pattern, 0..) |*b, i| b.* = @truncate(i);
     if (host.gattWrite(conn, d_rw_h, &pattern)) {
-        if (host.gattRead(conn, d_rw_h)) |data| {
+        if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
             if (data.len == 100 and data[0] == 0 and data[99] == 99)
                 pass("T49: 100-byte pattern integrity")
             else
@@ -513,7 +514,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T49: Pattern integrity");
 
     if (host.gattWrite(conn, d_rw_h, &[_]u8{0x42})) {
-        if (host.gattRead(conn, d_rw_h)) |data| {
+        if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
             if (data.len == 1 and data[0] == 0x42) pass("T50: Single byte integrity") else fail("T50: Single byte");
         } else |_| fail("T50: Single byte");
     } else |_| fail("T50: Single byte");
@@ -521,7 +522,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     var big: [200]u8 = undefined;
     for (&big, 0..) |*b, i| b.* = @truncate(i ^ 0xAA);
     if (host.gattWrite(conn, d_rw_h, &big)) {
-        if (host.gattRead(conn, d_rw_h)) |data| {
+        if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
             if (data.len == 200 and data[0] == (0 ^ 0xAA) and data[199] == @as(u8, @truncate(199 ^ 0xAA)))
                 pass("T51: 200-byte integrity")
             else
@@ -530,7 +531,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T51: 200-byte integrity");
 
     if (host.gattWrite(conn, d_rw_h, &[_]u8{ 0x11, 0x22 })) {
-        if (host.gattRead(conn, d_rw_h)) |data| {
+        if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
             if (data.len == 2 and data[0] == 0x11 and data[1] == 0x22)
                 pass("T52: Overwrite verify")
             else
@@ -539,7 +540,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T52: Overwrite verify");
 
     // T53: Read still works with notifications enabled
-    if (host.gattRead(conn, d_read_h)) |data| {
+    if (host.gattRead(conn, d_read_h, &read_buf)) |data| {
         if (data.len == 4) pass("T53: Read during notifications") else fail("T53: Read during notifications");
     } else |_| fail("T53: Read during notifications");
 
@@ -549,7 +550,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else |_| fail("T54: Write during notifications");
 
     // T55: Read back after write during notifications
-    if (host.gattRead(conn, d_rw_h)) |data| {
+    if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
         if (data.len == 1 and data[0] == 0x99) pass("T55: Read back during notif") else fail("T55: Read back during notif");
     } else |_| fail("T55: Read back during notif");
 
@@ -557,7 +558,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     var cycle_ok: u32 = 0;
     for (0..10) |i| {
         if (host.gattWrite(conn, d_rw_h, &[_]u8{@truncate(i)})) {
-            if (host.gattRead(conn, d_rw_h)) |data| {
+            if (host.gattRead(conn, d_rw_h, &read_buf)) |data| {
                 if (data.len == 1 and data[0] == @as(u8, @truncate(i))) cycle_ok += 1;
             } else |_| {}
         } else |_| {}

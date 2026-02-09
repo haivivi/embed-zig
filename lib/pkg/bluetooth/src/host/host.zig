@@ -514,7 +514,8 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // ================================================================
 
         /// Read a remote attribute (blocks until response).
-        pub fn gattRead(self: *Self, conn_handle: u16, attr_handle: u16) gatt_client.Error![]const u8 {
+        /// Caller provides output buffer; returned slice points into `out`.
+        pub fn gattRead(self: *Self, conn_handle: u16, attr_handle: u16, out: []u8) gatt_client.Error![]const u8 {
             const conn = self.connections.get(conn_handle) orelse return error.Disconnected;
 
             // Build Read Request PDU
@@ -528,7 +529,12 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             // Wait for response (blocks)
             const resp = conn.att_response.recv() orelse return error.Disconnected;
             if (resp.isError()) return error.AttError;
-            return resp.payload();
+
+            // Copy into caller's buffer (resp is on this stack frame)
+            const data = resp.payload();
+            const n = @min(data.len, out.len);
+            @memcpy(out[0..n], data[0..n]);
+            return out[0..n];
         }
 
         /// Write to a remote attribute with response (blocks until Write Response).

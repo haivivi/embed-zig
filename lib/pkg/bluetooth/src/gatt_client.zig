@@ -217,7 +217,6 @@ pub fn parseDescriptorsFromResponse(resp: *const AttResponse, out: []DiscoveredD
 
 // ============================================================================
 // Errors
-// Errors
 // ============================================================================
 
 pub const Error = error{
