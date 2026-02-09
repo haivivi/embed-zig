@@ -25,6 +25,7 @@
 //!     }
 
 const std = @import("std");
+const trait = @import("trait");
 const Allocator = std.mem.Allocator;
 const pkt = @import("packet.zig");
 const v4 = @import("v4.zig");
@@ -90,7 +91,11 @@ pub const DisconnectCallback = *const fn (client_id: []const u8) void;
 // Broker
 // ============================================================================
 
-pub fn Broker(comptime Transport: type) type {
+pub fn Broker(comptime Transport: type, comptime Rt: type) type {
+    comptime {
+        _ = trait.sync.Mutex(Rt.Mutex);
+    }
+
     return struct {
         const Self = @This();
 
@@ -101,10 +106,10 @@ pub fn Broker(comptime Transport: type) type {
             username_buf: [128]u8 = undefined,
             username_len: usize = 0,
             transport: ?*Transport = null,
-            write_mutex: std.Thread.Mutex = .{},
+            write_mutex: Rt.Mutex,
             active: bool = false,
             generation: u32 = 0,
-            alloc: Allocator = std.heap.page_allocator,
+            alloc: Allocator,
 
             fn clientId(self: *const ClientHandle) []const u8 {
                 return self.client_id_buf[0..self.client_id_len];
@@ -158,7 +163,7 @@ pub fn Broker(comptime Transport: type) type {
             topic_len: usize = 0,
             subscribers: std.ArrayListUnmanaged(*ClientHandle) = .empty,
             next_index: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
-            mutex: std.Thread.Mutex = .{},
+            mutex: Rt.Mutex,
 
             fn groupName(self: *const SharedGroup) []const u8 {
                 return self.group_name_buf[0..self.group_name_len];
@@ -219,6 +224,7 @@ pub fn Broker(comptime Transport: type) type {
 
             fn deinit(self: *SharedGroup, allocator: Allocator) void {
                 self.subscribers.deinit(allocator);
+                self.mutex.deinit();
             }
         };
 
@@ -238,12 +244,12 @@ pub fn Broker(comptime Transport: type) type {
         // Subscription management
         subscriptions: trie_mod.Trie(*ClientHandle),
         shared_trie: trie_mod.Trie(*SharedGroup), // $share/ subscriptions
-        sub_mutex: std.Thread.Mutex,
+        sub_mutex: Rt.Mutex,
 
         // Client tracking
         clients: std.StringHashMap(*ClientHandle),
         client_subscriptions: std.StringHashMap(std.ArrayListUnmanaged([]const u8)),
-        clients_mutex: std.Thread.Mutex,
+        clients_mutex: Rt.Mutex,
 
         // Shared group storage (owns SharedGroup allocations)
         shared_groups: std.ArrayListUnmanaged(*SharedGroup),
@@ -260,10 +266,10 @@ pub fn Broker(comptime Transport: type) type {
                 .config = config,
                 .subscriptions = try trie_mod.Trie(*ClientHandle).init(allocator),
                 .shared_trie = try trie_mod.Trie(*SharedGroup).init(allocator),
-                .sub_mutex = .{},
+                .sub_mutex = Rt.Mutex.init(),
                 .clients = std.StringHashMap(*ClientHandle).init(allocator),
                 .client_subscriptions = std.StringHashMap(std.ArrayListUnmanaged([]const u8)).init(allocator),
-                .clients_mutex = .{},
+                .clients_mutex = Rt.Mutex.init(),
                 .shared_groups = .empty,
             };
         }
@@ -273,7 +279,9 @@ pub fn Broker(comptime Transport: type) type {
             var cit = self.clients.iterator();
             while (cit.next()) |entry| {
                 self.allocator.free(entry.key_ptr.*);
-                self.allocator.destroy(entry.value_ptr.*);
+                var handle = entry.value_ptr.*;
+                handle.write_mutex.deinit();
+                self.allocator.destroy(handle);
             }
             self.clients.deinit();
 
@@ -297,6 +305,9 @@ pub fn Broker(comptime Transport: type) type {
             }
             self.shared_groups.deinit(self.allocator);
             self.shared_trie.deinit();
+
+            self.sub_mutex.deinit();
+            self.clients_mutex.deinit();
         }
 
         pub fn setAuthenticator(self: *Self, auth: Authenticator) void {
@@ -697,7 +708,7 @@ pub fn Broker(comptime Transport: type) type {
 
             // Create new shared group
             const sg = self.allocator.create(SharedGroup) catch return false;
-            sg.* = .{};
+            sg.* = .{ .mutex = Rt.Mutex.init() };
             sg.setGroupName(group_name);
             sg.setActualTopic(actual_topic);
             if (!sg.add(self.allocator, handle)) {
@@ -835,17 +846,19 @@ pub fn Broker(comptime Transport: type) type {
 
             // New client
             const handle = self.allocator.create(ClientHandle) catch return null;
-            handle.* = .{ .alloc = self.allocator };
+            handle.* = .{ .write_mutex = Rt.Mutex.init(), .alloc = self.allocator };
             handle.setClientId(client_id);
             handle.transport = transport;
             handle.active = true;
 
             const key_dup = self.allocator.dupe(u8, client_id) catch {
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
             self.clients.put(key_dup, handle) catch {
                 self.allocator.free(key_dup);
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
@@ -855,6 +868,7 @@ pub fn Broker(comptime Transport: type) type {
                 if (self.clients.fetchRemove(client_id)) |kv| {
                     self.allocator.free(kv.key);
                 }
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
@@ -863,6 +877,7 @@ pub fn Broker(comptime Transport: type) type {
                 if (self.clients.fetchRemove(client_id)) |kv| {
                     self.allocator.free(kv.key);
                 }
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
@@ -934,7 +949,7 @@ pub fn Broker(comptime Transport: type) type {
             const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/connected", .{safe_id}) catch return;
 
             var json_buf: [1024]u8 = undefined;
-            const timestamp = @divTrunc(std.time.milliTimestamp(), 1000);
+            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.getTimeMs(), 1000) else 0;
             const json = std.fmt.bufPrint(&json_buf,
                 \\{{"clientid":"{s}","username":"{s}","ipaddress":"","proto_ver":{d},"keepalive":{d},"connected_at":{d}}}
             , .{ client_id, username, proto_ver, keep_alive, timestamp }) catch return;
@@ -954,7 +969,7 @@ pub fn Broker(comptime Transport: type) type {
             const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/disconnected", .{safe_id}) catch return;
 
             var json_buf: [512]u8 = undefined;
-            const timestamp = @divTrunc(std.time.milliTimestamp(), 1000);
+            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.getTimeMs(), 1000) else 0;
             const json = std.fmt.bufPrint(&json_buf,
                 \\{{"clientid":"{s}","username":"{s}","reason":"normal","disconnected_at":{d}}}
             , .{ client_id, username, timestamp }) catch return;

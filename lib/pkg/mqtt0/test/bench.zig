@@ -19,6 +19,16 @@ const std = @import("std");
 const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
+const TestRt = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() @This() { return .{ .inner = .{} }; }
+        pub fn deinit(_: *@This()) void {}
+        pub fn lock(self: *@This()) void { self.inner.lock(); }
+        pub fn unlock(self: *@This()) void { self.inner.unlock(); }
+    };
+};
+
 // ============================================================================
 // TCP Socket (reused from test_mqtt0.zig)
 // ============================================================================
@@ -165,8 +175,8 @@ const Bench = struct {
 const BrokerEnv = struct {
     listener: posix.socket_t,
     port: u16,
-    broker: mqtt0.Broker(TcpSocket),
-    mux: mqtt0.Mux,
+    broker: mqtt0.Broker(TcpSocket, TestRt),
+    mux: mqtt0.Mux(TestRt),
     threads: std.ArrayListUnmanaged(std.Thread),
     allocator: std.mem.Allocator,
 
@@ -182,12 +192,12 @@ const BrokerEnv = struct {
             .threads = .empty,
             .allocator = allocator,
         };
-        self.mux = try mqtt0.Mux.init(allocator);
+        self.mux = try mqtt0.Mux(TestRt).init(allocator);
         const noop = struct {
             fn handle(_: []const u8, _: *const mqtt0.Message) anyerror!void {}
         }.handle;
         try self.mux.handleFn("#", noop);
-        self.broker = try mqtt0.Broker(TcpSocket).init(allocator, self.mux.handler(), .{});
+        self.broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, self.mux.handler(), .{});
         const srv = try TcpSocket.initServer(0);
         self.listener = srv.listener;
         self.port = srv.port;
@@ -196,7 +206,7 @@ const BrokerEnv = struct {
 
     fn acceptOne(self: *BrokerEnv) void {
         const t = std.Thread.spawn(.{}, struct {
-            fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+            fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t) void {
                 var conn = TcpSocket.accept(listener) catch return;
                 defer conn.close();
                 b.serveConn(&conn);
@@ -208,7 +218,7 @@ const BrokerEnv = struct {
     /// Spawn a persistent accept loop (handles unlimited connections, each in its own thread).
     fn acceptLoop(self: *BrokerEnv) void {
         const t = std.Thread.spawn(.{}, struct {
-            fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t, alloc: std.mem.Allocator) void {
+            fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t, alloc: std.mem.Allocator) void {
                 while (true) {
                     const conn_ptr = alloc.create(TcpSocket) catch return;
                     conn_ptr.* = TcpSocket.accept(listener) catch {
@@ -216,7 +226,7 @@ const BrokerEnv = struct {
                         return;
                     };
                     const ct = std.Thread.spawn(.{}, struct {
-                        fn handle(broker: *mqtt0.Broker(TcpSocket), c: *TcpSocket, a: std.mem.Allocator) void {
+                        fn handle(broker: *mqtt0.Broker(TcpSocket, TestRt), c: *TcpSocket, a: std.mem.Allocator) void {
                             defer {
                                 c.close();
                                 a.destroy(c);
@@ -362,8 +372,8 @@ fn benchPublishThroughput(comptime payload_size: usize, comptime version: mqtt0.
         const State = struct {
             env: *BrokerEnv,
             sock: TcpSocket,
-            mux: mqtt0.Mux,
-            client: mqtt0.Client(TcpSocket),
+            mux: mqtt0.Mux(TestRt),
+            client: mqtt0.Client(TcpSocket, TestRt),
         };
         var state: ?*State = null;
 
@@ -374,11 +384,12 @@ fn benchPublishThroughput(comptime payload_size: usize, comptime version: mqtt0.
                 s.env = BrokerEnv.create(allocator) catch return;
                 s.env.acceptLoop();
                 s.sock = TcpSocket.connect(s.env.port) catch return;
-                s.mux = mqtt0.Mux.init(allocator) catch return;
-                s.client = mqtt0.Client(TcpSocket).init(&s.sock, &s.mux, .{
+                s.mux = mqtt0.Mux(TestRt).init(allocator) catch return;
+                s.client = mqtt0.Client(TcpSocket, TestRt).init(&s.sock, &s.mux, .{
                     .client_id = "bench-pub",
                     .protocol_version = version,
                     .keep_alive = 0,
+                    .allocator = allocator,
                 }) catch return;
                 state = s;
             }
@@ -402,11 +413,11 @@ fn benchE2ELatency(comptime payload_size: usize) fn (*Bench) void {
                 var inited: bool = false;
                 var env: *BrokerEnv = undefined;
                 var sub_sock: TcpSocket = undefined;
-                var sub_mux: mqtt0.Mux = undefined;
-                var sub: mqtt0.Client(TcpSocket) = undefined;
+                var sub_mux: mqtt0.Mux(TestRt) = undefined;
+                var sub: mqtt0.Client(TcpSocket, TestRt) = undefined;
                 var pub_sock: TcpSocket = undefined;
-                var pub_mux: mqtt0.Mux = undefined;
-                var pub_client: mqtt0.Client(TcpSocket) = undefined;
+                var pub_mux: mqtt0.Mux(TestRt) = undefined;
+                var pub_client: mqtt0.Client(TcpSocket, TestRt) = undefined;
             };
             if (!S.inited) {
                 const allocator = std.heap.page_allocator;
@@ -414,23 +425,25 @@ fn benchE2ELatency(comptime payload_size: usize) fn (*Bench) void {
                 S.env.acceptLoop();
 
                 S.sub_sock = TcpSocket.connect(S.env.port) catch return;
-                S.sub_mux = mqtt0.Mux.init(allocator) catch return;
+                S.sub_mux = mqtt0.Mux(TestRt).init(allocator) catch return;
                 const noop = struct {
                     fn handle(_: []const u8, _: *const mqtt0.Message) anyerror!void {}
                 }.handle;
                 S.sub_mux.handleFn("bench/latency", noop) catch {};
-                S.sub = mqtt0.Client(TcpSocket).init(&S.sub_sock, &S.sub_mux, .{
+                S.sub = mqtt0.Client(TcpSocket, TestRt).init(&S.sub_sock, &S.sub_mux, .{
                     .client_id = "bench-e2e-sub",
                     .keep_alive = 0,
+                    .allocator = allocator,
                 }) catch return;
                 S.sub.subscribe(&.{"bench/latency"}) catch return;
                 S.sub_sock.setRecvTimeout(2000);
 
                 S.pub_sock = TcpSocket.connect(S.env.port) catch return;
-                S.pub_mux = mqtt0.Mux.init(allocator) catch return;
-                S.pub_client = mqtt0.Client(TcpSocket).init(&S.pub_sock, &S.pub_mux, .{
+                S.pub_mux = mqtt0.Mux(TestRt).init(allocator) catch return;
+                S.pub_client = mqtt0.Client(TcpSocket, TestRt).init(&S.pub_sock, &S.pub_mux, .{
                     .client_id = "bench-e2e-pub",
                     .keep_alive = 0,
+                    .allocator = allocator,
                 }) catch return;
 
                 S.inited = true;
@@ -456,11 +469,11 @@ fn benchRoutingThroughput(comptime sub_count: usize) fn (*Bench) void {
                 var inited: bool = false;
                 var env: *BrokerEnv = undefined;
                 var sub_socks: [sub_count]TcpSocket = undefined;
-                var sub_muxes: [sub_count]mqtt0.Mux = undefined;
-                var subs: [sub_count]mqtt0.Client(TcpSocket) = undefined;
+                var sub_muxes: [sub_count]mqtt0.Mux(TestRt) = undefined;
+                var subs: [sub_count]mqtt0.Client(TcpSocket, TestRt) = undefined;
                 var pub_sock: TcpSocket = undefined;
-                var pub_mux: mqtt0.Mux = undefined;
-                var pub_client: mqtt0.Client(TcpSocket) = undefined;
+                var pub_mux: mqtt0.Mux(TestRt) = undefined;
+                var pub_client: mqtt0.Client(TcpSocket, TestRt) = undefined;
             };
             if (!S.inited) {
                 const allocator = std.heap.page_allocator;
@@ -469,21 +482,23 @@ fn benchRoutingThroughput(comptime sub_count: usize) fn (*Bench) void {
 
                 for (0..sub_count) |i| {
                     S.sub_socks[i] = TcpSocket.connect(S.env.port) catch return;
-                    S.sub_muxes[i] = mqtt0.Mux.init(allocator) catch return;
+                    S.sub_muxes[i] = mqtt0.Mux(TestRt).init(allocator) catch return;
                     var id_buf: [32]u8 = undefined;
                     const id = std.fmt.bufPrint(&id_buf, "rsub-{d}", .{i}) catch "sub";
-                    S.subs[i] = mqtt0.Client(TcpSocket).init(&S.sub_socks[i], &S.sub_muxes[i], .{
+                    S.subs[i] = mqtt0.Client(TcpSocket, TestRt).init(&S.sub_socks[i], &S.sub_muxes[i], .{
                         .client_id = id,
                         .keep_alive = 0,
+                        .allocator = allocator,
                     }) catch return;
                     S.subs[i].subscribe(&.{"bench/route"}) catch return;
                     S.sub_socks[i].setRecvTimeout(2000);
                 }
                 S.pub_sock = TcpSocket.connect(S.env.port) catch return;
-                S.pub_mux = mqtt0.Mux.init(allocator) catch return;
-                S.pub_client = mqtt0.Client(TcpSocket).init(&S.pub_sock, &S.pub_mux, .{
+                S.pub_mux = mqtt0.Mux(TestRt).init(allocator) catch return;
+                S.pub_client = mqtt0.Client(TcpSocket, TestRt).init(&S.pub_sock, &S.pub_mux, .{
                     .client_id = "route-pub",
                     .keep_alive = 0,
+                    .allocator = allocator,
                 }) catch return;
                 S.inited = true;
             }
@@ -518,13 +533,14 @@ fn benchConnectionThroughput(comptime version: mqtt0.ProtocolVersion) fn (*Bench
             const allocator = std.heap.page_allocator;
             for (0..b.iterations) |i| {
                 var sock = TcpSocket.connect(S.env.port) catch return;
-                var mux = mqtt0.Mux.init(allocator) catch return;
+                var mux = mqtt0.Mux(TestRt).init(allocator) catch return;
                 var id_buf: [32]u8 = undefined;
                 const id = std.fmt.bufPrint(&id_buf, "c-{d}", .{i}) catch "c";
-                var client = mqtt0.Client(TcpSocket).init(&sock, &mux, .{
+                var client = mqtt0.Client(TcpSocket, TestRt).init(&sock, &mux, .{
                     .client_id = id,
                     .protocol_version = version,
                     .keep_alive = 0,
+                    .allocator = allocator,
                 }) catch {
                     mux.deinit();
                     sock.close();
@@ -548,11 +564,11 @@ fn benchHighThroughputStress(b: *Bench) void {
         var inited: bool = false;
         var env: *BrokerEnv = undefined;
         var pub_socks: [num_pairs]TcpSocket = undefined;
-        var pub_muxes: [num_pairs]mqtt0.Mux = undefined;
-        var pub_clients: [num_pairs]mqtt0.Client(TcpSocket) = undefined;
+        var pub_muxes: [num_pairs]mqtt0.Mux(TestRt) = undefined;
+        var pub_clients: [num_pairs]mqtt0.Client(TcpSocket, TestRt) = undefined;
         var sub_socks: [num_pairs]TcpSocket = undefined;
-        var sub_muxes: [num_pairs]mqtt0.Mux = undefined;
-        var sub_clients: [num_pairs]mqtt0.Client(TcpSocket) = undefined;
+        var sub_muxes: [num_pairs]mqtt0.Mux(TestRt) = undefined;
+        var sub_clients: [num_pairs]mqtt0.Client(TcpSocket, TestRt) = undefined;
         var topics: [num_pairs][32]u8 = undefined;
         var topic_lens: [num_pairs]usize = undefined;
     };
@@ -568,23 +584,25 @@ fn benchHighThroughputStress(b: *Bench) void {
             S.topic_lens[i] = topic.len;
 
             S.sub_socks[i] = TcpSocket.connect(S.env.port) catch return;
-            S.sub_muxes[i] = mqtt0.Mux.init(allocator) catch return;
+            S.sub_muxes[i] = mqtt0.Mux(TestRt).init(allocator) catch return;
             var sid_buf: [32]u8 = undefined;
             const sid = std.fmt.bufPrint(&sid_buf, "ss-{d}", .{i}) catch "sub";
-            S.sub_clients[i] = mqtt0.Client(TcpSocket).init(&S.sub_socks[i], &S.sub_muxes[i], .{
+            S.sub_clients[i] = mqtt0.Client(TcpSocket, TestRt).init(&S.sub_socks[i], &S.sub_muxes[i], .{
                 .client_id = sid,
                 .keep_alive = 0,
+                .allocator = allocator,
             }) catch return;
             S.sub_clients[i].subscribe(&.{S.topics[i][0..S.topic_lens[i]]}) catch return;
             S.sub_socks[i].setRecvTimeout(2000);
 
             S.pub_socks[i] = TcpSocket.connect(S.env.port) catch return;
-            S.pub_muxes[i] = mqtt0.Mux.init(allocator) catch return;
+            S.pub_muxes[i] = mqtt0.Mux(TestRt).init(allocator) catch return;
             var pid_buf: [32]u8 = undefined;
             const pid = std.fmt.bufPrint(&pid_buf, "sp-{d}", .{i}) catch "pub";
-            S.pub_clients[i] = mqtt0.Client(TcpSocket).init(&S.pub_socks[i], &S.pub_muxes[i], .{
+            S.pub_clients[i] = mqtt0.Client(TcpSocket, TestRt).init(&S.pub_socks[i], &S.pub_muxes[i], .{
                 .client_id = pid,
                 .keep_alive = 0,
+                .allocator = allocator,
             }) catch return;
         }
         S.inited = true;
@@ -610,17 +628,18 @@ fn benchMessageRate(b: *Bench) void {
         var inited: bool = false;
         var env: *BrokerEnv = undefined;
         var sock: TcpSocket = undefined;
-        var mux: mqtt0.Mux = undefined;
-        var client: mqtt0.Client(TcpSocket) = undefined;
+        var mux: mqtt0.Mux(TestRt) = undefined;
+        var client: mqtt0.Client(TcpSocket, TestRt) = undefined;
     };
     if (!S.inited) {
         S.env = BrokerEnv.create(std.heap.page_allocator) catch return;
         S.env.acceptLoop();
         S.sock = TcpSocket.connect(S.env.port) catch return;
-        S.mux = mqtt0.Mux.init(std.heap.page_allocator) catch return;
-        S.client = mqtt0.Client(TcpSocket).init(&S.sock, &S.mux, .{
+        S.mux = mqtt0.Mux(TestRt).init(std.heap.page_allocator) catch return;
+        S.client = mqtt0.Client(TcpSocket, TestRt).init(&S.sock, &S.mux, .{
             .client_id = "rate-client",
             .keep_alive = 0,
+            .allocator = std.heap.page_allocator,
         }) catch return;
         S.inited = true;
     }

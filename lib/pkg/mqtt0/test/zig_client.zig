@@ -10,6 +10,16 @@ const std = @import("std");
 const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
+const TestRt = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() @This() { return .{ .inner = .{} }; }
+        pub fn deinit(_: *@This()) void {}
+        pub fn lock(self: *@This()) void { self.inner.lock(); }
+        pub fn unlock(self: *@This()) void { self.inner.unlock(); }
+    };
+};
+
 const TcpSocket = struct {
     fd: posix.socket_t,
 
@@ -87,13 +97,14 @@ pub fn main() !void {
     };
     defer sock.close();
 
-    var mux = try mqtt0.Mux.init(allocator);
+    var mux = try mqtt0.Mux(TestRt).init(allocator);
     defer mux.deinit();
     try mux.handleFn("zig-test/#", handler);
 
-    var client = mqtt0.Client(TcpSocket).init(&sock, &mux, .{
+    var client = mqtt0.Client(TcpSocket, TestRt).init(&sock, &mux, .{
         .client_id = "zig-cross-client",
         .protocol_version = version,
+        .allocator = allocator,
     }) catch |err| {
         std.debug.print("FAIL: MQTT connect error: {}\n", .{err});
         std.process.exit(1);

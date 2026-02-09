@@ -54,29 +54,31 @@ pub const v4 = @import("v4.zig");
 pub const v5 = @import("v5.zig");
 
 // ServeMux and Handler
-pub const mux = @import("mux.zig");
-pub const Mux = mux.Mux;
-pub const Handler = mux.Handler;
+pub const mux_mod = @import("mux.zig");
+pub fn Mux(comptime Rt: type) type {
+    return mux_mod.Mux(Rt);
+}
+pub const Handler = mux_mod.Handler;
 
 // Topic trie
 pub const trie = @import("trie.zig");
 pub const topicMatches = trie.topicMatches;
 
 // Client
-pub const client = @import("client.zig");
-pub fn Client(comptime Transport: type) type {
-    return client.Client(Transport);
+pub const client_mod = @import("client.zig");
+pub fn Client(comptime Transport: type, comptime Rt: type) type {
+    return client_mod.Client(Transport, Rt);
 }
 
 // Broker
-pub const broker = @import("broker.zig");
-pub fn Broker(comptime Transport: type) type {
-    return broker.Broker(Transport);
+pub const broker_mod = @import("broker.zig");
+pub fn Broker(comptime Transport: type, comptime Rt: type) type {
+    return broker_mod.Broker(Transport, Rt);
 }
-pub const Authenticator = broker.Authenticator;
-pub const AllowAll = broker.AllowAll;
-pub const ConnectCallback = broker.ConnectCallback;
-pub const DisconnectCallback = broker.DisconnectCallback;
+pub const Authenticator = broker_mod.Authenticator;
+pub const AllowAll = broker_mod.AllowAll;
+pub const ConnectCallback = broker_mod.ConnectCallback;
+pub const DisconnectCallback = broker_mod.DisconnectCallback;
 
 // Run all tests
 test {
@@ -84,5 +86,5 @@ test {
     _ = v4;
     _ = v5;
     _ = trie;
-    _ = mux;
+    _ = mux_mod;
 }
