@@ -2,6 +2,7 @@
 
 load("//bazel/esp:defs.bzl", "esp_sdkconfig")
 load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
+load("//bazel/esp/sdkconfig:bt.bzl", "esp_bt")
 load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
 load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
 load("//bazel/esp/sdkconfig:littlefs.bzl", "esp_littlefs")
@@ -351,6 +352,28 @@ esp_sdkconfig(
     wifi = ":wifi",
     lwip = ":lwip",
     sr = ":sr",
+)
+
+# =============================================================================
+# Bluetooth
+# =============================================================================
+
+esp_bt(
+    name = "bt",
+    ble_max_act = 6,
+)
+
+# =============================================================================
+# ESP32-S3 with BLE (controller-only, VHCI)
+# =============================================================================
+
+esp_sdkconfig(
+    name = "esp32s3_bt",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram",
+    bt = ":bt",
 )
 
 esp_validate(

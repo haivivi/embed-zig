@@ -1,0 +1,17 @@
+.{
+    .name = .hci_test_app,
+    .version = "0.1.0",
+    .fingerprint = 0xbc1e5a0c3deaf789,
+    .dependencies = .{
+        .esp = .{ .path = "../../../../lib/platform/esp" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .bluetooth = .{ .path = "../../../../lib/pkg/bluetooth" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "../app.zig",
+        "../platform.zig",
+        "esp32s3_devkit.zig",
+    },
+}

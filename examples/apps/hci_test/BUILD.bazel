@@ -1,0 +1,8 @@
+# HCI Smoke Test - Shared sources
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
+)

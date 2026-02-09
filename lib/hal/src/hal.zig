@@ -101,6 +101,10 @@ pub const switch_ = @import("switch.zig");
 pub const imu = @import("imu.zig");
 /// Motion detection module (hal.motion.from, hal.motion.is)
 pub const motion = @import("motion.zig");
+/// HCI transport module (hal.hci.from, hal.hci.is)
+pub const hci = @import("hci.zig");
+/// BLE Host module (hal.ble.from, hal.ble.is)
+pub const ble = @import("ble.zig");
 
 // ============================================================================
 // Common Types
@@ -224,6 +228,32 @@ pub const MotionAxis = motion.Axis;
 /// Motion orientation
 pub const MotionOrientation = motion.Orientation;
 
+// ============================================================================
+// HCI Types
+// ============================================================================
+
+/// HCI poll flags
+pub const HciPollFlags = hci.PollFlags;
+/// HCI packet type indicator
+pub const HciPacketType = hci.PacketType;
+/// HCI transport error
+pub const HciError = hci.Error;
+
+// ============================================================================
+// BLE Types
+// ============================================================================
+
+/// BLE Host state
+pub const BleState = ble.State;
+/// BLE event
+pub const BleEvent = ble.BleEvent;
+/// BLE connection info
+pub const BleConnectionInfo = ble.ConnectionInfo;
+/// BLE advertising config
+pub const BleAdvConfig = ble.AdvConfig;
+/// BLE role
+pub const BleRole = ble.Role;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -240,4 +270,6 @@ test {
     _ = @import("switch.zig");
     _ = @import("imu.zig");
     _ = @import("motion.zig");
+    _ = @import("hci.zig");
+    _ = @import("ble.zig");
 }

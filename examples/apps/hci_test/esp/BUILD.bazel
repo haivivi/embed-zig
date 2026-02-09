@@ -1,0 +1,44 @@
+# HCI Smoke Test - ESP Platform
+# Verifies VHCI transport: init, HCI Reset, Read Buffer Size, Read BD_ADDR
+
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/hci_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["freertos", "bt"],
+    force_link = [
+        "${BT_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/bt/bt.cmake)",
+    ],
+    extra_c_sources = ["BT_C_SOURCES"],
+    deps = [
+        "//lib/hal",
+        "//lib/pkg/bluetooth",
+        "//lib/pkg/drivers",
+        "//lib/pkg/math",
+        "//lib/pkg/motion",
+        "//lib/pkg/waitgroup",
+        "//lib/pkg/channel",
+        "//lib/pkg/cancellation",
+    ],
+    sdkconfig = "//examples/esp:esp32s3_bt",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
