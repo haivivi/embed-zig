@@ -103,6 +103,11 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
         read_buffer: []u8,
         write_buffer: []u8,
 
+        // Pending plaintext from partially consumed TLS record
+        pending_plaintext: [common.MAX_CIPHERTEXT_LEN]u8 = undefined,
+        pending_pos: usize = 0,
+        pending_len: usize = 0,
+
         const Self = @This();
 
         /// The crypto implementation being used
@@ -169,10 +174,21 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
             return sent;
         }
 
-        /// Receive and decrypt data
+        /// Receive and decrypt data.
+        /// If the caller's buffer is smaller than the decrypted TLS record,
+        /// remaining data is buffered internally and returned on subsequent calls.
         pub fn recv(self: *Self, buffer: []u8) !usize {
             if (!self.connected) return error.NotConnected;
             if (self.received_close_notify) return 0;
+
+            // Return pending data from a previous partially-consumed record
+            if (self.pending_len > 0) {
+                const n = @min(self.pending_len, buffer.len);
+                @memcpy(buffer[0..n], self.pending_plaintext[self.pending_pos..][0..n]);
+                self.pending_pos += n;
+                self.pending_len -= n;
+                return n;
+            }
 
             // Use a loop instead of recursion to avoid stack overflow
             // from malicious servers sending many handshake messages
@@ -184,6 +200,15 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
                     .application_data => {
                         const copy_len = @min(result.length, buffer.len);
                         @memcpy(buffer[0..copy_len], plaintext[0..copy_len]);
+
+                        // Buffer any remaining data for subsequent recv() calls
+                        if (result.length > copy_len) {
+                            const leftover = result.length - copy_len;
+                            @memcpy(self.pending_plaintext[0..leftover], plaintext[copy_len..result.length]);
+                            self.pending_pos = 0;
+                            self.pending_len = leftover;
+                        }
+
                         return copy_len;
                     },
                     .alert => {
