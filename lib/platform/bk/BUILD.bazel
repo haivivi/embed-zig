@@ -1,47 +1,19 @@
+# BK platform — source files only
+#
+# This package does NOT compile as a standalone target.
+# Each app uses bk_modules() + bk_zig_app() to compile with app-specific config.
+
 package(default_visibility = ["//visibility:public"])
 
-# =============================================================================
-# BK7258 Platform — Zig sources compiled to ARM Cortex-M33 ELF
-# =============================================================================
+# Root module source
+exports_files(["bk.zig"])
 
+# All Zig sources (bk + armino + impl + boards)
 filegroup(
-    name = "zig_srcs",
-    srcs = glob([
+    name = "all_zig_srcs",
+    srcs = glob(["src/**/*.zig"]) + [
         "bk.zig",
-        "entry.zig",
-        "armino/src/**/*.zig",
-        "impl/src/**/*.zig",
-        "src/**/*.zig",
-    ]),
-)
-
-# Cross-compile all Zig platform code to a single ARM .o
-# Uses relative @import paths (no multi-module -M needed)
-genrule(
-    name = "bk_zig_arm",
-    srcs = [":zig_srcs"],
-    outs = ["bk_zig.o"],
-    cmd = """
-        TMPDIR=$$(mktemp -d) && \
-        $(execpath @zig_toolchain//:zig) build-obj \
-            -target thumb-freestanding-eabihf \
-            -mcpu cortex_m33 \
-            -O ReleaseSmall \
-            -fno-stack-check \
-            -Mroot=lib/platform/bk/entry.zig \
-            --cache-dir $$TMPDIR/cache \
-            --global-cache-dir $$TMPDIR/gcache \
-            -femit-bin=$@ && \
-        rm -rf $$TMPDIR
-    """,
-    tools = [
-        "@zig_toolchain//:zig",
-        "@zig_toolchain//:zig_files",
+        "//lib/platform/bk/armino:zig_srcs",
+        "//lib/platform/bk/impl:zig_srcs",
     ],
-)
-
-# C helper sources (compiled by Armino's GCC, not by Zig)
-filegroup(
-    name = "c_helpers",
-    srcs = ["armino/src/bk_zig_helper.c"],
 )

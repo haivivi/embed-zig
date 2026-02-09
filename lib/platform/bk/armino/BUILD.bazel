@@ -1,0 +1,17 @@
+# Armino SDK low-level bindings — source files only
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["src/armino.zig"])
+
+# Zig source files
+filegroup(
+    name = "zig_srcs",
+    srcs = glob(["src/**/*.zig"]),
+)
+
+# C source files (compiled by Armino GCC, not by Zig)
+filegroup(
+    name = "c_srcs",
+    srcs = glob(["src/**/*.c", "src/**/*.h"], allow_empty = True),
+)

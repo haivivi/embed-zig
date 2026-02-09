@@ -1,0 +1,10 @@
+# BK trait + hal implementations — source files only
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["src/impl.zig"])
+
+filegroup(
+    name = "zig_srcs",
+    srcs = glob(["src/**/*.zig"]),
+)
