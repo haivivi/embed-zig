@@ -139,11 +139,17 @@ pub fn TimerService(comptime Rt: type) type {
             var it = self.timers.iterator();
             while (it.next()) |entry| {
                 if (entry.value_ptr.fire_at <= now) {
+                    // Both appends must succeed together to avoid
+                    // firing a callback without removing its timer id.
+                    expired_ids.append(self.allocator, entry.key_ptr.*) catch continue;
                     to_fire.append(self.allocator, .{
                         .callback = entry.value_ptr.callback,
                         .ctx = entry.value_ptr.ctx,
-                    }) catch {};
-                    expired_ids.append(self.allocator, entry.key_ptr.*) catch {};
+                    }) catch {
+                        // Rollback: remove the id we just appended
+                        _ = expired_ids.pop();
+                        continue;
+                    };
                 }
             }
 
