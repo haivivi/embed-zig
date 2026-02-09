@@ -26,6 +26,7 @@ const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const gatt = bluetooth.gatt_server;
+const gatt_client = bluetooth.gatt_client;
 const chunk = x_proto.chunk;
 
 const EspRt = idf.runtime;
@@ -68,6 +69,7 @@ const ADV_NAME = "XProto";
 const BleTransport = struct {
     host: *BleHost,
     conn_handle: u16,
+    attr_handle: u16,
     use_notify: bool,
     rx: RxChannel,
 
@@ -77,11 +79,12 @@ const BleTransport = struct {
     };
     const RxChannel = channel.Channel(RxMsg, 16, EspRt);
 
-    fn create(host: *BleHost, conn_handle: u16, use_notify: bool) !*BleTransport {
+    fn create(host: *BleHost, conn_handle: u16, attr_handle: u16, use_notify: bool) !*BleTransport {
         const t = try heap.psram.create(BleTransport);
         t.* = .{
             .host = host,
             .conn_handle = conn_handle,
+            .attr_handle = attr_handle,
             .use_notify = use_notify,
             .rx = RxChannel.init(),
         };
@@ -96,10 +99,10 @@ const BleTransport = struct {
 
     pub fn send(self: *BleTransport, data: []const u8) !void {
         if (self.use_notify) {
-            self.host.notify(self.conn_handle, VALUE_HANDLE, data) catch
+            self.host.notify(self.conn_handle, self.attr_handle, data) catch
                 return error.SendFailed;
         } else {
-            self.host.gattWriteCmd(self.conn_handle, VALUE_HANDLE, data) catch
+            self.host.gattWriteCmd(self.conn_handle, self.attr_handle, data) catch
                 return error.SendFailed;
         }
     }
@@ -183,7 +186,7 @@ fn testServerReadX(host: *BleHost, conn: u16) void {
         chunk.chunksNeeded(data.len, TEST_MTU),
     });
 
-    const transport = BleTransport.create(host, conn, true) catch {
+    const transport = BleTransport.create(host, conn, VALUE_HANDLE, true) catch {
         log.err("Transport create failed", .{});
         return;
     };
@@ -228,7 +231,7 @@ fn testServerWriteX(host: *BleHost, conn: u16) void {
     };
     defer heap.psram.free(recv_buf);
 
-    const transport = BleTransport.create(host, conn, true) catch {
+    const transport = BleTransport.create(host, conn, VALUE_HANDLE, true) catch {
         log.err("Transport create failed", .{});
         return;
     };
@@ -269,7 +272,7 @@ fn testServerWriteX(host: *BleHost, conn: u16) void {
 // Client: ReadX Receiver (receive data from server)
 // ============================================================================
 
-fn testClientReadX(host: *BleHost, conn: u16) void {
+fn testClientReadX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
     log.info("", .{});
     log.info("=== Test 1: ReadX Client (receive from server) ===", .{});
 
@@ -279,7 +282,7 @@ fn testClientReadX(host: *BleHost, conn: u16) void {
     };
     defer heap.psram.free(recv_buf);
 
-    const transport = BleTransport.create(host, conn, false) catch {
+    const transport = BleTransport.create(host, conn, remote_value_handle, false) catch {
         log.err("Transport create failed", .{});
         return;
     };
@@ -327,7 +330,7 @@ fn testClientReadX(host: *BleHost, conn: u16) void {
 // Client: WriteX Sender (send data to server)
 // ============================================================================
 
-fn testClientWriteX(host: *BleHost, conn: u16) void {
+fn testClientWriteX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
     log.info("", .{});
     log.info("=== Test 2: WriteX Client (send to server) ===", .{});
 
@@ -343,7 +346,7 @@ fn testClientWriteX(host: *BleHost, conn: u16) void {
         chunk.chunksNeeded(data.len, TEST_MTU),
     });
 
-    const transport = BleTransport.create(host, conn, false) catch {
+    const transport = BleTransport.create(host, conn, remote_value_handle, false) catch {
         log.err("Transport create failed", .{});
         return;
     };
@@ -423,6 +426,77 @@ fn clientSendChunks(transport: *BleTransport, data: []const u8) !void {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// ============================================================================
+// GATT Service Discovery (for cross-platform: ESP client → Mac/ESP server)
+// ============================================================================
+
+const DiscoveredHandles = struct {
+    value: u16,
+    cccd: u16,
+};
+
+fn discoverHandles(host: *BleHost, conn: u16) ?DiscoveredHandles {
+    // Discover services
+    var services: [8]gatt_client.DiscoveredService = undefined;
+    const svc_count = host.discoverServices(conn, &services) catch |err| {
+        log.err("discoverServices: {}", .{err});
+        return null;
+    };
+    log.info("Discovered {} services", .{svc_count});
+
+    // Find our service (0xCC00)
+    var target_svc: ?gatt_client.DiscoveredService = null;
+    for (services[0..svc_count]) |svc| {
+        log.info("  SVC: 0x{X:0>4}-0x{X:0>4}", .{ svc.start_handle, svc.end_handle });
+        if (svc.uuid.eql(att.UUID.from16(SVC_UUID))) target_svc = svc;
+    }
+    const svc = target_svc orelse {
+        log.err("Service 0x{X:0>4} not found", .{SVC_UUID});
+        return null;
+    };
+
+    // Discover characteristics
+    var chars: [8]gatt_client.DiscoveredCharacteristic = undefined;
+    const char_count = host.discoverCharacteristics(conn, svc.start_handle, svc.end_handle, &chars) catch |err| {
+        log.err("discoverCharacteristics: {}", .{err});
+        return null;
+    };
+    log.info("Discovered {} chars", .{char_count});
+
+    var value_handle: u16 = 0;
+    for (chars[0..char_count]) |c| {
+        log.info("  CHR: val=0x{X:0>4}", .{c.value_handle});
+        if (c.uuid.eql(att.UUID.from16(CHR_UUID))) value_handle = c.value_handle;
+    }
+
+    if (value_handle == 0) {
+        log.err("Char 0x{X:0>4} not found", .{CHR_UUID});
+        return null;
+    }
+
+    // Discover CCCD descriptor
+    var cccd_handle: u16 = 0;
+    {
+        const desc_start = value_handle + 1;
+        const desc_end = svc.end_handle;
+        if (desc_start <= desc_end) {
+            var descs: [8]gatt_client.DiscoveredDescriptor = undefined;
+            const desc_count = host.discoverDescriptors(conn, desc_start, desc_end, &descs) catch 0;
+            for (descs[0..desc_count]) |d| {
+                if (d.uuid.eql(att.UUID.from16(0x2902))) cccd_handle = d.handle;
+            }
+        }
+    }
+
+    if (cccd_handle == 0) {
+        // Fallback: CCCD is typically value_handle + 1
+        cccd_handle = value_handle + 1;
+        log.info("CCCD not found via discovery, using fallback: 0x{X:0>4}", .{cccd_handle});
+    }
+
+    return .{ .value = value_handle, .cccd = cccd_handle };
+}
 
 fn containsName(ad_data: []const u8, name: []const u8) bool {
     var offset: usize = 0;
@@ -577,18 +651,25 @@ fn runClient(host: *BleHost) void {
                 host.requestPhyUpdate(info.conn_handle, 0x02, 0x02) catch {};
                 drain(host, 2000);
 
-                // Subscribe to notifications
-                host.gattSubscribe(info.conn_handle, CCCD_HANDLE) catch {};
+                // Discover remote GATT handles (needed for cross-platform: ESP↔Mac)
+                const handles = discoverHandles(host, info.conn_handle) orelse {
+                    log.err("Service discovery failed", .{});
+                    return;
+                };
+                log.info("Discovered: value=0x{X:0>4} cccd=0x{X:0>4}", .{ handles.value, handles.cccd });
+
+                // Subscribe to notifications using discovered CCCD handle
+                host.gattSubscribe(info.conn_handle, handles.cccd) catch {};
                 idf.time.sleepMs(500);
 
                 // Test 1: ReadX Client (receive from server)
-                testClientReadX(host, info.conn_handle);
+                testClientReadX(host, info.conn_handle, handles.value);
 
                 // Pause between tests
                 idf.time.sleepMs(3000);
 
                 // Test 2: WriteX Client (send to server)
-                testClientWriteX(host, info.conn_handle);
+                testClientWriteX(host, info.conn_handle, handles.value);
                 return;
             },
             .connection_failed => |status| {
