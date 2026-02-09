@@ -141,12 +141,33 @@ def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_modu
     main_args.append("-M{}={}".format(main_name, main_root_path))
 
     # 2. Dependency modules (deduped by depset)
+    #
+    # IMPORTANT: Modules with c_include_dirs (-I flags) MUST be emitted LAST.
+    # This works around a Zig compiler bug where a subsequent -M definition
+    # after a module's -I flags causes the -I to not be passed to clang
+    # during @cImport resolution. By placing modules with -I at the end,
+    # no further -M definitions follow to interfere.
+    #
+    # Example of the bug:
+    #   -Mnoise=noise.zig -I src/kcp -Mtun=tun.zig   # FAILS: -I lost
+    #   -Mtun=tun.zig -Mnoise=noise.zig -I src/kcp    # OK: -I at end
     seen = {main_name: True}
+    mods_without_includes = []
+    mods_with_includes = []
     for encoded in all_dep_module_strings.to_list():
         mod = _decode_module(encoded)
         if mod.name in seen:
             continue
         seen[mod.name] = True
+        if mod.link_libc:
+            deps_link_libc = True
+        if mod.c_include_dirs:
+            mods_with_includes.append(mod)
+        else:
+            mods_without_includes.append(mod)
+
+    # Emit modules without -I first, then modules with -I last
+    for mod in mods_without_includes + mods_with_includes:
         for dep_name in mod.dep_names:
             dep_args.extend(["--dep", dep_name])
         dep_args.append("-M{}={}".format(mod.name, mod.root_path))
@@ -156,8 +177,6 @@ def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_modu
         # -lc is a global link flag, tracked separately via deps_link_libc.
         # C source files are NOT passed per-module (zig doesn't support it for
         # dep modules). Linking is handled by passing the dep's .a library.
-        if mod.link_libc:
-            deps_link_libc = True
         for inc_dir in mod.c_include_dirs:
             dep_args.extend(["-I", inc_dir])
 
