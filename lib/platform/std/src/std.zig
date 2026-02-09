@@ -22,6 +22,13 @@ pub const time = @import("impl/time.zig");
 pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");
 pub const runtime = @import("impl/runtime.zig");
+pub const kqueue_io = if (@import("builtin").os.tag == .macos or
+    @import("builtin").os.tag == .freebsd or
+    @import("builtin").os.tag == .netbsd or
+    @import("builtin").os.tag == .openbsd)
+    @import("impl/kqueue_io.zig")
+else
+    struct {};
 pub const codec = struct {
     pub const opus = @import("impl/codec/opus.zig");
 };
