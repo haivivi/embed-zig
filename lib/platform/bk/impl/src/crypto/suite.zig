@@ -16,12 +16,23 @@ pub const Sha256 = struct {
     pub const digest_length = 32;
     pub const block_length = 64;
 
-    // Streaming not supported via C helper — use one-shot only
-    buf: [0]u8 = .{},
+    buf: [8192]u8 = undefined,
+    len: usize = 0,
 
-    pub fn init() Sha256 { return .{}; }
-    pub fn update(_: *Sha256, _: []const u8) void {}
-    pub fn final(_: *Sha256) [32]u8 { return .{0} ** 32; }
+    pub fn init() Sha256 { return .{ .len = 0 }; }
+
+    pub fn update(self: *Sha256, data: []const u8) void {
+        const avail = self.buf.len - self.len;
+        const n = @min(data.len, avail);
+        @memcpy(self.buf[self.len..][0..n], data[0..n]);
+        self.len += n;
+    }
+
+    pub fn final(self: *Sha256) [32]u8 {
+        var out: [32]u8 = undefined;
+        hash(self.buf[0..self.len], &out, .{});
+        return out;
+    }
 
     pub fn hash(data: []const u8, out: *[32]u8, _: anytype) void {
         crypto.sha256(data, out) catch {
@@ -33,51 +44,63 @@ pub const Sha256 = struct {
 pub const Sha384 = struct {
     pub const digest_length = 48;
     pub const block_length = 128;
-
-    buf: [0]u8 = .{},
-
-    pub fn init() Sha384 { return .{}; }
-    pub fn update(_: *Sha384, _: []const u8) void {}
-    pub fn final(_: *Sha384) [48]u8 { return .{0} ** 48; }
-
+    buf: [8192]u8 = undefined,
+    len: usize = 0,
+    pub fn init() Sha384 { return .{ .len = 0 }; }
+    pub fn update(self: *Sha384, data: []const u8) void {
+        const n = @min(data.len, self.buf.len - self.len);
+        @memcpy(self.buf[self.len..][0..n], data[0..n]);
+        self.len += n;
+    }
+    pub fn final(self: *Sha384) [48]u8 {
+        var out: [48]u8 = undefined;
+        hash(self.buf[0..self.len], &out, .{});
+        return out;
+    }
     pub fn hash(data: []const u8, out: *[48]u8, _: anytype) void {
-        crypto.sha384(data, out) catch {
-            @memset(out, 0);
-        };
+        crypto.sha384(data, out) catch @memset(out, 0);
     }
 };
 
 pub const Sha512 = struct {
     pub const digest_length = 64;
     pub const block_length = 128;
-
-    buf: [0]u8 = .{},
-
-    pub fn init() Sha512 { return .{}; }
-    pub fn update(_: *Sha512, _: []const u8) void {}
-    pub fn final(_: *Sha512) [64]u8 { return .{0} ** 64; }
-
+    buf: [8192]u8 = undefined,
+    len: usize = 0,
+    pub fn init() Sha512 { return .{ .len = 0 }; }
+    pub fn update(self: *Sha512, data: []const u8) void {
+        const n = @min(data.len, self.buf.len - self.len);
+        @memcpy(self.buf[self.len..][0..n], data[0..n]);
+        self.len += n;
+    }
+    pub fn final(self: *Sha512) [64]u8 {
+        var out: [64]u8 = undefined;
+        hash(self.buf[0..self.len], &out, .{});
+        return out;
+    }
     pub fn hash(data: []const u8, out: *[64]u8, _: anytype) void {
-        crypto.sha512(data, out) catch {
-            @memset(out, 0);
-        };
+        crypto.sha512(data, out) catch @memset(out, 0);
     }
 };
 
 pub const Sha1 = struct {
     pub const digest_length = 20;
     pub const block_length = 64;
-
-    buf: [0]u8 = .{},
-
-    pub fn init() Sha1 { return .{}; }
-    pub fn update(_: *Sha1, _: []const u8) void {}
-    pub fn final(_: *Sha1) [20]u8 { return .{0} ** 20; }
-
+    buf: [8192]u8 = undefined,
+    len: usize = 0,
+    pub fn init() Sha1 { return .{ .len = 0 }; }
+    pub fn update(self: *Sha1, data: []const u8) void {
+        const n = @min(data.len, self.buf.len - self.len);
+        @memcpy(self.buf[self.len..][0..n], data[0..n]);
+        self.len += n;
+    }
+    pub fn final(self: *Sha1) [20]u8 {
+        var out: [20]u8 = undefined;
+        hash(self.buf[0..self.len], &out, .{});
+        return out;
+    }
     pub fn hash(data: []const u8, out: *[20]u8, _: anytype) void {
-        crypto.sha1(data, out) catch {
-            @memset(out, 0);
-        };
+        crypto.sha1(data, out) catch @memset(out, 0);
     }
 };
 
@@ -287,13 +310,29 @@ pub const HmacSha256 = struct {
 
     key_buf: [64]u8 = .{0} ** 64,
     key_len: usize = 0,
+    data_buf: [4096]u8 = undefined,
+    data_len: usize = 0,
 
     pub fn init(key: []const u8) HmacSha256 {
         var self = HmacSha256{};
         const l = @min(key.len, 64);
         @memcpy(self.key_buf[0..l], key[0..l]);
         self.key_len = l;
+        self.data_len = 0;
         return self;
+    }
+
+    pub fn update(self: *HmacSha256, data: []const u8) void {
+        const avail = self.data_buf.len - self.data_len;
+        const copy_len = @min(data.len, avail);
+        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
+        self.data_len += copy_len;
+    }
+
+    pub fn final(self: *HmacSha256) [mac_length]u8 {
+        var out: [mac_length]u8 = .{0} ** mac_length;
+        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        return out;
     }
 
     pub fn create(out: *[32]u8, data: []const u8, key: []const u8) void {
@@ -307,13 +346,29 @@ pub const HmacSha384 = struct {
 
     key_buf: [128]u8 = .{0} ** 128,
     key_len: usize = 0,
+    data_buf: [4096]u8 = undefined,
+    data_len: usize = 0,
 
     pub fn init(key: []const u8) HmacSha384 {
         var self = HmacSha384{};
         const l = @min(key.len, 128);
         @memcpy(self.key_buf[0..l], key[0..l]);
         self.key_len = l;
+        self.data_len = 0;
         return self;
+    }
+
+    pub fn update(self: *HmacSha384, data: []const u8) void {
+        const avail = self.data_buf.len - self.data_len;
+        const copy_len = @min(data.len, avail);
+        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
+        self.data_len += copy_len;
+    }
+
+    pub fn final(self: *HmacSha384) [mac_length]u8 {
+        var out: [mac_length]u8 = .{0} ** mac_length;
+        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        return out;
     }
 
     pub fn create(out: *[48]u8, data: []const u8, key: []const u8) void {
@@ -327,13 +382,29 @@ pub const HmacSha512 = struct {
 
     key_buf: [128]u8 = .{0} ** 128,
     key_len: usize = 0,
+    data_buf: [4096]u8 = undefined,
+    data_len: usize = 0,
 
     pub fn init(key: []const u8) HmacSha512 {
         var self = HmacSha512{};
         const l = @min(key.len, 128);
         @memcpy(self.key_buf[0..l], key[0..l]);
         self.key_len = l;
+        self.data_len = 0;
         return self;
+    }
+
+    pub fn update(self: *HmacSha512, data: []const u8) void {
+        const avail = self.data_buf.len - self.data_len;
+        const copy_len = @min(data.len, avail);
+        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
+        self.data_len += copy_len;
+    }
+
+    pub fn final(self: *HmacSha512) [mac_length]u8 {
+        var out: [mac_length]u8 = .{0} ** mac_length;
+        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        return out;
     }
 
     pub fn create(out: *[64]u8, data: []const u8, key: []const u8) void {

@@ -10,13 +10,14 @@
 #include <mbedtls/sha512.h>
 #include <mbedtls/sha1.h>
 #include <mbedtls/gcm.h>
-#include <mbedtls/hkdf.h>
+/* hkdf.h not used — HKDF implemented via HMAC directly */
 #include <mbedtls/md.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/ecdh.h>
 #include <mbedtls/bignum.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/ecdsa.h>
 
 /* ========================================================================
  * RNG — uses bk_rand() hardware RNG
@@ -128,17 +129,30 @@ int bk_zig_aes_gcm_decrypt(
  * HKDF (Extract + Expand)
  * ======================================================================== */
 
+/* HKDF implemented via HMAC (mbedtls_hkdf not linked in Armino) */
+
 int bk_zig_hkdf_extract(
     const unsigned char *salt, unsigned int salt_len,
     const unsigned char *ikm, unsigned int ikm_len,
     unsigned char *prk, unsigned int hash_len)
 {
+    /* HKDF-Extract: PRK = HMAC-Hash(salt, IKM) */
     const mbedtls_md_info_t *md;
     if (hash_len == 32) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     else if (hash_len == 48) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA384);
     else if (hash_len == 64) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
     else return -1;
-    return mbedtls_hkdf_extract(md, salt, salt_len, ikm, ikm_len, prk);
+
+    /* If salt is NULL, use hash_len zeros */
+    unsigned char zero_salt[64] = {0};
+    const unsigned char *actual_salt = salt;
+    unsigned int actual_salt_len = salt_len;
+    if (actual_salt == NULL || actual_salt_len == 0) {
+        actual_salt = zero_salt;
+        actual_salt_len = hash_len;
+    }
+
+    return mbedtls_md_hmac(md, actual_salt, actual_salt_len, ikm, ikm_len, prk);
 }
 
 int bk_zig_hkdf_expand(
@@ -146,12 +160,52 @@ int bk_zig_hkdf_expand(
     const unsigned char *info, unsigned int info_len,
     unsigned char *okm, unsigned int okm_len)
 {
+    /* HKDF-Expand: OKM = T(1) || T(2) || ... where T(i) = HMAC-Hash(PRK, T(i-1) || info || i) */
     const mbedtls_md_info_t *md;
     if (prk_len == 32) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     else if (prk_len == 48) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA384);
     else if (prk_len == 64) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
     else return -1;
-    return mbedtls_hkdf_expand(md, prk, prk_len, info, info_len, okm, okm_len);
+
+    unsigned int hash_len = prk_len;
+    unsigned int n = (okm_len + hash_len - 1) / hash_len;
+    if (n > 255) return -1;
+
+    mbedtls_md_context_t ctx;
+    mbedtls_md_init(&ctx);
+    int ret = mbedtls_md_setup(&ctx, md, 1);
+    if (ret != 0) { mbedtls_md_free(&ctx); return ret; }
+
+    unsigned char t[64] = {0}; /* Previous T block */
+    unsigned int t_len = 0;
+    unsigned int done = 0;
+
+    for (unsigned int i = 1; i <= n; i++) {
+        unsigned char counter = (unsigned char)i;
+
+        ret = mbedtls_md_hmac_starts(&ctx, prk, prk_len);
+        if (ret != 0) break;
+        if (t_len > 0) {
+            ret = mbedtls_md_hmac_update(&ctx, t, t_len);
+            if (ret != 0) break;
+        }
+        if (info_len > 0) {
+            ret = mbedtls_md_hmac_update(&ctx, info, info_len);
+            if (ret != 0) break;
+        }
+        ret = mbedtls_md_hmac_update(&ctx, &counter, 1);
+        if (ret != 0) break;
+        ret = mbedtls_md_hmac_finish(&ctx, t);
+        if (ret != 0) break;
+        t_len = hash_len;
+
+        unsigned int copy_len = (okm_len - done < hash_len) ? okm_len - done : hash_len;
+        memcpy(okm + done, t, copy_len);
+        done += copy_len;
+    }
+
+    mbedtls_md_free(&ctx);
+    return ret;
 }
 
 /* ========================================================================
