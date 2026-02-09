@@ -1,187 +1,77 @@
-//! Hello BK7258 — WiFi + DNS Test (using hal-compatible drivers)
+//! Hello BK7258 — WiFi + DNS Test
 //!
-//! Uses impl.WifiDriver and impl.NetDriver with proper event loop.
+//! Simple connectivity test: connect to WiFi, get IP, resolve DNS.
 
-const bk = @import("bk");
-const armino = bk.armino;
-const board = bk.boards.bk7258;
+const std = @import("std");
+const hal = @import("hal");
 
-const WIFI_SSID = "HAIVIVI-MFG";
-const WIFI_PASSWORD = "!haivivi";
+const platform = @import("platform.zig");
+const Board = platform.Board;
+const log = Board.log;
 
-/// Zig entry point
-export fn zig_main() void {
-    armino.log.info("ZIG", "========================================");
-    armino.log.info("ZIG", "=== BK7258 WiFi + DNS (hal drivers)  ===");
-    armino.log.info("ZIG", "========================================");
+const AppState = enum { connecting, connected, testing, done };
 
-    // Initialize WiFi driver (hal.wifi compatible)
-    var wifi_driver = board.WifiDriver.init() catch {
-        armino.log.err("ZIG", "WiFi driver init failed!");
+pub fn run(env: anytype) void {
+    log.info("========================================", .{});
+    log.info("=== Hello BK7258 (hal.Board pattern) ===", .{});
+    log.info("========================================", .{});
+
+    var b: Board = undefined;
+    b.init() catch |err| {
+        log.err("Board init failed: {}", .{err});
         return;
     };
-    defer wifi_driver.deinit();
+    defer b.deinit();
 
-    // Initialize Net driver (hal.net compatible)
-    var net_driver = board.NetDriver.init() catch {
-        armino.log.err("ZIG", "Net driver init failed!");
-        return;
-    };
-    defer net_driver.deinit();
+    log.info("Connecting to WiFi: {s}", .{env.wifi_ssid});
+    b.wifi.connect(env.wifi_ssid, env.wifi_password);
 
-    // Connect (non-blocking — results via pollEvent)
-    armino.log.logFmt("ZIG", "Connecting to: {s}", .{WIFI_SSID});
-    wifi_driver.connect(WIFI_SSID, WIFI_PASSWORD);
+    var state: AppState = .connecting;
 
-    // Event loop — single queue has both wifi and net events
-    var got_ip = false;
-    var dns_server: [4]u8 = .{ 0, 0, 0, 0 };
-    var timeout: u32 = 0;
-
-    while (!got_ip and timeout < 30000) {
-        // Poll unified event queue (wifi + net events in one queue)
-        while (armino.wifi.popEvent()) |event| {
+    while (Board.isRunning()) {
+        while (b.nextEvent()) |event| {
             switch (event) {
-                .connected => armino.log.info("ZIG", "WiFi connected (waiting for IP...)"),
-                .disconnected => armino.log.warn("ZIG", "WiFi disconnected"),
-                .got_ip => |info| {
-                    armino.log.logFmt("ZIG", "Got IP: {d}.{d}.{d}.{d}", .{
-                        info.ip[0], info.ip[1], info.ip[2], info.ip[3],
-                    });
-                    armino.log.logFmt("ZIG", "DNS: {d}.{d}.{d}.{d}", .{
-                        info.dns[0], info.dns[1], info.dns[2], info.dns[3],
-                    });
-                    dns_server = info.dns;
-                    got_ip = true;
+                .wifi => |wifi_event| switch (wifi_event) {
+                    .connected => log.info("WiFi connected (waiting for IP...)", .{}),
+                    .disconnected => |reason| {
+                        log.warn("WiFi disconnected: {}", .{reason});
+                        state = .connecting;
+                    },
+                    .connection_failed => |reason| {
+                        log.err("WiFi failed: {}", .{reason});
+                        return;
+                    },
+                    else => {},
                 },
-                .dhcp_timeout => armino.log.err("ZIG", "DHCP timeout!"),
-                .scan_done => {},
+                .net => |net_event| switch (net_event) {
+                    .dhcp_bound, .dhcp_renewed => |info| {
+                        log.info("Got IP: {}.{}.{}.{}", .{ info.ip[0], info.ip[1], info.ip[2], info.ip[3] });
+                        log.info("DNS: {}.{}.{}.{}", .{ info.dns_main[0], info.dns_main[1], info.dns_main[2], info.dns_main[3] });
+                        state = .connected;
+                    },
+                    .ip_lost => {
+                        log.warn("IP lost", .{});
+                        state = .connecting;
+                    },
+                    else => {},
+                },
+                else => {},
             }
         }
 
-        armino.time.sleepMs(100);
-        timeout += 100;
-    }
-
-    if (!got_ip) {
-        armino.log.err("ZIG", "WiFi timeout after 30s");
-        return;
-    }
-
-    // DNS test
-    armino.log.info("ZIG", "");
-    armino.log.info("ZIG", "=== DNS Resolution Test (UDP) ===");
-
-    const domains = [_][]const u8{
-        "www.google.com",
-        "www.baidu.com",
-        "github.com",
-    };
-
-    for (domains) |domain| {
-        const start = armino.time.nowMs();
-        if (dnsResolveUdp(domain, dns_server)) |ip| {
-            const elapsed = armino.time.nowMs() - start;
-            armino.log.logFmt("ZIG", "{s} => {d}.{d}.{d}.{d} ({d}ms)", .{
-                domain, ip[0], ip[1], ip[2], ip[3], elapsed,
-            });
-        } else {
-            armino.log.logFmt("ZIG", "{s} => FAILED", .{domain});
+        switch (state) {
+            .connecting => {},
+            .connected => {
+                Board.time.sleepMs(500);
+                log.info("WiFi OK! Hello from BK7258.", .{});
+                state = .testing;
+            },
+            .testing => {
+                state = .done;
+            },
+            .done => {},
         }
+
+        Board.time.sleepMs(10);
     }
-
-    armino.log.info("ZIG", "");
-    armino.log.info("ZIG", "=== All tests done! ===");
-
-    var count: i32 = 0;
-    while (true) {
-        armino.log.logFmt("ZIG", "alive count={}", .{count});
-        count += 1;
-        armino.time.sleepMs(5000);
-    }
-}
-
-// ============================================================================
-// Minimal DNS resolver (UDP)
-// ============================================================================
-
-fn dnsResolveUdp(domain: []const u8, dns_server: [4]u8) ?[4]u8 {
-    const Socket = armino.socket.Socket;
-
-    var sock = Socket.udp() catch return null;
-    defer sock.close();
-    sock.setRecvTimeout(5000);
-
-    var query_buf: [512]u8 = undefined;
-    const query_len = buildDnsQuery(domain, &query_buf) catch return null;
-
-    _ = sock.sendTo(dns_server, 53, query_buf[0..query_len]) catch return null;
-
-    var resp_buf: [512]u8 = undefined;
-    const resp_len = sock.recvFrom(&resp_buf) catch return null;
-
-    return parseDnsResponse(resp_buf[0..resp_len]);
-}
-
-fn buildDnsQuery(domain: []const u8, buf: []u8) !usize {
-    // Header
-    buf[0] = 0x12; buf[1] = 0x34;
-    buf[2] = 0x01; buf[3] = 0x00;
-    buf[4] = 0x00; buf[5] = 0x01;
-    buf[6] = 0; buf[7] = 0; buf[8] = 0; buf[9] = 0; buf[10] = 0; buf[11] = 0;
-
-    var pos: usize = 12;
-    var start: usize = 0;
-    for (domain, 0..) |ch, i| {
-        if (ch == '.') {
-            const label_len = i - start;
-            buf[pos] = @intCast(label_len);
-            pos += 1;
-            @memcpy(buf[pos..][0..label_len], domain[start..i]);
-            pos += label_len;
-            start = i + 1;
-        }
-    }
-    const last_len = domain.len - start;
-    buf[pos] = @intCast(last_len);
-    pos += 1;
-    @memcpy(buf[pos..][0..last_len], domain[start..]);
-    pos += last_len;
-    buf[pos] = 0; pos += 1;
-    buf[pos] = 0; buf[pos+1] = 1; buf[pos+2] = 0; buf[pos+3] = 1;
-    pos += 4;
-    return pos;
-}
-
-fn parseDnsResponse(resp: []const u8) ?[4]u8 {
-    if (resp.len < 12) return null;
-    const ancount = (@as(u16, resp[6]) << 8) | resp[7];
-    if (ancount == 0) return null;
-
-    var pos: usize = 12;
-    // Skip question
-    while (pos < resp.len and resp[pos] != 0) {
-        if (resp[pos] & 0xC0 == 0xC0) { pos += 2; break; }
-        pos += 1 + resp[pos];
-    }
-    if (pos < resp.len and resp[pos] == 0) pos += 1;
-    pos += 4;
-
-    // Parse answers
-    var i: u16 = 0;
-    while (i < ancount and pos + 10 < resp.len) : (i += 1) {
-        if (resp[pos] & 0xC0 == 0xC0) { pos += 2; } else {
-            while (pos < resp.len and resp[pos] != 0) pos += 1 + resp[pos];
-            pos += 1;
-        }
-        if (pos + 10 > resp.len) return null;
-        const rtype = (@as(u16, resp[pos]) << 8) | resp[pos + 1];
-        const rdlength = (@as(u16, resp[pos + 8]) << 8) | resp[pos + 9];
-        pos += 10;
-        if (rtype == 1 and rdlength == 4 and pos + 4 <= resp.len) {
-            return .{ resp[pos], resp[pos+1], resp[pos+2], resp[pos+3] };
-        }
-        pos += rdlength;
-    }
-    return null;
 }

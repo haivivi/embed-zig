@@ -112,20 +112,14 @@ def _bk_zig_app_impl(ctx):
             all_dep_files.extend(info.transitive_srcs.to_list())
             all_dep_files.extend(info.transitive_c_inputs.to_list())
 
-    # Find root .zig file
-    ap_zig = _find_zig_file(ap_files, ["app.zig", "entry.zig"])
-    if not ap_zig:
-        fail("No .zig file found in ap sources")
-
-    # Cross-platform mode: find app.zig in shared sources
+    # Find app.zig — always generate main.zig bridge (like ESP)
     app_zig = None
-    if ctx.attr.cross_platform:
-        for f in ap_files:
-            if f.basename == "app.zig":
-                app_zig = f
-                break
-        if not app_zig:
-            fail("cross_platform=True but no app.zig found in ap sources")
+    for f in ap_files:
+        if f.basename == "app.zig":
+            app_zig = f
+            break
+    if not app_zig:
+        fail("No app.zig found in ap sources")
 
     cp_zig = _find_zig_file(cp_files, ["base.zig", "cp.zig", "entry.zig"])
     if not cp_zig:
@@ -171,7 +165,7 @@ exec bash "$E/{build_sh}"
         bin_out = bin_file.path,
         zig_bin = zig_bin.path if zig_bin else "zig",
         c_helpers = c_helper_paths,
-        ap_zig = ap_zig.path,
+        ap_zig = app_zig.path,
         cp_zig = cp_zig.path,
         bk_zig = bk_zig.path,
         requires = " ".join(ctx.attr.requires),
@@ -268,11 +262,6 @@ bk_zig_app = rule(
             allow_single_file = True,
             doc = "CP Kconfig target (from bk_config rule). Appended to base project config.",
         ),
-        "cross_platform": attr.bool(
-            default = False,
-            doc = "True = cross-platform app (generates main.zig bridge, app.zig becomes 'app' module). " +
-                  "False = BK-only app (app.zig exports zig_main directly).",
-        ),
         "env": attr.label(
             allow_single_file = True,
             doc = "Environment file with KEY=VALUE pairs (WIFI_SSID, WIFI_PASSWORD, etc.)",
@@ -304,6 +293,7 @@ def _bk_flash_impl(ctx):
         fail("No .bin file found in app target")
 
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
+    baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "115200"
     script_files = ctx.attr._scripts.files.to_list()
 
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
@@ -321,11 +311,18 @@ source "$RUNFILES/{common_sh}"
 find_bk_loader
 detect_bk_port "{port}" "bk_flash" || exit 1
 
-echo "[bk_flash] Flashing $RUNFILES/{bin} to $PORT..."
+# Kill any process using the port
+if lsof "$PORT" >/dev/null 2>&1; then
+    echo "[bk_flash] Killing process using $PORT..."
+    lsof -t "$PORT" | xargs kill 2>/dev/null || true
+    sleep 0.5
+fi
+
+echo "[bk_flash] Flashing $RUNFILES/{bin} to $PORT at {baud} baud..."
 "$BK_LOADER" download \\
     -p "$PORT" \\
-    -b 115200 \\
-    --reset_baudrate 115200 \\
+    -b {baud} \\
+    --reset_baudrate {baud} \\
     --reset_type 1 \\
     -i "$RUNFILES/{bin}" \\
     --reboot
@@ -334,6 +331,7 @@ echo "[bk_flash] Done!"
 """.format(
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
+        baud = baud,
         bin = bin_file.short_path,
     )
 
@@ -360,6 +358,9 @@ bk_flash = rule(
         ),
         "_port": attr.label(
             default = Label("//bazel:port"),
+        ),
+        "_baud": attr.label(
+            default = Label("//bazel:baud"),
         ),
         "_scripts": attr.label(
             default = _SCRIPTS_LABEL,
@@ -392,6 +393,14 @@ fi
 source "$RUNFILES/{common_sh}"
 detect_bk_port "{port}" "bk_monitor" || exit 1
 
+# Kill any process using the port
+if lsof "$PORT" >/dev/null 2>&1; then
+    echo "[bk_monitor] Killing process using $PORT..."
+    lsof -t "$PORT" | xargs kill 2>/dev/null || true
+    sleep 0.5
+fi
+
+echo "[bk_monitor] Board: BK7258"
 echo "[bk_monitor] Monitoring $PORT at 115200 baud..."
 echo "[bk_monitor] Press Ctrl+C to exit"
 
@@ -401,6 +410,9 @@ try:
     ser = serial.Serial('$PORT', 115200, timeout=0.5)
     ser.setDTR(False)
     ser.setRTS(False)
+    print('Connected to $PORT at 115200 baud')
+    print('Waiting for data... (press RST on device if needed)')
+    print('---')
     while True:
         data = ser.read(ser.in_waiting or 1)
         if data:
@@ -408,6 +420,9 @@ try:
             sys.stdout.flush()
 except KeyboardInterrupt:
     print('\\n--- Monitor stopped ---')
+except Exception as e:
+    print(f'Error: {{e}}')
+    sys.exit(1)
 "
 """.format(
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,

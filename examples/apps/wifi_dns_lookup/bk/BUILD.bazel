@@ -20,7 +20,6 @@ bk_zig_app(
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/dns"],
-    cross_platform = True,
     env = ":env",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",

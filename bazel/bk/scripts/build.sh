@@ -37,9 +37,9 @@ compile_zig_lib() {
 
     mkdir -p "$OUT_DIR"
 
-    # For cross-platform apps (BK_APP_ZIG set): generate env.zig + main.zig bridge
+    # Always generate main.zig + env.zig for AP (like ESP pattern)
     local ROOT_ZIG="$E/$APP_ZIG"
-    if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+    if [ "$NAME" = "bk_zig_ap" ]; then
         # Generate env.zig from env file
         {
             echo 'pub const Env = struct {'
@@ -68,7 +68,7 @@ export fn zig_main() callconv(.c) void {
 }
 MAINEOF
         ROOT_ZIG="$OUT_DIR/main.zig"
-        echo "[bk_build] Generated main.zig + env.zig (cross-platform mode)"
+        echo "[bk_build] Generated main.zig + env.zig"
     fi
 
     # Generate build.zig dynamically with all dep modules
@@ -97,11 +97,9 @@ MAINEOF
             mod_idx=$((mod_idx + 1))
         done
 
-        # Add cross-platform app module (if BK_APP_ZIG is set)
-        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+        # App module (always for AP — generated main.zig imports this)
+        if [ "$NAME" = "bk_zig_ap" ]; then
             # Generate build_options module (provides .board enum)
-            # All board variants are listed so platform.zig switch compiles,
-            # but only .bk7258 branch is evaluated at comptime.
             cat > "$OUT_DIR/build_options.zig" << 'OPTEOF'
 pub const Board = enum {
     bk7258,
@@ -149,7 +147,7 @@ OPTEOF
         done
 
         # App module imports all dep modules
-        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+        if [ "$NAME" = "bk_zig_ap" ]; then
             mod_idx=0
             for entry in $BK_MODULES; do
                 local mod_name="${entry%%:*}"
@@ -173,7 +171,7 @@ OPTEOF
             echo "    root_mod.addImport(\"$mod_name\", mod_${mod_idx});"
             mod_idx=$((mod_idx + 1))
         done
-        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+        if [ "$NAME" = "bk_zig_ap" ]; then
             echo '    root_mod.addImport("app", app_mod);'
             echo '    root_mod.addImport("env", env_mod);'
         fi
