@@ -232,22 +232,29 @@ def _bk_flash_impl(ctx):
 
     script_content = """#!/bin/bash
 set -e
-source "{common_sh}"
+
+# Resolve runfiles directory
+RUNFILES="${{BASH_SOURCE[0]}}.runfiles/_main"
+if [ ! -d "$RUNFILES" ]; then
+    RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+fi
+
+source "$RUNFILES/{common_sh}"
 find_bk_loader
 detect_bk_port "{port}" "bk_flash" || exit 1
 
-echo "[bk_flash] Flashing {bin} to $PORT..."
+echo "[bk_flash] Flashing $RUNFILES/{bin} to $PORT..."
 "$BK_LOADER" download \\
     -p "$PORT" \\
     -b 115200 \\
     --reset_baudrate 115200 \\
     --reset_type 1 \\
-    -i "{bin}" \\
+    -i "$RUNFILES/{bin}" \\
     --reboot
 
 echo "[bk_flash] Done!"
 """.format(
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
         bin = bin_file.short_path,
     )
@@ -297,7 +304,14 @@ def _bk_monitor_impl(ctx):
 
     script_content = """#!/bin/bash
 set -e
-source "{common_sh}"
+
+# Resolve runfiles directory
+RUNFILES="${{BASH_SOURCE[0]}}.runfiles/_main"
+if [ ! -d "$RUNFILES" ]; then
+    RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+fi
+
+source "$RUNFILES/{common_sh}"
 detect_bk_port "{port}" "bk_monitor" || exit 1
 
 echo "[bk_monitor] Monitoring $PORT at 115200 baud..."
@@ -318,7 +332,7 @@ except KeyboardInterrupt:
     print('\\n--- Monitor stopped ---')
 "
 """.format(
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
     )
 
