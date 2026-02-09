@@ -159,7 +159,7 @@ fn handlePeer(sock: *IdfSocket, local_kp: KP) !void {
 
     if (!hs.isFinished()) return error.HandshakeNotFinished;
 
-    var recv_cs, var send_cs = try hs.split();
+    var send_cs, var recv_cs = try hs.split();
     log.info("Handshake OK! Echo loop...", .{});
 
     // Phase 3: Echo loop
