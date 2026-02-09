@@ -152,18 +152,16 @@ cp "$BASE/cp/config/bk7258/config" "$PROJECT_DIR/cp/config/bk7258/"
 cp "$BASE/ap/config/bk7258_ap/usr_gpio_cfg.h" "$PROJECT_DIR/ap/config/bk7258_ap/" 2>/dev/null || true
 cp "$BASE/cp/config/bk7258/usr_gpio_cfg.h" "$PROJECT_DIR/cp/config/bk7258/" 2>/dev/null || true
 
-# Append Kconfig overrides
-if [ -n "$BK_KCONFIG_AP" ]; then
+# Append Kconfig overrides from bk_config rule
+if [ -n "$BK_KCONFIG_AP" ] && [ -f "$E/$BK_KCONFIG_AP" ]; then
     echo "" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
-    echo "# Kconfig overrides from bk_zig_app" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
-    echo -e "$BK_KCONFIG_AP" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
-    echo "[bk_build] AP Kconfig overrides applied"
+    cat "$E/$BK_KCONFIG_AP" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
+    echo "[bk_build] AP Kconfig appended from $BK_KCONFIG_AP"
 fi
-if [ -n "$BK_KCONFIG_CP" ]; then
+if [ -n "$BK_KCONFIG_CP" ] && [ -f "$E/$BK_KCONFIG_CP" ]; then
     echo "" >> "$PROJECT_DIR/cp/config/bk7258/config"
-    echo "# Kconfig overrides from bk_zig_app" >> "$PROJECT_DIR/cp/config/bk7258/config"
-    echo -e "$BK_KCONFIG_CP" >> "$PROJECT_DIR/cp/config/bk7258/config"
-    echo "[bk_build] CP Kconfig overrides applied"
+    cat "$E/$BK_KCONFIG_CP" >> "$PROJECT_DIR/cp/config/bk7258/config"
+    echo "[bk_build] CP Kconfig appended from $BK_KCONFIG_CP"
 fi
 
 # Makefile + CMakeLists

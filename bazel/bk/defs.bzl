@@ -162,8 +162,8 @@ exec bash "$E/{build_sh}"
         requires = " ".join(ctx.attr.requires),
         force_link = " ".join(["-Wl,--undefined=" + s for s in ctx.attr.force_link]),
         base_project = ctx.attr.base_project,
-        kconfig_ap = "\\n".join(ctx.attr.kconfig_ap),
-        kconfig_cp = "\\n".join(ctx.attr.kconfig_cp),
+        kconfig_ap = ctx.file.kconfig_ap.path if ctx.file.kconfig_ap else "",
+        kconfig_cp = ctx.file.kconfig_cp.path if ctx.file.kconfig_cp else "",
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -173,8 +173,15 @@ exec bash "$E/{build_sh}"
         is_executable = True,
     )
 
+    # Collect kconfig files
+    kconfig_files = []
+    if ctx.file.kconfig_ap:
+        kconfig_files.append(ctx.file.kconfig_ap)
+    if ctx.file.kconfig_cp:
+        kconfig_files.append(ctx.file.kconfig_cp)
+
     # All inputs
-    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -232,13 +239,13 @@ bk_zig_app = rule(
             default = "app",
             doc = "Armino base project to copy config from (e.g., 'app', 'audio_player_example'). Located at $ARMINO_PATH/projects/<name>/.",
         ),
-        "kconfig_ap": attr.string_list(
-            default = [],
-            doc = "Kconfig overrides for AP (appended to base config). E.g., ['CONFIG_PWM=y']",
+        "kconfig_ap": attr.label(
+            allow_single_file = True,
+            doc = "AP Kconfig target (from bk_config rule). Appended to base project config.",
         ),
-        "kconfig_cp": attr.string_list(
-            default = [],
-            doc = "Kconfig overrides for CP (appended to base config).",
+        "kconfig_cp": attr.label(
+            allow_single_file = True,
+            doc = "CP Kconfig target (from bk_config rule). Appended to base project config.",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

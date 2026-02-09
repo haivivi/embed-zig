@@ -11,5 +11,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_speaker",
     ],
     requires = ["bk_audio"],
+    base_project = "audio_player_example",
+    kconfig_ap = "//examples/bk:bk7258_audio",
 )
 bk_flash(name = "flash", app = ":app")
