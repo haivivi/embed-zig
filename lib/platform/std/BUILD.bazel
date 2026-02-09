@@ -2,12 +2,12 @@ load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# No test: platform impl has compile errors without full platform context
+# Platform impl uses conditional compilation (builtin.os.tag) for
+# kqueue_io (macOS/BSD) and epoll_io (Linux) — safe to test on all platforms.
 zig_package(
     name = "std",
     module_name = "std_impl",
     deps = ["//lib/trait"],
-    test = False,
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

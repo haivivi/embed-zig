@@ -68,21 +68,19 @@ pub const EpollIO = struct {
     events: [max_events]linux.epoll_event,
 
     pub fn init(allocator: Allocator) !Self {
-        // EPOLL_CLOEXEC = 0x80000 (O_CLOEXEC)
-        const epfd = try posix.epoll_create1(@bitCast(linux.EPOLL{ .CLOEXEC = true }));
+        const epfd = try posix.epoll_create1(linux.EPOLL.CLOEXEC);
         errdefer posix.close(epfd);
 
         // Create eventfd for wake() signaling
-        // EFD_CLOEXEC | EFD_NONBLOCK
-        const wake_fd = try posix.eventfd(0, @bitCast(linux.EFD{ .CLOEXEC = true, .NONBLOCK = true }));
+        const wake_fd = try posix.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
         errdefer posix.close(wake_fd);
 
         // Register eventfd with epoll
         var wake_event = linux.epoll_event{
-            .events = @bitCast(linux.EPOLL.IN),
+            .events = linux.EPOLL.IN,
             .data = .{ .fd = wake_fd },
         };
-        try posix.epoll_ctl(epfd, .ADD, wake_fd, &wake_event);
+        try posix.epoll_ctl(epfd, linux.EPOLL.CTL_ADD, wake_fd, &wake_event);
 
         return .{
             .epfd = epfd,
@@ -101,12 +99,12 @@ pub const EpollIO = struct {
 
     /// Register a file descriptor for read readiness.
     pub fn registerRead(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, @bitCast(linux.EPOLL.IN), callback, true);
+        self.registerEvents(fd, linux.EPOLL.IN, callback, true);
     }
 
     /// Register a file descriptor for write readiness.
     pub fn registerWrite(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, @bitCast(linux.EPOLL.OUT), callback, false);
+        self.registerEvents(fd, linux.EPOLL.OUT, callback, false);
     }
 
     /// Shared implementation for registering events on a file descriptor.
@@ -143,8 +141,8 @@ pub const EpollIO = struct {
                 .events = new_events,
                 .data = .{ .fd = fd },
             };
-            const op: u32 = if (is_new) @bitCast(linux.EPOLL.CTL_ADD) else @bitCast(linux.EPOLL.CTL_MOD);
-            posix.epoll_ctl(self.epfd, @enumFromInt(op), fd, &ev) catch |err| {
+            const op: u32 = if (is_new) linux.EPOLL.CTL_ADD else linux.EPOLL.CTL_MOD;
+            posix.epoll_ctl(self.epfd, op, fd, &ev) catch |err| {
                 std.log.err("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
                     _ = self.registrations.fetchRemove(fd);
@@ -159,7 +157,7 @@ pub const EpollIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         if (self.registrations.fetchRemove(fd)) |_| {
-            posix.epoll_ctl(self.epfd, .DEL, fd, null) catch |err| {
+            posix.epoll_ctl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
                 std.log.err("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
         }
@@ -169,7 +167,7 @@ pub const EpollIO = struct {
     /// Pass -1 for timeout_ms to block indefinitely.
     /// Returns the number of events processed.
     pub fn poll(self: *Self, timeout_ms: i32) usize {
-        const n = posix.epoll_wait(self.epfd, &self.events, timeout_ms) catch return 0;
+        const n = posix.epoll_wait(self.epfd, &self.events, timeout_ms);
 
         var processed: usize = 0;
         for (self.events[0..n]) |event| {
@@ -183,11 +181,11 @@ pub const EpollIO = struct {
             }
 
             if (self.registrations.get(fd)) |entry| {
-                if (event.events & @as(u32, @bitCast(linux.EPOLL.IN)) != 0) {
+                if (event.events & linux.EPOLL.IN != 0) {
                     entry.read_cb.call(fd);
                     processed += 1;
                 }
-                if (event.events & @as(u32, @bitCast(linux.EPOLL.OUT)) != 0) {
+                if (event.events & linux.EPOLL.OUT != 0) {
                     entry.write_cb.call(fd);
                     processed += 1;
                 }

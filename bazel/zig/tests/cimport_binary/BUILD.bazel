@@ -1,0 +1,31 @@
+load("//bazel/zig:defs.bzl", "zig_binary", "zig_library")
+
+# Regression test for Zig multi-module @cImport ordering bug.
+#
+# The binary depends on TWO modules:
+#   - crypto_wrapper: has @cImport("xor.h") with c_includes (needs -I)
+#   - config: plain Zig module, no @cImport (no -I)
+#
+# Without the fix in _build_module_args, if config's -M is emitted AFTER
+# crypto_wrapper's -M/-I on the zig CLI, the -I flags are lost and
+# @cImport fails with "'xor.h' file not found".
+#
+# The fix ensures modules with c_include_dirs are emitted last.
+
+zig_library(
+    name = "config",
+    main = "src/config.zig",
+    srcs = ["src/config.zig"],
+)
+
+zig_binary(
+    name = "cimport_binary",
+    main = "src/main.zig",
+    srcs = ["src/main.zig"],
+    deps = [
+        # Both deps must be present to trigger the multi-module ordering bug.
+        # config has no -I, crypto_wrapper has -I.
+        ":config",
+        "//bazel/zig/tests/crypto_wrapper",
+    ],
+)
