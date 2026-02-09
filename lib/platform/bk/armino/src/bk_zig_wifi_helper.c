@@ -16,46 +16,99 @@
 #define TAG "zig_wifi"
 
 /* ========================================================================
- * Callback storage — Zig registers callbacks, C dispatches events
+ * Event queue (C-side) — Zig polls via bk_zig_wifi_poll_event()
  * ======================================================================== */
 
-typedef void (*zig_wifi_event_cb_t)(int event_id, void *event_data, int data_len);
-typedef void (*zig_netif_event_cb_t)(int event_id, const char *ip);
+#define MAX_EVENTS 16
 
-static zig_wifi_event_cb_t s_wifi_cb = NULL;
-static zig_netif_event_cb_t s_netif_cb = NULL;
+/* Event types matching Zig's WifiEvent union */
+#define EVT_NONE          0
+#define EVT_CONNECTED     1
+#define EVT_DISCONNECTED  2
+#define EVT_GOT_IP        3
+#define EVT_DHCP_TIMEOUT  4
+#define EVT_SCAN_DONE     5
 
-/* C event handler → dispatches to Zig callback */
+typedef struct {
+    int type;
+    unsigned char ip[4];
+    unsigned char dns[4];
+} bk_zig_event_t;
+
+static bk_zig_event_t s_events[MAX_EVENTS];
+static volatile int s_head = 0;
+static volatile int s_tail = 0;
+
+static void push_event(bk_zig_event_t ev) {
+    s_events[s_tail] = ev;
+    s_tail = (s_tail + 1) % MAX_EVENTS;
+    if (s_tail == s_head) s_head = (s_head + 1) % MAX_EVENTS; /* overflow: drop oldest */
+}
+
+/* Called from Zig to poll events */
+int bk_zig_wifi_poll_event(int *out_type, unsigned char *out_ip, unsigned char *out_dns) {
+    if (s_head == s_tail) return 0; /* no events */
+    bk_zig_event_t *ev = &s_events[s_head];
+    *out_type = ev->type;
+    if (out_ip) { memcpy(out_ip, ev->ip, 4); }
+    if (out_dns) { memcpy(out_dns, ev->dns, 4); }
+    s_head = (s_head + 1) % MAX_EVENTS;
+    return 1;
+}
+
+/* C event handlers */
 static bk_err_t wifi_event_handler(void *arg, event_module_t mod, int event_id,
                                    void *event_data) {
-    if (s_wifi_cb) {
-        int data_len = 0;
-        switch (event_id) {
-            case EVENT_WIFI_STA_CONNECTED:
-                data_len = sizeof(wifi_event_sta_connected_t);
-                break;
-            case EVENT_WIFI_STA_DISCONNECTED:
-                data_len = sizeof(wifi_event_sta_disconnected_t);
-                break;
-            case EVENT_WIFI_SCAN_DONE:
-                data_len = sizeof(wifi_event_scan_done_t);
-                break;
-        }
-        s_wifi_cb(event_id, event_data, data_len);
+    bk_zig_event_t ev = {0};
+    switch (event_id) {
+        case EVENT_WIFI_STA_CONNECTED:
+            ev.type = EVT_CONNECTED;
+            BK_LOGI(TAG, "event: STA connected\r\n");
+            break;
+        case EVENT_WIFI_STA_DISCONNECTED:
+            ev.type = EVT_DISCONNECTED;
+            BK_LOGI(TAG, "event: STA disconnected\r\n");
+            break;
+        case EVENT_WIFI_SCAN_DONE:
+            ev.type = EVT_SCAN_DONE;
+            break;
+        default:
+            return BK_OK;
     }
+    push_event(ev);
     return BK_OK;
 }
 
 static bk_err_t netif_event_handler(void *arg, event_module_t mod, int event_id,
                                     void *event_data) {
-    if (s_netif_cb) {
-        const char *ip = "";
-        if (event_id == EVENT_NETIF_GOT_IP4 && event_data) {
-            netif_event_got_ip4_t *got_ip = (netif_event_got_ip4_t *)event_data;
-            ip = got_ip->ip;
+    bk_zig_event_t ev = {0};
+    switch (event_id) {
+        case EVENT_NETIF_GOT_IP4: {
+            ev.type = EVT_GOT_IP;
+            /* Get IP and DNS from netif */
+            netif_ip4_config_t config;
+            if (bk_netif_get_ip4_config(NETIF_IF_STA, &config) == BK_OK) {
+                unsigned int a,b,c,d;
+                if (sscanf(config.ip, "%u.%u.%u.%u", &a,&b,&c,&d) == 4) {
+                    ev.ip[0]=a; ev.ip[1]=b; ev.ip[2]=c; ev.ip[3]=d;
+                }
+                if (sscanf(config.dns, "%u.%u.%u.%u", &a,&b,&c,&d) == 4) {
+                    ev.dns[0]=a; ev.dns[1]=b; ev.dns[2]=c; ev.dns[3]=d;
+                }
+            }
+            BK_LOGI(TAG, "event: got IP %d.%d.%d.%d dns %d.%d.%d.%d\r\n",
+                    ev.ip[0],ev.ip[1],ev.ip[2],ev.ip[3],
+                    ev.dns[0],ev.dns[1],ev.dns[2],ev.dns[3]);
+            break;
         }
-        s_netif_cb(event_id, ip);
+        case EVENT_NETIF_DHCP_TIMEOUT:
+            ev.type = EVT_DHCP_TIMEOUT;
+            BK_LOGW(TAG, "event: DHCP timeout\r\n");
+            break;
+        default:
+            return BK_OK;
     }
+    push_event(ev);
     return BK_OK;
 }
 
@@ -69,11 +122,7 @@ int bk_zig_wifi_init(void) {
     return BK_OK;
 }
 
-int bk_zig_wifi_register_events(zig_wifi_event_cb_t wifi_cb,
-                                zig_netif_event_cb_t netif_cb) {
-    s_wifi_cb = wifi_cb;
-    s_netif_cb = netif_cb;
-
+int bk_zig_wifi_register_events(void) {
     bk_err_t ret;
 
     /* Register WiFi events */

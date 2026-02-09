@@ -3,8 +3,16 @@
 const armino = @import("../../armino/src/armino.zig");
 const impl = @import("../../impl/src/impl.zig");
 
+// ============================================================================
+// Board Identification
+// ============================================================================
+
 pub const name = "BK7258";
 pub const serial_port = "/dev/cu.usbserial-130";
+
+// ============================================================================
+// Platform Primitives
+// ============================================================================
 
 pub const log = impl.log.scoped("app");
 
@@ -22,16 +30,24 @@ pub fn isRunning() bool {
 }
 
 // ============================================================================
-// Socket (LWIP — same as ESP)
+// Socket (LWIP)
 // ============================================================================
 
 pub const socket = impl.Socket;
 
 // ============================================================================
-// WiFi
+// WiFi (hal.wifi compatible)
 // ============================================================================
 
-pub const wifi = armino.wifi;
+pub const WifiDriver = impl.WifiDriver;
+pub const wifi_spec = impl.wifi.wifi_spec;
+
+// ============================================================================
+// Net (hal.net compatible)
+// ============================================================================
+
+pub const NetDriver = impl.NetDriver;
+pub const net_spec = impl.net.net_spec;
 
 // ============================================================================
 // Audio Configuration (BK7258 Onboard DAC)
