@@ -18,4 +18,5 @@
 pub const log = @import("log.zig");
 pub const time = @import("time.zig");
 pub const rtos = @import("rtos.zig");
+pub const socket = @import("socket.zig");
 pub const speaker = @import("speaker.zig");

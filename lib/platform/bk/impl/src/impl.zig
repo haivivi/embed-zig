@@ -24,6 +24,10 @@
 // trait implementations
 // ============================================================================
 
+/// Socket implementation (trait.socket)
+pub const socket = @import("socket.zig");
+pub const Socket = socket.Socket;
+
 /// Log implementation (trait.log)
 pub const log = @import("log.zig");
 pub const Log = log.Log;
