@@ -7,6 +7,7 @@
  */
 
 #import <CoreBluetooth/CoreBluetooth.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <dispatch/dispatch.h>
 #include "cb_helper.h"
 #include <string.h>
@@ -445,11 +446,11 @@ int cb_peripheral_notify_blocking(const char *svc_uuid, const char *chr_uuid,
     // which sets readyToUpdate=YES and signals updateSem.
     s_peripheral.readyToUpdate = NO;
 
-    // Pump run loop in small increments until ready or timeout
+    // Pump run loop in tight increments until ready or timeout
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout_ms / 1000.0];
     while (!s_peripheral.readyToUpdate) {
-        NSDate *step = [NSDate dateWithTimeIntervalSinceNow:0.001]; // 1ms
-        [[NSRunLoop currentRunLoop] runUntilDate:step];
+        // Process one run loop source then return immediately
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0001, true); // 0.1ms max
         if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
             return -4; // timeout
         }
@@ -631,8 +632,7 @@ int cb_central_write_no_response(const char *svc_uuid, const char *chr_uuid,
         s_central.writeNoRspReady = NO;
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10.0];
         while (!s_central.writeNoRspReady) {
-            NSDate *step = [NSDate dateWithTimeIntervalSinceNow:0.001];
-            [[NSRunLoop currentRunLoop] runUntilDate:step];
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0001, true);
             if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
                 return -4; // timeout
             }

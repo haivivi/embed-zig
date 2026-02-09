@@ -17,7 +17,7 @@ const SVC = "CC00";
 const CHR = "CC01";
 const TARGET_NAME = "XProto";
 const TEST_DATA_SIZE = 900 * 1024;
-const TEST_MTU: u16 = 247;
+const TEST_MTU: u16 = 247; // optimal: fits in 1 ACL fragment (241 bytes/chunk)
 
 // ============================================================================
 // RX Queue — single-threaded, callbacks fire during runLoopOnce
@@ -63,8 +63,6 @@ const ServerTransport = struct {
     rx: RxQueue = .{},
 
     pub fn send(_: *ServerTransport, data: []const u8) !void {
-        // Use blocking notify with proper flow control via
-        // peripheralManagerIsReadyToUpdateSubscribers delegate.
         cb.Peripheral.notifyBlocking(SVC, CHR, data, 10_000) catch
             return error.SendFailed;
     }

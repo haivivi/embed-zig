@@ -59,7 +59,7 @@ const CCCD_HANDLE = VALUE_HANDLE + 1;
 // ============================================================================
 
 const TEST_DATA_SIZE = 900 * 1024; // 900 KB
-const TEST_MTU: u16 = 247; // ATT MTU
+const TEST_MTU: u16 = 247; // optimal: fits in 1 ACL fragment (241 bytes/chunk)
 const ADV_NAME = "XProto";
 
 // ============================================================================
