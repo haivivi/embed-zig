@@ -5,3 +5,7 @@ zig-out
 
 # External repo integration tests (separate Bazel workspaces)
 bazel/tests/external_help
+
+# Nested .zig-cache directories
+examples/apps/opus_aec_test/native/.zig-cache
+examples/apps/adc_button/esp/.zig-cache

@@ -18,9 +18,9 @@ genrule(
         "build.zig",
         "build.zig.zon",
         "//lib/pkg/audio:srcs",
-        "@opus//:opus_srcs",
-        "@opus//:opus_internal_headers",
-        "@opus//:opus_public_headers",
+        "@opus//:core_srcs",
+        "@opus//:float_srcs",
+        "@opus//:headers",
     ],
     outs = ["opus_test"],
     cmd = """
