@@ -1,0 +1,10 @@
+.{
+    .name = .x_proto,
+    .version = "0.1.0",
+    .fingerprint = 0x92f7a0b3c4d5e612,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

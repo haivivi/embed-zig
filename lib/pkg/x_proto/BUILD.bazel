@@ -1,0 +1,9 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_package(
+    name = "x_proto",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
