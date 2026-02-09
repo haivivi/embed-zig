@@ -7,6 +7,7 @@
  */
 
 #import <CoreBluetooth/CoreBluetooth.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <dispatch/dispatch.h>
 #include "cb_helper.h"
 #include <string.h>
@@ -43,6 +44,8 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 @property (nonatomic, strong) NSMutableSet<CBCentral *> *subscribedCentrals;
 @property (nonatomic, assign) BOOL ready;
 @property (nonatomic, strong) dispatch_semaphore_t readySem;
+// Bug 1 fix: flow control for updateValue
+@property (nonatomic, assign) BOOL readyToUpdate;
 @end
 
 @implementation CBPeripheralHelper
@@ -54,6 +57,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
         _charMap = [NSMutableDictionary new];
         _subscribedCentrals = [NSMutableSet new];
         _ready = NO;
+        _readyToUpdate = YES; // initially ready
         _readySem = dispatch_semaphore_create(0);
         _manager = [[CBPeripheralManager alloc] initWithDelegate:self queue:nil];
     }
@@ -65,6 +69,11 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
         _ready = YES;
         dispatch_semaphore_signal(_readySem);
     }
+}
+
+// Bug 1 fix: called by CoreBluetooth when transmit queue has space again
+- (void)peripheralManagerIsReadyToUpdateSubscribers:(CBPeripheralManager *)peripheral {
+    _readyToUpdate = YES;
 }
 
 - (void)peripheralManager:(CBPeripheralManager *)peripheral
@@ -98,9 +107,15 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
     }
 }
 
+// Bug 3 fix: fire connection callback on first subscribe
 - (void)peripheralManager:(CBPeripheralManager *)peripheral
     central:(CBCentral *)central didSubscribeToCharacteristic:(CBCharacteristic *)characteristic {
+    BOOL wasEmpty = (_subscribedCentrals.count == 0);
     [_subscribedCentrals addObject:central];
+    // Fire connection callback when first central subscribes
+    if (wasEmpty && _subscribedCentrals.count > 0 && s_peripheral_conn_cb) {
+        s_peripheral_conn_cb(true);
+    }
     if (s_subscribe_cb) {
         const char *svc = characteristic.service.UUID.UUIDString.UTF8String;
         const char *chr = characteristic.UUID.UUIDString.UTF8String;
@@ -108,6 +123,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
     }
 }
 
+// Bug 3 fix: fire disconnection callback when all centrals unsubscribe
 - (void)peripheralManager:(CBPeripheralManager *)peripheral
     central:(CBCentral *)central didUnsubscribeFromCharacteristic:(CBCharacteristic *)characteristic {
     [_subscribedCentrals removeObject:central];
@@ -115,6 +131,10 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
         const char *svc = characteristic.service.UUID.UUIDString.UTF8String;
         const char *chr = characteristic.UUID.UUIDString.UTF8String;
         s_subscribe_cb(svc, chr, false);
+    }
+    // Fire disconnection callback when no centrals remain
+    if (_subscribedCentrals.count == 0 && s_peripheral_conn_cb) {
+        s_peripheral_conn_cb(false);
     }
 }
 
@@ -151,6 +171,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 @property (nonatomic, strong) NSData *lastReadValue;
 @property (nonatomic, assign) int lastError;
 @property (nonatomic, assign) BOOL opDone;
+@property (nonatomic, assign) BOOL writeNoRspReady;
 @end
 
 @implementation CBCentralHelper
@@ -198,7 +219,9 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
     didConnectPeripheral:(CBPeripheral *)peripheral {
     _connectedPeripheral = peripheral;
     peripheral.delegate = self;
-    // Discover all services
+    // Bug 2 fix: clear stale char cache before fresh discovery
+    [_discoveredChars removeAllObjects];
+    // Discover all services (fresh, not from cache)
     [peripheral discoverServices:nil];
 }
 
@@ -224,8 +247,10 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 - (void)peripheral:(CBPeripheral *)peripheral
     didDiscoverCharacteristicsForService:(CBService *)service error:(NSError *)error {
     for (CBCharacteristic *chr in service.characteristics) {
+        // Bug 2 fix: normalize UUID keys to uppercase for consistent matching
         NSString *key = [NSString stringWithFormat:@"%@/%@",
-            service.UUID.UUIDString, chr.UUID.UUIDString];
+            service.UUID.UUIDString.uppercaseString,
+            chr.UUID.UUIDString.uppercaseString];
         _discoveredChars[key] = chr;
         fprintf(stderr, "[cb] discovered char key: '%s'\n", key.UTF8String);
     }
@@ -265,6 +290,11 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
     _opDone = YES;
 }
 
+// Flow control for writeWithoutResponse (same pattern as peripheral notify)
+- (void)peripheralIsReadyToSendWriteWithoutResponse:(CBPeripheral *)peripheral {
+    _writeNoRspReady = YES;
+}
+
 @end
 
 // ============================================================================
@@ -273,6 +303,14 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 
 static CBPeripheralHelper *s_peripheral = nil;
 static CBCentralHelper *s_central = nil;
+
+// ============================================================================
+// Helper: normalize UUID key to uppercase for consistent matching
+// ============================================================================
+
+static NSString *normalizedKey(const char *svc_uuid, const char *chr_uuid) {
+    return [[NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid] uppercaseString];
+}
 
 // ============================================================================
 // Peripheral C API
@@ -331,7 +369,8 @@ int cb_peripheral_add_service(const char *svc_uuid,
 
         [chars addObject:chr];
 
-        NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuids[i]];
+        // Bug 2 fix: use normalized (uppercase) keys for charMap
+        NSString *key = normalizedKey(svc_uuid, chr_uuids[i]);
         s_peripheral.charMap[key] = chr;
     }
 
@@ -367,17 +406,56 @@ void cb_peripheral_stop_advertising(void) {
     }
 }
 
+// Original non-blocking notify (returns immediately)
 int cb_peripheral_notify(const char *svc_uuid, const char *chr_uuid,
                          const uint8_t *data, uint16_t len) {
     if (!s_peripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
+    NSString *key = normalizedKey(svc_uuid, chr_uuid);
     CBMutableCharacteristic *chr = s_peripheral.charMap[key];
     if (!chr) return -2;
 
     NSData *value = [NSData dataWithBytes:data length:len];
     BOOL ok = [s_peripheral.manager updateValue:value forCharacteristic:chr
                onSubscribedCentrals:nil];
+    return ok ? 0 : -3;
+}
+
+// Bug 1 fix: blocking notify — waits for queue space via
+// peripheralManagerIsReadyToUpdateSubscribers delegate callback.
+int cb_peripheral_notify_blocking(const char *svc_uuid, const char *chr_uuid,
+                                  const uint8_t *data, uint16_t len,
+                                  uint32_t timeout_ms) {
+    if (!s_peripheral) return -1;
+
+    NSString *key = normalizedKey(svc_uuid, chr_uuid);
+    CBMutableCharacteristic *chr = s_peripheral.charMap[key];
+    if (!chr) return -2;
+
+    NSData *value = [NSData dataWithBytes:data length:len];
+
+    // Try sending — if queue has space, returns YES immediately
+    BOOL ok = [s_peripheral.manager updateValue:value forCharacteristic:chr
+               onSubscribedCentrals:nil];
+    if (ok) return 0;
+
+    // Queue full — wait for peripheralManagerIsReadyToUpdateSubscribers
+    // which sets readyToUpdate=YES and signals updateSem.
+    s_peripheral.readyToUpdate = NO;
+
+    // Pump run loop in tight increments until ready or timeout
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout_ms / 1000.0];
+    while (!s_peripheral.readyToUpdate) {
+        // Process one run loop source then return immediately
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0001, true); // 0.1ms max
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            return -4; // timeout
+        }
+    }
+
+    // Retry after queue drained
+    ok = [s_peripheral.manager updateValue:value forCharacteristic:chr
+          onSubscribedCentrals:nil];
     return ok ? 0 : -3;
 }
 
@@ -445,34 +523,60 @@ int cb_central_connect(const char *peripheral_uuid) {
     return s_central.connectedPeripheral ? 0 : -3;
 }
 
+// Bug 2 fix: force re-discovery by disconnecting and reconnecting.
+// Clears CoreBluetooth's GATT cache for this peripheral.
+int cb_central_rediscover(void) {
+    if (!s_central || !s_central.connectedPeripheral) return -1;
+
+    CBPeripheral *peripheral = s_central.connectedPeripheral;
+
+    // Disconnect
+    [s_central.manager cancelPeripheralConnection:peripheral];
+    for (int i = 0; i < 20 && s_central.connectedPeripheral; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+
+    // Clear stale cache
+    [s_central.discoveredChars removeAllObjects];
+
+    // Reconnect
+    s_central.lastError = 0;
+    [s_central.manager connectPeripheral:peripheral options:nil];
+
+    for (int i = 0; i < 100 && !s_central.connectedPeripheral; i++) {
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+
+    return s_central.connectedPeripheral ? 0 : -3;
+}
+
 void cb_central_disconnect(void) {
     if (s_central && s_central.connectedPeripheral) {
         [s_central.manager cancelPeripheralConnection:s_central.connectedPeripheral];
     }
 }
 
+// Helper: find a characteristic by normalized (uppercase) key
+static CBCharacteristic *findChar(const char *svc_uuid, const char *chr_uuid) {
+    NSString *key = normalizedKey(svc_uuid, chr_uuid);
+    CBCharacteristic *chr = s_central.discoveredChars[key];
+    if (!chr) {
+        fprintf(stderr, "[cb] char not found for key '%s'\n", key.UTF8String);
+        fprintf(stderr, "[cb]   available keys (%lu):\n",
+                (unsigned long)s_central.discoveredChars.count);
+        for (NSString *k in s_central.discoveredChars) {
+            fprintf(stderr, "[cb]     '%s'\n", k.UTF8String);
+        }
+    }
+    return chr;
+}
+
 int cb_central_read(const char *svc_uuid, const char *chr_uuid,
                     uint8_t *out, uint16_t *out_len, uint16_t max_len) {
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
-    fprintf(stderr, "[cb] read lookup key: '%s' (have %lu chars)\n",
-            key.UTF8String, (unsigned long)s_central.discoveredChars.count);
-    CBCharacteristic *chr = s_central.discoveredChars[key];
-    if (!chr) {
-        // Try uppercase key
-        NSString *upperKey = [key uppercaseString];
-        chr = s_central.discoveredChars[upperKey];
-        if (!chr) {
-            fprintf(stderr, "[cb] char not found for key '%s' or '%s'\n",
-                    key.UTF8String, upperKey.UTF8String);
-            // Dump all keys
-            for (NSString *k in s_central.discoveredChars) {
-                fprintf(stderr, "[cb]   have key: '%s'\n", k.UTF8String);
-            }
-            return -2;
-        }
-    }
+    CBCharacteristic *chr = findChar(svc_uuid, chr_uuid);
+    if (!chr) return -2;
 
     s_central.lastReadValue = nil;
     s_central.lastError = 0;
@@ -495,8 +599,7 @@ int cb_central_write(const char *svc_uuid, const char *chr_uuid,
                      const uint8_t *data, uint16_t len) {
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
-    CBCharacteristic *chr = s_central.discoveredChars[key];
+    CBCharacteristic *chr = findChar(svc_uuid, chr_uuid);
     if (!chr) return -2;
 
     NSData *value = [NSData dataWithBytes:data length:len];
@@ -516,11 +619,23 @@ int cb_central_write_no_response(const char *svc_uuid, const char *chr_uuid,
                                  const uint8_t *data, uint16_t len) {
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
-    CBCharacteristic *chr = s_central.discoveredChars[key];
+    CBCharacteristic *chr = findChar(svc_uuid, chr_uuid);
     if (!chr) return -2;
 
     NSData *value = [NSData dataWithBytes:data length:len];
+
+    // Flow control: wait until peripheral is ready to accept writes
+    if (!s_central.connectedPeripheral.canSendWriteWithoutResponse) {
+        s_central.writeNoRspReady = NO;
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10.0];
+        while (!s_central.writeNoRspReady) {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0001, true);
+            if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+                return -4; // timeout
+            }
+        }
+    }
+
     [s_central.connectedPeripheral writeValue:value forCharacteristic:chr
      type:CBCharacteristicWriteWithoutResponse];
     return 0;
@@ -529,8 +644,7 @@ int cb_central_write_no_response(const char *svc_uuid, const char *chr_uuid,
 int cb_central_subscribe(const char *svc_uuid, const char *chr_uuid) {
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
-    CBCharacteristic *chr = s_central.discoveredChars[key];
+    CBCharacteristic *chr = findChar(svc_uuid, chr_uuid);
     if (!chr) return -2;
 
     s_central.lastError = 0;
@@ -547,8 +661,7 @@ int cb_central_subscribe(const char *svc_uuid, const char *chr_uuid) {
 int cb_central_unsubscribe(const char *svc_uuid, const char *chr_uuid) {
     if (!s_central || !s_central.connectedPeripheral) return -1;
 
-    NSString *key = [NSString stringWithFormat:@"%s/%s", svc_uuid, chr_uuid];
-    CBCharacteristic *chr = s_central.discoveredChars[key];
+    CBCharacteristic *chr = findChar(svc_uuid, chr_uuid);
     if (!chr) return -2;
 
     [s_central.connectedPeripheral setNotifyValue:NO forCharacteristic:chr];

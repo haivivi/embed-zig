@@ -38,6 +38,7 @@ extern fn cb_peripheral_add_service([*c]const u8, [*c]const [*c]const u8, [*c]co
 extern fn cb_peripheral_start_advertising([*c]const u8) c_int;
 extern fn cb_peripheral_stop_advertising() void;
 extern fn cb_peripheral_notify([*c]const u8, [*c]const u8, [*c]const u8, u16) c_int;
+extern fn cb_peripheral_notify_blocking([*c]const u8, [*c]const u8, [*c]const u8, u16, u32) c_int;
 extern fn cb_peripheral_deinit() void;
 
 // Central
@@ -49,6 +50,7 @@ extern fn cb_central_scan_start([*c]const u8) c_int;
 extern fn cb_central_scan_stop() void;
 extern fn cb_central_connect([*c]const u8) c_int;
 extern fn cb_central_disconnect() void;
+extern fn cb_central_rediscover() c_int;
 extern fn cb_central_read([*c]const u8, [*c]const u8, [*c]u8, *u16, u16) c_int;
 extern fn cb_central_write([*c]const u8, [*c]const u8, [*c]const u8, u16) c_int;
 extern fn cb_central_write_no_response([*c]const u8, [*c]const u8, [*c]const u8, u16) c_int;
@@ -67,6 +69,8 @@ pub const Error = error{
     NotReady,
     NotFound,
     Failed,
+    QueueFull,
+    Timeout,
     Disconnected,
 };
 
@@ -100,8 +104,29 @@ pub const Peripheral = struct {
         cb_peripheral_stop_advertising();
     }
 
+    /// Send notification (non-blocking). Returns QueueFull if transmit queue is full.
     pub fn notify(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8, data: []const u8) Error!void {
-        if (cb_peripheral_notify(svc_uuid, chr_uuid, data.ptr, @intCast(data.len)) != 0) return error.Failed;
+        const ret = cb_peripheral_notify(svc_uuid, chr_uuid, data.ptr, @intCast(data.len));
+        switch (ret) {
+            0 => {},
+            -2 => return error.NotFound,
+            -3 => return error.QueueFull,
+            else => return error.Failed,
+        }
+    }
+
+    /// Send notification with flow control (blocking).
+    /// Waits for CoreBluetooth's transmit queue to have space via
+    /// peripheralManagerIsReadyToUpdateSubscribers delegate.
+    pub fn notifyBlocking(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8, data: []const u8, timeout_ms: u32) Error!void {
+        const ret = cb_peripheral_notify_blocking(svc_uuid, chr_uuid, data.ptr, @intCast(data.len), timeout_ms);
+        switch (ret) {
+            0 => {},
+            -2 => return error.NotFound,
+            -3 => return error.QueueFull,
+            -4 => return error.Timeout,
+            else => return error.Failed,
+        }
     }
 
     pub fn deinit() void {
@@ -141,18 +166,39 @@ pub const Central = struct {
         cb_central_disconnect();
     }
 
+    /// Force re-discovery of GATT services (clears CoreBluetooth cache).
+    /// Disconnects and reconnects to the peripheral.
+    pub fn rediscover() Error!void {
+        if (cb_central_rediscover() != 0) return error.Failed;
+    }
+
     pub fn read(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8, buf: []u8) Error![]const u8 {
         var len: u16 = 0;
-        if (cb_central_read(svc_uuid, chr_uuid, buf.ptr, &len, @intCast(buf.len)) != 0) return error.Failed;
-        return buf[0..len];
+        const ret = cb_central_read(svc_uuid, chr_uuid, buf.ptr, &len, @intCast(buf.len));
+        switch (ret) {
+            0 => return buf[0..len],
+            -2 => return error.NotFound,
+            else => return error.Failed,
+        }
     }
 
     pub fn write(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8, data: []const u8) Error!void {
-        if (cb_central_write(svc_uuid, chr_uuid, data.ptr, @intCast(data.len)) != 0) return error.Failed;
+        const ret = cb_central_write(svc_uuid, chr_uuid, data.ptr, @intCast(data.len));
+        switch (ret) {
+            0 => {},
+            -2 => return error.NotFound,
+            else => return error.Failed,
+        }
     }
 
     pub fn writeNoResponse(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8, data: []const u8) Error!void {
-        if (cb_central_write_no_response(svc_uuid, chr_uuid, data.ptr, @intCast(data.len)) != 0) return error.Failed;
+        const ret = cb_central_write_no_response(svc_uuid, chr_uuid, data.ptr, @intCast(data.len));
+        switch (ret) {
+            0 => {},
+            -2 => return error.NotFound,
+            -4 => return error.Timeout,
+            else => return error.Failed,
+        }
     }
 
     pub fn subscribe(svc_uuid: [*c]const u8, chr_uuid: [*c]const u8) Error!void {

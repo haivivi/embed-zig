@@ -1,0 +1,51 @@
+# BLE X-Proto Throughput Test - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/ble_x_proto_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["freertos", "bt"],
+    force_link = [
+        "${BT_FORCE_LINK}",
+        "${RUNTIME_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/bt/bt.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/runtime/runtime.cmake)",
+    ],
+    extra_c_sources = ["BT_C_SOURCES", "RUNTIME_C_SOURCES"],
+    deps = [
+        ":idf",
+        ":esp",
+        "//lib/hal",
+        "//lib/trait",
+        "//lib/pkg/bluetooth",
+        "//lib/pkg/x_proto",
+        "//lib/pkg/drivers",
+        "//lib/pkg/math",
+        "//lib/pkg/motion",
+        "//lib/pkg/waitgroup",
+        "//lib/pkg/channel",
+        "//lib/pkg/cancellation",
+    ],
+    sdkconfig = "//examples/esp:esp32s3_bt",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
