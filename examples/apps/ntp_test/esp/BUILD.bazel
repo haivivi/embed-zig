@@ -1,7 +1,7 @@
 # NTP Test - ESP Platform
 
 load("//bazel:env.bzl", "make_env_file")
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,12 +12,15 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
+
 # Environment from command line
 # Usage: bazel build //examples/apps/ntp_test/esp:app --define WIFI_SSID=xxx --define WIFI_PASSWORD=yyy
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
 )
+
+esp_modules()
 
 esp_zig_app(
     name = "app",
@@ -35,7 +38,9 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
     ],
     extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "NET_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/pkg/ntp", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [":idf", ":esp",
+
+ "//lib/hal", "//lib/trait", "//lib/pkg/ntp", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
     env = ":env",

@@ -39,7 +39,7 @@ sh_test(
         ":server_sources",
         "//lib/tls:tls_sources",
         "//lib/crypto:crypto_sources",
-        "//lib/trait:trait_sources",
+        "//lib/trait:srcs",
     ],
     env = {
         "ZIG_GLOBAL_CACHE_DIR": "/tmp/zig-cache",
@@ -63,7 +63,7 @@ sh_test(
     data = [
         "//lib/tls:tls_sources",
         "//lib/crypto:crypto_sources", 
-        "//lib/trait:trait_sources",
+        "//lib/trait:srcs",
         "@zig_toolchain//:zig_files",
     ],
     env = {

@@ -5,14 +5,13 @@ def _make_env_file_impl(ctx):
     """Generate env file from --define and --action_env."""
     out = ctx.actions.declare_file(ctx.attr.name + ".env")
     
-    # Static lines from --define
+    # Static lines from --define (always emit all fields, use defaults or empty string)
     static_lines = []
     for key in ctx.attr.defines:
         value = ctx.var.get(key, "")
-        if value:
-            static_lines.append('{}="{}"'.format(key, value))
-        elif ctx.attr.defaults.get(key):
-            static_lines.append('{}="{}"'.format(key, ctx.attr.defaults[key]))
+        if not value:
+            value = ctx.attr.defaults.get(key, "")
+        static_lines.append('{}="{}"'.format(key, value))
     
     # If no env_vars, just write static content
     if not ctx.attr.env_vars:

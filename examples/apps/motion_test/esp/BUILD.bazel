@@ -1,6 +1,6 @@
 # Motion Test - ESP Platform
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -10,6 +10,9 @@ filegroup(
         "//examples/apps/motion_test:app_srcs",
     ] + glob(["**/*"]),
 )
+
+
+esp_modules()
 
 esp_zig_app(
     name = "app",
@@ -28,7 +31,11 @@ esp_zig_app(
     ],
     extra_c_sources = ["I2C_C_SOURCES"],
     deps = [
+        ":idf",
+        ":esp",
+
         "//lib/hal",
+        "//lib/trait",
         "//lib/pkg/drivers",
         "//lib/pkg/motion",
         "//lib/pkg/math",

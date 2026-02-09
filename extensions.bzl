@@ -21,33 +21,45 @@ def _opus_repo_impl(ctx):
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
 
+# Public headers (include/opus.h etc.)
 filegroup(
-    name = "opus_public_headers",
-    srcs = glob(["include/*.h"]),
+    name = "headers",
+    srcs = glob(["include/*.h", "src/*.h", "celt/*.h", "silk/*.h"]),
 )
 
+# Core C sources (shared by fixed and float builds)
 filegroup(
-    name = "opus_srcs",
+    name = "core_srcs",
     srcs = glob([
         "src/*.c",
         "celt/*.c",
         "silk/*.c",
-        "silk/float/*.c",
     ], exclude = [
         "src/opus_demo.c",
         "src/opus_compare.c",
         "src/repacketizer_demo.c",
         "celt/opus_custom_demo.c",
+        "celt/arm/*.c",
+        "celt/x86/*.c",
+        "silk/arm/*.c",
+        "silk/x86/*.c",
     ]),
 )
 
+# SILK fixed-point sources (for embedded / Xtensa)
 filegroup(
-    name = "opus_internal_headers",
-    srcs = glob([
-        "src/*.h",
-        "celt/*.h",
-        "silk/*.h",
-        "silk/float/*.h",
+    name = "fixed_srcs",
+    srcs = glob(["silk/fixed/*.c", "silk/fixed/*.h"], exclude = [
+        "silk/fixed/arm/*.c",
+        "silk/fixed/x86/*.c",
+    ]),
+)
+
+# SILK float sources (for desktop / server)
+filegroup(
+    name = "float_srcs",
+    srcs = glob(["silk/float/*.c", "silk/float/*.h"], exclude = [
+        "silk/float/x86/*.c",
     ]),
 )
 """)
@@ -184,4 +196,51 @@ def _zig_toolchain_ext_impl(ctx):
 
 zig_toolchain = module_extension(
     implementation = _zig_toolchain_ext_impl,
+)
+
+# =============================================================================
+# ESP Sysroot (auto-detect newlib headers for cross-compilation)
+# =============================================================================
+
+def _esp_sysroot_impl(ctx):
+    """Auto-detect ESP-IDF toolchain newlib headers."""
+    home = ctx.os.environ.get("HOME", "")
+    espressif_dir = home + "/.espressif/tools/xtensa-esp-elf"
+
+    # Find the latest installed version
+    result = ctx.execute(["ls", espressif_dir])
+    newlib_include = ""
+    if result.return_code == 0:
+        versions = sorted(result.stdout.strip().split("\n"), reverse = True)
+        for v in versions:
+            if v.startswith("esp-"):
+                candidate = espressif_dir + "/" + v + "/xtensa-esp-elf/xtensa-esp-elf/include"
+                check = ctx.execute(["test", "-d", candidate])
+                if check.return_code == 0:
+                    newlib_include = candidate
+                    break
+
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+# Auto-detected newlib include path: {path}
+NEWLIB_INCLUDE = "{path}"
+""".format(path = newlib_include))
+
+    ctx.file("defs.bzl", """
+# Auto-detected ESP newlib include path for cross-compilation
+NEWLIB_INCLUDE = "{path}"
+""".format(path = newlib_include))
+
+_esp_sysroot_repo = repository_rule(
+    implementation = _esp_sysroot_impl,
+    environ = ["HOME"],
+)
+
+def _esp_sysroot_ext_impl(ctx):
+    """Module extension for ESP sysroot detection."""
+    _esp_sysroot_repo(name = "esp_sysroot")
+
+esp_sysroot = module_extension(
+    implementation = _esp_sysroot_ext_impl,
 )

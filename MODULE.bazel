@@ -32,3 +32,10 @@ use_repo(audio_libs, "opus", "ogg")
 
 zig_toolchain = use_extension("//:extensions.bzl", "zig_toolchain")
 use_repo(zig_toolchain, "zig_toolchain")
+
+# =============================================================================
+# ESP sysroot (auto-detect newlib headers for xtensa cross-compilation)
+# =============================================================================
+
+esp_sysroot = use_extension("//:extensions.bzl", "esp_sysroot")
+use_repo(esp_sysroot, "esp_sysroot")

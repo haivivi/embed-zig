@@ -1,7 +1,7 @@
 # Async Test - ESP Platform
 # Tests cross-platform async framework (CancellationToken, WaitGroup, Channel)
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,13 +12,18 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
+esp_modules()
+
 esp_zig_app(
     name = "app",
     app = ":srcs",
     boards = ["esp32s3_devkit"],
     requires = ["freertos"],
     deps = [
+        ":idf",
+        ":esp",
         "//lib/hal",
+        "//lib/trait",
         "//lib/pkg/cancellation",
         "//lib/pkg/waitgroup",
         "//lib/pkg/drivers",

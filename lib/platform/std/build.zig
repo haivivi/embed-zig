@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
     });
     std_impl_module.addImport("trait", trait_dep.module("trait"));
 
+    // Opus dependency for codec impl (float variant for desktop/server)
+    const opus_dep = b.dependency("opus", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    std_impl_module.addImport("opus", opus_dep.module("opus"));
+
     const test_step = b.step("test", "Run all unit tests");
 
     // Test modules (no dependencies)

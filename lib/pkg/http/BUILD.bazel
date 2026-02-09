@@ -6,10 +6,10 @@ zig_package(
     name = "http",
     deps = [
         "//lib/pkg/dns",
-        "//lib/platform/std",
         "//lib/pkg/tls",
         "//lib/trait",
     ],
+    test_deps = ["//lib/platform/std"],
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

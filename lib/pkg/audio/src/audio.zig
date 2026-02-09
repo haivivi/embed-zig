@@ -1,10 +1,11 @@
 //! Audio library for embed-zig
 //!
-//! Provides Zig bindings for audio codecs and containers:
-//! - Opus: High-quality audio codec for speech and music
-//! - Ogg: Container format for audio streams
+//! - stream: Generic encode/decode loops (codec-agnostic)
+//! - ogg: Ogg container bindings
+//!
+//! Opus codec: see //third_party/opus (opus_fixed / opus_float)
 
-pub const opus = @import("opus.zig");
+pub const stream = @import("stream.zig");
 pub const ogg = @import("ogg.zig");
 
 test {

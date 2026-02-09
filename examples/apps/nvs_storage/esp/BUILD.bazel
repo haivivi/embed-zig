@@ -1,6 +1,6 @@
 # NVS Storage - ESP Platform
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,12 +11,15 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
+esp_modules()
+
 esp_zig_app(
     name = "app",
     app = ":srcs",
     boards = ["esp32s3_devkit"],
     requires = ["nvs_flash"],
-    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [":idf", ":esp",
+ "//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
 )

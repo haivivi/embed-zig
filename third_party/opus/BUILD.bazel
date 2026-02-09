@@ -1,77 +1,38 @@
-load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+load("//bazel/zig:defs.bzl", "zig_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# Build opus using zig cc
-genrule(
-    name = "opus_static",
-    srcs = [
-        "@opus//:opus_srcs",
-        "@opus//:opus_public_headers",
-        "@opus//:opus_internal_headers",
-        "config.h",
+# Common args shared by both variants
+_COMMON_C_FLAGS = ["-DOPUS_BUILD", "-DHAVE_LRINTF", "-DVAR_ARRAYS"]
+
+# Opus compiled with FIXED_POINT — no float, fast on Xtensa/embedded
+zig_library(
+    name = "opus_fixed",
+    main = "opus.zig",
+    srcs = ["opus.zig"],
+    c_srcs = [
+        "@opus//:core_srcs",
+        "@opus//:fixed_srcs",
+        "@opus//:headers",
     ],
-    outs = ["libopus.a"],
-    cmd = """
-        set -e
-        export HOME=/tmp
-        export ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache
-        export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
-        mkdir -p /tmp/zig-cache
-        
-        OUTDIR=$$(mktemp -d)
-        CONFIG_DIR=$$(mktemp -d)
-        cp $(location config.h) $$CONFIG_DIR/config.h
-        
-        for src in $(locations @opus//:opus_srcs); do
-            base=$$(basename $$src .c)
-            zig cc -c $$src -o $$OUTDIR/$$base.o \
-                -I$$CONFIG_DIR \
-                -Iexternal/+audio_libs+opus/include \
-                -Iexternal/+audio_libs+opus/celt \
-                -Iexternal/+audio_libs+opus/silk \
-                -Iexternal/+audio_libs+opus/silk/float \
-                -Iexternal/+audio_libs+opus \
-                -DHAVE_CONFIG_H \
-                -DOPUS_BUILD \
-                -fno-sanitize=undefined \
-                -O2 \
-                -w
-        done
-        
-        ar rcs $@ $$OUTDIR/*.o
-        rm -rf $$OUTDIR $$CONFIG_DIR
-    """,
+    c_flags = _COMMON_C_FLAGS + ["-DFIXED_POINT"],
+    link_libc = True,
+    module_name = "opus",
 )
 
-genrule(
-    name = "opus_headers",
-    srcs = ["@opus//:opus_public_headers"],
-    outs = [
-        "include/opus.h",
-        "include/opus_custom.h",
-        "include/opus_defines.h",
-        "include/opus_multistream.h",
-        "include/opus_projection.h",
-        "include/opus_types.h",
+# Opus compiled with float SILK — better quality, needs FPU
+zig_library(
+    name = "opus_float",
+    main = "opus.zig",
+    srcs = ["opus.zig"],
+    c_srcs = [
+        "@opus//:core_srcs",
+        "@opus//:float_srcs",
+        "@opus//:headers",
     ],
-    cmd = """
-        mkdir -p $(@D)/include
-        for f in $(SRCS); do
-            cp $$f $(@D)/include/
-        done
-    """,
+    c_flags = _COMMON_C_FLAGS,
+    link_libc = True,
+    module_name = "opus",
 )
 
-cc_import(
-    name = "opus_import",
-    static_library = ":opus_static",
-    visibility = ["//visibility:private"],
-)
-
-cc_library(
-    name = "opus",
-    hdrs = [":opus_headers"],
-    includes = ["include"],
-    deps = [":opus_import"],
-)
+filegroup(name = "srcs", srcs = glob(["**/*"]))

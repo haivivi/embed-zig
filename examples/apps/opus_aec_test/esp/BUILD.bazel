@@ -1,0 +1,90 @@
+# Opus AEC Loopback Test - ESP Platform
+# mic -> AEC -> opus encode -> Channel -> opus decode -> speaker
+# Board: lichuang_gocool
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_static_library")
+load("@esp_sysroot//:defs.bzl", "NEWLIB_INCLUDE")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/opus_aec_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+# Per-app ESP modules (declaration-only, compiled by zig build in CMake)
+# Cross-compile opus for xtensa — same zig_library definition as host,
+# just different target + newlib system headers
+zig_static_library(
+    name = "opus_xtensa",
+    lib = "//third_party/opus:opus_fixed",
+    target = "xtensa-freestanding-none",
+    optimize = "ReleaseSafe",
+    system_include_dirs = [NEWLIB_INCLUDE],
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["lichuang_gocool"],
+    requires = [
+        "driver",
+        "esp_driver_i2s",
+        "esp_driver_gpio",
+        "esp_driver_i2c",
+        "nvs_flash",
+        "esp_wifi",
+        "lwip",
+    ],
+    force_link = [
+        "${I2S_FORCE_LINK}",
+        "${I2C_FORCE_LINK}",
+        "${SR_FORCE_LINK}",
+        "${RUNTIME_FORCE_LINK}",
+        "${WIFI_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2s/i2s.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2c/i2c.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/sr/sr.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/runtime/runtime.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
+    ],
+    extra_c_sources = [
+        "I2S_C_SOURCES",
+        "I2C_C_SOURCES",
+        "SR_C_SOURCES",
+        "RUNTIME_C_SOURCES",
+        "WIFI_C_SOURCES",
+    ],
+    deps = [
+        ":idf",
+        ":esp",
+        "//lib/hal",
+        "//lib/trait",
+        "//lib/pkg/channel",
+        "//lib/pkg/waitgroup",
+        "//lib/pkg/cancellation",
+        "//lib/pkg/drivers",
+        "//lib/pkg/math",
+        "//third_party/opus:opus_fixed",
+    ],
+    static_libs = [
+        ":opus_xtensa",
+    ],
+    idf_deps = [
+        "espressif/esp-sr:^2.1.1",
+    ],
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

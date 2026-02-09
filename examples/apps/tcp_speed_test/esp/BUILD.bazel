@@ -1,7 +1,7 @@
 # TCP Speed Test - ESP Platform
 
 load("//bazel:env.bzl", "make_env_file")
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -22,6 +22,8 @@ make_env_file(
     },
 )
 
+esp_modules()
+
 esp_zig_app(
     name = "app",
     app = ":srcs",
@@ -38,7 +40,8 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
-    deps = ["//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [":idf", ":esp",
+ "//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
     env = ":env",

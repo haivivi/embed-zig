@@ -1,6 +1,6 @@
 # Timer Callback - ESP Platform
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -10,6 +10,8 @@ filegroup(
         "//examples/apps/timer_callback:app_srcs",
     ] + glob(["**/*"]),
 )
+
+esp_modules()
 
 esp_zig_app(
     name = "app",
@@ -25,7 +27,8 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/timer/timer.cmake)",
     ],
     extra_c_sources = ["TIMER_C_SOURCES"],
-    deps = ["//lib/hal", "//lib/pkg/motion", "//lib/pkg/math"],
+    deps = [":idf", ":esp",
+ "//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
     idf_deps = ["espressif/led_strip:^3.0.0"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",

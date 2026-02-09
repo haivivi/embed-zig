@@ -69,6 +69,11 @@ pub const stdLogFn = log.stdLogFn;
 /// Crypto implementation (trait.crypto) - mbedTLS hardware accelerated
 pub const crypto = @import("crypto/suite.zig");
 
+/// Codec implementation (trait.codec) - opus with FIXED_POINT, PSRAM
+pub const codec = struct {
+    pub const opus = @import("codec/opus.zig");
+};
+
 /// Net implementation (hal.net) - network interface
 pub const net = @import("net.zig");
 pub const NetDriver = net.NetDriver;

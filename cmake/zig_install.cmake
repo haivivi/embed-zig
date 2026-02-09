@@ -133,15 +133,7 @@ message(STATUS "[zig_install] Using Zig: ${ZIG_INSTALL}")
 function(esp_zig_build)
     cmake_parse_arguments(ARG "" "" "FORCE_LINK" ${ARGN})
     
-    # Get board from environment or CMake variable
-    if(DEFINED ENV{ZIG_BOARD})
-        set(ZIG_BOARD "$ENV{ZIG_BOARD}")
-    elseif(NOT DEFINED ZIG_BOARD)
-        set(ZIG_BOARD "esp32s3_devkit")
-    endif()
-    message(STATUS "[esp_zig_build] Board: ${ZIG_BOARD}")
-    
-    # Detect target architecture
+    # Detect target architecture for zig cross-compilation
     if(CONFIG_IDF_TARGET_ARCH_RISCV)
         set(ZIG_TARGET "riscv32-freestanding-none")
         if(CONFIG_IDF_TARGET_ESP32C6 OR CONFIG_IDF_TARGET_ESP32C5 OR CONFIG_IDF_TARGET_ESP32H2)
@@ -165,17 +157,22 @@ function(esp_zig_build)
         message(FATAL_ERROR "Unsupported target ${CONFIG_IDF_TARGET}")
     endif()
     
-    # Build type - respect CMAKE_BUILD_TYPE, default to ReleaseSafe
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(ZIG_BUILD_TYPE "Debug")
     else()
         set(ZIG_BUILD_TYPE "ReleaseSafe")
     endif()
     
-    # Include directories
+    # ESP-IDF include directories (for @cImport of sdkconfig.h, freertos, etc.)
+    set(ESP_INCLUDE_DIRS "$<TARGET_PROPERTY:${COMPONENT_LIB},INCLUDE_DIRECTORIES>;${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES}")
+    
+    set(ZIG_OUTPUT_A "${CMAKE_BINARY_DIR}/lib/libmain_zig.a")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+    
+    # Include directories passed via env var (read by build.zig at build time)
     set(include_dirs $<TARGET_PROPERTY:${COMPONENT_LIB},INCLUDE_DIRECTORIES> ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES})
     
-    # Zig build target
+    # zig build with Bazel-generated build.zig (no build.zig.zon deps)
     add_custom_target(zig_build
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMAND ${CMAKE_COMMAND} -E env "INCLUDE_DIRS=${include_dirs}"
@@ -184,44 +181,26 @@ function(esp_zig_build)
             -Doptimize=${ZIG_BUILD_TYPE}
             -Dtarget=${ZIG_TARGET}
             -Dcpu=${TARGET_CPU_MODEL}
-            -Dboard=${ZIG_BOARD}
-            ${ZIG_OPTIONS}
             -freference-trace
-            --prominent-compile-errors
             --cache-dir ${CMAKE_BINARY_DIR}/../.zig-cache
             --prefix ${CMAKE_BINARY_DIR}
         BYPRODUCTS ${CMAKE_BINARY_DIR}/lib/libmain_zig.a
         VERBATIM
     )
     
-    # Link Zig library with mbedcrypto after it
-    # The linker processes libraries left to right, so we need mbedcrypto AFTER libmain_zig.a
-    # to resolve symbols from Zig that depend on mbedTLS crypto functions.
-    add_prebuilt_library(zig ${CMAKE_BINARY_DIR}/lib/libmain_zig.a)
+    # Link prebuilt Zig .a
+    add_prebuilt_library(zig ${ZIG_OUTPUT_A})
     add_dependencies(zig zig_build)
     
-    # mbedcrypto library path in ESP-IDF build
     set(MBEDCRYPTO_LIB "${CMAKE_BINARY_DIR}/esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a")
-    
-    # Add link options directly to ensure proper ordering
-    # Use INTERFACE_LINK_LIBRARIES to append at the end of the link command
-    target_link_libraries(${COMPONENT_LIB} PRIVATE 
-        ${CMAKE_BINARY_DIR}/lib/libmain_zig.a
-        ${MBEDCRYPTO_LIB}
+    # Link the Zig library, then re-link libmain.a to resolve circular references:
+    # libmain_zig.a references C helpers in libmain.a (e.g., x25519_keypair, hkdf_expand),
+    # but libmain.a is linked before libmain_zig.a. Re-adding it after makes the linker
+    # rescan for symbols needed by the Zig code.
+    set(COMPONENT_LIB_A "${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a")
+    target_link_libraries(${COMPONENT_LIB} PRIVATE
+        ${ZIG_OUTPUT_A} ${COMPONENT_LIB_A} ${MBEDCRYPTO_LIB}
     )
-    
-    # Force link symbols from C helpers (needed for static library order resolution)
-    set(C_HELPER_SYMBOLS
-        x25519_keypair x25519_scalarmult x25519_base_scalarmult
-        p256_keypair p256_ecdh p256_compute_public
-        p384_keypair p384_ecdh p384_compute_public
-        aes_gcm_encrypt aes_gcm_decrypt
-        hkdf_extract hkdf_expand
-    )
-    foreach(sym ${C_HELPER_SYMBOLS})
-        set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY 
-            INTERFACE_LINK_OPTIONS "-Wl,-u,${sym}")
-    endforeach()
     
     # Force link user-specified symbols
     foreach(sym ${ARG_FORCE_LINK})

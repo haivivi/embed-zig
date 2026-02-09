@@ -4,10 +4,8 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "ntp",
-    deps = [
-        "//lib/platform/std",
-        "//lib/trait",
-    ],
+    deps = ["//lib/trait"],
+    test_deps = ["//lib/platform/std"],
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

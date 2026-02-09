@@ -1,40 +1,46 @@
-# ESP-IDF low-level bindings
+# ESP-IDF low-level bindings — source files only
+#
+# This package does NOT compile. Each app creates its own zig_library
+# target for idf with app-specific sdkconfig.h from esp_configure.
+#
+# Usage in app's esp/BUILD.bazel:
+#   esp_configure(name = "config", sdkconfig = "...")
+#   zig_library(
+#       name = "idf",
+#       main = "//lib/platform/esp/idf:src/idf.zig",
+#       srcs = ["//lib/platform/esp/idf:zig_srcs"],
+#       c_srcs = ["//lib/platform/esp/idf:c_srcs", ":config"],
+#       deps = ["//lib/trait"],
+#       link_libc = True,
+#   )
 
 package(default_visibility = ["//visibility:public"])
 
-# Default target: all files (for zig_lib deps)
+exports_files(["src/idf.zig"])
+
+# Zig source files
+filegroup(
+    name = "zig_srcs",
+    srcs = glob(["src/**/*.zig"]),
+)
+
+# C source and header files (helpers for @cImport)
+filegroup(
+    name = "c_srcs",
+    srcs = glob(["src/**/*.c", "src/**/*.h"]),
+)
+
+# CMake module files (for esp_zig_app extra_cmake)
+filegroup(
+    name = "cmake_files",
+    srcs = glob(["src/**/*.cmake"]),
+)
+
+# All files (for backward compat / file copying)
 filegroup(
     name = "idf",
     srcs = glob(
         ["**/*"],
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
-)
-
-# Legacy targets (for backward compatibility)
-filegroup(
-    name = "idf_sources",
-    srcs = glob(
-        ["**/*.zig", "**/*.zon"],
-        allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
-)
-
-filegroup(
-    name = "idf_c_sources",
-    srcs = glob(
-        ["**/*.c", "**/*.h"],
-        allow_empty = True,
-        exclude = [".zig-cache/**", "zig-out/**"],
-    ),
-)
-
-filegroup(
-    name = "idf_cmake",
-    srcs = glob(
-        ["**/*.cmake"],
-        allow_empty = True,
         exclude = [".zig-cache/**", "zig-out/**"],
     ),
 )

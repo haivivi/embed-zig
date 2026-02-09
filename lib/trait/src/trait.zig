@@ -44,6 +44,7 @@ pub const crypto = @import("crypto.zig");
 pub const net = @import("net.zig");
 pub const sync = @import("sync.zig");
 pub const spawner = @import("spawner.zig");
+pub const codec = @import("codec.zig");
 
 // Socket helpers
 pub const Ipv4Address = socket.Ipv4Address;
@@ -66,4 +67,5 @@ test {
     _ = net;
     _ = sync;
     _ = spawner;
+    _ = codec;
 }

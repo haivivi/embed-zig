@@ -68,6 +68,7 @@ ZigModuleInfo = provider(
         "lib_a": "File — The .a library produced by this module (for linking C objects in consumers)",
         "transitive_c_inputs": "depset(File) — Accumulated C/header files from this module and all transitive deps (needed in sandbox for @cImport cache validation)",
         "transitive_lib_as": "depset(File) — Accumulated .a libraries from deps that have C code (for linking)",
+        "own_c_build_args": "list(string) — This module's C compilation args (sources + flags), for cross-compilation in zig_static_library",
     },
 )
 
@@ -192,12 +193,20 @@ def _build_c_asm_args(ctx):
 
     # Collect C and ASM source files
     c_files = []
+    header_dirs = {}
     for src in ctx.attr.c_srcs:
         for f in src.files.to_list():
             inputs.append(f)
             if f.path.endswith(".c"):
                 c_files.append(f)
-            # .h files are inputs (for include resolution) but not compiled
+            elif f.path.endswith(".h"):
+                # Auto-detect include dirs from header file paths.
+                # This enables external repo headers (e.g., @opus) to be found
+                # without hardcoding repo-specific paths in c_includes.
+                dir_path = f.path.rsplit("/", 1)[0] if "/" in f.path else ""
+                if dir_path and dir_path not in header_dirs:
+                    header_dirs[dir_path] = True
+                    pre_args.extend(["-I", dir_path])
 
     asm_files = []
     for src in ctx.attr.asm_srcs:
@@ -215,7 +224,7 @@ def _build_c_asm_args(ctx):
         for f in c_files + asm_files:
             src_args.append(f.path)
 
-    return struct(pre_args = pre_args, src_args = src_args, inputs = inputs)
+    return struct(pre_args = pre_args, src_args = src_args, inputs = inputs, header_include_dirs = header_dirs.keys())
 
 # Common C/ASM attributes shared by zig_library, zig_binary, zig_test
 _C_ASM_ATTRS = {
@@ -386,14 +395,15 @@ def _zig_library_impl(ctx):
     # C/ASM sources
     c_asm = _build_c_asm_args(ctx)
 
-    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <main-M> [c/asm] <dep-M> -femit-bin=out.a
+    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] [c/asm] <main-M> <dep-M> -femit-bin=out.a
+    # C/ASM source files MUST come BEFORE -M module definitions (zig CLI requirement).
     # pre_args (-lc, -I) are this module's own C/ASM flags only (not transitive — deps' C is in their cache)
     cm_args = [cache_dir.path]
     for dc in collected.dep_cache_dirs:
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-lib"] + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + ["-femit-bin=" + output_a.path])
+    cm_args.extend(["build-lib"] + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + ["-femit-bin=" + output_a.path])
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
@@ -414,6 +424,9 @@ def _zig_library_impl(ctx):
             own_c_include_dirs.append(pkg + "/" + inc)
         else:
             own_c_include_dirs.append(pkg)
+    # Also include auto-detected dirs from .h files (e.g., @opus external headers)
+    # This ensures transitive C include propagation works for external repos
+    own_c_include_dirs.extend(c_asm.header_include_dirs)
 
     # Transitive C inputs (headers + source files needed in sandbox for
     # @cImport cache manifest validation)
@@ -448,6 +461,7 @@ def _zig_library_impl(ctx):
             lib_a = output_a if has_c else None,
             transitive_c_inputs = transitive_c_inputs,
             transitive_lib_as = transitive_lib_as,
+            own_c_build_args = c_asm.src_args if has_c else [],
         ),
     ]
 
@@ -475,7 +489,7 @@ zig_library = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -501,6 +515,124 @@ Example:
 )
 
 # =============================================================================
+# zig_module — Declaration-only module (no compilation)
+# =============================================================================
+
+def _zig_module_impl(ctx):
+    """Declare a Zig module without compiling it.
+    
+    Provides ZigModuleInfo metadata (name, root_source, deps) without
+    running zig build-lib. Used for modules that can't be compiled in
+    isolation (e.g., ESP platform code that needs ESP-IDF headers from
+    CMake configure).
+    
+    The actual compilation happens downstream (e.g., in esp_zig_app's
+    zig build-lib invocation where all include paths are available).
+    """
+    root_source = ctx.file.main
+    module_name = ctx.attr.module_name if ctx.attr.module_name else ctx.label.name
+    own_srcs = depset(ctx.files.srcs)
+    
+    # Collect dep info (same as zig_library)
+    collected = _collect_deps(own_srcs, ctx.attr.deps)
+    
+    # C include dirs (for per-module -I in downstream builds)
+    pkg = ctx.label.package
+    own_c_include_dirs = []
+    for inc in ctx.attr.c_includes:
+        if inc:
+            own_c_include_dirs.append(pkg + "/" + inc)
+        else:
+            own_c_include_dirs.append(pkg)
+    
+    # Auto-detect include dirs from .h files in c_srcs
+    c_inputs = []
+    header_dirs = {}
+    for src in ctx.attr.c_srcs:
+        for f in src.files.to_list():
+            c_inputs.append(f)
+            if f.path.endswith(".h"):
+                dir_path = f.path.rsplit("/", 1)[0] if "/" in f.path else ""
+                if dir_path and dir_path not in header_dirs:
+                    header_dirs[dir_path] = True
+                    own_c_include_dirs.append(dir_path)
+    
+    transitive_c_inputs = depset(
+        c_inputs,
+        transitive = [collected.deps_transitive_c_inputs],
+    )
+    
+    return [
+        DefaultInfo(files = own_srcs),
+        ZigModuleInfo(
+            module_name = module_name,
+            package_path = ctx.label.package,
+            root_source = root_source,
+            srcs = own_srcs,
+            transitive_srcs = depset(transitive = collected.transitive_src_depsets),
+            direct_dep_names = collected.direct_dep_names,
+            transitive_module_strings = collected.all_dep_module_strings,
+            cache_dir = None,
+            own_c_include_dirs = own_c_include_dirs,
+            own_link_libc = ctx.attr.link_libc,
+            lib_a = None,
+            transitive_c_inputs = transitive_c_inputs,
+            transitive_lib_as = depset(transitive = [collected.deps_transitive_lib_as]),
+            own_c_build_args = [],
+        ),
+    ]
+
+zig_module = rule(
+    implementation = _zig_module_impl,
+    attrs = {
+        "srcs": attr.label_list(
+            allow_files = [".zig"],
+            mandatory = True,
+            doc = "Zig source files",
+        ),
+        "main": attr.label(
+            allow_single_file = [".zig"],
+            mandatory = True,
+            doc = "Root source file",
+        ),
+        "module_name": attr.string(
+            doc = "Module name for @import(). Defaults to target name.",
+        ),
+        "deps": attr.label_list(
+            providers = [ZigModuleInfo],
+            doc = "Module dependencies",
+        ),
+        "c_srcs": attr.label_list(
+            allow_files = [".c", ".h"],
+            doc = "C source and header files (for include path detection)",
+        ),
+        "c_includes": attr.string_list(
+            doc = "C include directories relative to package",
+        ),
+        "link_libc": attr.bool(
+            default = False,
+            doc = "Whether this module requires libc",
+        ),
+    },
+    doc = """Declare a Zig module without compiling.
+    
+    Provides ZigModuleInfo for downstream rules but does not run zig build-lib.
+    Used for platform modules that need external headers (ESP-IDF) only available
+    at the final build stage.
+    
+    Example:
+        zig_module(
+            name = "esp",
+            main = "//lib/platform/esp:src/esp.zig",
+            srcs = ["//lib/platform/esp:all_zig_srcs"],
+            c_srcs = ["//lib/platform/esp:c_srcs"],
+            deps = ["//lib/trait", "//lib/hal"],
+            link_libc = True,
+        )
+    """,
+)
+
+# =============================================================================
 # zig_static_library — Compile a zig_library to .a (for C interop)
 # =============================================================================
 
@@ -522,9 +654,12 @@ def _zig_static_library_impl(ctx):
         all_dep_module_strings = info.transitive_module_strings,
     )
 
-    # Collect dep cache from the lib target
+    is_cross = bool(ctx.attr.target)
+
+    # When cross-compiling, DON'T use dep cache (it has host objects).
+    # Instead, recompile C sources from scratch for the new target.
     dep_cache_dirs = []
-    if info.cache_dir:
+    if not is_cross and info.cache_dir:
         dep_cache_dirs.append(info.cache_dir)
 
     # Per-module -I flags in deps are handled by _build_module_args.
@@ -534,41 +669,64 @@ def _zig_static_library_impl(ctx):
         global_pre.append("-lc")
 
     # Root module's own C flags (include dirs only — C source files are
-    # compiled via cache, not re-passed here)
+    # compiled via cache, not re-passed here... unless cross-compiling)
     root_c_args = []
     for inc_dir in info.own_c_include_dirs:
         root_c_args.extend(["-I", inc_dir])
+
+    # When cross-compiling, add C source files + flags from ZigModuleInfo
+    # (normally these are in the dep cache, but we can't reuse host cache for xtensa)
+    c_build_args = info.own_c_build_args if is_cross else []
 
     # Exclude lib's own .a from transitive set — build-lib recompiles from
     # source, linking its own .a would be circular/redundant.
     own_a = info.lib_a
     dep_lib_a_args = [f.path for f in info.transitive_lib_as.to_list() if f != own_a]
 
-    # cache_merge <out_cache> [dep_caches...] -- <zig> build-lib [global] <mods> [dep .a] -femit-bin=out.a
-    cm_args = [cache_dir.path]
-    for dc in dep_cache_dirs:
-        cm_args.append(dc.path)
-    cm_args.append("--")
-    cm_args.append(zig_bin.path)
-    pic_args = ["-fPIC"] if ctx.attr.pic else []
-    cm_args.extend(["build-lib"] + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
-    if ctx.attr.optimize:
-        cm_args.extend(["-O", ctx.attr.optimize])
-    if ctx.attr.target:
-        cm_args.extend(["-target", ctx.attr.target])
-
     all_srcs = info.transitive_srcs.to_list()
     transitive_c_inputs = info.transitive_c_inputs.to_list()
     dep_lib_as = info.transitive_lib_as.to_list()
 
-    ctx.actions.run(
-        executable = ctx.executable._compile_tool,
-        arguments = cm_args,
-        inputs = all_srcs + zig_files + dep_cache_dirs + transitive_c_inputs + dep_lib_as,
-        outputs = [output, cache_dir],
-        mnemonic = "ZigBuildLib",
-        progress_message = "Compiling Zig static library %s" % ctx.label,
-    )
+    if is_cross:
+        # Cross-compilation: run zig directly (no cache_merge — fresh build, no host cache pollution)
+        # Put -target and -O BEFORE C sources (zig may ignore flags after -cflags --)
+        target_args = ["-target", ctx.attr.target]
+        if ctx.attr.optimize:
+            target_args.extend(["-O", ctx.attr.optimize])
+        for sysdir in ctx.attr.system_include_dirs:
+            target_args.extend(["-isystem", sysdir])
+        zig_args = ["build-lib"] + target_args + c_build_args + global_pre + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path]
+        zig_args.extend(["--cache-dir", cache_dir.path, "--global-cache-dir", cache_dir.path])
+
+        ctx.actions.run(
+            executable = zig_bin,
+            arguments = zig_args,
+            inputs = all_srcs + zig_files + transitive_c_inputs + dep_lib_as,
+            outputs = [output, cache_dir],
+            env = {"HOME": cache_dir.path},  # Prevent zig from using ~/.cache/zig
+            mnemonic = "ZigCrossLib",
+            progress_message = "Cross-compiling Zig static library %s" % ctx.label,
+        )
+    else:
+        # Same-target: use cache_merge for incremental builds
+        cm_args = [cache_dir.path]
+        for dc in dep_cache_dirs:
+            cm_args.append(dc.path)
+        cm_args.append("--")
+        cm_args.append(zig_bin.path)
+        pic_args = ["-fPIC"] if ctx.attr.pic else []
+        cm_args.extend(["build-lib"] + global_pre + pic_args + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+        if ctx.attr.optimize:
+            cm_args.extend(["-O", ctx.attr.optimize])
+
+        ctx.actions.run(
+            executable = ctx.executable._compile_tool,
+            arguments = cm_args,
+            inputs = all_srcs + zig_files + dep_cache_dirs + transitive_c_inputs + dep_lib_as,
+            outputs = [output, cache_dir],
+            mnemonic = "ZigBuildLib",
+            progress_message = "Compiling Zig static library %s" % ctx.label,
+        )
 
     return [
         DefaultInfo(files = depset([output])),
@@ -591,13 +749,17 @@ zig_static_library = rule(
             doc = "Optimization mode: Debug, ReleaseFast, ReleaseSafe, ReleaseSmall",
         ),
         "target": attr.string(
-            doc = "Cross-compilation target (e.g., xtensa-esp32s3-none-elf)",
+            doc = "Cross-compilation target (e.g., xtensa-freestanding-none)",
+        ),
+        "system_include_dirs": attr.string_list(
+            default = [],
+            doc = "System include directories (-isystem) for cross-compilation (e.g., newlib headers for xtensa)",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -657,7 +819,7 @@ def _zig_binary_impl(ctx):
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["build-exe"] + global_pre + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
+    cm_args.extend(["build-exe"] + global_pre + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path])
     if ctx.attr.optimize:
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
@@ -715,7 +877,7 @@ zig_binary = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -772,7 +934,7 @@ def _zig_test_impl(ctx):
         cm_args.append(dc.path)
     cm_args.append("--")
     cm_args.append(zig_bin.path)
-    cm_args.extend(["test"] + global_pre + c_asm.pre_args + mods.main + c_asm.src_args + mods.deps + dep_lib_a_args + [
+    cm_args.extend(["test"] + global_pre + c_asm.pre_args + c_asm.src_args + mods.main + mods.deps + dep_lib_a_args + [
         "--test-no-exec",
         "-femit-bin=" + test_bin.path,
     ])
@@ -838,7 +1000,7 @@ zig_test = rule(
             default = "@zig_toolchain//:zig_files",
         ),
         "_compile_tool": attr.label(
-            default = "//bazel/zig:cache_merge",
+            default = Label("//bazel/zig:cache_merge"),
             executable = True,
             cfg = "exec",
         ),
@@ -864,6 +1026,7 @@ def zig_package(
         srcs = None,
         module_name = None,
         deps = [],
+        test_deps = [],
         c_srcs = [],
         asm_srcs = [],
         c_includes = [],
@@ -937,10 +1100,19 @@ def zig_package(
             main = _main,
             srcs = _srcs,
             module_name = _module_name,
-            deps = deps,
+            deps = deps + test_deps,
             c_srcs = c_srcs,
             asm_srcs = asm_srcs,
             c_includes = c_includes,
             c_flags = c_flags,
             link_libc = link_libc,
         )
+
+# =============================================================================
+# Public API for esp_zig_app and other consumers
+# =============================================================================
+
+build_module_args = _build_module_args
+collect_deps = _collect_deps
+encode_module = _encode_module
+decode_module = _decode_module

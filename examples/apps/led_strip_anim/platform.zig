@@ -3,10 +3,9 @@
 const hal = @import("hal");
 const build_options = @import("build_options");
 
-pub const BoardType = build_options.@"build.BoardType";
-pub const selected_board: BoardType = build_options.board;
+pub const selected_board = build_options.board;
 
-const hw = switch (selected_board) {
+const hw = switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
 };
