@@ -137,15 +137,9 @@ project(app)
 EOF
 
 # CP main — boot AP + call into Zig lib
-C_HELPER_SRCS=""
-for helper in $BK_C_HELPERS; do
-    bn=$(basename "$helper")
-    cp "$E/$helper" "$PROJECT_DIR/cp/$bn"
-    C_HELPER_SRCS="$C_HELPER_SRCS $bn"
-done
-
-# Copy Zig .a to CP
-cp "$ZIG_LIB" "$PROJECT_DIR/cp/libbk_zig.a"
+# =========================================================================
+# CP: standard template — bk_init + boot AP. No user code.
+# =========================================================================
 
 cat > "$PROJECT_DIR/cp/cp_main.c" << 'CPEOF'
 #include "bk_private/bk_init.h"
@@ -154,12 +148,8 @@ cat > "$PROJECT_DIR/cp/cp_main.c" << 'CPEOF'
 #include <modules/pm.h>
 #include <driver/pwr_clk.h>
 extern void rtos_set_user_app_entry(beken_thread_function_t entry);
-extern void zig_main(void);
-static void zig_task(void *arg) { zig_main(); }
 void user_app_main(void) {
-    beken_thread_t t;
     bk_pm_module_vote_boot_cp1_ctrl(PM_BOOT_CP1_MODULE_NAME_APP, PM_POWER_MODULE_STATE_ON);
-    rtos_create_thread(&t, 4, "zig_cp", (beken_thread_function_t)zig_task, 8192, 0);
 }
 int main(void) {
     rtos_set_user_app_entry((beken_thread_function_t)user_app_main);
@@ -168,23 +158,45 @@ int main(void) {
 }
 CPEOF
 
-cat > "$PROJECT_DIR/cp/CMakeLists.txt" << CPCMAKEOF
+cat > "$PROJECT_DIR/cp/CMakeLists.txt" << 'CPCMAKEOF'
 set(incs .)
-set(srcs cp_main.c $C_HELPER_SRCS)
-set(priv_req lwip_intf_v2_1)
-armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
-target_link_libraries(\${COMPONENT_LIB} INTERFACE \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig.a)
+set(srcs cp_main.c)
+armino_component_register(SRCS "${srcs}" INCLUDE_DIRS "${incs}")
 CPCMAKEOF
+
+# =========================================================================
+# AP: Zig .a + C helpers. All user code runs here.
+# =========================================================================
+
+C_HELPER_SRCS=""
+for helper in $BK_C_HELPERS; do
+    bn=$(basename "$helper")
+    cp "$E/$helper" "$PROJECT_DIR/ap/$bn"
+    C_HELPER_SRCS="$C_HELPER_SRCS $bn"
+done
+
+cp "$ZIG_LIB" "$PROJECT_DIR/ap/libbk_zig.a"
 
 cat > "$PROJECT_DIR/ap/ap_main.c" << 'APEOF'
 #include "bk_private/bk_init.h"
-int main(void) { bk_init(); return 0; }
+#include <components/system.h>
+#include <os/os.h>
+extern void zig_main(void);
+static void zig_task(void *arg) { zig_main(); }
+int main(void) {
+    bk_init();
+    beken_thread_t t;
+    rtos_create_thread(&t, 4, "zig_ap", (beken_thread_function_t)zig_task, 16384, 0);
+    return 0;
+}
 APEOF
 
-cat > "$PROJECT_DIR/ap/CMakeLists.txt" << 'APCMAKEOF'
+cat > "$PROJECT_DIR/ap/CMakeLists.txt" << APCMAKEOF
 set(incs .)
-set(srcs ap_main.c)
-armino_component_register(SRCS "${srcs}" INCLUDE_DIRS "${incs}")
+set(srcs ap_main.c $C_HELPER_SRCS)
+set(priv_req lwip_intf_v2_1)
+armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
+target_link_libraries(\${COMPONENT_LIB} INTERFACE \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig.a)
 APCMAKEOF
 
 touch "$PROJECT_DIR/pj_config.mk"
