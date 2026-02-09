@@ -1,0 +1,15 @@
+load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_zig_app")
+package(default_visibility = ["//visibility:public"])
+bk_modules()
+bk_zig_app(
+    name = "app",
+    ap = "app.zig",
+    cp = "//lib/platform/bk/cp:base",
+    deps = [":bk"],
+    c_helpers = [
+        "//lib/platform/bk/armino:c_helpers_core",
+        "//lib/platform/bk/armino:c_helpers_wifi",
+        "//lib/platform/bk/armino:c_helpers_socket",
+    ],
+)
+bk_flash(name = "flash", app = ":app")
