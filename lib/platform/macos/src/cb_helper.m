@@ -46,7 +46,6 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 @property (nonatomic, strong) dispatch_semaphore_t readySem;
 // Bug 1 fix: flow control for updateValue
 @property (nonatomic, assign) BOOL readyToUpdate;
-@property (nonatomic, strong) dispatch_semaphore_t updateSem;
 @end
 
 @implementation CBPeripheralHelper
@@ -60,7 +59,6 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
         _ready = NO;
         _readyToUpdate = YES; // initially ready
         _readySem = dispatch_semaphore_create(0);
-        _updateSem = dispatch_semaphore_create(0);
         _manager = [[CBPeripheralManager alloc] initWithDelegate:self queue:nil];
     }
     return self;
@@ -76,7 +74,6 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 // Bug 1 fix: called by CoreBluetooth when transmit queue has space again
 - (void)peripheralManagerIsReadyToUpdateSubscribers:(CBPeripheralManager *)peripheral {
     _readyToUpdate = YES;
-    dispatch_semaphore_signal(_updateSem);
 }
 
 - (void)peripheralManager:(CBPeripheralManager *)peripheral

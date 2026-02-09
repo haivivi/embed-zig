@@ -15,7 +15,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,7 +174,7 @@ func main() {
 	// Check for PASS/FAIL in output
 	mu.Lock()
 	for _, line := range append(macLines, espLines...) {
-		if strings.Contains(line, "integrity: FAIL") {
+		if strings.Contains(line, "integrity: FAIL") || strings.Contains(line, "FAILED") {
 			allPass = false
 		}
 	}
@@ -228,5 +227,3 @@ func findUp(dir string) string {
 	}
 }
 
-// Ensure pipes are drained even if process dies (avoid deadlock)
-var _ io.Reader

@@ -136,7 +136,7 @@ fn onDeviceFound(name: [*c]const u8, uuid: [*c]const u8, rssi: c_int) callconv(.
     const name_str = std.mem.span(name);
     if (std.mem.eql(u8, name_str, TARGET_NAME)) {
         const uuid_str = std.mem.span(uuid);
-        const len = @min(uuid_str.len, g_target_uuid.len);
+        const len = @min(uuid_str.len, g_target_uuid.len - 1); // reserve space for null terminator
         @memcpy(g_target_uuid[0..len], uuid_str[0..len]);
         g_target_uuid_len = len;
         g_device_found = true;
