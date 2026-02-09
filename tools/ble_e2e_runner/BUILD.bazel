@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "ble_e2e_runner_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/haivivi/embed-zig/tools/ble_e2e_runner",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "ble_e2e_runner_bin",
+    embed = [":ble_e2e_runner_lib"],
+    visibility = ["//visibility:public"],
+)
+
+# Convenience alias: `bazel run //tools/ble_e2e_runner`
+alias(
+    name = "ble_e2e_runner",
+    actual = ":ble_e2e_runner_bin",
+    visibility = ["//visibility:public"],
+)
