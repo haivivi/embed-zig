@@ -55,19 +55,31 @@ def bk_modules():
 # bk_zig_app — Build BK7258 project with Zig
 # =============================================================================
 
-def _bk_zig_app_impl(ctx):
-    """Build a BK7258 project with Zig — Bazel-native.
+def _find_zig_file(files, names):
+    """Find first .zig file matching any of the given basenames."""
+    for f in files:
+        if f.basename in names:
+            return f
+    for f in files:
+        if f.path.endswith(".zig"):
+            return f
+    return None
 
-    1. Compile Zig to ARM .o using zig build-obj with -M flags from ZigModuleInfo
-    2. Generate Armino project skeleton
-    3. Run make bk7258 to produce all-app.bin
+def _bk_zig_app_impl(ctx):
+    """Build a BK7258 project with Zig — dual target (AP + CP).
+
+    1. Compile AP Zig → libbk_zig_ap.a
+    2. Compile CP Zig → libbk_zig_cp.a
+    3. Generate Armino project skeleton (CP boots AP, both link Zig)
+    4. Run make bk7258 to produce all-app.bin
     """
 
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
 
-    # Get app files
-    app_files = ctx.attr.app.files.to_list()
+    # Get AP and CP source files
+    ap_files = ctx.attr.ap.files.to_list()
+    cp_files = ctx.attr.cp.files.to_list()
 
     # Get Zig toolchain
     zig_files = ctx.attr._zig_toolchain.files.to_list()
@@ -80,12 +92,9 @@ def _bk_zig_app_impl(ctx):
     # Get script files
     script_files = ctx.attr._scripts.files.to_list()
     build_sh = None
-    common_sh = None
     for f in script_files:
         if f.basename == "build.sh":
             build_sh = f
-        elif f.basename == "common.sh":
-            common_sh = f
 
     # Get C helper files
     c_helper_files = []
@@ -102,19 +111,14 @@ def _bk_zig_app_impl(ctx):
             all_dep_files.extend(info.transitive_srcs.to_list())
             all_dep_files.extend(info.transitive_c_inputs.to_list())
 
-    # Find app.zig and bk.zig root sources
-    app_zig = None
-    for f in app_files:
-        if f.basename == "app.zig" or f.basename == "entry.zig":
-            app_zig = f
-            break
-    if not app_zig:
-        for f in app_files:
-            if f.path.endswith(".zig"):
-                app_zig = f
-                break
-    if not app_zig:
-        fail("No .zig file found in app sources")
+    # Find root .zig files
+    ap_zig = _find_zig_file(ap_files, ["app.zig", "entry.zig"])
+    if not ap_zig:
+        fail("No .zig file found in ap sources")
+
+    cp_zig = _find_zig_file(cp_files, ["base.zig", "cp.zig", "entry.zig"])
+    if not cp_zig:
+        fail("No .zig file found in cp sources")
 
     # Find bk.zig root from deps
     bk_zig = None
@@ -128,7 +132,7 @@ def _bk_zig_app_impl(ctx):
     # C helper paths (space-separated for build.sh)
     c_helper_paths = " ".join([f.path for f in c_helper_files])
 
-    # Create wrapper script — uses zig build (not build-obj) for multi-module
+    # Create wrapper script
     wrapper = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
 
     script_content = """#!/bin/bash
@@ -138,7 +142,8 @@ export ZIG_BIN="$E/{zig_bin}"
 export BK_PROJECT_NAME="{project_name}"
 export BK_BIN_OUT="$E/{bin_out}"
 export BK_C_HELPERS="{c_helpers}"
-export BK_APP_ZIG="{app_zig}"
+export BK_AP_ZIG="{ap_zig}"
+export BK_CP_ZIG="{cp_zig}"
 export BK_BK_ZIG="{bk_zig}"
 exec bash "$E/{build_sh}"
 """.format(
@@ -146,7 +151,8 @@ exec bash "$E/{build_sh}"
         bin_out = bin_file.path,
         zig_bin = zig_bin.path if zig_bin else "zig",
         c_helpers = c_helper_paths,
-        app_zig = app_zig.path,
+        ap_zig = ap_zig.path,
+        cp_zig = cp_zig.path,
         bk_zig = bk_zig.path,
         build_sh = build_sh.path if build_sh else "",
     )
@@ -158,7 +164,7 @@ exec bash "$E/{build_sh}"
     )
 
     # All inputs
-    inputs = app_files + zig_files + all_dep_files + script_files + c_helper_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -169,7 +175,7 @@ exec bash "$E/{build_sh}"
             "requires-network": "1",
         },
         mnemonic = "BkZigBuild",
-        progress_message = "Building BK7258 Zig app %s" % ctx.label,
+        progress_message = "Building BK7258 Zig app %s (AP + CP)" % ctx.label,
         use_default_shell_env = True,
     )
 
@@ -183,10 +189,15 @@ exec bash "$E/{build_sh}"
 bk_zig_app = rule(
     implementation = _bk_zig_app_impl,
     attrs = {
-        "app": attr.label(
+        "ap": attr.label(
             mandatory = True,
             allow_files = True,
-            doc = "App source files (app.zig, platform.zig, board files)",
+            doc = "AP Zig sources (user app code — runs on AP core)",
+        ),
+        "cp": attr.label(
+            mandatory = True,
+            allow_files = True,
+            doc = "CP Zig sources (e.g. //lib/platform/bk/cp:base)",
         ),
         "project_name": attr.string(
             doc = "Project name (defaults to target name)",
@@ -197,7 +208,7 @@ bk_zig_app = rule(
         ),
         "c_helpers": attr.label_list(
             allow_files = [".c", ".h"],
-            doc = "C helper files compiled by Armino's GCC. Defaults to core helper only.",
+            doc = "C helper files compiled by Armino's GCC (linked to AP side).",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
@@ -206,7 +217,7 @@ bk_zig_app = rule(
             default = _SCRIPTS_LABEL,
         ),
     },
-    doc = "Build a BK7258 Zig app — compile Zig to ARM .o + Armino build",
+    doc = "Build a BK7258 Zig app — dual target: AP (user code) + CP (boot/BLE)",
 )
 
 # =============================================================================

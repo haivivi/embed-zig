@@ -1,4 +1,4 @@
-# Hello BK7258 - BK Platform
+# Hello BK7258 - BK Platform (dual target: AP + CP)
 
 load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_zig_app")
 
@@ -15,7 +15,8 @@ bk_modules()
 
 bk_zig_app(
     name = "app",
-    app = ":srcs",
+    ap = ":srcs",
+    cp = "//lib/platform/bk/cp:base",
     deps = [":bk"],
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",

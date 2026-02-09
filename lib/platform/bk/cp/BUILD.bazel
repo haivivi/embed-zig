@@ -1,0 +1,15 @@
+# BK7258 CP templates
+#
+# Usage:
+#   bk_zig_app(
+#       cp = "//lib/platform/bk/cp:base",
+#       ...
+#   )
+
+package(default_visibility = ["//visibility:public"])
+
+# Base CP template — boots AP, logs, idles.
+filegroup(
+    name = "base",
+    srcs = ["base.zig"],
+)
