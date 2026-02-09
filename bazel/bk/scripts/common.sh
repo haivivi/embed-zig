@@ -2,15 +2,18 @@
 # Common functions for BK7258 Bazel build scripts
 
 # Setup Armino SDK environment
+# Requires ARMINO_PATH (set via .bazelrc.user: build --action_env=ARMINO_PATH)
 setup_armino_env() {
-    # Find Armino SDK
     if [ -z "$ARMINO_PATH" ]; then
-        if [ -d "$HOME/armino/bk_avdk_smp" ]; then
-            export ARMINO_PATH="$HOME/armino/bk_avdk_smp"
-        else
-            echo "[bk] Error: ARMINO_PATH not set and ~/armino/bk_avdk_smp not found"
-            exit 1
-        fi
+        echo "[bk] Error: ARMINO_PATH not set"
+        echo "[bk] Add to .bazelrc.user:"
+        echo "[bk]   build --action_env=ARMINO_PATH=/path/to/bk_avdk_smp"
+        exit 1
+    fi
+
+    if [ ! -d "$ARMINO_PATH" ]; then
+        echo "[bk] Error: ARMINO_PATH=$ARMINO_PATH does not exist"
+        exit 1
     fi
 
     # Activate Python venv if available
@@ -22,14 +25,15 @@ setup_armino_env() {
 }
 
 # Find bk_loader CLI tool
+# Requires BK_LOADER_PATH (set via .bazelrc.user: build --action_env=BK_LOADER_PATH)
 find_bk_loader() {
-    if [ -z "$BK_LOADER" ]; then
-        if [ -x "$HOME/armino/bk_loader/bk_loader" ]; then
-            export BK_LOADER="$HOME/armino/bk_loader/bk_loader"
-        else
-            echo "[bk] Error: bk_loader not found at ~/armino/bk_loader/bk_loader"
-            exit 1
-        fi
+    if [ -n "$BK_LOADER_PATH" ] && [ -x "$BK_LOADER_PATH" ]; then
+        export BK_LOADER="$BK_LOADER_PATH"
+    else
+        echo "[bk] Error: BK_LOADER_PATH not set or not executable"
+        echo "[bk] Add to .bazelrc.user:"
+        echo "[bk]   build --action_env=BK_LOADER_PATH=/path/to/bk_loader"
+        exit 1
     fi
     echo "[bk] bk_loader: $BK_LOADER"
 }

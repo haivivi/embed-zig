@@ -36,6 +36,16 @@ build --action_env=ADF_PATH
 build --action_env=HOME
 
 # =============================================================================
+# BK (Beken) environment
+# =============================================================================
+
+# ARMINO_PATH is required for BK builds (Armino SDK location)
+# BK_LOADER_PATH is required for BK flash (bk_loader CLI tool)
+# These should be set in .bazelrc.user or environment
+build --action_env=ARMINO_PATH
+build --action_env=BK_LOADER_PATH
+
+# =============================================================================
 # Test options
 # =============================================================================
 
