@@ -193,7 +193,14 @@ function(esp_zig_build)
     add_dependencies(zig zig_build)
     
     set(MBEDCRYPTO_LIB "${CMAKE_BINARY_DIR}/esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a")
-    target_link_libraries(${COMPONENT_LIB} PRIVATE ${ZIG_OUTPUT_A} ${MBEDCRYPTO_LIB})
+    # Link the Zig library, then re-link libmain.a to resolve circular references:
+    # libmain_zig.a references C helpers in libmain.a (e.g., x25519_keypair, hkdf_expand),
+    # but libmain.a is linked before libmain_zig.a. Re-adding it after makes the linker
+    # rescan for symbols needed by the Zig code.
+    set(COMPONENT_LIB_A "${CMAKE_BINARY_DIR}/esp-idf/main/libmain.a")
+    target_link_libraries(${COMPONENT_LIB} PRIVATE
+        ${ZIG_OUTPUT_A} ${COMPONENT_LIB_A} ${MBEDCRYPTO_LIB}
+    )
     
     # Force link user-specified symbols
     foreach(sym ${ARG_FORCE_LINK})
