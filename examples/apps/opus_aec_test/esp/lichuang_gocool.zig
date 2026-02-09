@@ -5,7 +5,8 @@ const idf = @import("idf");
 const hal = @import("hal");
 
 // Board hardware definitions from platform layer
-const board = @import("board_lichuang_gocool");
+const esp = @import("esp");
+const board = esp.boards.lichuang_gocool;
 
 // ============================================================================
 // Re-export board definitions

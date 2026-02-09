@@ -24,7 +24,7 @@ zig_module(
     name = "impl",
     main = "//lib/platform/esp/impl:src/impl.zig",
     srcs = ["//lib/platform/esp/impl:zig_srcs"],
-    deps = [":idf", ":impl", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
+    deps = [":idf", "//lib/trait", "//lib/hal", "//lib/pkg/drivers", "//lib/pkg/math", "//lib/pkg/motion"],
 )
 
 zig_module(
