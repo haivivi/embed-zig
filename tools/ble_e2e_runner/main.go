@@ -166,12 +166,13 @@ func main() {
 	mu.Unlock()
 
 	fmt.Println()
+	allPass := true
 	if macErr != nil {
 		fmt.Printf("Mac process error: %v\n", macErr)
+		allPass = false
 	}
 
-	// Check for PASS/FAIL
-	allPass := true
+	// Check for PASS/FAIL in output
 	mu.Lock()
 	for _, line := range append(macLines, espLines...) {
 		if strings.Contains(line, "integrity: FAIL") {
