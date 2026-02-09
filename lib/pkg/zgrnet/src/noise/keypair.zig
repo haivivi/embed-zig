@@ -1,4 +1,7 @@
 //! Key and KeyPair types for Curve25519.
+//!
+//! Key is a standalone 32-byte wrapper (no crypto dependency).
+//! KeyPair uses trait.crypto X25519 for DH operations.
 
 const std = @import("std");
 const crypto = std.crypto;
@@ -68,49 +71,64 @@ pub const Key = struct {
     }
 };
 
-/// A Curve25519 key pair.
-pub const KeyPair = struct {
-    private: Key,
-    public: Key,
+/// A Curve25519 key pair, parameterized by Crypto implementation.
+pub fn KeyPair(comptime Crypto: type) type {
+    const X = Crypto.X25519;
 
-    /// Generates a new random key pair.
-    pub fn generate() KeyPair {
-        const kp = crypto.dh.X25519.KeyPair.generate();
-        return .{
-            .private = Key.fromBytes(kp.secret_key),
-            .public = Key.fromBytes(kp.public_key),
-        };
-    }
+    return struct {
+        private: Key,
+        public: Key,
 
-    /// Creates a key pair from a private key.
-    pub fn fromPrivate(private: Key) KeyPair {
-        const public_key = crypto.dh.X25519.recoverPublicKey(private.data) catch {
-            // This shouldn't happen with valid private keys
-            return .{ .private = private, .public = Key.zero };
-        };
-        return .{
-            .private = private,
-            .public = Key.fromBytes(public_key),
-        };
-    }
+        const Self = @This();
 
-    /// Performs Diffie-Hellman key exchange.
-    pub fn dh(self: KeyPair, peer_public: Key) !Key {
-        const shared = crypto.dh.X25519.scalarmult(self.private.data, peer_public.data) catch {
-            return error.DhFailed;
-        };
-        // Check for low-order points
-        if (mem.eql(u8, &shared, &Key.zero.data)) {
-            return error.LowOrderPoint;
+        /// Generates a new random key pair.
+        pub fn generate() Self {
+            var seed: [32]u8 = undefined;
+            crypto.random.bytes(&seed);
+            const kp = X.KeyPair.generateDeterministic(seed) catch {
+                return Self{ .private = Key.zero, .public = Key.zero };
+            };
+            return .{
+                .private = Key.fromBytes(kp.secret_key),
+                .public = Key.fromBytes(kp.public_key),
+            };
         }
-        return Key.fromBytes(shared);
-    }
-};
+
+        /// Creates a key pair from a private key.
+        pub fn fromPrivate(private: Key) Self {
+            // X25519 base point (u = 9)
+            var base: [32]u8 = [_]u8{0} ** 32;
+            base[0] = 9;
+            const public_key = X.scalarmult(private.data, base) catch {
+                return Self{ .private = private, .public = Key.zero };
+            };
+            return .{
+                .private = private,
+                .public = Key.fromBytes(public_key),
+            };
+        }
+
+        /// Performs Diffie-Hellman key exchange.
+        pub fn dh(self: Self, peer_public: Key) !Key {
+            const shared = X.scalarmult(self.private.data, peer_public.data) catch {
+                return error.DhFailed;
+            };
+            // Check for low-order points
+            if (mem.eql(u8, &shared, &Key.zero.data)) {
+                return error.LowOrderPoint;
+            }
+            return Key.fromBytes(shared);
+        }
+    };
+}
 
 // Tests
+const TestCrypto = @import("test_crypto.zig");
+const TestKeyPair = KeyPair(TestCrypto);
+
 test "key is zero" {
-    const zero = Key.zero;
-    try std.testing.expect(zero.isZero());
+    const zero_key = Key.zero;
+    try std.testing.expect(zero_key.isZero());
 
     var non_zero = Key.zero;
     non_zero.data[0] = 1;
@@ -138,20 +156,20 @@ test "key equality" {
 }
 
 test "generate keypair" {
-    const kp = KeyPair.generate();
+    const kp = TestKeyPair.generate();
     try std.testing.expect(!kp.private.isZero());
     try std.testing.expect(!kp.public.isZero());
 }
 
 test "keypair from private" {
-    const kp1 = KeyPair.generate();
-    const kp2 = KeyPair.fromPrivate(kp1.private);
+    const kp1 = TestKeyPair.generate();
+    const kp2 = TestKeyPair.fromPrivate(kp1.private);
     try std.testing.expect(kp1.public.eql(kp2.public));
 }
 
 test "dh exchange" {
-    const alice = KeyPair.generate();
-    const bob = KeyPair.generate();
+    const alice = TestKeyPair.generate();
+    const bob = TestKeyPair.generate();
 
     const shared_alice = try alice.dh(bob.public);
     const shared_bob = try bob.dh(alice.public);
@@ -162,7 +180,7 @@ test "dh exchange" {
 
 test "dh deterministic" {
     const priv = Key.fromBytes([_]u8{42} ** key_size);
-    const kp1 = KeyPair.fromPrivate(priv);
-    const kp2 = KeyPair.fromPrivate(priv);
+    const kp1 = TestKeyPair.fromPrivate(priv);
+    const kp2 = TestKeyPair.fromPrivate(priv);
     try std.testing.expect(kp1.public.eql(kp2.public));
 }

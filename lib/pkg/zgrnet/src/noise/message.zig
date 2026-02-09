@@ -4,11 +4,10 @@
 //! including handshake messages and transport messages.
 
 const std = @import("std");
-const crypto = @import("cipher.zig");
 const keypair = @import("keypair.zig");
+const crypto_mod = @import("crypto.zig");
 
 const Key = keypair.Key;
-const key_length = keypair.key_length;
 
 /// Message type constants for the wire protocol.
 pub const MessageType = enum(u8) {
@@ -69,8 +68,8 @@ pub const Protocol = enum(u8) {
     _,
 };
 
-/// Tag size for AEAD.
-pub const tag_size = crypto.tag_size;
+/// Tag size for AEAD (Poly1305).
+pub const tag_size = crypto_mod.tag_size;
 
 /// Handshake initiation message size.
 /// type(1) + sender_idx(4) + ephemeral(32) + static_enc(48) = 85

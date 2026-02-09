@@ -4,127 +4,139 @@ const std = @import("std");
 const mem = std.mem;
 
 const keypair = @import("keypair.zig");
-const cipher = @import("cipher.zig");
-const c = @import("crypto.zig");
+const crypto_mod = @import("crypto.zig");
 
 const Key = keypair.Key;
 const key_size = keypair.key_size;
-const hash_size = c.hash_size;
-const tag_size = c.tag_size;
+const hash_size = crypto_mod.hash_size;
+const tag_size = crypto_mod.tag_size;
 
-/// Manages encryption for one direction of communication.
-pub const CipherState = struct {
-    key: Key,
-    nonce: u64,
+/// Instantiate state types for a given Crypto implementation.
+pub fn State(comptime Crypto: type) type {
+    const cipher = @import("cipher.zig").Cipher(Crypto);
+    const c = crypto_mod.CryptoMod(Crypto);
 
-    pub fn init(key: Key) CipherState {
-        return .{ .key = key, .nonce = 0 };
-    }
+    return struct {
+        /// Manages encryption for one direction of communication.
+        pub const CipherState = struct {
+            key: Key,
+            nonce: u64,
 
-    /// Encrypts plaintext and increments nonce.
-    pub fn encrypt(self: *CipherState, plaintext: []const u8, ad: []const u8, out: []u8) void {
-        cipher.encrypt(self.key.asBytes(), self.nonce, plaintext, ad, out);
-        self.nonce += 1;
-    }
+            pub fn init(key: Key) CipherState {
+                return .{ .key = key, .nonce = 0 };
+            }
 
-    /// Decrypts ciphertext and increments nonce.
-    pub fn decrypt(self: *CipherState, ciphertext: []const u8, ad: []const u8, out: []u8) !void {
-        try cipher.decrypt(self.key.asBytes(), self.nonce, ciphertext, ad, out);
-        self.nonce += 1;
-    }
+            /// Encrypts plaintext and increments nonce.
+            pub fn encrypt(self: *CipherState, plaintext: []const u8, ad: []const u8, out: []u8) void {
+                cipher.encrypt(self.key.asBytes(), self.nonce, plaintext, ad, out);
+                self.nonce += 1;
+            }
 
-    /// Returns current nonce.
-    pub fn getNonce(self: CipherState) u64 {
-        return self.nonce;
-    }
+            /// Decrypts ciphertext and increments nonce.
+            pub fn decrypt(self: *CipherState, ciphertext: []const u8, ad: []const u8, out: []u8) !void {
+                try cipher.decrypt(self.key.asBytes(), self.nonce, ciphertext, ad, out);
+                self.nonce += 1;
+            }
 
-    /// Sets nonce (for testing).
-    pub fn setNonce(self: *CipherState, n: u64) void {
-        self.nonce = n;
-    }
+            /// Returns current nonce.
+            pub fn getNonce(self: CipherState) u64 {
+                return self.nonce;
+            }
 
-    /// Returns the key.
-    pub fn getKey(self: CipherState) Key {
-        return self.key;
-    }
-};
+            /// Sets nonce (for testing).
+            pub fn setNonce(self: *CipherState, n: u64) void {
+                self.nonce = n;
+            }
 
-/// Holds the evolving state during a Noise handshake.
-pub const SymmetricState = struct {
-    chaining_key: Key,
-    hash: [hash_size]u8,
-
-    /// Creates a new SymmetricState with the protocol name.
-    pub fn init(protocol_name: []const u8) SymmetricState {
-        var chaining_key: [key_size]u8 = [_]u8{0} ** key_size;
-
-        if (protocol_name.len <= hash_size) {
-            @memcpy(chaining_key[0..protocol_name.len], protocol_name);
-        } else {
-            chaining_key = c.hash(&.{protocol_name});
-        }
-
-        return .{
-            .chaining_key = Key.fromBytes(chaining_key),
-            .hash = chaining_key,
+            /// Returns the key.
+            pub fn getKey(self: CipherState) Key {
+                return self.key;
+            }
         };
-    }
 
-    /// Mixes input into the chaining key.
-    pub fn mixKey(self: *SymmetricState, input: []const u8) Key {
-        const new_ck, const k = c.kdf2(&self.chaining_key, input);
-        self.chaining_key = new_ck;
-        return k;
-    }
+        /// Holds the evolving state during a Noise handshake.
+        pub const SymmetricState = struct {
+            chaining_key: Key,
+            hash: [hash_size]u8,
 
-    /// Mixes data into the hash.
-    pub fn mixHash(self: *SymmetricState, data: []const u8) void {
-        self.hash = c.hash(&.{ &self.hash, data });
-    }
+            /// Creates a new SymmetricState with the protocol name.
+            pub fn init(protocol_name: []const u8) SymmetricState {
+                var chaining_key: [key_size]u8 = [_]u8{0} ** key_size;
 
-    /// Mixes input into both chaining key and hash (for PSK).
-    pub fn mixKeyAndHash(self: *SymmetricState, input: []const u8) Key {
-        const ck, const temp, const k = c.kdf3(&self.chaining_key, input);
-        self.chaining_key = ck;
-        self.mixHash(temp.asBytes());
-        return k;
-    }
+                if (protocol_name.len <= hash_size) {
+                    @memcpy(chaining_key[0..protocol_name.len], protocol_name);
+                } else {
+                    chaining_key = c.hash(&.{protocol_name});
+                }
 
-    /// Encrypts plaintext and updates hash.
-    pub fn encryptAndHash(self: *SymmetricState, key: *const Key, plaintext: []const u8, out: []u8) void {
-        cipher.encryptWithAd(key, &self.hash, plaintext, out);
-        self.mixHash(out[0 .. plaintext.len + tag_size]);
-    }
+                return .{
+                    .chaining_key = Key.fromBytes(chaining_key),
+                    .hash = chaining_key,
+                };
+            }
 
-    /// Decrypts ciphertext and updates hash.
-    pub fn decryptAndHash(self: *SymmetricState, key: *const Key, ciphertext: []const u8, out: []u8) !void {
-        try cipher.decryptWithAd(key, &self.hash, ciphertext, out);
-        self.mixHash(ciphertext);
-    }
+            /// Mixes input into the chaining key.
+            pub fn mixKey(self: *SymmetricState, input: []const u8) Key {
+                const new_ck, const k = c.kdf2(&self.chaining_key, input);
+                self.chaining_key = new_ck;
+                return k;
+            }
 
-    /// Splits into two CipherStates for transport.
-    pub fn split(self: *const SymmetricState) struct { CipherState, CipherState } {
-        const keys = c.hkdf(&self.chaining_key, "", 2);
-        return .{ CipherState.init(keys[0]), CipherState.init(keys[1]) };
-    }
+            /// Mixes data into the hash.
+            pub fn mixHash(self: *SymmetricState, data: []const u8) void {
+                self.hash = c.hash(&.{ &self.hash, data });
+            }
 
-    /// Returns the current chaining key.
-    pub fn getChainingKey(self: SymmetricState) Key {
-        return self.chaining_key;
-    }
+            /// Mixes input into both chaining key and hash (for PSK).
+            pub fn mixKeyAndHash(self: *SymmetricState, input: []const u8) Key {
+                const ck, const temp, const k = c.kdf3(&self.chaining_key, input);
+                self.chaining_key = ck;
+                self.mixHash(temp.asBytes());
+                return k;
+            }
 
-    /// Returns the current hash.
-    pub fn getHash(self: *const SymmetricState) *const [hash_size]u8 {
-        return &self.hash;
-    }
+            /// Encrypts plaintext and updates hash.
+            pub fn encryptAndHash(self: *SymmetricState, key: *const Key, plaintext: []const u8, out: []u8) void {
+                cipher.encryptWithAd(key, &self.hash, plaintext, out);
+                self.mixHash(out[0 .. plaintext.len + tag_size]);
+            }
 
-    /// Creates a copy of the state.
-    pub fn clone(self: SymmetricState) SymmetricState {
-        return self;
-    }
-};
+            /// Decrypts ciphertext and updates hash.
+            pub fn decryptAndHash(self: *SymmetricState, key: *const Key, ciphertext: []const u8, out: []u8) !void {
+                try cipher.decryptWithAd(key, &self.hash, ciphertext, out);
+                self.mixHash(ciphertext);
+            }
+
+            /// Splits into two CipherStates for transport.
+            pub fn split(self: *const SymmetricState) struct { CipherState, CipherState } {
+                const keys = c.hkdf(&self.chaining_key, "", 2);
+                return .{ CipherState.init(keys[0]), CipherState.init(keys[1]) };
+            }
+
+            /// Returns the current chaining key.
+            pub fn getChainingKey(self: SymmetricState) Key {
+                return self.chaining_key;
+            }
+
+            /// Returns the current hash.
+            pub fn getHash(self: *const SymmetricState) *const [hash_size]u8 {
+                return &self.hash;
+            }
+
+            /// Creates a copy of the state.
+            pub fn clone(self: SymmetricState) SymmetricState {
+                return self;
+            }
+        };
+    };
+}
 
 // Tests
+const TestCrypto = @import("test_crypto.zig");
+const TestState = State(TestCrypto);
+const CipherState = TestState.CipherState;
+const SymmetricState = TestState.SymmetricState;
+
 test "cipher state" {
     const key = Key.fromBytes([_]u8{42} ** key_size);
     var cs = CipherState.init(key);
