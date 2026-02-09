@@ -45,6 +45,9 @@ pub const net = @import("net.zig");
 pub const sync = @import("sync.zig");
 pub const spawner = @import("spawner.zig");
 pub const codec = @import("codec.zig");
+pub const io = @import("io.zig");
+pub const timer = @import("timer.zig");
+pub const task = @import("task.zig");
 
 // Socket helpers
 pub const Ipv4Address = socket.Ipv4Address;
@@ -68,4 +71,7 @@ test {
     _ = sync;
     _ = spawner;
     _ = codec;
+    _ = io;
+    _ = timer;
+    _ = task;
 }
