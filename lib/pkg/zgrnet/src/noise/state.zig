@@ -134,20 +134,20 @@ pub fn State(comptime Crypto: type) type {
 // Tests
 const TestCrypto = @import("test_crypto.zig");
 const TestState = State(TestCrypto);
-const CipherState = TestState.CipherState;
-const SymmetricState = TestState.SymmetricState;
+const TestCipherState = TestState.CipherState;
+const TestSymmetricState = TestState.SymmetricState;
 
 test "cipher state" {
     const key = Key.fromBytes([_]u8{42} ** key_size);
-    var cs = CipherState.init(key);
+    var cs = TestCipherState.init(key);
     try std.testing.expectEqual(@as(u64, 0), cs.getNonce());
     try std.testing.expect(cs.getKey().eql(key));
 }
 
 test "cipher state encrypt decrypt" {
     const key = Key.fromBytes([_]u8{42} ** key_size);
-    var cs1 = CipherState.init(key);
-    var cs2 = CipherState.init(key);
+    var cs1 = TestCipherState.init(key);
+    var cs2 = TestCipherState.init(key);
 
     const plaintext = "hello, world!";
     var ciphertext: [plaintext.len + tag_size]u8 = undefined;
@@ -162,7 +162,7 @@ test "cipher state encrypt decrypt" {
 
 test "cipher state nonce increment" {
     const key = Key.fromBytes([_]u8{0} ** key_size);
-    var cs = CipherState.init(key);
+    var cs = TestCipherState.init(key);
 
     var i: u64 = 0;
     while (i < 10) : (i += 1) {
@@ -174,30 +174,30 @@ test "cipher state nonce increment" {
 
 test "cipher state set nonce" {
     const key = Key.fromBytes([_]u8{0} ** key_size);
-    var cs = CipherState.init(key);
+    var cs = TestCipherState.init(key);
     cs.setNonce(100);
     try std.testing.expectEqual(@as(u64, 100), cs.getNonce());
 }
 
 test "symmetric state new" {
     // Short name
-    const ss1 = SymmetricState.init("Noise_IK");
+    const ss1 = TestSymmetricState.init("Noise_IK");
     try std.testing.expect(!ss1.chaining_key.isZero());
 
     // Long name
-    const ss2 = SymmetricState.init("Noise_IK_25519_ChaChaPoly_BLAKE2s");
+    const ss2 = TestSymmetricState.init("Noise_IK_25519_ChaChaPoly_BLAKE2s");
     try std.testing.expect(!ss2.chaining_key.isZero());
 }
 
 test "symmetric state mix hash" {
-    var ss = SymmetricState.init("Test");
+    var ss = TestSymmetricState.init("Test");
     const initial = ss.hash;
     ss.mixHash("data");
     try std.testing.expect(!mem.eql(u8, &ss.hash, &initial));
 }
 
 test "symmetric state mix key" {
-    var ss = SymmetricState.init("Test");
+    var ss = TestSymmetricState.init("Test");
     const initial = ss.chaining_key;
     const k = ss.mixKey("input");
     try std.testing.expect(!ss.chaining_key.eql(initial));
@@ -205,7 +205,7 @@ test "symmetric state mix key" {
 }
 
 test "symmetric state mix key and hash" {
-    var ss = SymmetricState.init("Test");
+    var ss = TestSymmetricState.init("Test");
     const initial_ck = ss.chaining_key;
     const initial_h = ss.hash;
 
@@ -217,8 +217,8 @@ test "symmetric state mix key and hash" {
 }
 
 test "symmetric state encrypt decrypt and hash" {
-    var ss1 = SymmetricState.init("Test");
-    var ss2 = SymmetricState.init("Test");
+    var ss1 = TestSymmetricState.init("Test");
+    var ss2 = TestSymmetricState.init("Test");
 
     const k1 = ss1.mixKey("key");
     const k2 = ss2.mixKey("key");
@@ -236,7 +236,7 @@ test "symmetric state encrypt decrypt and hash" {
 }
 
 test "symmetric state split" {
-    var ss = SymmetricState.init("Test");
+    var ss = TestSymmetricState.init("Test");
     _ = ss.mixKey("input");
 
     const cs1, const cs2 = ss.split();
@@ -244,7 +244,7 @@ test "symmetric state split" {
 }
 
 test "symmetric state clone" {
-    var ss = SymmetricState.init("Test");
+    var ss = TestSymmetricState.init("Test");
     ss.mixHash("data");
 
     const cloned = ss.clone();

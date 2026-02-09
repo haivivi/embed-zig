@@ -355,20 +355,20 @@ pub fn Handshake(comptime Crypto: type) type {
 const TestCrypto = @import("test_crypto.zig");
 const TestHS = Handshake(TestCrypto);
 const TestKP = keypair_mod.KeyPair(TestCrypto);
-const HandshakeState = TestHS.HandshakeState;
+const TestHandshakeState = TestHS.HandshakeState;
 
 test "handshake IK" {
     const initiator_static = TestKP.generate();
     const responder_static = TestKP.generate();
 
-    var initiator = try HandshakeState.init(.{
+    var initiator = try TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,
         .local_static = initiator_static,
         .remote_static = responder_static.public,
     });
 
-    var responder = try HandshakeState.init(.{
+    var responder = try TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = false,
         .local_static = responder_static,
@@ -414,12 +414,12 @@ test "handshake IK" {
 }
 
 test "handshake NN" {
-    var initiator = try HandshakeState.init(.{
+    var initiator = try TestHandshakeState.init(.{
         .pattern = .NN,
         .initiator = true,
     });
 
-    var responder = try HandshakeState.init(.{
+    var responder = try TestHandshakeState.init(.{
         .pattern = .NN,
         .initiator = false,
     });
@@ -451,14 +451,14 @@ test "handshake NN" {
 
 test "handshake errors" {
     const rs = TestKP.generate();
-    try std.testing.expectError(Error.MissingLocalStatic, HandshakeState.init(.{
+    try std.testing.expectError(Error.MissingLocalStatic, TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,
         .remote_static = rs.public,
     }));
 
     const ls = TestKP.generate();
-    try std.testing.expectError(Error.MissingRemoteStatic, HandshakeState.init(.{
+    try std.testing.expectError(Error.MissingRemoteStatic, TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,
         .local_static = ls,
@@ -466,7 +466,7 @@ test "handshake errors" {
 }
 
 test "split before finish" {
-    const initiator = try HandshakeState.init(.{
+    const initiator = try TestHandshakeState.init(.{
         .pattern = .NN,
         .initiator = true,
     });

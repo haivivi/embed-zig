@@ -16,7 +16,9 @@ pub const Blake2s256 = struct {
         self.inner.update(data);
     }
     pub fn final(self: *@This()) [32]u8 {
-        return self.inner.finalResult();
+        var out: [32]u8 = undefined;
+        self.inner.final(&out);
+        return out;
     }
     pub fn hash(data: []const u8, out: *[32]u8, opts: anytype) void {
         _ = opts;
