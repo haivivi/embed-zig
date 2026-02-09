@@ -173,6 +173,7 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
 @property (nonatomic, strong) NSData *lastReadValue;
 @property (nonatomic, assign) int lastError;
 @property (nonatomic, assign) BOOL opDone;
+@property (nonatomic, assign) BOOL writeNoRspReady;
 @end
 
 @implementation CBCentralHelper
@@ -289,6 +290,11 @@ static cb_connection_callback_t s_central_conn_cb = NULL;
     didUpdateNotificationStateForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error {
     _lastError = error ? -1 : 0;
     _opDone = YES;
+}
+
+// Flow control for writeWithoutResponse (same pattern as peripheral notify)
+- (void)peripheralIsReadyToSendWriteWithoutResponse:(CBPeripheral *)peripheral {
+    _writeNoRspReady = YES;
 }
 
 @end
@@ -619,6 +625,20 @@ int cb_central_write_no_response(const char *svc_uuid, const char *chr_uuid,
     if (!chr) return -2;
 
     NSData *value = [NSData dataWithBytes:data length:len];
+
+    // Flow control: wait until peripheral is ready to accept writes
+    if (!s_central.connectedPeripheral.canSendWriteWithoutResponse) {
+        s_central.writeNoRspReady = NO;
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10.0];
+        while (!s_central.writeNoRspReady) {
+            NSDate *step = [NSDate dateWithTimeIntervalSinceNow:0.001];
+            [[NSRunLoop currentRunLoop] runUntilDate:step];
+            if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+                return -4; // timeout
+            }
+        }
+    }
+
     [s_central.connectedPeripheral writeValue:value forCharacteristic:chr
      type:CBCharacteristicWriteWithoutResponse];
     return 0;

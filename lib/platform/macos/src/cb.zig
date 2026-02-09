@@ -196,6 +196,7 @@ pub const Central = struct {
         switch (ret) {
             0 => {},
             -2 => return error.NotFound,
+            -4 => return error.Timeout,
             else => return error.Failed,
         }
     }
