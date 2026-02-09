@@ -80,7 +80,7 @@ pub const EpollIO = struct {
             .events = linux.EPOLL.IN,
             .data = .{ .fd = wake_fd },
         };
-        try posix.epoll_ctl(epfd, .ADD, wake_fd, &wake_event);
+        try posix.epoll_ctl(epfd, linux.EPOLL.CTL_ADD, wake_fd, &wake_event);
 
         return .{
             .epfd = epfd,
@@ -142,7 +142,7 @@ pub const EpollIO = struct {
                 .data = .{ .fd = fd },
             };
             const op: u32 = if (is_new) linux.EPOLL.CTL_ADD else linux.EPOLL.CTL_MOD;
-            posix.epoll_ctl(self.epfd, @enumFromInt(op), fd, &ev) catch |err| {
+            posix.epoll_ctl(self.epfd, op, fd, &ev) catch |err| {
                 std.log.err("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
                     _ = self.registrations.fetchRemove(fd);
@@ -157,7 +157,7 @@ pub const EpollIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         if (self.registrations.fetchRemove(fd)) |_| {
-            posix.epoll_ctl(self.epfd, .DEL, fd, null) catch |err| {
+            posix.epoll_ctl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
                 std.log.err("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
         }
