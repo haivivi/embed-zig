@@ -1,0 +1,23 @@
+load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = ["//examples/apps/nvs_storage:app_srcs"] + glob(["**/*"]),
+)
+
+bk_modules()
+
+bk_zig_app(
+    name = "app",
+    ap = ":srcs",
+    cp = "//lib/platform/bk/cp:base",
+    deps = [":bk", "//lib/hal", "//lib/trait"],
+    c_helpers = [
+        "//lib/platform/bk/armino:c_helpers_core",
+        "//lib/platform/bk/armino:c_helpers_kvs",
+    ],
+)
+
+bk_flash(name = "flash", app = ":app")

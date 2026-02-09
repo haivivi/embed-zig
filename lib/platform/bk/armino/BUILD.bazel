@@ -52,6 +52,12 @@ filegroup(
     srcs = ["src/bk_zig_crypto_helper.c"],
 )
 
+# KVS helper (EasyFlash V4)
+filegroup(
+    name = "c_helpers_kvs",
+    srcs = ["src/bk_zig_kvs_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",
