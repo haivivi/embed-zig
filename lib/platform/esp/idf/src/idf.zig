@@ -73,6 +73,7 @@ pub const Pwm = pwm.Pwm;
 
 pub const timer = @import("timer/timer.zig");
 pub const Timer = timer.Timer;
+pub const esp_timer = @import("esp_timer.zig");
 
 // ============================================================================
 // Storage

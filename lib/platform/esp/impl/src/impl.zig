@@ -129,6 +129,10 @@ pub const AudioSystem = audio_system.AudioSystem;
 pub const hci = @import("hci.zig");
 pub const HciDriver = hci.HciDriver;
 
+/// Timer driver (hal.timer) — esp_timer based
+pub const timer = @import("timer.zig");
+pub const EspTimerDriver = timer.EspTimerDriver;
+
 // ============================================================================
 // Tests
 // ============================================================================

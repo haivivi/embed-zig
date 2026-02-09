@@ -1,0 +1,38 @@
+# Timer Test - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/timer_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["freertos", "esp_timer"],
+    deps = [
+        ":idf",
+        ":esp",
+        "//lib/hal",
+        "//lib/trait",
+        "//lib/pkg/timer",
+        "//lib/pkg/drivers",
+        "//lib/pkg/math",
+        "//lib/pkg/motion",
+    ],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

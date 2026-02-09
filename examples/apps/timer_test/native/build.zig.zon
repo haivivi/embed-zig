@@ -1,0 +1,16 @@
+.{
+    .name = .timer_test,
+    .version = "0.1.0",
+    .fingerprint = 0x7b1af98358d0cb94,
+    .dependencies = .{
+        .trait = .{ .path = "../../../../lib/trait" },
+        .hal = .{ .path = "../../../../lib/hal" },
+        .std_impl = .{ .path = "../../../../lib/platform/std" },
+        .timer = .{ .path = "../../../../lib/pkg/timer" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}
