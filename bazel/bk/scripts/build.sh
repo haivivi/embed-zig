@@ -171,7 +171,8 @@ CPEOF
 cat > "$PROJECT_DIR/cp/CMakeLists.txt" << CPCMAKEOF
 set(incs .)
 set(srcs cp_main.c $C_HELPER_SRCS)
-armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}")
+set(priv_req lwip_intf_v2_1)
+armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
 target_link_libraries(\${COMPONENT_LIB} INTERFACE \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig.a)
 CPCMAKEOF
 

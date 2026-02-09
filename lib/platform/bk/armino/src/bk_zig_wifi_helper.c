@@ -6,6 +6,8 @@
  */
 
 #include <os/os.h>
+#include <string.h>
+#include <stdio.h>
 #include <components/log.h>
 #include <components/event.h>
 #include <components/netif.h>

@@ -16,7 +16,25 @@ filegroup(
     srcs = ["src/bk_zig_helper.c"],
 )
 
-# All C sources including speaker helper (AP-only)
+# WiFi + Event + Netif helper
+filegroup(
+    name = "c_helpers_wifi",
+    srcs = ["src/bk_zig_wifi_helper.c"],
+)
+
+# Socket helper (LWIP)
+filegroup(
+    name = "c_helpers_socket",
+    srcs = ["src/bk_zig_socket_helper.c"],
+)
+
+# Speaker helper (AP-only, needs bk_audio)
+filegroup(
+    name = "c_helpers_speaker",
+    srcs = ["src/bk_zig_speaker_helper.c"],
+)
+
+# All C sources
 filegroup(
     name = "c_srcs",
     srcs = glob(["src/**/*.c", "src/**/*.h"], allow_empty = True),

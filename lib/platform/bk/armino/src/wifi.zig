@@ -5,8 +5,8 @@
 // C helpers (bk_zig_wifi_helper.c)
 extern fn bk_zig_wifi_init() c_int;
 extern fn bk_zig_wifi_register_events(
-    wifi_cb: *const fn (c_int, ?*anyopaque, c_int) callconv(.C) void,
-    netif_cb: *const fn (c_int, [*:0]const u8) callconv(.C) void,
+    wifi_cb: *const fn (c_int, ?*anyopaque, c_int) callconv(.c) void,
+    netif_cb: *const fn (c_int, [*:0]const u8) callconv(.c) void,
 ) c_int;
 extern fn bk_zig_wifi_sta_connect(ssid: [*:0]const u8, password: [*:0]const u8) c_int;
 extern fn bk_zig_wifi_sta_disconnect() c_int;
@@ -66,7 +66,7 @@ pub fn popEvent() ?WifiEvent {
 // C Callbacks → Zig Event Queue
 // ============================================================================
 
-fn wifiEventCallback(event_id: c_int, _: ?*anyopaque, _: c_int) callconv(.C) void {
+fn wifiEventCallback(event_id: c_int, _: ?*anyopaque, _: c_int) callconv(.c) void {
     switch (event_id) {
         EVENT_STA_CONNECTED => pushEvent(.connected),
         EVENT_STA_DISCONNECTED => pushEvent(.{ .disconnected = 0 }),
@@ -75,7 +75,7 @@ fn wifiEventCallback(event_id: c_int, _: ?*anyopaque, _: c_int) callconv(.C) voi
     }
 }
 
-fn netifEventCallback(event_id: c_int, ip_str: [*:0]const u8) callconv(.C) void {
+fn netifEventCallback(event_id: c_int, ip_str: [*:0]const u8) callconv(.c) void {
     switch (event_id) {
         EVENT_NETIF_GOT_IP4 => {
             var ip: [4]u8 = .{ 0, 0, 0, 0 };
