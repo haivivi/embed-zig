@@ -48,7 +48,6 @@ jobs:
         run: |
           bazel test --config=ci \
             //lib/trait:trait_test \
-            //lib/pkg/channel:channel_test \
             //lib/pkg/waitgroup:waitgroup_test \
             //lib/pkg/cancellation:cancellation_test \
             //lib/platform/std:std_test

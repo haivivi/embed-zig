@@ -68,13 +68,11 @@ pub const EpollIO = struct {
     events: [max_events]linux.epoll_event,
 
     pub fn init(allocator: Allocator) !Self {
-        // EPOLL_CLOEXEC = 0x80000 (O_CLOEXEC)
-        const epfd = try posix.epoll_create1(@bitCast(linux.EPOLL{ .CLOEXEC = true }));
+        const epfd = try posix.epoll_create1(linux.EPOLL.CLOEXEC);
         errdefer posix.close(epfd);
 
         // Create eventfd for wake() signaling
-        // EFD_CLOEXEC | EFD_NONBLOCK
-        const wake_fd = try posix.eventfd(0, @bitCast(linux.EFD{ .CLOEXEC = true, .NONBLOCK = true }));
+        const wake_fd = try posix.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
         errdefer posix.close(wake_fd);
 
         // Register eventfd with epoll
