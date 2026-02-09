@@ -92,6 +92,7 @@ pub fn Client(comptime Transport: type, comptime Rt: type) type {
                 .write_buf = pkt.PacketBuffer.init(config.allocator),
                 .write_mutex = Rt.Mutex.init(),
             };
+            errdefer self.write_mutex.deinit();
             try self.doConnect();
             return self;
         }

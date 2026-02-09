@@ -852,11 +852,13 @@ pub fn Broker(comptime Transport: type, comptime Rt: type) type {
             handle.active = true;
 
             const key_dup = self.allocator.dupe(u8, client_id) catch {
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
             self.clients.put(key_dup, handle) catch {
                 self.allocator.free(key_dup);
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
@@ -866,6 +868,7 @@ pub fn Broker(comptime Transport: type, comptime Rt: type) type {
                 if (self.clients.fetchRemove(client_id)) |kv| {
                     self.allocator.free(kv.key);
                 }
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
@@ -874,6 +877,7 @@ pub fn Broker(comptime Transport: type, comptime Rt: type) type {
                 if (self.clients.fetchRemove(client_id)) |kv| {
                     self.allocator.free(kv.key);
                 }
+                handle.write_mutex.deinit();
                 self.allocator.destroy(handle);
                 return null;
             };
