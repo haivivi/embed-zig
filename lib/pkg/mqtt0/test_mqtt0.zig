@@ -9,6 +9,29 @@ const std = @import("std");
 const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
+/// Runtime for host tests — wraps std.Thread.Mutex for trait.sync compliance.
+const TestRt = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() @This() {
+            return .{ .inner = .{} };
+        }
+        pub fn deinit(_: *@This()) void {}
+        pub fn lock(self: *@This()) void {
+            self.inner.lock();
+        }
+        pub fn unlock(self: *@This()) void {
+            self.inner.unlock();
+        }
+    };
+    pub const Time = struct {
+        pub fn sleepMs(_: u32) void {}
+        pub fn getTimeMs() u64 {
+            return @intCast(std.time.milliTimestamp());
+        }
+    };
+};
+
 /// Simple TCP socket wrapper matching the Transport interface (send/recv)
 const TcpSocket = struct {
     fd: posix.socket_t,
@@ -97,7 +120,7 @@ fn testHandler(_: []const u8, msg: *const mqtt0.Message) anyerror!void {
     test_state.received = true;
 }
 
-fn runBrokerThread(broker: *mqtt0.Broker(TcpSocket), conn: *TcpSocket) void {
+fn runBrokerThread(broker: *mqtt0.Broker(TcpSocket, TestRt), conn: *TcpSocket) void {
     broker.serveConn(conn);
 }
 
@@ -164,11 +187,11 @@ fn testZigToZig(allocator: std.mem.Allocator, version: mqtt0.ProtocolVersion) !v
     test_state = TestState{};
 
     // Setup broker
-    var broker_mux = try mqtt0.Mux.init(allocator);
+    var broker_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer broker_mux.deinit();
     try broker_mux.handleFn("test/#", testHandler);
 
-    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{});
+    var broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, broker_mux.handler(), .{});
     defer broker.deinit();
 
     // Create TCP listener on random port
@@ -177,7 +200,7 @@ fn testZigToZig(allocator: std.mem.Allocator, version: mqtt0.ProtocolVersion) !v
 
     // Accept in a thread
     const broker_thread = try std.Thread.spawn(.{}, struct {
-        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+        fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t) void {
             var conn = TcpSocket.accept(listener) catch return;
             defer conn.close();
             b.serveConn(&conn);
@@ -191,12 +214,13 @@ fn testZigToZig(allocator: std.mem.Allocator, version: mqtt0.ProtocolVersion) !v
     var client_sock = try TcpSocket.connect(srv.port);
     defer client_sock.close();
 
-    var client_mux = try mqtt0.Mux.init(allocator);
+    var client_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer client_mux.deinit();
 
-    var client = try mqtt0.Client(TcpSocket).init(&client_sock, &client_mux, .{
+    var client = try mqtt0.Client(TcpSocket, TestRt).init(&client_sock, &client_mux, .{
         .client_id = "zig-test-client",
         .protocol_version = version,
+        .allocator = allocator,
     });
 
     // Subscribe
@@ -239,12 +263,12 @@ fn testSysEvents(allocator: std.mem.Allocator) !void {
     sys_received = false;
 
     // Setup broker with $SYS enabled
-    var broker_mux = try mqtt0.Mux.init(allocator);
+    var broker_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer broker_mux.deinit();
     // Subscribe to $SYS events on the broker mux
     try broker_mux.handleFn("$SYS/#", sysHandler);
 
-    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{
+    var broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, broker_mux.handler(), .{
         .sys_events_enabled = true,
     });
     defer broker.deinit();
@@ -253,7 +277,7 @@ fn testSysEvents(allocator: std.mem.Allocator) !void {
     defer posix.close(srv.listener);
 
     const broker_thread = try std.Thread.spawn(.{}, struct {
-        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+        fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t) void {
             var conn = TcpSocket.accept(listener) catch return;
             defer conn.close();
             b.serveConn(&conn);
@@ -266,12 +290,13 @@ fn testSysEvents(allocator: std.mem.Allocator) !void {
     var client_sock = try TcpSocket.connect(srv.port);
     defer client_sock.close();
 
-    var client_mux = try mqtt0.Mux.init(allocator);
+    var client_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer client_mux.deinit();
 
-    var client = try mqtt0.Client(TcpSocket).init(&client_sock, &client_mux, .{
+    var client = try mqtt0.Client(TcpSocket, TestRt).init(&client_sock, &client_mux, .{
         .client_id = "sys-test-client",
         .username = "testuser",
+        .allocator = allocator,
     });
 
     // Give broker time to publish $SYS event
@@ -322,18 +347,18 @@ fn testLargeMessage(allocator: std.mem.Allocator) !void {
     large_received = false;
     large_payload_size = 0;
 
-    var broker_mux = try mqtt0.Mux.init(allocator);
+    var broker_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer broker_mux.deinit();
     try broker_mux.handleFn("large/#", largeHandler);
 
-    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{});
+    var broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, broker_mux.handler(), .{});
     defer broker.deinit();
 
     const srv = try TcpSocket.initServer(0);
     defer posix.close(srv.listener);
 
     const broker_thread = try std.Thread.spawn(.{}, struct {
-        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t) void {
+        fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t) void {
             var conn = TcpSocket.accept(listener) catch return;
             defer conn.close();
             b.serveConn(&conn);
@@ -345,10 +370,10 @@ fn testLargeMessage(allocator: std.mem.Allocator) !void {
     var client_sock = try TcpSocket.connect(srv.port);
     defer client_sock.close();
 
-    var client_mux = try mqtt0.Mux.init(allocator);
+    var client_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer client_mux.deinit();
 
-    var client = try mqtt0.Client(TcpSocket).init(&client_sock, &client_mux, .{
+    var client = try mqtt0.Client(TcpSocket, TestRt).init(&client_sock, &client_mux, .{
         .client_id = "large-test",
         .allocator = allocator,
     });
@@ -383,11 +408,11 @@ fn testLargeMessage(allocator: std.mem.Allocator) !void {
 fn testReconnect(allocator: std.mem.Allocator) !void {
     test_state = TestState{};
 
-    var broker_mux = try mqtt0.Mux.init(allocator);
+    var broker_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer broker_mux.deinit();
     try broker_mux.handleFn("reconnect/#", testHandler);
 
-    var broker = try mqtt0.Broker(TcpSocket).init(allocator, broker_mux.handler(), .{});
+    var broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, broker_mux.handler(), .{});
     defer broker.deinit();
 
     const srv = try TcpSocket.initServer(0);
@@ -395,12 +420,12 @@ fn testReconnect(allocator: std.mem.Allocator) !void {
 
     // Accept loop (handles multiple connections for reconnect)
     const accept_thread = try std.Thread.spawn(.{}, struct {
-        fn run(b: *mqtt0.Broker(TcpSocket), listener: posix.socket_t, alloc: std.mem.Allocator) void {
+        fn run(b: *mqtt0.Broker(TcpSocket, TestRt), listener: posix.socket_t, alloc: std.mem.Allocator) void {
             for (0..3) |_| {
                 const conn_ptr = alloc.create(TcpSocket) catch return;
                 conn_ptr.* = TcpSocket.accept(listener) catch return;
                 const t = std.Thread.spawn(.{}, struct {
-                    fn handle(br: *mqtt0.Broker(TcpSocket), c: *TcpSocket, a: std.mem.Allocator) void {
+                    fn handle(br: *mqtt0.Broker(TcpSocket, TestRt), c: *TcpSocket, a: std.mem.Allocator) void {
                         defer {
                             c.close();
                             a.destroy(c);
@@ -419,11 +444,12 @@ fn testReconnect(allocator: std.mem.Allocator) !void {
     // First connection
     var sock1 = try TcpSocket.connect(srv.port);
 
-    var client_mux = try mqtt0.Mux.init(allocator);
+    var client_mux = try mqtt0.Mux(TestRt).init(allocator);
     defer client_mux.deinit();
 
-    var client = try mqtt0.Client(TcpSocket).init(&sock1, &client_mux, .{
+    var client = try mqtt0.Client(TcpSocket, TestRt).init(&sock1, &client_mux, .{
         .client_id = "reconnect-test",
+        .allocator = allocator,
     });
 
     // Subscribe (this is tracked for reconnect)

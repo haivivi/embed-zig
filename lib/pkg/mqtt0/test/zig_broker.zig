@@ -10,6 +10,16 @@ const std = @import("std");
 const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
+const TestRt = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() @This() { return .{ .inner = .{} }; }
+        pub fn deinit(_: *@This()) void {}
+        pub fn lock(self: *@This()) void { self.inner.lock(); }
+        pub fn unlock(self: *@This()) void { self.inner.unlock(); }
+    };
+};
+
 const TcpSocket = struct {
     fd: posix.socket_t,
 
@@ -61,11 +71,11 @@ pub fn main() !void {
     }
 
     // Setup broker
-    var mux = try mqtt0.Mux.init(allocator);
+    var mux = try mqtt0.Mux(TestRt).init(allocator);
     defer mux.deinit();
     try mux.handleFn("#", handler);
 
-    var broker = try mqtt0.Broker(TcpSocket).init(allocator, mux.handler(), .{});
+    var broker = try mqtt0.Broker(TcpSocket, TestRt).init(allocator, mux.handler(), .{});
     defer broker.deinit();
 
     // Create listener
@@ -97,7 +107,7 @@ pub fn main() !void {
 
         // Handle in a thread
         const thread = try std.Thread.spawn(.{}, struct {
-            fn run(b: *mqtt0.Broker(TcpSocket), cfd: posix.socket_t) void {
+            fn run(b: *mqtt0.Broker(TcpSocket, TestRt), cfd: posix.socket_t) void {
                 var conn = TcpSocket{ .fd = cfd };
                 defer conn.close();
                 b.serveConn(&conn);

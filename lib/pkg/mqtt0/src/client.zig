@@ -22,16 +22,22 @@
 //!     try client.readLoop(); // blocks, dispatches to mux
 
 const std = @import("std");
+const trait = @import("trait");
 const pkt = @import("packet.zig");
 const v4 = @import("v4.zig");
 const v5 = @import("v5.zig");
 const mux_mod = @import("mux.zig");
 
 const Message = pkt.Message;
-const Mux = mux_mod.Mux;
 const ProtocolVersion = pkt.ProtocolVersion;
 
-pub fn Client(comptime Transport: type) type {
+pub fn Client(comptime Transport: type, comptime Rt: type) type {
+    comptime {
+        _ = trait.sync.Mutex(Rt.Mutex);
+    }
+
+    const MuxType = mux_mod.Mux(Rt);
+
     return struct {
         const Self = @This();
 
@@ -61,29 +67,30 @@ pub fn Client(comptime Transport: type) type {
             clean_start: bool = true,
             protocol_version: ProtocolVersion = .v4,
             session_expiry: ?u32 = null,
-            allocator: std.mem.Allocator = std.heap.page_allocator,
+            allocator: std.mem.Allocator,
         };
 
         transport: *Transport,
-        mux: *Mux,
+        mux: *MuxType,
         config: Config,
         connected: bool = false,
         next_packet_id: u16 = 1,
         read_buf: pkt.PacketBuffer,
         write_buf: pkt.PacketBuffer,
-        write_mutex: std.Thread.Mutex = .{},
+        write_mutex: Rt.Mutex,
         /// Tracked subscriptions for auto-resubscribe on reconnect.
         subscriptions: std.ArrayListUnmanaged(SubEntry) = .empty,
 
         // ---- Lifecycle ----
 
-        pub fn init(transport: *Transport, mux: *Mux, config: Config) !Self {
+        pub fn init(transport: *Transport, mux: *MuxType, config: Config) !Self {
             var self = Self{
                 .transport = transport,
                 .mux = mux,
                 .config = config,
                 .read_buf = pkt.PacketBuffer.init(config.allocator),
                 .write_buf = pkt.PacketBuffer.init(config.allocator),
+                .write_mutex = Rt.Mutex.init(),
             };
             try self.doConnect();
             return self;
@@ -94,6 +101,7 @@ pub fn Client(comptime Transport: type) type {
             self.read_buf.deinit();
             self.write_buf.deinit();
             self.subscriptions.deinit(self.config.allocator);
+            self.write_mutex.deinit();
         }
 
         // ---- Reconnect ----
