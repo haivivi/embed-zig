@@ -1,18 +1,9 @@
-//! BK Module
+//! BK Module — Entry point for BK7258 platform
 //!
-//! Provides access to Armino SDK bindings and trait/hal implementations.
-//!
-//! ## Package Structure
-//!
-//! ```
-//! lib/platform/bk/
-//! ├── bk.zig       (this file — entry)
-//! ├── armino/      Low-level Armino SDK bindings
-//! ├── impl/        trait + hal implementations
-//! └── src/boards/  Board definitions
-//! ```
+//! Single flat module using relative @import paths.
+//! All armino/impl/boards files are part of this module tree.
 
-/// Low-level Armino SDK bindings (C helper wrappers)
+/// Low-level Armino SDK bindings
 pub const armino = @import("armino/src/armino.zig");
 
 /// trait + hal implementations

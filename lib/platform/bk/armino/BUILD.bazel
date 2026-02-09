@@ -10,7 +10,13 @@ filegroup(
     srcs = glob(["src/**/*.zig"]),
 )
 
-# C source files (compiled by Armino GCC, not by Zig)
+# Core C helper (log, time, rtos — works on both CP and AP)
+filegroup(
+    name = "c_helpers_core",
+    srcs = ["src/bk_zig_helper.c"],
+)
+
+# All C sources including speaker helper (AP-only)
 filegroup(
     name = "c_srcs",
     srcs = glob(["src/**/*.c", "src/**/*.h"], allow_empty = True),

@@ -32,38 +32,23 @@ _SCRIPTS_LABEL = Label("//bazel/bk:scripts")
 # =============================================================================
 
 def bk_modules():
-    """Create the standard BK platform zig_module declarations.
+    """Create the BK platform zig_module declaration.
 
-    Creates 3 targets: :armino, :impl, :bk
-    These are required by bk_zig_app.
+    Creates 1 target: :bk (single flat module, uses relative @import internally)
+
+    BK platform uses a single module because Zig's -M multi-module system
+    doesn't handle lazy cross-module imports well. All armino/impl/boards
+    files are part of one module tree rooted at bk.zig.
 
     Usage:
         load("//bazel/bk:defs.bzl", "bk_modules", "bk_zig_app")
         bk_modules()
-        bk_zig_app(name = "app", deps = [":bk", ...], ...)
+        bk_zig_app(name = "app", deps = [":bk"], ...)
     """
-    zig_module(
-        name = "armino",
-        main = Label("//lib/platform/bk/armino:src/armino.zig"),
-        srcs = [Label("//lib/platform/bk/armino:zig_srcs")],
-        c_srcs = [Label("//lib/platform/bk/armino:c_srcs")],
-    )
-    zig_module(
-        name = "impl",
-        main = Label("//lib/platform/bk/impl:src/impl.zig"),
-        srcs = [Label("//lib/platform/bk/impl:zig_srcs")],
-        deps = [
-            ":armino",
-        ],
-    )
     zig_module(
         name = "bk",
         main = Label("//lib/platform/bk:bk.zig"),
         srcs = [Label("//lib/platform/bk:all_zig_srcs")],
-        deps = [
-            ":armino",
-            ":impl",
-        ],
     )
 
 # =============================================================================
@@ -117,15 +102,13 @@ def _bk_zig_app_impl(ctx):
             all_dep_files.extend(info.transitive_srcs.to_list())
             all_dep_files.extend(info.transitive_c_inputs.to_list())
 
-    # Build Zig -M arguments from ZigModuleInfo
-    # App module: app.zig with deps on all user-specified modules
+    # Find app.zig and bk.zig root sources
     app_zig = None
     for f in app_files:
         if f.basename == "app.zig" or f.basename == "entry.zig":
             app_zig = f
             break
     if not app_zig:
-        # Fallback: use first .zig file
         for f in app_files:
             if f.path.endswith(".zig"):
                 app_zig = f
@@ -133,87 +116,38 @@ def _bk_zig_app_impl(ctx):
     if not app_zig:
         fail("No .zig file found in app sources")
 
-    app_dep_names = [info.module_name for info in dep_infos]
-    app_module_str = encode_module("app", app_zig.path, app_dep_names)
-
-    all_module_strings = [app_module_str] + [
-        encode_module(
-            info.module_name, info.root_source.path, info.direct_dep_names,
-            c_include_dirs = info.own_c_include_dirs, link_libc = info.own_link_libc,
-        )
-        for info in dep_infos
-    ]
+    # Find bk.zig root from deps
+    bk_zig = None
     for info in dep_infos:
-        all_module_strings.extend(info.transitive_module_strings.to_list())
-
-    # Deduplicate
-    seen = {}
-    deduped = []
-    for s in all_module_strings:
-        name = s.split("\t")[0]
-        if name not in seen:
-            seen[name] = True
-            deduped.append(s)
-
-    # Build -M args for zig build-obj
-    zig_m_args = []
-    for encoded in deduped:
-        mod = decode_module(encoded)
-        if mod.name == "app":
-            continue  # app is the root module, handled separately
-        zig_m_args.append("-M{name}={path}".format(name = mod.name, path = mod.root_path))
-        for dep_name in mod.dep_names:
-            zig_m_args.append("--dep")
-            zig_m_args.append(dep_name)
-
-    # Root module (app) with its deps
-    root_args = []
-    for dep_name in app_dep_names:
-        root_args.append("--dep")
-        root_args.append(dep_name)
-    root_args.append("-Mroot={path}".format(path = app_zig.path))
-
-    # Combine: target flags + dep modules + root module
-    zig_cmd_args = [
-        "build-obj",
-        "-target", "thumb-freestanding-eabihf",
-        "-mcpu", "cortex_m33",
-        "-O", "ReleaseSmall",
-        "-fno-stack-check",
-    ] + zig_m_args + root_args
+        if info.module_name == "bk":
+            bk_zig = info.root_source
+            break
+    if not bk_zig:
+        fail("No 'bk' module found in deps. Did you call bk_modules()?")
 
     # C helper paths (space-separated for build.sh)
     c_helper_paths = " ".join([f.path for f in c_helper_files])
 
-    # Create wrapper script
+    # Create wrapper script — uses zig build (not build-obj) for multi-module
     wrapper = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
 
     script_content = """#!/bin/bash
 set -e
-E="$(pwd)"
+export E="$(pwd)"
+export ZIG_BIN="$E/{zig_bin}"
 export BK_PROJECT_NAME="{project_name}"
 export BK_BIN_OUT="$E/{bin_out}"
 export BK_C_HELPERS="{c_helpers}"
-
-# Compile Zig to ARM .o
-TMPDIR=$(mktemp -d)
-export BK_ZIG_OBJ="$TMPDIR/bk_zig.o"
-"$E/{zig_bin}" {zig_args} \\
-    --cache-dir "$TMPDIR/cache" \\
-    --global-cache-dir "$TMPDIR/gcache" \\
-    -femit-bin="$BK_ZIG_OBJ"
-
-echo "[bk_zig_app] Zig compiled: $(file "$BK_ZIG_OBJ" | cut -d: -f2)"
-
-# Build with Armino
-export BK_WORK_DIR="$TMPDIR"
+export BK_APP_ZIG="{app_zig}"
+export BK_BK_ZIG="{bk_zig}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
         bin_out = bin_file.path,
         zig_bin = zig_bin.path if zig_bin else "zig",
-        zig_args = " ".join(zig_cmd_args),
         c_helpers = c_helper_paths,
+        app_zig = app_zig.path,
+        bk_zig = bk_zig.path,
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -263,8 +197,7 @@ bk_zig_app = rule(
         ),
         "c_helpers": attr.label_list(
             allow_files = [".c", ".h"],
-            default = [Label("//lib/platform/bk/armino:c_srcs")],
-            doc = "C helper files compiled by Armino's GCC",
+            doc = "C helper files compiled by Armino's GCC. Defaults to core helper only.",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
