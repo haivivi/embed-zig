@@ -63,7 +63,6 @@ pub const concepts = @import("concepts.zig");
 
 // Implementation backends
 pub const thread = @import("thread/mod.zig");
-pub const minicoro = @import("minicoro/mod.zig");
 pub const kqueue = if (@import("builtin").os.tag == .macos or
     @import("builtin").os.tag == .freebsd or
     @import("builtin").os.tag == .netbsd or
@@ -112,7 +111,6 @@ pub const IOService = io.IOService;
 pub const ThreadExecutor = thread.ThreadExecutor;
 pub const ThreadExecutorWithTimers = thread.ThreadExecutorWithTimers;
 pub const EventLoop = thread.EventLoop;
-pub const Coroutine = thread.Coroutine;
 
 // Re-export kqueue IO backend (macOS/BSD only)
 pub const KqueueIO = if (@hasDecl(kqueue, "KqueueIO")) kqueue.KqueueIO else struct {};
@@ -129,5 +127,4 @@ test {
     _ = thread;
     _ = concepts;
     if (@hasDecl(kqueue, "KqueueIO")) _ = kqueue;
-    // Note: minicoro tests require C linkage, tested separately
 }
