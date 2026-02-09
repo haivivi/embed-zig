@@ -1,6 +1,6 @@
 # BLE X-Proto Throughput Test - ESP Platform
 
-load("//bazel/esp:defs.bzl", "esp_flash", "esp_zig_app")
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -10,6 +10,8 @@ filegroup(
         "//examples/apps/ble_x_proto_test:app_srcs",
     ] + glob(["**/*"]),
 )
+
+esp_modules()
 
 esp_zig_app(
     name = "app",
@@ -26,7 +28,10 @@ esp_zig_app(
     ],
     extra_c_sources = ["BT_C_SOURCES", "RUNTIME_C_SOURCES"],
     deps = [
+        ":idf",
+        ":esp",
         "//lib/hal",
+        "//lib/trait",
         "//lib/pkg/bluetooth",
         "//lib/pkg/x_proto",
         "//lib/pkg/drivers",
