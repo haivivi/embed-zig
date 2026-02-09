@@ -75,6 +75,8 @@ pub fn from(comptime Impl: type, comptime config: Config) type {
         if (config.sha384) validateHash(Impl, "Sha384", 48);
         if (config.sha512) validateHash(Impl, "Sha512", 64);
         if (config.sha1) validateHash(Impl, "Sha1", 20);
+        if (config.blake2s) validateHash(Impl, "Blake2s256", 32);
+        if (config.blake2b) validateHash(Impl, "Blake2b512", 64);
 
         // AEAD
         if (config.aes_128_gcm) validateAead(Impl, "Aes128Gcm", 16, 12, 16);
