@@ -136,14 +136,35 @@ fi
 PROJECT_DIR="$WORK/projects/$PROJECT"
 mkdir -p "$PROJECT_DIR/ap" "$PROJECT_DIR/cp" "$PROJECT_DIR/partitions/bk7258"
 
-# Copy configs from audio_player_example
-cp "$ARMINO_PATH/projects/audio_player_example/partitions/bk7258/auto_partitions.csv" "$PROJECT_DIR/partitions/bk7258/"
-cp "$ARMINO_PATH/projects/audio_player_example/partitions/bk7258/ram_regions.csv" "$PROJECT_DIR/partitions/bk7258/"
+# Copy configs from base project
+BASE="$ARMINO_PATH/projects/$BK_BASE_PROJECT"
+if [ ! -d "$BASE" ]; then
+    echo "[bk_build] Error: base project '$BK_BASE_PROJECT' not found at $BASE"
+    exit 1
+fi
+echo "[bk_build] Base project: $BK_BASE_PROJECT"
+
+cp "$BASE/partitions/bk7258/auto_partitions.csv" "$PROJECT_DIR/partitions/bk7258/"
+cp "$BASE/partitions/bk7258/ram_regions.csv" "$PROJECT_DIR/partitions/bk7258/"
 mkdir -p "$PROJECT_DIR/ap/config/bk7258_ap" "$PROJECT_DIR/cp/config/bk7258"
-cp "$ARMINO_PATH/projects/audio_player_example/ap/config/bk7258_ap/config" "$PROJECT_DIR/ap/config/bk7258_ap/"
-cp "$ARMINO_PATH/projects/audio_player_example/cp/config/bk7258/config" "$PROJECT_DIR/cp/config/bk7258/"
-cp "$ARMINO_PATH/projects/audio_player_example/ap/config/bk7258_ap/usr_gpio_cfg.h" "$PROJECT_DIR/ap/config/bk7258_ap/" 2>/dev/null || true
-cp "$ARMINO_PATH/projects/audio_player_example/cp/config/bk7258/usr_gpio_cfg.h" "$PROJECT_DIR/cp/config/bk7258/" 2>/dev/null || true
+cp "$BASE/ap/config/bk7258_ap/config" "$PROJECT_DIR/ap/config/bk7258_ap/"
+cp "$BASE/cp/config/bk7258/config" "$PROJECT_DIR/cp/config/bk7258/"
+cp "$BASE/ap/config/bk7258_ap/usr_gpio_cfg.h" "$PROJECT_DIR/ap/config/bk7258_ap/" 2>/dev/null || true
+cp "$BASE/cp/config/bk7258/usr_gpio_cfg.h" "$PROJECT_DIR/cp/config/bk7258/" 2>/dev/null || true
+
+# Append Kconfig overrides
+if [ -n "$BK_KCONFIG_AP" ]; then
+    echo "" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
+    echo "# Kconfig overrides from bk_zig_app" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
+    echo -e "$BK_KCONFIG_AP" >> "$PROJECT_DIR/ap/config/bk7258_ap/config"
+    echo "[bk_build] AP Kconfig overrides applied"
+fi
+if [ -n "$BK_KCONFIG_CP" ]; then
+    echo "" >> "$PROJECT_DIR/cp/config/bk7258/config"
+    echo "# Kconfig overrides from bk_zig_app" >> "$PROJECT_DIR/cp/config/bk7258/config"
+    echo -e "$BK_KCONFIG_CP" >> "$PROJECT_DIR/cp/config/bk7258/config"
+    echo "[bk_build] CP Kconfig overrides applied"
+fi
 
 # Makefile + CMakeLists
 cat > "$PROJECT_DIR/Makefile" << 'EOF'
@@ -230,7 +251,8 @@ set(incs .)
 set(srcs ap_main.c $C_HELPER_SRCS)
 set(priv_req driver lwip_intf_v2_1 $BK_AP_REQUIRES)
 armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
-target_link_libraries(\${COMPONENT_LIB} INTERFACE \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a)
+target_link_libraries(\${COMPONENT_LIB} INTERFACE -Wl,--whole-archive \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a -Wl,--no-whole-archive)
+target_link_options(\${COMPONENT_LIB} INTERFACE $BK_FORCE_LINK)
 APCMAKEOF
 
 touch "$PROJECT_DIR/pj_config.mk"

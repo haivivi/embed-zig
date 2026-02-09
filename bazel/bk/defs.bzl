@@ -146,6 +146,10 @@ export BK_AP_ZIG="{ap_zig}"
 export BK_CP_ZIG="{cp_zig}"
 export BK_BK_ZIG="{bk_zig}"
 export BK_AP_REQUIRES="{requires}"
+export BK_FORCE_LINK="{force_link}"
+export BK_BASE_PROJECT="{base_project}"
+export BK_KCONFIG_AP="{kconfig_ap}"
+export BK_KCONFIG_CP="{kconfig_cp}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -156,6 +160,10 @@ exec bash "$E/{build_sh}"
         cp_zig = cp_zig.path,
         bk_zig = bk_zig.path,
         requires = " ".join(ctx.attr.requires),
+        force_link = " ".join(["-Wl,--undefined=" + s for s in ctx.attr.force_link]),
+        base_project = ctx.attr.base_project,
+        kconfig_ap = "\\n".join(ctx.attr.kconfig_ap),
+        kconfig_cp = "\\n".join(ctx.attr.kconfig_cp),
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -215,6 +223,22 @@ bk_zig_app = rule(
         "requires": attr.string_list(
             default = [],
             doc = "Additional Armino component requirements for AP CMakeLists (e.g., bk_audio). driver and lwip are always included.",
+        ),
+        "force_link": attr.string_list(
+            default = [],
+            doc = "Symbols to force-link (prevents linker from stripping them). E.g., ['bk_pwm_init']",
+        ),
+        "base_project": attr.string(
+            default = "app",
+            doc = "Armino base project to copy config from (e.g., 'app', 'audio_player_example'). Located at $ARMINO_PATH/projects/<name>/.",
+        ),
+        "kconfig_ap": attr.string_list(
+            default = [],
+            doc = "Kconfig overrides for AP (appended to base config). E.g., ['CONFIG_PWM=y']",
+        ),
+        "kconfig_cp": attr.string_list(
+            default = [],
+            doc = "Kconfig overrides for CP (appended to base config).",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

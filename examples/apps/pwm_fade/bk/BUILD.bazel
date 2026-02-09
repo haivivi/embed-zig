@@ -10,5 +10,6 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_pwm",
     ],
+    kconfig_ap = ["CONFIG_PWM=y"],
 )
 bk_flash(name = "flash", app = ":app")
