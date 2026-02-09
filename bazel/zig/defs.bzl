@@ -975,16 +975,10 @@ def _zig_test_impl(ctx):
         progress_message = "Compiling Zig tests %s" % ctx.label,
     )
 
-    # Create a runner script that executes the compiled test binary
-    runner = ctx.actions.declare_file(ctx.label.name + "_test_runner.sh")
-    ctx.actions.write(
-        output = runner,
-        content = '#!/bin/bash\nexec "./{bin}" "$@"\n'.format(bin = test_bin.short_path),
-        is_executable = True,
-    )
-
+    # Use the compiled test binary directly as the test executable.
+    # No .sh wrapper needed — the test binary IS the executable.
     return [DefaultInfo(
-        executable = runner,
+        executable = test_bin,
         runfiles = ctx.runfiles(files = [test_bin]),
     )]
 
