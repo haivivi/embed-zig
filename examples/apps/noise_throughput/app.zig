@@ -17,7 +17,21 @@ const log = Board.log;
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
 
-const Noise = zgrnet.noise.Protocol(crypto_suite);
+/// ESP32-specific Crypto: uses crypto Suite for algorithms but
+/// replaces Rng with ESP hardware random number generator.
+const EspCrypto = struct {
+    pub const Blake2s256 = crypto_suite.Blake2s256;
+    pub const ChaCha20Poly1305 = crypto_suite.ChaCha20Poly1305;
+    pub const X25519 = crypto_suite.X25519;
+    pub const Rng = struct {
+        pub fn fill(buf: []u8) void {
+            const esp_mod2 = @import("esp");
+            esp_mod2.idf.random.fill(buf);
+        }
+    };
+};
+
+const Noise = zgrnet.noise.Protocol(EspCrypto);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const tag_size = zgrnet.tag_size;
@@ -77,16 +91,15 @@ pub fn run(env: anytype) void {
 
     if (!got_ip) return;
 
-    // Generate keypair using ESP hardware RNG
-    const idf = esp_mod.idf;
+    // Generate keypair using ESP hardware RNG (via EspCrypto.Rng)
     var seed: [32]u8 = undefined;
-    idf.random.fill(&seed);
-    const local_kp = KP.fromPrivate(Key.fromBytes(seed));
+    EspCrypto.Rng.fill(&seed);
+    const local_kp = KP.fromSeed(seed);
     log.info("Local public key: {s}...", .{&local_kp.public.shortHex()});
     log.info("Listening on UDP :{d}", .{listen_port});
 
     // Create UDP socket
-    var sock = idf.socket.Socket.udp() catch |err| {
+    var sock = esp_mod.idf.socket.Socket.udp() catch |err| {
         log.err("UDP socket failed: {}", .{err});
         return;
     };

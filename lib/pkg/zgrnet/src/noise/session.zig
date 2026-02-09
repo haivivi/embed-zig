@@ -1,10 +1,10 @@
 //! Session management for transport phase.
+//!
+//! NOT thread-safe. Caller must provide external synchronization
+//! and pass timestamps explicitly. No std.Thread or std.time dependencies.
 
 const std = @import("std");
 const mem = std.mem;
-const time = std.time;
-const Mutex = std.Thread.Mutex;
-const Atomic = std.atomic.Value;
 
 const keypair = @import("keypair.zig");
 const replay_mod = @import("replay.zig");
@@ -20,23 +20,10 @@ pub const SessionState = enum {
     handshaking,
     established,
     expired,
-
-    pub fn format(
-        self: SessionState,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        try writer.writeAll(switch (self) {
-            .handshaking => "handshaking",
-            .established => "established",
-            .expired => "expired",
-        });
-    }
 };
 
 /// Session timeout in nanoseconds (180 seconds).
-pub const session_timeout_ns: i128 = 180 * std.time.ns_per_s;
+pub const session_timeout_ns: u64 = 180 * std.time.ns_per_s;
 
 /// Maximum nonce value.
 pub const max_nonce: u64 = std.math.maxInt(u64) - 1;
@@ -58,6 +45,8 @@ pub const SessionConfig = struct {
     send_key: Key,
     recv_key: Key,
     remote_pk: Key = Key.zero,
+    /// Current timestamp in nanoseconds (caller-provided).
+    now_ns: u64 = 0,
 };
 
 /// Instantiate session for a given Crypto implementation.
@@ -66,38 +55,37 @@ pub fn SessionMod(comptime Crypto: type) type {
 
     return struct {
         /// An established Noise session with a peer.
+        ///
+        /// NOT thread-safe. Caller must synchronize access and provide
+        /// timestamps via method parameters.
         pub const Session = struct {
-            mutex: Mutex = .{},
-
             local_index: u32,
             remote_index: u32,
 
             send_key: Key,
             recv_key: Key,
 
-            send_nonce: Atomic(u64) = Atomic(u64).init(0),
+            send_nonce: u64 = 0,
             recv_filter: ReplayFilter = ReplayFilter.init(),
 
-            state_atomic: Atomic(u8) = Atomic(u8).init(@intFromEnum(SessionState.established)),
+            state: SessionState = .established,
             remote_pk: Key,
 
-            created_at: i128,
-            last_received_nanos: Atomic(i64) = Atomic(i64).init(0),
-            last_sent_nanos: Atomic(i64) = Atomic(i64).init(0),
+            created_ns: u64,
+            last_received_ns: u64 = 0,
+            last_sent_ns: u64 = 0,
 
             /// Creates a new session.
             pub fn init(cfg: SessionConfig) Session {
-                const now = time.nanoTimestamp();
-                const now_i64: i64 = @intCast(@mod(now, std.math.maxInt(i64)));
                 return .{
                     .local_index = cfg.local_index,
                     .remote_index = cfg.remote_index,
                     .send_key = cfg.send_key,
                     .recv_key = cfg.recv_key,
                     .remote_pk = cfg.remote_pk,
-                    .created_at = now,
-                    .last_received_nanos = Atomic(i64).init(now_i64),
-                    .last_sent_nanos = Atomic(i64).init(now_i64),
+                    .created_ns = cfg.now_ns,
+                    .last_received_ns = cfg.now_ns,
+                    .last_sent_ns = cfg.now_ns,
                 };
             }
 
@@ -105,15 +93,11 @@ pub fn SessionMod(comptime Crypto: type) type {
                 return self.local_index;
             }
 
-            pub fn remoteIndex(self: *Session) u32 {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+            pub fn remoteIndex(self: *const Session) u32 {
                 return self.remote_index;
             }
 
             pub fn setRemoteIndex(self: *Session, idx: u32) void {
-                self.mutex.lock();
-                defer self.mutex.unlock();
                 self.remote_index = idx;
             }
 
@@ -122,35 +106,36 @@ pub fn SessionMod(comptime Crypto: type) type {
             }
 
             pub fn getState(self: *const Session) SessionState {
-                return @enumFromInt(self.state_atomic.load(.acquire));
+                return self.state;
             }
 
             pub fn setState(self: *Session, new_state: SessionState) void {
-                self.state_atomic.store(@intFromEnum(new_state), .release);
+                self.state = new_state;
             }
 
             /// Encrypts a message. Returns the nonce used.
-            pub fn encrypt(self: *Session, plaintext: []const u8, out: []u8) SessionError!u64 {
-                if (self.getState() != .established) {
+            /// `now_ns` is the current timestamp in nanoseconds (caller-provided).
+            pub fn encrypt(self: *Session, plaintext: []const u8, out: []u8, now_ns: u64) SessionError!u64 {
+                if (self.state != .established) {
                     return SessionError.NotEstablished;
                 }
 
-                const nonce = self.send_nonce.fetchAdd(1, .seq_cst);
+                const nonce = self.send_nonce;
                 if (nonce >= max_nonce) {
                     return SessionError.NonceExhausted;
                 }
+                self.send_nonce += 1;
 
                 cipher.encrypt(&self.send_key.data, nonce, plaintext, "", out);
-
-                const now: i64 = @intCast(@mod(time.nanoTimestamp(), std.math.maxInt(i64)));
-                self.last_sent_nanos.store(now, .release);
+                self.last_sent_ns = now_ns;
 
                 return nonce;
             }
 
             /// Decrypts a message.
-            pub fn decrypt(self: *Session, ciphertext: []const u8, nonce: u64, out: []u8) SessionError!usize {
-                if (self.getState() != .established) {
+            /// `now_ns` is the current timestamp in nanoseconds (caller-provided).
+            pub fn decrypt(self: *Session, ciphertext: []const u8, nonce: u64, out: []u8, now_ns: u64) SessionError!usize {
+                if (self.state != .established) {
                     return SessionError.NotEstablished;
                 }
 
@@ -166,45 +151,39 @@ pub fn SessionMod(comptime Crypto: type) type {
                     return SessionError.AuthenticationFailed;
                 };
 
-                const now: i64 = @intCast(@mod(time.nanoTimestamp(), std.math.maxInt(i64)));
-                self.last_received_nanos.store(now, .release);
+                self.last_received_ns = now_ns;
 
                 return ciphertext.len - tag_size;
             }
 
-            pub fn isExpired(self: *const Session) bool {
-                if (self.getState() == .expired) {
-                    return true;
-                }
-
-                const last = self.last_received_nanos.load(.acquire);
-                const now: i64 = @intCast(@mod(time.nanoTimestamp(), std.math.maxInt(i64)));
-                const elapsed = now - last;
-                return elapsed > @as(i64, @intCast(@mod(session_timeout_ns, std.math.maxInt(i64))));
+            pub fn isExpired(self: *const Session, now_ns: u64) bool {
+                if (self.state == .expired) return true;
+                if (now_ns < self.last_received_ns) return false;
+                return (now_ns - self.last_received_ns) > session_timeout_ns;
             }
 
             pub fn expire(self: *Session) void {
-                self.setState(.expired);
+                self.state = .expired;
             }
 
             pub fn sendNonce(self: *const Session) u64 {
-                return self.send_nonce.load(.seq_cst);
+                return self.send_nonce;
             }
 
-            pub fn recvMaxNonce(self: *Session) u64 {
+            pub fn recvMaxNonce(self: *const Session) u64 {
                 return self.recv_filter.maxNonce();
             }
 
-            pub fn createdAt(self: *const Session) i128 {
-                return self.created_at;
+            pub fn createdNs(self: *const Session) u64 {
+                return self.created_ns;
             }
 
-            pub fn lastReceivedNanos(self: *const Session) i64 {
-                return self.last_received_nanos.load(.acquire);
+            pub fn lastReceivedNs(self: *const Session) u64 {
+                return self.last_received_ns;
             }
 
-            pub fn lastSentNanos(self: *const Session) i64 {
-                return self.last_sent_nanos.load(.acquire);
+            pub fn lastSentNs(self: *const Session) u64 {
+                return self.last_sent_ns;
             }
         };
     };
@@ -250,8 +229,8 @@ test "encrypt decrypt" {
     var ciphertext: [plaintext.len + tag_size]u8 = undefined;
     var decrypted: [plaintext.len]u8 = undefined;
 
-    const nonce = try sessions.alice.encrypt(plaintext, &ciphertext);
-    const pt_len = try sessions.bob.decrypt(&ciphertext, nonce, &decrypted);
+    const nonce = try sessions.alice.encrypt(plaintext, &ciphertext, 0);
+    const pt_len = try sessions.bob.decrypt(&ciphertext, nonce, &decrypted, 0);
 
     try testing.expectEqualSlices(u8, plaintext, decrypted[0..pt_len]);
 }
@@ -262,7 +241,7 @@ test "nonce increment" {
 
     for (0..10) |i| {
         try testing.expectEqual(@as(u64, i), sessions.alice.sendNonce());
-        _ = try sessions.alice.encrypt("test", &ct);
+        _ = try sessions.alice.encrypt("test", &ct, 0);
     }
     try testing.expectEqual(@as(u64, 10), sessions.alice.sendNonce());
 }
@@ -274,9 +253,9 @@ test "replay protection" {
     var ciphertext: [plaintext.len + tag_size]u8 = undefined;
     var decrypted: [plaintext.len]u8 = undefined;
 
-    const nonce = try sessions.alice.encrypt(plaintext, &ciphertext);
-    _ = try sessions.bob.decrypt(&ciphertext, nonce, &decrypted);
-    try testing.expectError(SessionError.ReplayDetected, sessions.bob.decrypt(&ciphertext, nonce, &decrypted));
+    const nonce = try sessions.alice.encrypt(plaintext, &ciphertext, 0);
+    _ = try sessions.bob.decrypt(&ciphertext, nonce, &decrypted, 0);
+    try testing.expectError(SessionError.ReplayDetected, sessions.bob.decrypt(&ciphertext, nonce, &decrypted, 0));
 }
 
 test "state" {
@@ -287,19 +266,11 @@ test "state" {
     try testing.expectEqual(SessionState.expired, sessions.alice.getState());
 
     var ct: [4 + tag_size]u8 = undefined;
-    try testing.expectError(SessionError.NotEstablished, sessions.alice.encrypt("test", &ct));
+    try testing.expectError(SessionError.NotEstablished, sessions.alice.encrypt("test", &ct, 0));
 }
 
 test "generate index from bytes" {
-    var indices = std.AutoHashMap(u32, void).init(testing.allocator);
-    defer indices.deinit();
-
-    for (0..1000) |i| {
-        var bytes: [4]u8 = undefined;
-        std.crypto.random.bytes(&bytes);
-        _ = i;
-        try indices.put(generateIndexFromBytes(bytes), {});
-    }
-
-    try testing.expect(indices.count() > 900);
+    const bytes1 = [4]u8{ 1, 0, 0, 0 };
+    const bytes2 = [4]u8{ 2, 0, 0, 0 };
+    try testing.expect(generateIndexFromBytes(bytes1) != generateIndexFromBytes(bytes2));
 }

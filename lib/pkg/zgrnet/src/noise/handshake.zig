@@ -175,7 +175,9 @@ pub fn Handshake(comptime Crypto: type) type {
                 for (tokens) |token| {
                     switch (token) {
                         .e => {
-                            const ephemeral = KP.generate();
+                            var seed: [32]u8 = undefined;
+                            Crypto.Rng.fill(&seed);
+                            const ephemeral = KP.fromSeed(seed);
                             @memcpy(out[offset..][0..key_size], ephemeral.public.asBytes());
                             offset += key_size;
                             self.ss.mixHash(ephemeral.public.asBytes());
@@ -358,8 +360,8 @@ const TestKP = keypair_mod.KeyPair(TestCrypto);
 const TestHandshakeState = TestHS.HandshakeState;
 
 test "handshake IK" {
-    const initiator_static = TestKP.generate();
-    const responder_static = TestKP.generate();
+    const initiator_static = TestKP.fromSeed([_]u8{11} ** 32);
+    const responder_static = TestKP.fromSeed([_]u8{12} ** 32);
 
     var initiator = try TestHandshakeState.init(.{
         .pattern = .IK,
@@ -450,14 +452,14 @@ test "handshake NN" {
 }
 
 test "handshake errors" {
-    const rs = TestKP.generate();
+    const rs = TestKP.fromSeed([_]u8{13} ** 32);
     try std.testing.expectError(Error.MissingLocalStatic, TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,
         .remote_static = rs.public,
     }));
 
-    const ls = TestKP.generate();
+    const ls = TestKP.fromSeed([_]u8{14} ** 32);
     try std.testing.expectError(Error.MissingRemoteStatic, TestHandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,

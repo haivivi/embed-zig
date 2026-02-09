@@ -18,8 +18,11 @@ const std = @import("std");
 pub const keypair_mod = @import("keypair.zig");
 pub const replay = @import("replay.zig");
 pub const message = @import("message.zig");
-pub const transport = @import("transport.zig");
 pub const address = @import("address.zig");
+
+// NOTE: transport.zig uses std.Thread/std.time (OS-dependent) and
+// references net/transport_udp.zig (upper layer). It will be moved
+// to the net module when upper layers are genericized.
 
 // Non-generic re-exports
 pub const Key = keypair_mod.Key;
@@ -32,11 +35,6 @@ pub const Protocol_msg = message.Protocol;
 pub const HandshakeInit = message.HandshakeInit;
 pub const HandshakeResp = message.HandshakeResp;
 pub const TransportMessage = message.TransportMessage;
-
-pub const Transport = transport.Transport;
-pub const Addr = transport.Addr;
-pub const MockTransport = transport.MockTransport;
-pub const MockAddr = transport.MockAddr;
 
 pub const Address = address.Address;
 pub const AddressError = address.AddressError;
@@ -97,6 +95,5 @@ test {
     _ = replay;
     _ = session_mod;
     _ = message;
-    _ = transport;
     _ = address;
 }

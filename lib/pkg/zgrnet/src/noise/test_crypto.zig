@@ -41,6 +41,12 @@ pub const ChaCha20Poly1305 = struct {
     }
 };
 
+pub const Rng = struct {
+    pub fn fill(buf: []u8) void {
+        std.crypto.random.bytes(buf);
+    }
+};
+
 pub const X25519 = struct {
     pub const secret_length = 32;
     pub const public_length = 32;

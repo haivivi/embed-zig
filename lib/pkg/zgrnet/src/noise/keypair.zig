@@ -4,7 +4,6 @@
 //! KeyPair uses trait.crypto X25519 for DH operations.
 
 const std = @import("std");
-const crypto = std.crypto;
 const fmt = std.fmt;
 const mem = std.mem;
 
@@ -73,7 +72,12 @@ pub const Key = struct {
 
     /// Constant-time equality check.
     pub fn eql(self: Key, other: Key) bool {
-        return crypto.timing_safe.eql([key_size]u8, self.data, other.data);
+        // Constant-time comparison without std.crypto dependency
+        var diff: u8 = 0;
+        for (self.data, other.data) |a, b| {
+            diff |= a ^ b;
+        }
+        return diff == 0;
     }
 };
 
@@ -87,15 +91,8 @@ pub fn KeyPair(comptime Crypto: type) type {
 
         const Self = @This();
 
-        /// Generates a new random key pair using std.crypto.random.
-        /// Not available on freestanding; use fromSeed() with platform RNG.
-        pub fn generate() Self {
-            var seed: [32]u8 = undefined;
-            std.crypto.random.bytes(&seed);
-            return fromSeed(seed);
-        }
-
         /// Creates a key pair from a 32-byte seed (deterministic).
+        /// Use platform RNG to generate the seed.
         pub fn fromSeed(seed: [32]u8) Self {
             const kp = X.KeyPair.generateDeterministic(seed) catch {
                 return Self{ .private = Key.zero, .public = Key.zero };
@@ -167,21 +164,21 @@ test "key equality" {
     try std.testing.expect(!k1.eql(k3));
 }
 
-test "generate keypair" {
-    const kp = TestKeyPair.generate();
+test "keypair from seed" {
+    const kp = TestKeyPair.fromSeed([_]u8{42} ** 32);
     try std.testing.expect(!kp.private.isZero());
     try std.testing.expect(!kp.public.isZero());
 }
 
 test "keypair from private" {
-    const kp1 = TestKeyPair.generate();
+    const kp1 = TestKeyPair.fromSeed([_]u8{99} ** 32);
     const kp2 = TestKeyPair.fromPrivate(kp1.private);
     try std.testing.expect(kp1.public.eql(kp2.public));
 }
 
 test "dh exchange" {
-    const alice = TestKeyPair.generate();
-    const bob = TestKeyPair.generate();
+    const alice = TestKeyPair.fromSeed([_]u8{1} ** 32);
+    const bob = TestKeyPair.fromSeed([_]u8{2} ** 32);
 
     const shared_alice = try alice.dh(bob.public);
     const shared_bob = try bob.dh(alice.public);
