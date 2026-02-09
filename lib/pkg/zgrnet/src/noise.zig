@@ -28,17 +28,6 @@ pub const tag_size = noise.tag_size;
 pub const hash_size = noise.hash_size;
 pub const Pattern = noise.Pattern;
 
-// TODO(zgrnet-mirror): Higher-level modules need Crypto genericization.
-// Once done, uncomment and update these imports:
-// pub const net = @import("net/mod.zig");
-// pub const async_mod = @import("async/mod.zig");
-// pub const kcp_mod = @import("kcp/mod.zig");
-// pub const relay_mod = @import("relay/mod.zig");
-// pub const host = @import("host/mod.zig");
-// pub const proxy_mod = @import("proxy/mod.zig");
-// pub const dns_mod = @import("dns/mod.zig");
-// pub const dnsmgr_mod = @import("dnsmgr/mod.zig");
-
 test {
     _ = noise;
 }
