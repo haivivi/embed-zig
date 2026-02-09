@@ -8,6 +8,7 @@ filegroup(
     name = "zig_srcs",
     srcs = glob([
         "bk.zig",
+        "entry.zig",
         "armino/src/**/*.zig",
         "impl/src/**/*.zig",
         "src/**/*.zig",
@@ -27,7 +28,7 @@ genrule(
             -mcpu cortex_m33 \
             -O ReleaseSmall \
             -fno-stack-check \
-            -Mroot=lib/platform/bk/bk.zig \
+            -Mroot=lib/platform/bk/entry.zig \
             --cache-dir $$TMPDIR/cache \
             --global-cache-dir $$TMPDIR/gcache \
             -femit-bin=$@ && \
