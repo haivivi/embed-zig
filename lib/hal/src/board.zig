@@ -747,8 +747,21 @@ pub fn Board(comptime spec: type) type {
         // Event Queue
         // ================================================================
 
-        /// Get next event from the queue
+        /// Get next event from the queue.
+        /// Also polls WiFi and Net drivers for pending events (push into queue first).
         pub fn nextEvent(self: *Self) ?Event {
+            // Poll WiFi driver for events
+            if (analysis.wifi_count > 0) {
+                if (self.wifi.pollEvent()) |wifi_event| {
+                    _ = self.events.trySend(.{ .wifi = wifi_event });
+                }
+            }
+            // Poll Net driver for events (if not using callback mode)
+            if (analysis.net_count > 0) {
+                if (self.net.pollEvent()) |net_event| {
+                    _ = self.events.trySend(.{ .net = net_event });
+                }
+            }
             return self.events.tryReceive();
         }
 

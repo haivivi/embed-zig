@@ -2,7 +2,7 @@
 
 const armino = @import("../../armino/src/armino.zig");
 
-/// Event types for pollEvent() — structurally compatible with hal.wifi.WifiEvent
+/// Event types — structurally compatible with hal.wifi.WifiEvent
 pub const DisconnectReason = enum { user_request, auth_failed, ap_not_found, connection_lost, unknown };
 pub const FailReason = enum { timeout, auth_failed, ap_not_found, dhcp_failed, unknown };
 pub const ScanDoneInfo = struct { count: u16, success: bool };
@@ -56,21 +56,15 @@ pub const WifiDriver = struct {
         return self.connected;
     }
 
-    /// Poll events — maps armino C-side events to hal-compatible WifiEvent
+    /// Poll events via shared dispatcher (avoids dual-poll from same C queue).
     pub fn pollEvent(self: *Self) ?WifiEvent {
-        const event = armino.wifi.popEvent() orelse return null;
-        return switch (event) {
-            .connected => blk: {
-                self.connected = true;
-                break :blk .{ .connected = {} };
-            },
-            .disconnected => blk: {
-                self.connected = false;
-                break :blk .{ .disconnected = .unknown };
-            },
-            .scan_done => .{ .scan_done = .{ .count = 0, .success = true } },
-            .got_ip, .dhcp_timeout => null,
-        };
+        const event = @import("event_dispatch.zig").popWifi() orelse return null;
+        switch (event) {
+            .connected => self.connected = true,
+            .disconnected => self.connected = false,
+            else => {},
+        }
+        return event;
     }
 };
 
