@@ -159,9 +159,29 @@ fn generateTestData() ![]u8 {
 }
 
 fn verifyData(received: []const u8, expected_len: usize) bool {
-    if (received.len != expected_len) return false;
+    if (received.len != expected_len) {
+        log.err("verify: len mismatch: got {} expected {}", .{ received.len, expected_len });
+        return false;
+    }
+    var errors: u32 = 0;
+    var first_err: usize = 0;
     for (received, 0..) |b, i| {
-        if (b != @as(u8, @truncate(i))) return false;
+        const expected: u8 = @truncate(i);
+        if (b != expected) {
+            if (errors < 10) {
+                log.err("verify: byte[{}] = 0x{X:0>2}, expected 0x{X:0>2} (chunk ~{})", .{
+                    i, b, expected, i / 241, // dcs for MTU=247
+                });
+            }
+            if (errors == 0) first_err = i;
+            errors += 1;
+        }
+    }
+    if (errors > 0) {
+        log.err("verify: {} corrupted bytes out of {}, first at offset {}", .{
+            errors, received.len, first_err,
+        });
+        return false;
     }
     return true;
 }
@@ -645,11 +665,20 @@ fn runClient(host: *BleHost) void {
             .connected => |info| {
                 log.info("Connected! handle=0x{X:0>4}", .{info.conn_handle});
 
-                // Negotiate DLE + 2M PHY
+                // Negotiate DLE + 2M PHY + ATT MTU
                 host.requestDataLength(info.conn_handle, 251, 2120) catch {};
                 drain(host, 1000);
                 host.requestPhyUpdate(info.conn_handle, 0x02, 0x02) catch {};
                 drain(host, 2000);
+
+                // Exchange ATT MTU — CRITICAL for cross-platform!
+                // Without this, CoreBluetooth truncates notifications to default MTU (23 bytes).
+                if (host.gattExchangeMtu(info.conn_handle, 512)) |mtu| {
+                    log.info("MTU exchanged: {}", .{mtu});
+                } else |err| {
+                    log.err("MTU exchange failed: {} (using default)", .{err});
+                }
+                idf.time.sleepMs(200);
 
                 // Discover remote GATT handles (needed for cross-platform: ESP↔Mac)
                 const handles = discoverHandles(host, info.conn_handle) orelse {
