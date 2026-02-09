@@ -27,7 +27,7 @@ pub const OpusEncoder = struct {
         application: opus.Application,
         frame_ms: u32,
     ) !Self {
-        var inner = try opus.Encoder.init(allocator, sample_rate, channels, application);
+        const inner = try opus.Encoder.init(allocator, sample_rate, channels, application);
         return .{ .inner = inner, .frame_ms = frame_ms, .alloc = allocator };
     }
 
@@ -73,7 +73,7 @@ pub const OpusDecoder = struct {
         channels: u8,
         frame_ms: u32,
     ) !Self {
-        var inner = try opus.Decoder.init(allocator, sample_rate, channels);
+        const inner = try opus.Decoder.init(allocator, sample_rate, channels);
         return .{ .inner = inner, .frame_ms = frame_ms, .alloc = allocator };
     }
 
