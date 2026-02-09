@@ -140,17 +140,20 @@ func main() {
 		}
 	}()
 
-	// --- 4. Wait for Mac to finish (it exits after both tests) ---
+	// --- 4. Wait for output goroutines to finish reading all pipe data ---
+	// Per Go os/exec docs: Wait must not be called before all reads from
+	// the pipe have completed. Goroutines read until EOF (pipe closed by
+	// process exit), then wg.Done().
 	fmt.Println("[runner] Waiting for tests to complete...")
+	wg.Wait()
+
+	// --- 5. Now safe to call Wait (all pipe reads done) ---
 	macErr := macCmd.Wait()
 
-	// --- 5. Kill ESP monitor ---
+	// --- 6. Kill ESP monitor ---
 	fmt.Println("[runner] Mac process exited, killing ESP monitor...")
 	espCmd.Process.Kill()
 	espCmd.Wait()
-
-	// --- Wait for output goroutines to drain all buffered lines ---
-	wg.Wait()
 
 	// --- 6. Parse and report results ---
 	fmt.Println()

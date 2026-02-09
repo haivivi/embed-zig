@@ -182,7 +182,9 @@ fn verifyData(received: []const u8) bool {
 
 fn clientSendChunks(transport: *ClientTransport, data: []const u8) !void {
     const dcs = chunk.dataChunkSize(TEST_MTU);
-    const total: u16 = @intCast(chunk.chunksNeeded(data.len, TEST_MTU));
+    const total_usize = chunk.chunksNeeded(data.len, TEST_MTU);
+    if (total_usize > chunk.max_chunks) return error.TooManyChunks;
+    const total: u16 = @intCast(total_usize);
     const mask_len = chunk.Bitmask.requiredBytes(total);
 
     var sndmask: [chunk.max_mask_bytes]u8 = undefined;
