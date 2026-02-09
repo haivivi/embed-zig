@@ -77,7 +77,7 @@ pub const EpollIO = struct {
 
         // Register eventfd with epoll
         var wake_event = linux.epoll_event{
-            .events = linux.EPOLL.IN,
+            .events = @bitCast(linux.EPOLL.IN),
             .data = .{ .fd = wake_fd },
         };
         try posix.epoll_ctl(epfd, .ADD, wake_fd, &wake_event);
@@ -99,12 +99,12 @@ pub const EpollIO = struct {
 
     /// Register a file descriptor for read readiness.
     pub fn registerRead(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, linux.EPOLL.IN, callback, true);
+        self.registerEvents(fd, @bitCast(linux.EPOLL.IN), callback, true);
     }
 
     /// Register a file descriptor for write readiness.
     pub fn registerWrite(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, linux.EPOLL.OUT, callback, false);
+        self.registerEvents(fd, @bitCast(linux.EPOLL.OUT), callback, false);
     }
 
     /// Shared implementation for registering events on a file descriptor.
@@ -141,7 +141,7 @@ pub const EpollIO = struct {
                 .events = new_events,
                 .data = .{ .fd = fd },
             };
-            const op: u32 = if (is_new) @intFromEnum(linux.EPOLL.CTL_ADD) else @intFromEnum(linux.EPOLL.CTL_MOD);
+            const op: u32 = if (is_new) @bitCast(linux.EPOLL.CTL_ADD) else @bitCast(linux.EPOLL.CTL_MOD);
             posix.epoll_ctl(self.epfd, @enumFromInt(op), fd, &ev) catch |err| {
                 std.log.err("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
@@ -181,11 +181,11 @@ pub const EpollIO = struct {
             }
 
             if (self.registrations.get(fd)) |entry| {
-                if (event.events & linux.EPOLL.IN != 0) {
+                if (event.events & @as(u32, @bitCast(linux.EPOLL.IN)) != 0) {
                     entry.read_cb.call(fd);
                     processed += 1;
                 }
-                if (event.events & linux.EPOLL.OUT != 0) {
+                if (event.events & @as(u32, @bitCast(linux.EPOLL.OUT)) != 0) {
                     entry.write_cb.call(fd);
                     processed += 1;
                 }
