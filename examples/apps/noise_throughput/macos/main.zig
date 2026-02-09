@@ -140,8 +140,8 @@ pub fn main() !void {
     }
     kcp_inst.setDefaultConfig();
 
-    // Set short recv timeout for KCP loop (10ms)
-    const short_timeout = posix.timeval{ .sec = 0, .usec = 10_000 };
+    // Set short recv timeout for KCP loop (1ms for fast KCP updates)
+    const short_timeout = posix.timeval{ .sec = 0, .usec = 1_000 };
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&short_timeout));
 
     // === Phase 4: KCP Echo Throughput ===
@@ -168,31 +168,28 @@ pub fn main() !void {
                 last_update = now;
             }
 
-            // Send data if we haven't sent enough yet
-            if (bytes_sent < total_bytes) {
-                const wait = kcp_inst.waitSnd();
-                if (wait < 256) { // Flow control: don't overfill KCP send queue
-                    const ret = kcp_inst.send(&plaintext);
-                    if (ret >= 0) bytes_sent += chunk_size;
+            // Send 1 chunk per iteration (interleave with recv for flow control)
+            if (bytes_sent < total_bytes and kcp_inst.waitSnd() < 128) {
+                const ret = kcp_inst.send(&plaintext);
+                if (ret >= 0) bytes_sent += chunk_size;
+            }
+
+            // Drain all pending UDP packets + decrypt + KCP input
+            while (true) {
+                var udp_buf: [max_pkt]u8 = undefined;
+                const udp_len = posix.recvfrom(sock, &udp_buf, 0, null, null) catch break;
+                if (udp_len > tag_size) {
+                    var pt: [max_pkt]u8 = undefined;
+                    recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
+                    _ = kcp_inst.input(pt[0 .. udp_len - tag_size]);
                 }
             }
 
-            // Receive UDP + decrypt + KCP input
-            var udp_buf: [max_pkt]u8 = undefined;
-            const udp_len = posix.recvfrom(sock, &udp_buf, 0, null, null) catch |err| {
-                if (err == error.WouldBlock) continue;
-                break;
-            };
-            if (udp_len > tag_size) {
-                var pt: [max_pkt]u8 = undefined;
-                recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
-                _ = kcp_inst.input(pt[0 .. udp_len - tag_size]);
-            }
-
-            // KCP recv
-            var recv_buf: [chunk_size]u8 = undefined;
-            const kcp_len = kcp_inst.recv(&recv_buf);
-            if (kcp_len > 0) {
+            // Drain all KCP recv
+            while (true) {
+                var recv_buf: [chunk_size]u8 = undefined;
+                const kcp_len = kcp_inst.recv(&recv_buf);
+                if (kcp_len <= 0) break;
                 bytes_recv += @intCast(kcp_len);
             }
 
