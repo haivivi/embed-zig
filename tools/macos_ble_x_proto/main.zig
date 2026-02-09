@@ -63,16 +63,10 @@ const ServerTransport = struct {
     rx: RxQueue = .{},
 
     pub fn send(_: *ServerTransport, data: []const u8) !void {
-        // CoreBluetooth transmit queue can fill up. Retry with run loop pump.
-        var retries: u32 = 0;
-        while (retries < 5000) : (retries += 1) {
-            cb.Peripheral.notify(SVC, CHR, data) catch {
-                cb.runLoopOnce(1); // pump events → frees transmit queue
-                continue;
-            };
-            return;
-        }
-        return error.SendFailed;
+        // Use blocking notify with proper flow control via
+        // peripheralManagerIsReadyToUpdateSubscribers delegate.
+        cb.Peripheral.notifyBlocking(SVC, CHR, data, 10_000) catch
+            return error.SendFailed;
     }
 
     pub fn recv(self: *ServerTransport, buf: []u8, timeout_ms: u32) !?usize {
@@ -153,13 +147,27 @@ fn onDeviceFound(name: [*c]const u8, uuid: [*c]const u8, rssi: c_int) callconv(.
 }
 
 // ============================================================================
-// Test data
+// Test data (heap-allocated to avoid 900KB stack frame)
 // ============================================================================
 
-fn generateTestData() ![TEST_DATA_SIZE]u8 {
-    var data: [TEST_DATA_SIZE]u8 = undefined;
-    for (&data, 0..) |*b, i| b.* = @truncate(i);
+const allocator = std.heap.page_allocator;
+
+fn generateTestData() ![]u8 {
+    const data = try allocator.alloc(u8, TEST_DATA_SIZE);
+    for (data, 0..) |*b, i| b.* = @truncate(i);
     return data;
+}
+
+fn freeTestData(data: []u8) void {
+    allocator.free(data);
+}
+
+fn allocRecvBuf() ![]u8 {
+    return try allocator.alloc(u8, TEST_DATA_SIZE + 4096);
+}
+
+fn freeRecvBuf(buf: []u8) void {
+    allocator.free(buf);
 }
 
 fn verifyData(received: []const u8) bool {
@@ -245,24 +253,29 @@ fn runServer() !void {
     while (!g_subscribed) cb.runLoopOnce(100);
     print("Client connected + subscribed!\n\n", .{});
 
+    // Setup persistent transport for both tests (avoid timing gap)
+    var transport = ServerTransport{};
+    g_server_transport = &transport;
+    defer {
+        g_server_transport = null;
+    }
+
     // Test 1: ReadX (Server → Client)
     {
         print("=== Test 1: ReadX (Server → Client) ===\n", .{});
-        const data = generateTestData() catch unreachable;
+        const data = generateTestData() catch {
+            print("Failed to allocate test data\n", .{});
+            return;
+        };
+        defer freeTestData(data);
         print("Data: {} KB, MTU: {}, chunks: {}\n", .{
             TEST_DATA_SIZE / 1024, TEST_MTU, chunk.chunksNeeded(data.len, TEST_MTU),
         });
 
-        var transport = ServerTransport{};
-        g_server_transport = &transport;
-        defer {
-            g_server_transport = null;
-        }
-
         print("Waiting for start magic...\n", .{});
         const start = std.time.milliTimestamp();
 
-        var rx = x_proto.ReadX(ServerTransport).init(&transport, &data, .{
+        var rx = x_proto.ReadX(ServerTransport).init(&transport, data, .{
             .mtu = TEST_MTU,
             .send_redundancy = 1,
             .start_timeout_ms = 60_000,
@@ -280,25 +293,23 @@ fn runServer() !void {
         });
     }
 
-    // Pause
+    // Pause (transport stays active — ESP writes during pause are queued)
     print("Pausing 3s before next test...\n", .{});
     for (0..30) |_| cb.runLoopOnce(100);
 
     // Test 2: WriteX (Client → Server)
     {
         print("=== Test 2: WriteX (Client → Server) ===\n", .{});
-        var recv_buf: [TEST_DATA_SIZE + 4096]u8 = undefined;
-
-        var transport = ServerTransport{};
-        g_server_transport = &transport;
-        defer {
-            g_server_transport = null;
-        }
+        const recv_buf = allocRecvBuf() catch {
+            print("Failed to allocate recv buffer\n", .{});
+            return;
+        };
+        defer freeRecvBuf(recv_buf);
 
         print("Waiting for client chunks...\n", .{});
         const start = std.time.milliTimestamp();
 
-        var wx = x_proto.WriteX(ServerTransport).init(&transport, &recv_buf, .{
+        var wx = x_proto.WriteX(ServerTransport).init(&transport, recv_buf, .{
             .mtu = TEST_MTU,
             .timeout_ms = 30_000,
             .max_retries = 10,
@@ -362,27 +373,46 @@ fn runClient() !void {
     // Wait for service discovery
     for (0..20) |_| cb.runLoopOnce(100);
 
-    // Subscribe
-    _ = cb.Central.subscribe(SVC, CHR) catch {};
-    for (0..10) |_| cb.runLoopOnce(100);
-    print("Subscribed to notifications.\n\n", .{});
+    // Subscribe — if fails (stale GATT cache), force re-discovery
+    if (cb.Central.subscribe(SVC, CHR)) {
+        for (0..10) |_| cb.runLoopOnce(100);
+        print("Subscribed to notifications.\n\n", .{});
+    } else |_| {
+        print("Subscribe failed (stale GATT cache?), forcing re-discovery...\n", .{});
+        cb.Central.rediscover() catch {
+            print("Re-discovery failed\n", .{});
+            return;
+        };
+        for (0..20) |_| cb.runLoopOnce(100);
+        cb.Central.subscribe(SVC, CHR) catch {
+            print("Subscribe still failed after re-discovery\n", .{});
+            return;
+        };
+        for (0..10) |_| cb.runLoopOnce(100);
+        print("Subscribed after re-discovery.\n\n", .{});
+    }
+
+    // Setup persistent transport for both tests
+    var transport = ClientTransport{};
+    g_client_transport = &transport;
+    defer {
+        g_client_transport = null;
+    }
 
     // Test 1: ReadX Client (receive from server)
     {
         print("=== Test 1: ReadX Client (receive from server) ===\n", .{});
-        var recv_buf: [TEST_DATA_SIZE + 4096]u8 = undefined;
-
-        var transport = ClientTransport{};
-        g_client_transport = &transport;
-        defer {
-            g_client_transport = null;
-        }
+        const recv_buf = allocRecvBuf() catch {
+            print("Failed to allocate recv buffer\n", .{});
+            return;
+        };
+        defer freeRecvBuf(recv_buf);
 
         print("Sending start magic...\n", .{});
         try transport.send(&chunk.start_magic);
 
         const start = std.time.milliTimestamp();
-        var wx = x_proto.WriteX(ClientTransport).init(&transport, &recv_buf, .{
+        var wx = x_proto.WriteX(ClientTransport).init(&transport, recv_buf, .{
             .mtu = TEST_MTU,
             .timeout_ms = 30_000,
             .max_retries = 10,
@@ -411,19 +441,17 @@ fn runClient() !void {
     // Test 2: WriteX Client (send to server)
     {
         print("=== Test 2: WriteX Client (send to server) ===\n", .{});
-        const data = generateTestData() catch unreachable;
+        const data = generateTestData() catch {
+            print("Failed to allocate test data\n", .{});
+            return;
+        };
+        defer freeTestData(data);
         print("Data: {} KB, MTU: {}, chunks: {}\n", .{
             TEST_DATA_SIZE / 1024, TEST_MTU, chunk.chunksNeeded(data.len, TEST_MTU),
         });
 
-        var transport = ClientTransport{};
-        g_client_transport = &transport;
-        defer {
-            g_client_transport = null;
-        }
-
         const start = std.time.milliTimestamp();
-        clientSendChunks(&transport, &data) catch |err| {
+        clientSendChunks(&transport, data) catch |err| {
             print("WriteX client FAILED: {}\n", .{err});
             return;
         };

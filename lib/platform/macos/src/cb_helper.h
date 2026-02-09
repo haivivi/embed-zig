@@ -115,17 +115,38 @@ int cb_peripheral_start_advertising(const char *name);
 void cb_peripheral_stop_advertising(void);
 
 /**
- * Send a notification/indication to subscribed centrals.
+ * Send a notification/indication to subscribed centrals (non-blocking).
  *
  * @param svc_uuid  Service UUID
  * @param chr_uuid  Characteristic UUID
  * @param data      Data to send
  * @param len       Data length
- * @return 0 on success
+ * @return 0 on success, -2 char not found, -3 queue full
  */
 int cb_peripheral_notify(
     const char *svc_uuid, const char *chr_uuid,
     const uint8_t *data, uint16_t len
+);
+
+/**
+ * Send a notification with flow control (blocking).
+ *
+ * If the CoreBluetooth transmit queue is full, waits for the
+ * peripheralManagerIsReadyToUpdateSubscribers delegate callback
+ * before retrying. This is the correct way to handle high-throughput
+ * notification sending per Apple's documentation.
+ *
+ * @param svc_uuid    Service UUID
+ * @param chr_uuid    Characteristic UUID
+ * @param data        Data to send
+ * @param len         Data length
+ * @param timeout_ms  Maximum wait time for queue space (ms)
+ * @return 0 on success, -2 char not found, -3 still full after retry, -4 timeout
+ */
+int cb_peripheral_notify_blocking(
+    const char *svc_uuid, const char *chr_uuid,
+    const uint8_t *data, uint16_t len,
+    uint32_t timeout_ms
 );
 
 /** Deinitialize and clean up. */
@@ -159,6 +180,16 @@ int cb_central_connect(const char *peripheral_uuid);
 
 /** Disconnect from the connected peripheral. */
 void cb_central_disconnect(void);
+
+/**
+ * Force re-discovery of GATT services.
+ *
+ * Disconnects and reconnects to clear CoreBluetooth's GATT cache.
+ * Use when discovered UUIDs don't match expected values (stale cache).
+ *
+ * @return 0 on success
+ */
+int cb_central_rediscover(void);
 
 /**
  * Read a characteristic value (blocking).
