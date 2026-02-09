@@ -1,0 +1,11 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_package(
+    name = "timer",
+    deps = ["//lib/trait"],
+    test_deps = ["//lib/platform/std"],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
