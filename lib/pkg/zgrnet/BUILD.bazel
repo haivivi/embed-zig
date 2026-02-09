@@ -1,0 +1,23 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+# zgrnet - Noise Protocol based networking library.
+#
+# Currently builds the noise core module (genericized over Crypto trait).
+# Higher-level modules (net, kcp, relay, host, dns, proxy) are not yet
+# imported from the root and will be added incrementally.
+#
+# The noise module requires a Crypto type providing:
+#   - Blake2s256, ChaCha20Poly1305, X25519
+# Use with lib/pkg/crypto Suite or any trait.crypto-compliant impl.
+zig_package(
+    name = "zgrnet",
+    main = "src/noise.zig",
+    deps = [
+        "//lib/trait",
+        "//lib/pkg/crypto",
+    ],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
