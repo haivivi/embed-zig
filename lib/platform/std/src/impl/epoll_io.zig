@@ -131,7 +131,6 @@ pub const EpollIO = struct {
 
         const new_events = result.value_ptr.events | event_flag;
         const events_changed = new_events != result.value_ptr.events;
-        result.value_ptr.events = new_events;
 
         if (events_changed) {
             // Level-triggered (no EPOLLET). Same rationale as kqueue:
@@ -148,7 +147,10 @@ pub const EpollIO = struct {
                 if (is_new) {
                     _ = self.registrations.fetchRemove(fd);
                 }
+                return;
             };
+            // Only update events after successful epoll_ctl
+            result.value_ptr.events = new_events;
         }
     }
 
