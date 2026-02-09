@@ -80,6 +80,7 @@ func main() {
 	// Collectors for output lines
 	var macLines, espLines []string
 	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	// --- 1. Start Mac process ---
 	fmt.Printf("[runner] Starting Mac tool (%s)...\n", macArg)
@@ -93,7 +94,9 @@ func main() {
 	fmt.Printf("[runner] Mac PID=%d\n", macCmd.Process.Pid)
 
 	// Tee Mac output to terminal + buffer
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(macOut)
 		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
@@ -124,7 +127,9 @@ func main() {
 	fmt.Printf("[runner] ESP monitor PID=%d\n", espCmd.Process.Pid)
 
 	// Tee ESP output to terminal + buffer
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(espOut)
 		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
@@ -144,6 +149,9 @@ func main() {
 	fmt.Println("[runner] Mac process exited, killing ESP monitor...")
 	espCmd.Process.Kill()
 	espCmd.Wait()
+
+	// --- Wait for output goroutines to drain all buffered lines ---
+	wg.Wait()
 
 	// --- 6. Parse and report results ---
 	fmt.Println()

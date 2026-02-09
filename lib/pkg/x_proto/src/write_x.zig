@@ -123,7 +123,7 @@ pub fn WriteX(comptime Transport: type) type {
                 } else {
                     // -- Timeout --
                     timeout_count += 1;
-                    if (timeout_count > self.max_retries) return error.Timeout;
+                    if (timeout_count >= self.max_retries) return error.Timeout;
 
                     // If not initialized yet, just wait more (no loss list to send)
                     if (!initialized) continue;

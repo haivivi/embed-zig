@@ -393,8 +393,8 @@ test "WriteX: out-of-order chunks" {
 
 test "WriteX: timeout gives up after max retries" {
     var mock = MockTransport{};
-    // Script: 6 consecutive timeouts (max_retries=5 → gives up on 6th)
-    for (0..6) |_| {
+    // Script: 5 consecutive timeouts (max_retries=5 → gives up on 5th)
+    for (0..5) |_| {
         mock.scriptTimeout();
     }
 
