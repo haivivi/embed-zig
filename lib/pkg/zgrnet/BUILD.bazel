@@ -18,6 +18,10 @@ zig_package(
         "//lib/trait",
         "//lib/pkg/crypto",
     ],
+    c_srcs = ["@kcp//:srcs"],
+    c_includes = ["src/kcp"],
+    c_flags = ["-O3", "-DNDEBUG", "-fno-sanitize=undefined"],
+    link_libc = True,
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

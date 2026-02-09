@@ -1,4 +1,4 @@
-# Noise Throughput Test - ESP Platform
+# Noise + KCP Throughput Test - ESP Platform
 
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
@@ -12,8 +12,6 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
-# Environment from command line
-# Usage: bazel build ... --define WIFI_SSID=xxx --define WIFI_PASSWORD=xxx
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
@@ -35,8 +33,10 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
         "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
         "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
+        "set(KCP_C_SOURCES ${_ESP_LIB}/pkg/zgrnet/src/kcp/ikcp.c)",
+        "set(KCP_INCLUDE_DIR ${_ESP_LIB}/pkg/zgrnet/src/kcp)",
     ],
-    extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
+    extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS", "KCP_C_SOURCES"],
     deps = [":idf", ":esp",
  "//lib/hal", "//lib/trait", "//lib/pkg/crypto", "//lib/pkg/zgrnet",
  "//lib/pkg/motion", "//lib/pkg/math"],

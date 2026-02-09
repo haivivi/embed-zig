@@ -775,6 +775,9 @@ endif()
 if(COMMAND net_setup_includes)
     net_setup_includes()
 endif()
+if(COMMAND kcp_setup_includes)
+    kcp_setup_includes()
+endif()
 esp_zig_build(
     FORCE_LINK
         {force_link}

@@ -21,6 +21,9 @@ const std = @import("std");
 // Core module (fully genericized over Crypto)
 pub const noise = @import("noise/mod.zig");
 
+// KCP reliable transport (C bindings)
+pub const kcp = @import("kcp/kcp.zig");
+
 // Re-export noise non-generic types for convenience
 pub const Key = noise.Key;
 pub const key_size = noise.key_size;

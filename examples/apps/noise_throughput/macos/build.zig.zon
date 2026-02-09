@@ -5,6 +5,10 @@
     .dependencies = .{
         .crypto = .{ .path = "../../../../lib/pkg/crypto" },
         .zgrnet = .{ .path = "../../../../lib/pkg/zgrnet" },
+        .kcp = .{
+            .url = "https://github.com/skywind3000/kcp/archive/refs/tags/1.7.tar.gz",
+            .hash = "N-V-__8AAMOnBgAQRcPBLjneHujXuhWEDtVGruVOuwd_bv78",
+        },
     },
     .paths = .{
         "build.zig",
