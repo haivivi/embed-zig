@@ -1,4 +1,5 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_pwm")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -8,6 +9,9 @@ filegroup(
         "//examples/apps/pwm_fade:app_srcs",
     ] + glob(["**/*"]),
 )
+
+bk_pwm(name = "pwm")
+bk_config(name = "kconfig", modules = [":pwm"])
 
 bk_modules()
 
@@ -20,7 +24,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_pwm",
     ],
-    kconfig_ap = "//examples/bk:bk7258_pwm",
+    kconfig_ap = ":kconfig",
 )
 
 bk_flash(name = "flash", app = ":app")

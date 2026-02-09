@@ -1,4 +1,5 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_audio", "bk_config")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -6,6 +7,9 @@ filegroup(
     name = "srcs",
     srcs = ["//examples/apps/speaker_test:app_srcs"] + glob(["**/*"]),
 )
+
+bk_audio(name = "audio")
+bk_config(name = "kconfig", modules = [":audio"])
 
 bk_modules()
 
@@ -20,7 +24,7 @@ bk_zig_app(
     ],
     requires = ["bk_audio"],
     base_project = "audio_player_example",
-    kconfig_ap = "//examples/bk:bk7258_audio",
+    kconfig_ap = ":kconfig",
 )
 
 bk_flash(name = "flash", app = ":app")
