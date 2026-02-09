@@ -1,97 +1,51 @@
 //! Timer — Delayed callback scheduling
 //!
-//! Provides a cross-platform timer service with comptime HW/SW selection:
-//! - If a HAL timer is provided, delegates to hardware (esp_timer, timerfd, etc.)
-//! - If no HAL timer, uses software fallback (Mutex + ArrayList + manual advance)
+//! Software timer service using async primitives (Mutex).
+//! The caller drives time by calling `advance(delta_ms)` in a loop.
+//! No OS timer dependency, no background thread — the caller controls
+//! the tick rate (e.g., 1ms for KCP).
 //!
-//! ## Hardware Timer (ESP32, etc.)
-//!
-//! ```zig
-//! const HwTimer = hal.timer.from(esp_timer_spec);
-//! const Timer = timer.TimerService(Rt, HwTimer);
-//!
-//! var hw_driver = try EspTimerDriver.init();
-//! var hw_timer = HwTimer.init(&hw_driver);
-//! var ts = Timer.initHw(&hw_timer);
-//! defer ts.deinit();
-//!
-//! const handle = ts.schedule(100, myCallback, &ctx);
-//! ts.cancel(handle);
-//! ```
-//!
-//! ## Software Timer (desktop/server, testing)
+//! ## Usage
 //!
 //! ```zig
-//! const Timer = timer.TimerService(Rt, null);
+//! const Rt = @import("std_impl").runtime;
+//! const Timer = timer.TimerService(Rt);
 //!
 //! var ts = Timer.init(allocator);
 //! defer ts.deinit();
 //!
-//! _ = ts.schedule(100, myCallback, &ctx);
+//! const handle = ts.schedule(100, myCallback, &ctx);
+//! // ... later, cancel if needed:
+//! ts.cancel(handle);
 //!
-//! // Caller drives time (e.g., 1ms loop for KCP):
+//! // Drive time forward (e.g., in a 1ms loop):
 //! _ = ts.advance(1);
 //! ```
 
 const std = @import("std");
 const trait = @import("trait");
-const hal = @import("hal");
 
-/// Timer callback type — reuses hal.timer / spawner.TaskFn
-pub const Callback = hal.TimerCallback;
+/// Callback type — reuses spawner.TaskFn: `*const fn (?*anyopaque) void`
+pub const Callback = trait.spawner.TaskFn;
 
-/// Timer handle — re-exported from hal.timer
-pub const TimerHandle = hal.TimerHandle;
+/// Handle to a scheduled timer, used for cancellation.
+pub const TimerHandle = struct {
+    id: u64,
 
-/// Timer service with comptime HW/SW backend selection.
-///
-/// - `Rt`: Runtime type providing Mutex (for software fallback)
-/// - `HwTimer`: optional HAL timer type from `hal.timer.from(spec)`.
-///   Pass `null` for software-only mode.
-pub fn TimerService(comptime Rt: type, comptime HwTimer: ?type) type {
-    if (HwTimer) |Hw| {
-        return HwTimerService(Hw);
-    } else {
-        return SwTimerService(Rt);
+    /// A null handle representing no timer.
+    pub const null_handle: TimerHandle = .{ .id = 0 };
+
+    /// Check if this is a valid (non-null) handle.
+    pub fn isValid(self: TimerHandle) bool {
+        return self.id != 0;
     }
-}
+};
 
-// ============================================================================
-// Hardware Timer Backend
-// ============================================================================
-
-fn HwTimerService(comptime Hw: type) type {
-    return struct {
-        const Self = @This();
-
-        hw: *Hw,
-
-        /// Initialize with a HAL timer instance.
-        pub fn initHw(hw: *Hw) Self {
-            return .{ .hw = hw };
-        }
-
-        pub fn deinit(self: *Self) void {
-            _ = self;
-        }
-
-        /// Schedule a callback to fire after `delay_ms` milliseconds.
-        pub fn schedule(self: *Self, delay_ms: u32, callback: Callback, ctx: ?*anyopaque) TimerHandle {
-            return self.hw.schedule(delay_ms, callback, ctx);
-        }
-
-        /// Cancel a scheduled timer.
-        pub fn cancel(self: *Self, handle: TimerHandle) void {
-            self.hw.cancel(handle);
-        }
-    };
-}
-
-// ============================================================================
-// Software Timer Backend
-// ============================================================================
-
-fn SwTimerService(comptime Rt: type) type {
+/// Software timer service — delayed callback scheduling with manual time advancement.
+///
+/// Generic over `Rt` for cross-platform Mutex support (ESP32 / std).
+/// Only requires `Rt.Mutex` (no Condition or Spawner needed).
+pub fn TimerService(comptime Rt: type) type {
     const Mutex = trait.sync.Mutex(Rt.Mutex);
 
     return struct {
@@ -119,7 +73,7 @@ fn SwTimerService(comptime Rt: type) type {
         next_id: u64,
         mutex: Mutex,
 
-        /// Initialize software timer service.
+        /// Initialize timer service.
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .timers = .{},
@@ -238,8 +192,8 @@ test "TimerHandle validity" {
     try std.testing.expect(valid.isValid());
 }
 
-test "Software TimerService schedule and advance" {
-    const Timer = TimerService(TestRt, null);
+test "TimerService schedule and advance" {
+    const Timer = TimerService(TestRt);
     var ts = Timer.init(std.testing.allocator);
     defer ts.deinit();
 
@@ -260,8 +214,8 @@ test "Software TimerService schedule and advance" {
     try std.testing.expectEqual(@as(usize, 1), fired);
 }
 
-test "Software TimerService cancel" {
-    const Timer = TimerService(TestRt, null);
+test "TimerService cancel" {
+    const Timer = TimerService(TestRt);
     var ts = Timer.init(std.testing.allocator);
     defer ts.deinit();
 
@@ -281,8 +235,8 @@ test "Software TimerService cancel" {
     try std.testing.expectEqual(@as(usize, 0), ts.pendingCount());
 }
 
-test "Software TimerService multiple timers ordering" {
-    const Timer = TimerService(TestRt, null);
+test "TimerService multiple timers ordering" {
+    const Timer = TimerService(TestRt);
     var ts = Timer.init(std.testing.allocator);
     defer ts.deinit();
 
@@ -319,46 +273,4 @@ test "Software TimerService multiple timers ordering" {
     try std.testing.expectEqual(@as(u8, 3), idx);
 
     try std.testing.expectEqualSlices(u8, "ABC", &order);
-}
-
-test "Hardware TimerService delegates to driver" {
-    const MockDriver = struct {
-        last_delay: u32 = 0,
-        cancelled_id: u64 = 0,
-        next_id: u64 = 1,
-
-        pub fn schedule(self: *@This(), delay_ms: u32, _: Callback, _: ?*anyopaque) TimerHandle {
-            self.last_delay = delay_ms;
-            const handle = TimerHandle{ .id = self.next_id };
-            self.next_id += 1;
-            return handle;
-        }
-
-        pub fn cancel(self: *@This(), handle: TimerHandle) void {
-            self.cancelled_id = handle.id;
-        }
-    };
-
-    const TestSpec = struct {
-        pub const Driver = MockDriver;
-        pub const meta = .{ .id = "timer.mock" };
-    };
-
-    const HwTimer = hal.timer.from(TestSpec);
-    const Timer = TimerService(TestRt, HwTimer);
-
-    var driver = MockDriver{};
-    var hw = HwTimer.init(&driver);
-    var ts = Timer.initHw(&hw);
-    defer ts.deinit();
-
-    const handle = ts.schedule(42, struct {
-        fn cb(_: ?*anyopaque) void {}
-    }.cb, null);
-
-    try std.testing.expectEqual(@as(u32, 42), driver.last_delay);
-    try std.testing.expect(handle.isValid());
-
-    ts.cancel(handle);
-    try std.testing.expectEqual(handle.id, driver.cancelled_id);
 }

@@ -7,7 +7,7 @@ const std = @import("std");
 const timer_pkg = @import("timer");
 
 const StdRt = @import("runtime");
-const Timer = timer_pkg.TimerService(StdRt, null);
+const Timer = timer_pkg.TimerService(StdRt);
 const TimerHandle = timer_pkg.TimerHandle;
 
 fn printLog(comptime fmt: []const u8, args: anytype) void {

@@ -6,9 +6,6 @@
         .trait = .{
             .path = "../../trait",
         },
-        .hal = .{
-            .path = "../../hal",
-        },
         .std_impl = .{
             .path = "../../platform/std",
         },

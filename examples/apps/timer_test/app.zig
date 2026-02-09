@@ -1,7 +1,7 @@
-//! Timer Test — ESP platform (hardware timer via esp_timer)
+//! Timer Test — ESP platform (software timer)
 //!
-//! Demonstrates lib/pkg/timer with hardware backend on ESP32.
-//! Schedules callbacks using esp_timer, verifies they fire correctly.
+//! Demonstrates lib/pkg/timer on ESP32. Uses a FreeRTOS task
+//! to drive advance(1) every 1ms.
 
 const std = @import("std");
 const hal = @import("hal");
@@ -9,16 +9,29 @@ const esp = @import("esp");
 const timer_pkg = @import("timer");
 
 const idf = esp.idf;
-const impl = esp.impl;
 const EspRt = idf.runtime;
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
 
-const HwTimer = hal.timer.from(impl.timer.timer_spec);
-const Timer = timer_pkg.TimerService(EspRt, HwTimer);
+const Timer = timer_pkg.TimerService(EspRt);
 const TimerHandle = timer_pkg.TimerHandle;
+
+// ============================================================================
+// Timer tick task — drives advance(1) every 1ms
+// ============================================================================
+
+var g_timer: *Timer = undefined;
+var g_running: bool = true;
+
+fn timerTickTask(ctx: ?*anyopaque) void {
+    _ = ctx;
+    while (g_running) {
+        _ = g_timer.advance(1);
+        idf.time.sleepMs(1);
+    }
+}
 
 // ============================================================================
 // Test 1: Single timer fires
@@ -36,7 +49,6 @@ fn testSingleTimer(ts: *Timer) void {
     test1_fired = false;
     _ = ts.schedule(100, test1Callback, null);
 
-    // Wait for timer to fire
     idf.time.sleepMs(200);
 
     if (test1_fired) {
@@ -61,7 +73,7 @@ fn testCancel(ts: *Timer) void {
 
     test2_fired = false;
     const handle = ts.schedule(200, test2Callback, null);
-    log.info("  scheduled 200ms timer, handle.id={d}", .{handle.id});
+    log.info("  scheduled 200ms timer", .{});
 
     idf.time.sleepMs(50);
     ts.cancel(handle);
@@ -118,11 +130,10 @@ fn testMultiple(ts: *Timer) void {
 
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
-    log.info("Timer Test (ESP, hardware esp_timer)", .{});
+    log.info("Timer Test (ESP, software timer)", .{});
     log.info("Board: {s}", .{Board.meta.id});
     log.info("==========================================", .{});
 
-    // Init board
     var board: Board = undefined;
     board.init() catch |err| {
         log.err("Failed to init board: {}", .{err});
@@ -130,12 +141,18 @@ pub fn run(_: anytype) void {
     };
     defer board.deinit();
 
-    // Init HW timer driver + TimerService
-    var timer_driver = impl.EspTimerDriver.init();
-    defer timer_driver.deinit();
-    var hw_timer = HwTimer.init(&timer_driver);
-    var ts = Timer.initHw(&hw_timer);
+    // Init software timer + tick task
+    var ts = Timer.init(idf.heap.psram);
     defer ts.deinit();
+    g_timer = &ts;
+
+    EspRt.spawn("timer_tick", timerTickTask, null, .{
+        .stack_size = 4096,
+        .priority = 10,
+    }) catch |err| {
+        log.err("Failed to spawn tick task: {}", .{err});
+        return;
+    };
 
     // Run tests
     testSingleTimer(&ts);
@@ -146,6 +163,8 @@ pub fn run(_: anytype) void {
 
     testMultiple(&ts);
     log.info("", .{});
+
+    g_running = false;
 
     log.info("==========================================", .{});
     log.info("All tests completed!", .{});

@@ -4,10 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "timer",
-    deps = [
-        "//lib/trait",
-        "//lib/hal",
-    ],
+    deps = ["//lib/trait"],
     test_deps = ["//lib/platform/std"],
 )
 
