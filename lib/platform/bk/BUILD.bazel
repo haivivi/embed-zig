@@ -1,10 +1,24 @@
 package(default_visibility = ["//visibility:public"])
 
-# Direct cross-compilation to ARM Cortex-M33 ELF object
-# Note: -target must come BEFORE -Mroot= for Zig 0.15+
+# =============================================================================
+# BK7258 Platform — Zig sources compiled to ARM Cortex-M33 ELF
+# =============================================================================
+
+filegroup(
+    name = "zig_srcs",
+    srcs = glob([
+        "bk.zig",
+        "armino/src/**/*.zig",
+        "impl/src/**/*.zig",
+        "src/**/*.zig",
+    ]),
+)
+
+# Cross-compile all Zig platform code to a single ARM .o
+# Uses relative @import paths (no multi-module -M needed)
 genrule(
     name = "bk_zig_arm",
-    srcs = ["src/bk.zig"],
+    srcs = [":zig_srcs"],
     outs = ["bk_zig.o"],
     cmd = """
         TMPDIR=$$(mktemp -d) && \
@@ -13,7 +27,7 @@ genrule(
             -mcpu cortex_m33 \
             -O ReleaseSmall \
             -fno-stack-check \
-            -Mroot=$(location src/bk.zig) \
+            -Mroot=lib/platform/bk/bk.zig \
             --cache-dir $$TMPDIR/cache \
             --global-cache-dir $$TMPDIR/gcache \
             -femit-bin=$@ && \
@@ -25,8 +39,8 @@ genrule(
     ],
 )
 
-# C helper sources (compiled by Armino's GCC)
+# C helper sources (compiled by Armino's GCC, not by Zig)
 filegroup(
     name = "c_helpers",
-    srcs = ["src/bk_zig_helper.c"],
+    srcs = ["armino/src/bk_zig_helper.c"],
 )
