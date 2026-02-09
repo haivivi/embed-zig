@@ -213,8 +213,8 @@ bk_zig_app = rule(
             doc = "C helper files compiled by Armino's GCC (linked to AP side).",
         ),
         "requires": attr.string_list(
-            default = ["lwip_intf_v2_1"],
-            doc = "Armino component requirements for AP CMakeLists (e.g., lwip_intf_v2_1, bk_audio)",
+            default = [],
+            doc = "Additional Armino component requirements for AP CMakeLists (e.g., bk_audio). driver and lwip are always included.",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

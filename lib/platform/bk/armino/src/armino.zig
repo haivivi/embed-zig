@@ -20,4 +20,6 @@ pub const time = @import("time.zig");
 pub const rtos = @import("rtos.zig");
 pub const socket = @import("socket.zig");
 pub const wifi = @import("wifi.zig");
+pub const gpio = @import("gpio.zig");
+pub const pwm = @import("pwm.zig");
 pub const speaker = @import("speaker.zig");

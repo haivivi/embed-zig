@@ -28,6 +28,18 @@ filegroup(
     srcs = ["src/bk_zig_socket_helper.c"],
 )
 
+# GPIO helper
+filegroup(
+    name = "c_helpers_gpio",
+    srcs = ["src/bk_zig_gpio_helper.c"],
+)
+
+# PWM helper
+filegroup(
+    name = "c_helpers_pwm",
+    srcs = ["src/bk_zig_pwm_helper.c"],
+)
+
 # Speaker helper (AP-only, needs bk_audio)
 filegroup(
     name = "c_helpers_speaker",
