@@ -167,7 +167,7 @@ pub const EpollIO = struct {
     /// Pass -1 for timeout_ms to block indefinitely.
     /// Returns the number of events processed.
     pub fn poll(self: *Self, timeout_ms: i32) usize {
-        const n = posix.epoll_wait(self.epfd, &self.events, timeout_ms) catch return 0;
+        const n = posix.epoll_wait(self.epfd, &self.events, timeout_ms);
 
         var processed: usize = 0;
         for (self.events[0..n]) |event| {
