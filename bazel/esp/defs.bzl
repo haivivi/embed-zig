@@ -640,7 +640,6 @@ def _esp_zig_app_impl(ctx):
     build_zig_modules = []  # Lines for module creation
     build_zig_imports = []  # Lines for addImport
     build_zig_includes = []  # Lines for addIncludePath (per-module C headers)
-    needs_libc = False
     seen = {"main": True}
     
     for encoded in all_module_strings.to_list():
@@ -667,9 +666,6 @@ def _esp_zig_app_impl(ctx):
                 '    {name}_mod.addImport("{dep}", {dep}_mod);'.format(name = mod.name, dep = dep_name)
             )
         
-        if mod.link_libc:
-            needs_libc = True
-    
     # Main module imports
     main_imports = ""
     for d in main_dep_names:
@@ -701,6 +697,9 @@ def _esp_zig_app_impl(ctx):
     esp_include_all_modules = "\n".join(esp_include_lines)
     # Same but using p2 variable (for IDF component scan section)
     esp_include_all_modules_idf = "\n".join([l.replace("(p)", "(p2)") for l in esp_include_lines])
+    # Same but using .cwd_relative for toolchain includes (direct LazyPath)
+    esp_include_all_modules_tc = "\n".join([l.replace("addIncludePath(p)", "addIncludePath(tc_inc)") for l in esp_include_lines])
+    esp_sysinclude_all_modules_tc = "\n".join([l.replace("addIncludePath(p)", "addSystemIncludePath(tc_sys)") for l in esp_include_lines])
     
     # Collect pre-compiled static libraries (.a) for linking at CMake level
     # (not in build.zig — addObjectFile doesn't embed .a into static lib output)
@@ -818,11 +817,11 @@ pub fn build(b: *std.Build) void {{
     if (idf_path.len > 0) {{
         defer b.allocator.free(idf_path);
         const comp = b.pathJoin(&.{{ idf_path, "components" }});
-        var dir = std.fs.cwd().openDir(comp, .{{ .iterate = true }}) catch unreachable;
+        var dir = std.fs.cwd().openDir(comp, .{{ .iterate = true }}) catch return;
         defer dir.close();
         var added = std.StringHashMap(void).init(b.allocator);
         defer added.deinit();
-        var walker = dir.walk(b.allocator) catch unreachable;
+        var walker = dir.walk(b.allocator) catch return;
         defer walker.deinit();
         while (walker.next() catch null) |entry| {{
             if (std.mem.eql(u8, std.fs.path.extension(entry.basename), ".h")) {{
@@ -853,9 +852,14 @@ pub fn build(b: *std.Build) void {{
             if (e.kind == .directory and std.mem.startsWith(u8, e.name, "esp-")) {{ ver = b.dupe(e.name); break; }}
         }}
         if (ver) |v| {{
-            root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, "include" }}) }});
-            root_module.addSystemIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "sys-include" }}) }});
-            root_module.addIncludePath(.{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "include" }}) }});
+            const tc_inc: std.Build.LazyPath = .{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, "include" }}) }};
+            const tc_sys: std.Build.LazyPath = .{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "sys-include" }}) }};
+            const tc_inc2: std.Build.LazyPath = .{{ .cwd_relative = b.pathJoin(&.{{ tbase, v, archtools, archtools, "include" }}) }};
+            root_module.addIncludePath(tc_inc);
+            root_module.addSystemIncludePath(tc_sys);
+            root_module.addIncludePath(tc_inc2);
+{esp_include_all_modules_tc}
+{esp_sysinclude_all_modules_tc}
         }}
     }}
     const lib = b.addLibrary(.{{ .name = "main_zig", .linkage = .static, .root_module = root_module }});
@@ -1006,6 +1010,8 @@ exec bash "{build_sh}"
         main_imports = main_imports,
         esp_include_all_modules = esp_include_all_modules,
         esp_include_all_modules_idf = esp_include_all_modules_idf,
+        esp_include_all_modules_tc = esp_include_all_modules_tc,
+        esp_sysinclude_all_modules_tc = esp_sysinclude_all_modules_tc,
         static_lib_copies = "\n".join(static_lib_copy_cmds),
         static_lib_links = "\n".join(static_lib_link_cmds),
         idf_deps_yml = idf_deps_yml,
