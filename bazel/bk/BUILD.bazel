@@ -1,6 +1,14 @@
+load("//bazel/bk:defs.bzl", "bk_monitor")
+
 package(default_visibility = ["//visibility:public"])
 
+# Build scripts
 filegroup(
     name = "scripts",
-    srcs = glob(["scripts/**"]),
+    srcs = glob(["scripts/*.sh"]),
+)
+
+# Serial monitor — bazel run //bazel/bk:monitor
+bk_monitor(
+    name = "monitor",
 )

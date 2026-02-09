@@ -239,7 +239,7 @@ detect_bk_port "{port}" "bk_flash" || exit 1
 echo "[bk_flash] Flashing {bin} to $PORT..."
 "$BK_LOADER" download \\
     -p "$PORT" \\
-    -b 1500000 \\
+    -b 115200 \\
     --reset_baudrate 115200 \\
     --reset_type 1 \\
     -i "{bin}" \\

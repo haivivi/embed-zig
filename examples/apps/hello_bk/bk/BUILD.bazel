@@ -1,6 +1,6 @@
 # Hello BK7258 - BK Platform
 
-load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_monitor", "bk_zig_app")
+load("//bazel/bk:defs.bzl", "bk_modules", "bk_flash", "bk_zig_app")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -23,8 +23,4 @@ bk_zig_app(
 bk_flash(
     name = "flash",
     app = ":app",
-)
-
-bk_monitor(
-    name = "monitor",
 )
