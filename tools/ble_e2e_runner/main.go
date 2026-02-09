@@ -79,7 +79,8 @@ func main() {
 	// Collectors for output lines
 	var macLines, espLines []string
 	var mu sync.Mutex
-	var wg sync.WaitGroup
+	// Separate WaitGroups: Mac exits naturally, ESP monitor must be killed.
+	var macWg, espWg sync.WaitGroup
 
 	// --- 1. Start Mac process ---
 	fmt.Printf("[runner] Starting Mac tool (%s)...\n", macArg)
@@ -93,9 +94,9 @@ func main() {
 	fmt.Printf("[runner] Mac PID=%d\n", macCmd.Process.Pid)
 
 	// Tee Mac output to terminal + buffer
-	wg.Add(1)
+	macWg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer macWg.Done()
 		scanner := bufio.NewScanner(macOut)
 		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
@@ -126,9 +127,9 @@ func main() {
 	fmt.Printf("[runner] ESP monitor PID=%d\n", espCmd.Process.Pid)
 
 	// Tee ESP output to terminal + buffer
-	wg.Add(1)
+	espWg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer espWg.Done()
 		scanner := bufio.NewScanner(espOut)
 		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
@@ -140,20 +141,18 @@ func main() {
 		}
 	}()
 
-	// --- 4. Wait for output goroutines to finish reading all pipe data ---
-	// Per Go os/exec docs: Wait must not be called before all reads from
-	// the pipe have completed. Goroutines read until EOF (pipe closed by
-	// process exit), then wg.Done().
+	// --- 4. Wait for Mac pipe to drain, then call Wait ---
+	// Mac process exits after tests complete. Wait for its goroutine first
+	// (per os/exec docs), then call Wait.
 	fmt.Println("[runner] Waiting for tests to complete...")
-	wg.Wait()
-
-	// --- 5. Now safe to call Wait (all pipe reads done) ---
+	macWg.Wait()
 	macErr := macCmd.Wait()
 
-	// --- 6. Kill ESP monitor ---
+	// --- 5. Kill ESP monitor (long-running, never exits on its own) ---
 	fmt.Println("[runner] Mac process exited, killing ESP monitor...")
 	espCmd.Process.Kill()
 	espCmd.Wait()
+	espWg.Wait() // drain any remaining ESP output
 
 	// --- 6. Parse and report results ---
 	fmt.Println()
