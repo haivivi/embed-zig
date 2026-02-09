@@ -145,6 +145,7 @@ export BK_C_HELPERS="{c_helpers}"
 export BK_AP_ZIG="{ap_zig}"
 export BK_CP_ZIG="{cp_zig}"
 export BK_BK_ZIG="{bk_zig}"
+export BK_AP_REQUIRES="{requires}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -154,6 +155,7 @@ exec bash "$E/{build_sh}"
         ap_zig = ap_zig.path,
         cp_zig = cp_zig.path,
         bk_zig = bk_zig.path,
+        requires = " ".join(ctx.attr.requires),
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -209,6 +211,10 @@ bk_zig_app = rule(
         "c_helpers": attr.label_list(
             allow_files = [".c", ".h"],
             doc = "C helper files compiled by Armino's GCC (linked to AP side).",
+        ),
+        "requires": attr.string_list(
+            default = ["lwip_intf_v2_1"],
+            doc = "Armino component requirements for AP CMakeLists (e.g., lwip_intf_v2_1, bk_audio)",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
