@@ -8,6 +8,8 @@ const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
     .lichuang_szp => @import("esp/lichuang_szp.zig"),
     .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
+    .sim_raylib => @import("esp/sim_raylib.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
 };
 
 const spec = struct {

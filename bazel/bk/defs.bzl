@@ -56,10 +56,11 @@ def bk_modules():
 # =============================================================================
 
 def _find_zig_file(files, names):
-    """Find first .zig file matching any of the given basenames."""
-    for f in files:
-        if f.basename in names:
-            return f
+    """Find .zig file matching names in priority order."""
+    for name in names:
+        for f in files:
+            if f.basename == name:
+                return f
     for f in files:
         if f.path.endswith(".zig"):
             return f
@@ -111,21 +112,32 @@ def _bk_zig_app_impl(ctx):
             all_dep_files.extend(info.transitive_srcs.to_list())
             all_dep_files.extend(info.transitive_c_inputs.to_list())
 
-    # Find root .zig files
+    # Find root .zig file
     ap_zig = _find_zig_file(ap_files, ["app.zig", "entry.zig"])
     if not ap_zig:
         fail("No .zig file found in ap sources")
+
+    # Cross-platform mode: find app.zig in shared sources
+    app_zig = None
+    if ctx.attr.cross_platform:
+        for f in ap_files:
+            if f.basename == "app.zig":
+                app_zig = f
+                break
+        if not app_zig:
+            fail("cross_platform=True but no app.zig found in ap sources")
 
     cp_zig = _find_zig_file(cp_files, ["base.zig", "cp.zig", "entry.zig"])
     if not cp_zig:
         fail("No .zig file found in cp sources")
 
-    # Find bk.zig root from deps
+    # Find bk.zig root from deps + collect all module info
     bk_zig = None
+    module_entries = []  # "name:root_path" pairs for build.sh
     for info in dep_infos:
         if info.module_name == "bk":
             bk_zig = info.root_source
-            break
+        module_entries.append("{}:{}".format(info.module_name, info.root_source.path))
     if not bk_zig:
         fail("No 'bk' module found in deps. Did you call bk_modules()?")
 
@@ -150,6 +162,8 @@ export BK_FORCE_LINK="{force_link}"
 export BK_BASE_PROJECT="{base_project}"
 export BK_KCONFIG_AP="{kconfig_ap}"
 export BK_KCONFIG_CP="{kconfig_cp}"
+export BK_MODULES="{modules}"
+export BK_APP_ZIG="{app_zig}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -164,6 +178,8 @@ exec bash "$E/{build_sh}"
         base_project = ctx.attr.base_project,
         kconfig_ap = ctx.file.kconfig_ap.path if ctx.file.kconfig_ap else "",
         kconfig_cp = ctx.file.kconfig_cp.path if ctx.file.kconfig_cp else "",
+        modules = " ".join(module_entries),
+        app_zig = app_zig.path if app_zig else "",
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -246,6 +262,11 @@ bk_zig_app = rule(
         "kconfig_cp": attr.label(
             allow_single_file = True,
             doc = "CP Kconfig target (from bk_config rule). Appended to base project config.",
+        ),
+        "cross_platform": attr.bool(
+            default = False,
+            doc = "True = cross-platform app (generates main.zig bridge, app.zig becomes 'app' module). " +
+                  "False = BK-only app (app.zig exports zig_main directly).",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

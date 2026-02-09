@@ -37,45 +37,129 @@ compile_zig_lib() {
 
     mkdir -p "$OUT_DIR"
 
-    # Generate build.zig
-    cat > "$OUT_DIR/build.zig" << 'BUILDZIGEOF'
-const std = @import("std");
-pub fn build(b: *std.Build) void {
-    const target = b.resolveTargetQuery(.{
-        .cpu_arch = .thumb,
-        .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m33 },
-        .os_tag = .freestanding,
-        .abi = .eabihf,
-    });
-    const optimize: std.builtin.OptimizeMode = .ReleaseSmall;
-
-    const bk_mod = b.createModule(.{
-        .root_source_file = .{ .cwd_relative = "$BK_ZIG_PLACEHOLDER" },
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const root_mod = b.createModule(.{
-        .root_source_file = .{ .cwd_relative = "$APP_ZIG_PLACEHOLDER" },
-        .target = target,
-        .optimize = optimize,
-    });
-    root_mod.addImport("bk", bk_mod);
-
-    const lib = b.addLibrary(.{
-        .name = "$LIB_NAME_PLACEHOLDER",
-        .linkage = .static,
-        .root_module = root_mod,
-    });
-    b.installArtifact(lib);
+    # For cross-platform apps (BK_APP_ZIG set): generate main.zig bridge
+    local ROOT_ZIG="$E/$APP_ZIG"
+    if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+        cat > "$OUT_DIR/main.zig" << 'MAINEOF'
+const app = @import("app");
+export fn zig_main() callconv(.c) void {
+    app.run(.{});
 }
-BUILDZIGEOF
+MAINEOF
+        ROOT_ZIG="$OUT_DIR/main.zig"
+        echo "[bk_build] Generated main.zig bridge (cross-platform mode)"
+    fi
 
-    # Replace placeholders
-    sed -i.bak "s|\$BK_ZIG_PLACEHOLDER|$E/$BK_ZIG|g" "$OUT_DIR/build.zig"
-    sed -i.bak "s|\$APP_ZIG_PLACEHOLDER|$E/$APP_ZIG|g" "$OUT_DIR/build.zig"
-    sed -i.bak "s|\$LIB_NAME_PLACEHOLDER|$NAME|g" "$OUT_DIR/build.zig"
-    rm -f "$OUT_DIR/build.zig.bak"
+    # Generate build.zig dynamically with all dep modules
+    {
+        echo 'const std = @import("std");'
+        echo 'pub fn build(b: *std.Build) void {'
+        echo '    const target = b.resolveTargetQuery(.{'
+        echo '        .cpu_arch = .thumb,'
+        echo '        .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m33 },'
+        echo '        .os_tag = .freestanding,'
+        echo '        .abi = .eabihf,'
+        echo '    });'
+        echo '    const optimize: std.builtin.OptimizeMode = .ReleaseSmall;'
+        echo ''
+
+        # Declare each dep module
+        local mod_idx=0
+        for entry in $BK_MODULES; do
+            local mod_name="${entry%%:*}"
+            local mod_path="${entry#*:}"
+            echo "    const mod_${mod_idx} = b.createModule(.{"
+            echo "        .root_source_file = .{ .cwd_relative = \"$E/$mod_path\" },"
+            echo '        .target = target,'
+            echo '        .optimize = optimize,'
+            echo '    });'
+            mod_idx=$((mod_idx + 1))
+        done
+
+        # Add cross-platform app module (if BK_APP_ZIG is set)
+        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+            # Generate build_options module (provides .board enum)
+            # All board variants are listed so platform.zig switch compiles,
+            # but only .bk7258 branch is evaluated at comptime.
+            cat > "$OUT_DIR/build_options.zig" << 'OPTEOF'
+pub const Board = enum {
+    bk7258,
+    // ESP boards (needed for platform.zig switch exhaustiveness)
+    esp32s3_devkit,
+    korvo2_v3,
+    lichuang_szp,
+    lichuang_gocool,
+    sim_raylib,
+};
+pub const board: Board = .bk7258;
+OPTEOF
+            echo "    const build_options_mod = b.createModule(.{"
+            echo "        .root_source_file = .{ .cwd_relative = \"$OUT_DIR/build_options.zig\" },"
+            echo '        .target = target,'
+            echo '        .optimize = optimize,'
+            echo '    });'
+            echo "    const app_mod = b.createModule(.{"
+            echo "        .root_source_file = .{ .cwd_relative = \"$E/$BK_APP_ZIG\" },"
+            echo '        .target = target,'
+            echo '        .optimize = optimize,'
+            echo '    });'
+            echo '    app_mod.addImport("build_options", build_options_mod);'
+        fi
+        echo ''
+
+        # Wire up inter-module dependencies (each module can import all others)
+        mod_idx=0
+        for entry in $BK_MODULES; do
+            local mod_name="${entry%%:*}"
+            local inner_idx=0
+            for inner_entry in $BK_MODULES; do
+                local inner_name="${inner_entry%%:*}"
+                if [ "$mod_name" != "$inner_name" ]; then
+                    echo "    mod_${mod_idx}.addImport(\"$inner_name\", mod_${inner_idx});"
+                fi
+                inner_idx=$((inner_idx + 1))
+            done
+            mod_idx=$((mod_idx + 1))
+        done
+
+        # App module imports all dep modules
+        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+            mod_idx=0
+            for entry in $BK_MODULES; do
+                local mod_name="${entry%%:*}"
+                echo "    app_mod.addImport(\"$mod_name\", mod_${mod_idx});"
+                mod_idx=$((mod_idx + 1))
+            done
+        fi
+        echo ''
+
+        # Root module
+        echo '    const root_mod = b.createModule(.{'
+        echo "        .root_source_file = .{ .cwd_relative = \"$ROOT_ZIG\" },"
+        echo '        .target = target,'
+        echo '        .optimize = optimize,'
+        echo '    });'
+
+        # Root module imports
+        mod_idx=0
+        for entry in $BK_MODULES; do
+            local mod_name="${entry%%:*}"
+            echo "    root_mod.addImport(\"$mod_name\", mod_${mod_idx});"
+            mod_idx=$((mod_idx + 1))
+        done
+        if [ "$NAME" = "bk_zig_ap" ] && [ -n "$BK_APP_ZIG" ]; then
+            echo '    root_mod.addImport("app", app_mod);'
+        fi
+        echo ''
+
+        echo '    const lib = b.addLibrary(.{'
+        echo "        .name = \"$NAME\","
+        echo '        .linkage = .static,'
+        echo '        .root_module = root_mod,'
+        echo '    });'
+        echo '    b.installArtifact(lib);'
+        echo '}'
+    } > "$OUT_DIR/build.zig"
 
     # Minimal build.zig.zon
     cat > "$OUT_DIR/build.zig.zon" << ZONEOF
