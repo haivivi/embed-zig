@@ -46,38 +46,151 @@ static int bk_rng_callback(void *ctx, unsigned char *output, size_t len) {
 }
 
 /* ========================================================================
- * SHA-256
+ * SHA one-shot
  * ======================================================================== */
 
 int bk_zig_sha256(const unsigned char *input, unsigned int len,
                    unsigned char output[32]) {
-    return mbedtls_sha256(input, len, output, 0); /* 0 = SHA-256 */
+    return mbedtls_sha256(input, len, output, 0);
 }
-
-/* ========================================================================
- * SHA-384 / SHA-512
- * ======================================================================== */
 
 int bk_zig_sha384(const unsigned char *input, unsigned int len,
                    unsigned char output[48]) {
     unsigned char full[64];
-    int ret = mbedtls_sha512(input, len, full, 1); /* 1 = SHA-384 */
+    int ret = mbedtls_sha512(input, len, full, 1);
     if (ret == 0) memcpy(output, full, 48);
     return ret;
 }
 
 int bk_zig_sha512(const unsigned char *input, unsigned int len,
                    unsigned char output[64]) {
-    return mbedtls_sha512(input, len, output, 0); /* 0 = SHA-512 */
+    return mbedtls_sha512(input, len, output, 0);
 }
-
-/* ========================================================================
- * SHA-1 (legacy, for TLS 1.2)
- * ======================================================================== */
 
 int bk_zig_sha1(const unsigned char *input, unsigned int len,
                   unsigned char output[20]) {
     return mbedtls_sha1(input, len, output);
+}
+
+/* ========================================================================
+ * SHA streaming (init/update/final with context handles)
+ * ======================================================================== */
+
+#define MAX_SHA_CONTEXTS 4
+
+static mbedtls_sha256_context s_sha256_ctx[MAX_SHA_CONTEXTS];
+static int s_sha256_used[MAX_SHA_CONTEXTS] = {0};
+static mbedtls_sha512_context s_sha512_ctx[MAX_SHA_CONTEXTS];
+static int s_sha512_used[MAX_SHA_CONTEXTS] = {0};
+static mbedtls_sha1_context s_sha1_ctx[MAX_SHA_CONTEXTS];
+static int s_sha1_used[MAX_SHA_CONTEXTS] = {0};
+
+/* SHA-256 streaming */
+int bk_zig_sha256_init(void) {
+    for (int i = 0; i < MAX_SHA_CONTEXTS; i++) {
+        if (!s_sha256_used[i]) {
+            s_sha256_used[i] = 1;
+            mbedtls_sha256_init(&s_sha256_ctx[i]);
+            mbedtls_sha256_starts(&s_sha256_ctx[i], 0);
+            return i;
+        }
+    }
+    return -1;
+}
+
+int bk_zig_sha256_update(int handle, const unsigned char *data, unsigned int len) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha256_used[handle]) return -1;
+    return mbedtls_sha256_update(&s_sha256_ctx[handle], data, len);
+}
+
+int bk_zig_sha256_final(int handle, unsigned char output[32]) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha256_used[handle]) return -1;
+    int ret = mbedtls_sha256_finish(&s_sha256_ctx[handle], output);
+    mbedtls_sha256_free(&s_sha256_ctx[handle]);
+    s_sha256_used[handle] = 0;
+    return ret;
+}
+
+/* SHA-384 streaming (uses sha512 context with is384=1) */
+int bk_zig_sha384_init(void) {
+    for (int i = 0; i < MAX_SHA_CONTEXTS; i++) {
+        if (!s_sha512_used[i]) {
+            s_sha512_used[i] = 1;
+            mbedtls_sha512_init(&s_sha512_ctx[i]);
+            mbedtls_sha512_starts(&s_sha512_ctx[i], 1); /* 1 = SHA-384 */
+            return i;
+        }
+    }
+    return -1;
+}
+
+int bk_zig_sha384_update(int handle, const unsigned char *data, unsigned int len) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha512_used[handle]) return -1;
+    return mbedtls_sha512_update(&s_sha512_ctx[handle], data, len);
+}
+
+int bk_zig_sha384_final(int handle, unsigned char output[48]) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha512_used[handle]) return -1;
+    unsigned char full[64];
+    int ret = mbedtls_sha512_finish(&s_sha512_ctx[handle], full);
+    if (ret == 0) memcpy(output, full, 48);
+    mbedtls_sha512_free(&s_sha512_ctx[handle]);
+    s_sha512_used[handle] = 0;
+    return ret;
+}
+
+/* SHA-512 streaming */
+int bk_zig_sha512_init(void) {
+    /* Use separate tracking to avoid colliding with SHA-384 */
+    /* Actually sha384 and sha512 share s_sha512_ctx, so we need a different pool */
+    /* For simplicity, reuse the same pool — caller must not use both sha384 and sha512 simultaneously beyond MAX_SHA_CONTEXTS */
+    for (int i = 0; i < MAX_SHA_CONTEXTS; i++) {
+        if (!s_sha512_used[i]) {
+            s_sha512_used[i] = 1;
+            mbedtls_sha512_init(&s_sha512_ctx[i]);
+            mbedtls_sha512_starts(&s_sha512_ctx[i], 0); /* 0 = SHA-512 */
+            return i;
+        }
+    }
+    return -1;
+}
+
+int bk_zig_sha512_update(int handle, const unsigned char *data, unsigned int len) {
+    return bk_zig_sha384_update(handle, data, len); /* Same ctx pool */
+}
+
+int bk_zig_sha512_final(int handle, unsigned char output[64]) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha512_used[handle]) return -1;
+    int ret = mbedtls_sha512_finish(&s_sha512_ctx[handle], output);
+    mbedtls_sha512_free(&s_sha512_ctx[handle]);
+    s_sha512_used[handle] = 0;
+    return ret;
+}
+
+/* SHA-1 streaming */
+int bk_zig_sha1_init(void) {
+    for (int i = 0; i < MAX_SHA_CONTEXTS; i++) {
+        if (!s_sha1_used[i]) {
+            s_sha1_used[i] = 1;
+            mbedtls_sha1_init(&s_sha1_ctx[i]);
+            mbedtls_sha1_starts(&s_sha1_ctx[i]);
+            return i;
+        }
+    }
+    return -1;
+}
+
+int bk_zig_sha1_update(int handle, const unsigned char *data, unsigned int len) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha1_used[handle]) return -1;
+    return mbedtls_sha1_update(&s_sha1_ctx[handle], data, len);
+}
+
+int bk_zig_sha1_final(int handle, unsigned char output[20]) {
+    if (handle < 0 || handle >= MAX_SHA_CONTEXTS || !s_sha1_used[handle]) return -1;
+    int ret = mbedtls_sha1_finish(&s_sha1_ctx[handle], output);
+    mbedtls_sha1_free(&s_sha1_ctx[handle]);
+    s_sha1_used[handle] = 0;
+    return ret;
 }
 
 /* ========================================================================
@@ -224,6 +337,55 @@ int bk_zig_hmac(
     else if (hash_len == 64) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
     else return -1;
     return mbedtls_md_hmac(md, key, key_len, input, input_len, output);
+}
+
+/* ========================================================================
+ * HMAC streaming (init/update/final with context handles)
+ * ======================================================================== */
+
+#define MAX_HMAC_CONTEXTS 4
+
+static mbedtls_md_context_t s_hmac_ctx[MAX_HMAC_CONTEXTS];
+static int s_hmac_used[MAX_HMAC_CONTEXTS] = {0};
+
+int bk_zig_hmac_init(unsigned int hash_len,
+                      const unsigned char *key, unsigned int key_len) {
+    const mbedtls_md_info_t *md;
+    if (hash_len == 32) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    else if (hash_len == 48) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA384);
+    else if (hash_len == 64) md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA512);
+    else return -1;
+
+    for (int i = 0; i < MAX_HMAC_CONTEXTS; i++) {
+        if (!s_hmac_used[i]) {
+            s_hmac_used[i] = 1;
+            mbedtls_md_init(&s_hmac_ctx[i]);
+            if (mbedtls_md_setup(&s_hmac_ctx[i], md, 1) != 0) {
+                s_hmac_used[i] = 0;
+                return -1;
+            }
+            if (mbedtls_md_hmac_starts(&s_hmac_ctx[i], key, key_len) != 0) {
+                mbedtls_md_free(&s_hmac_ctx[i]);
+                s_hmac_used[i] = 0;
+                return -1;
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+int bk_zig_hmac_update(int handle, const unsigned char *data, unsigned int len) {
+    if (handle < 0 || handle >= MAX_HMAC_CONTEXTS || !s_hmac_used[handle]) return -1;
+    return mbedtls_md_hmac_update(&s_hmac_ctx[handle], data, len);
+}
+
+int bk_zig_hmac_final(int handle, unsigned char *output) {
+    if (handle < 0 || handle >= MAX_HMAC_CONTEXTS || !s_hmac_used[handle]) return -1;
+    int ret = mbedtls_md_hmac_finish(&s_hmac_ctx[handle], output);
+    mbedtls_md_free(&s_hmac_ctx[handle]);
+    s_hmac_used[handle] = 0;
+    return ret;
 }
 
 /* ========================================================================

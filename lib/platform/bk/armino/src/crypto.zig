@@ -11,11 +11,28 @@ extern fn bk_zig_sha256(input: [*]const u8, len: c_uint, output: *[32]u8) c_int;
 extern fn bk_zig_sha384(input: [*]const u8, len: c_uint, output: *[48]u8) c_int;
 extern fn bk_zig_sha512(input: [*]const u8, len: c_uint, output: *[64]u8) c_int;
 extern fn bk_zig_sha1(input: [*]const u8, len: c_uint, output: *[20]u8) c_int;
+
+// Streaming SHA
+pub extern fn bk_zig_sha256_init() c_int;
+pub extern fn bk_zig_sha256_update(handle: c_int, data: [*]const u8, len: c_uint) c_int;
+pub extern fn bk_zig_sha256_final(handle: c_int, output: *[32]u8) c_int;
+pub extern fn bk_zig_sha384_init() c_int;
+pub extern fn bk_zig_sha384_update(handle: c_int, data: [*]const u8, len: c_uint) c_int;
+pub extern fn bk_zig_sha384_final(handle: c_int, output: *[48]u8) c_int;
+pub extern fn bk_zig_sha512_init() c_int;
+pub extern fn bk_zig_sha512_update(handle: c_int, data: [*]const u8, len: c_uint) c_int;
+pub extern fn bk_zig_sha512_final(handle: c_int, output: *[64]u8) c_int;
+pub extern fn bk_zig_sha1_init() c_int;
+pub extern fn bk_zig_sha1_update(handle: c_int, data: [*]const u8, len: c_uint) c_int;
+pub extern fn bk_zig_sha1_final(handle: c_int, output: *[20]u8) c_int;
 extern fn bk_zig_aes_gcm_encrypt(key: [*]const u8, key_len: c_uint, iv: [*]const u8, iv_len: c_uint, aad: [*]const u8, aad_len: c_uint, input: [*]const u8, input_len: c_uint, output: [*]u8, tag: *[16]u8) c_int;
 extern fn bk_zig_aes_gcm_decrypt(key: [*]const u8, key_len: c_uint, iv: [*]const u8, iv_len: c_uint, aad: [*]const u8, aad_len: c_uint, input: [*]const u8, input_len: c_uint, output: [*]u8, tag: [*]const u8) c_int;
 extern fn bk_zig_hkdf_extract(salt: ?[*]const u8, salt_len: c_uint, ikm: [*]const u8, ikm_len: c_uint, prk: [*]u8, hash_len: c_uint) c_int;
 extern fn bk_zig_hkdf_expand(prk: [*]const u8, prk_len: c_uint, info: [*]const u8, info_len: c_uint, okm: [*]u8, okm_len: c_uint) c_int;
 extern fn bk_zig_hmac(hash_len: c_uint, key: [*]const u8, key_len: c_uint, input: [*]const u8, input_len: c_uint, output: [*]u8) c_int;
+pub extern fn bk_zig_hmac_init(hash_len: c_uint, key: [*]const u8, key_len: c_uint) c_int;
+pub extern fn bk_zig_hmac_update(handle: c_int, data: [*]const u8, len: c_uint) c_int;
+pub extern fn bk_zig_hmac_final(handle: c_int, output: [*]u8) c_int;
 extern fn bk_zig_p256_keypair(seed: *const [32]u8, sk_out: *[32]u8, pk_out: *[65]u8) c_int;
 extern fn bk_zig_p256_ecdh(sk: *const [32]u8, pk: *const [65]u8, out: *[32]u8) c_int;
 extern fn bk_zig_p256_compute_public(sk: *const [32]u8, pk_out: *[65]u8) c_int;

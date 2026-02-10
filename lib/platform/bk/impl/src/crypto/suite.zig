@@ -16,45 +16,43 @@ pub const Sha256 = struct {
     pub const digest_length = 32;
     pub const block_length = 64;
 
-    buf: [8192]u8 = undefined,
-    len: usize = 0,
+    handle: c_int = -1,
 
-    pub fn init() Sha256 { return .{ .len = 0 }; }
+    pub fn init() Sha256 {
+        return .{ .handle = crypto.bk_zig_sha256_init() };
+    }
 
     pub fn update(self: *Sha256, data: []const u8) void {
-        const avail = self.buf.len - self.len;
-        const n = @min(data.len, avail);
-        @memcpy(self.buf[self.len..][0..n], data[0..n]);
-        self.len += n;
+        if (self.handle >= 0) {
+            _ = crypto.bk_zig_sha256_update(self.handle, data.ptr, @intCast(data.len));
+        }
     }
 
     pub fn final(self: *Sha256) [32]u8 {
-        var out: [32]u8 = undefined;
-        hash(self.buf[0..self.len], &out, .{});
+        var out: [32]u8 = .{0} ** 32;
+        if (self.handle >= 0) {
+            _ = crypto.bk_zig_sha256_final(self.handle, &out);
+            self.handle = -1;
+        }
         return out;
     }
 
     pub fn hash(data: []const u8, out: *[32]u8, _: anytype) void {
-        crypto.sha256(data, out) catch {
-            @memset(out, 0);
-        };
+        crypto.sha256(data, out) catch @memset(out, 0);
     }
 };
 
 pub const Sha384 = struct {
     pub const digest_length = 48;
     pub const block_length = 128;
-    buf: [8192]u8 = undefined,
-    len: usize = 0,
-    pub fn init() Sha384 { return .{ .len = 0 }; }
+    handle: c_int = -1,
+    pub fn init() Sha384 { return .{ .handle = crypto.bk_zig_sha384_init() }; }
     pub fn update(self: *Sha384, data: []const u8) void {
-        const n = @min(data.len, self.buf.len - self.len);
-        @memcpy(self.buf[self.len..][0..n], data[0..n]);
-        self.len += n;
+        if (self.handle >= 0) _ = crypto.bk_zig_sha384_update(self.handle, data.ptr, @intCast(data.len));
     }
     pub fn final(self: *Sha384) [48]u8 {
-        var out: [48]u8 = undefined;
-        hash(self.buf[0..self.len], &out, .{});
+        var out: [48]u8 = .{0} ** 48;
+        if (self.handle >= 0) { _ = crypto.bk_zig_sha384_final(self.handle, &out); self.handle = -1; }
         return out;
     }
     pub fn hash(data: []const u8, out: *[48]u8, _: anytype) void {
@@ -65,17 +63,14 @@ pub const Sha384 = struct {
 pub const Sha512 = struct {
     pub const digest_length = 64;
     pub const block_length = 128;
-    buf: [8192]u8 = undefined,
-    len: usize = 0,
-    pub fn init() Sha512 { return .{ .len = 0 }; }
+    handle: c_int = -1,
+    pub fn init() Sha512 { return .{ .handle = crypto.bk_zig_sha512_init() }; }
     pub fn update(self: *Sha512, data: []const u8) void {
-        const n = @min(data.len, self.buf.len - self.len);
-        @memcpy(self.buf[self.len..][0..n], data[0..n]);
-        self.len += n;
+        if (self.handle >= 0) _ = crypto.bk_zig_sha512_update(self.handle, data.ptr, @intCast(data.len));
     }
     pub fn final(self: *Sha512) [64]u8 {
-        var out: [64]u8 = undefined;
-        hash(self.buf[0..self.len], &out, .{});
+        var out: [64]u8 = .{0} ** 64;
+        if (self.handle >= 0) { _ = crypto.bk_zig_sha512_final(self.handle, &out); self.handle = -1; }
         return out;
     }
     pub fn hash(data: []const u8, out: *[64]u8, _: anytype) void {
@@ -86,17 +81,14 @@ pub const Sha512 = struct {
 pub const Sha1 = struct {
     pub const digest_length = 20;
     pub const block_length = 64;
-    buf: [8192]u8 = undefined,
-    len: usize = 0,
-    pub fn init() Sha1 { return .{ .len = 0 }; }
+    handle: c_int = -1,
+    pub fn init() Sha1 { return .{ .handle = crypto.bk_zig_sha1_init() }; }
     pub fn update(self: *Sha1, data: []const u8) void {
-        const n = @min(data.len, self.buf.len - self.len);
-        @memcpy(self.buf[self.len..][0..n], data[0..n]);
-        self.len += n;
+        if (self.handle >= 0) _ = crypto.bk_zig_sha1_update(self.handle, data.ptr, @intCast(data.len));
     }
     pub fn final(self: *Sha1) [20]u8 {
-        var out: [20]u8 = undefined;
-        hash(self.buf[0..self.len], &out, .{});
+        var out: [20]u8 = .{0} ** 20;
+        if (self.handle >= 0) { _ = crypto.bk_zig_sha1_final(self.handle, &out); self.handle = -1; }
         return out;
     }
     pub fn hash(data: []const u8, out: *[20]u8, _: anytype) void {
@@ -307,31 +299,19 @@ pub const HkdfSha512 = struct {
 pub const HmacSha256 = struct {
     pub const mac_length = 32;
     pub const block_length = 64;
-
-    key_buf: [64]u8 = .{0} ** 64,
-    key_len: usize = 0,
-    data_buf: [4096]u8 = undefined,
-    data_len: usize = 0,
+    handle: c_int = -1,
 
     pub fn init(key: []const u8) HmacSha256 {
-        var self = HmacSha256{};
-        const l = @min(key.len, 64);
-        @memcpy(self.key_buf[0..l], key[0..l]);
-        self.key_len = l;
-        self.data_len = 0;
-        return self;
+        return .{ .handle = crypto.bk_zig_hmac_init(32, key.ptr, @intCast(key.len)) };
     }
 
     pub fn update(self: *HmacSha256, data: []const u8) void {
-        const avail = self.data_buf.len - self.data_len;
-        const copy_len = @min(data.len, avail);
-        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
-        self.data_len += copy_len;
+        if (self.handle >= 0) _ = crypto.bk_zig_hmac_update(self.handle, data.ptr, @intCast(data.len));
     }
 
     pub fn final(self: *HmacSha256) [mac_length]u8 {
         var out: [mac_length]u8 = .{0} ** mac_length;
-        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        if (self.handle >= 0) { _ = crypto.bk_zig_hmac_final(self.handle, &out); self.handle = -1; }
         return out;
     }
 
@@ -343,31 +323,19 @@ pub const HmacSha256 = struct {
 pub const HmacSha384 = struct {
     pub const mac_length = 48;
     pub const block_length = 128;
-
-    key_buf: [128]u8 = .{0} ** 128,
-    key_len: usize = 0,
-    data_buf: [4096]u8 = undefined,
-    data_len: usize = 0,
+    handle: c_int = -1,
 
     pub fn init(key: []const u8) HmacSha384 {
-        var self = HmacSha384{};
-        const l = @min(key.len, 128);
-        @memcpy(self.key_buf[0..l], key[0..l]);
-        self.key_len = l;
-        self.data_len = 0;
-        return self;
+        return .{ .handle = crypto.bk_zig_hmac_init(48, key.ptr, @intCast(key.len)) };
     }
 
     pub fn update(self: *HmacSha384, data: []const u8) void {
-        const avail = self.data_buf.len - self.data_len;
-        const copy_len = @min(data.len, avail);
-        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
-        self.data_len += copy_len;
+        if (self.handle >= 0) _ = crypto.bk_zig_hmac_update(self.handle, data.ptr, @intCast(data.len));
     }
 
     pub fn final(self: *HmacSha384) [mac_length]u8 {
         var out: [mac_length]u8 = .{0} ** mac_length;
-        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        if (self.handle >= 0) { _ = crypto.bk_zig_hmac_final(self.handle, &out); self.handle = -1; }
         return out;
     }
 
@@ -379,31 +347,19 @@ pub const HmacSha384 = struct {
 pub const HmacSha512 = struct {
     pub const mac_length = 64;
     pub const block_length = 128;
-
-    key_buf: [128]u8 = .{0} ** 128,
-    key_len: usize = 0,
-    data_buf: [4096]u8 = undefined,
-    data_len: usize = 0,
+    handle: c_int = -1,
 
     pub fn init(key: []const u8) HmacSha512 {
-        var self = HmacSha512{};
-        const l = @min(key.len, 128);
-        @memcpy(self.key_buf[0..l], key[0..l]);
-        self.key_len = l;
-        self.data_len = 0;
-        return self;
+        return .{ .handle = crypto.bk_zig_hmac_init(64, key.ptr, @intCast(key.len)) };
     }
 
     pub fn update(self: *HmacSha512, data: []const u8) void {
-        const avail = self.data_buf.len - self.data_len;
-        const copy_len = @min(data.len, avail);
-        @memcpy(self.data_buf[self.data_len..][0..copy_len], data[0..copy_len]);
-        self.data_len += copy_len;
+        if (self.handle >= 0) _ = crypto.bk_zig_hmac_update(self.handle, data.ptr, @intCast(data.len));
     }
 
     pub fn final(self: *HmacSha512) [mac_length]u8 {
         var out: [mac_length]u8 = .{0} ** mac_length;
-        create(&out, self.data_buf[0..self.data_len], self.key_buf[0..self.key_len]);
+        if (self.handle >= 0) { _ = crypto.bk_zig_hmac_final(self.handle, &out); self.handle = -1; }
         return out;
     }
 
