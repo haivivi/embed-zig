@@ -83,6 +83,13 @@ pub fn run(_: anytype) void {
 
     log.info("Ready! Press buttons to play notes.", .{});
 
+    // Discard initial ADC readings (settling time)
+    for (0..20) |_| {
+        board.buttons.poll();
+        while (board.nextEvent()) |_| {}
+        Board.time.sleepMs(10);
+    }
+
     var buffer: [160]i16 = undefined; // 10ms @ 16kHz (or 20ms @ 8kHz)
     var phase: f32 = 0;
     var current_freq: u32 = 0;

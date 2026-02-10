@@ -1,59 +1,72 @@
 /**
  * bk_zig_adc_helper.c — SARADC read for Zig
  *
- * Simple one-shot ADC read on a given channel.
+ * Uses the same ADC configuration as Armino's adc_key component.
  */
 
 #include <string.h>
 #include <components/log.h>
-
-/* Armino SARADC API (from bk_saradc.h / adc_driver.h) */
-extern int bk_adc_acquire(void);
-extern int bk_adc_init(int adc_chan);
-extern int bk_adc_start(void);
-extern int bk_adc_read_raw(unsigned short *buf, unsigned int size, unsigned int timeout);
-extern int bk_adc_stop(void);
-extern int bk_adc_deinit(int chan);
-extern int bk_adc_release(void);
+#include <driver/adc.h>
+#include <driver/hal/hal_adc_types.h>
 
 #define TAG "zig_adc"
 
 int bk_zig_adc_read(unsigned int channel, unsigned short *value_out) {
-    int ret;
+    bk_err_t ret;
 
     ret = bk_adc_acquire();
-    if (ret != 0) {
-        BK_LOGE(TAG, "adc_acquire failed: %d\r\n", ret);
-        return ret;
+    if (ret != BK_OK) {
+        BK_LOGE(TAG, "acquire: %d\r\n", ret);
+        return (int)ret;
     }
 
-    ret = bk_adc_init((int)channel);
-    if (ret != 0) {
-        BK_LOGE(TAG, "adc_init(%d) failed: %d\r\n", channel, ret);
+    ret = bk_adc_init((adc_chan_t)channel);
+    if (ret != BK_OK) {
+        BK_LOGE(TAG, "init(%d): %d\r\n", channel, ret);
         bk_adc_release();
-        return ret;
+        return (int)ret;
     }
+
+    /* Configure exactly like Armino's adc_key */
+    adc_config_t config = {0};
+    config.chan = (adc_chan_t)channel;
+    config.adc_mode = ADC_CONTINUOUS_MODE;
+    config.src_clk = ADC_SCLK_XTAL_26M;
+    config.clk = 3203125;
+    config.saturate_mode = ADC_SATURATE_MODE_3;
+    config.steady_ctrl = 7;
+    config.adc_filter = 0;
+
+    ret = bk_adc_set_config(&config);
+    if (ret != BK_OK) {
+        BK_LOGE(TAG, "set_config: %d\r\n", ret);
+        bk_adc_deinit((adc_chan_t)channel);
+        bk_adc_release();
+        return (int)ret;
+    }
+
+    bk_adc_enable_bypass_clalibration();
 
     ret = bk_adc_start();
-    if (ret != 0) {
-        BK_LOGE(TAG, "adc_start failed: %d\r\n", ret);
-        bk_adc_deinit((int)channel);
+    if (ret != BK_OK) {
+        BK_LOGE(TAG, "start: %d\r\n", ret);
+        bk_adc_deinit((adc_chan_t)channel);
         bk_adc_release();
-        return ret;
+        return (int)ret;
     }
 
-    unsigned short buf[1] = {0};
-    ret = bk_adc_read_raw(buf, 1, 1000);
+    uint16_t val = 0;
+    ret = bk_adc_read(&val, 200);
 
     bk_adc_stop();
-    bk_adc_deinit((int)channel);
+    bk_adc_deinit((adc_chan_t)channel);
     bk_adc_release();
 
-    if (ret != 0) {
-        BK_LOGE(TAG, "adc_read_raw failed: %d\r\n", ret);
-        return ret;
+    if (ret != BK_OK) {
+        BK_LOGE(TAG, "read: %d\r\n", ret);
+        return (int)ret;
     }
 
-    *value_out = buf[0];
+    *value_out = val;
     return 0;
 }
