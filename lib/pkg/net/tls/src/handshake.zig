@@ -610,6 +610,11 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                             },
                             .key_share => {
                                 const key_share = try extensions.parseKeyShareServer(ext_content);
+                                // DEBUG: log server's key_share group and length
+                                if (@import("builtin").mode == .ReleaseSmall) {
+                                    // In release mode, use Zig's log
+                                    @import("std").log.info("[TLS] server key_share: group=0x{x}, key_len={}", .{ @intFromEnum(key_share.group), key_share.key_exchange.len });
+                                }
                                 // Compute shared secret (TLS 1.3)
                                 if (self.key_exchange) |*kx| {
                                     const shared = try kx.computeSharedSecret(key_share.key_exchange);

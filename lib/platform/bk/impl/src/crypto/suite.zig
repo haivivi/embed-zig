@@ -491,9 +491,45 @@ pub const rsa = struct {
     pub const PublicKey = struct {
         n: []const u8,
         e: []const u8,
-        pub fn parseDer(_: []const u8) !struct { modulus: []const u8, exponent: []const u8 } {
-            return error.CertificatePublicKeyInvalid;
+
+        pub fn parseDer(der: []const u8) !struct { modulus: []const u8, exponent: []const u8 } {
+            if (der.len < 4) return error.CertificatePublicKeyInvalid;
+            if (der[0] != 0x30) return error.CertificatePublicKeyInvalid;
+
+            var pos: usize = 2;
+            if (der[1] & 0x80 != 0) {
+                const len_bytes = der[1] & 0x7f;
+                pos = 2 + len_bytes;
+            }
+
+            if (pos >= der.len or der[pos] != 0x02) return error.CertificatePublicKeyInvalid;
+            pos += 1;
+            var n_len: usize = der[pos];
+            pos += 1;
+            if (n_len & 0x80 != 0) {
+                const len_bytes = n_len & 0x7f;
+                n_len = 0;
+                for (der[pos..][0..len_bytes]) |b| n_len = (n_len << 8) | b;
+                pos += len_bytes;
+            }
+            while (n_len > 0 and der[pos] == 0) { pos += 1; n_len -= 1; }
+            const modulus = der[pos..][0..n_len];
+            pos += n_len;
+
+            if (pos >= der.len or der[pos] != 0x02) return error.CertificatePublicKeyInvalid;
+            pos += 1;
+            var e_len: usize = der[pos];
+            pos += 1;
+            if (e_len & 0x80 != 0) {
+                const len_bytes = e_len & 0x7f;
+                e_len = 0;
+                for (der[pos..][0..len_bytes]) |b| e_len = (e_len << 8) | b;
+                pos += len_bytes;
+            }
+            const exponent = der[pos..][0..e_len];
+            return .{ .modulus = modulus, .exponent = exponent };
         }
+
         pub fn fromBytes(exponent: []const u8, modulus: []const u8) !PublicKey {
             return PublicKey{ .n = modulus, .e = exponent };
         }
