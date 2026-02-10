@@ -20,14 +20,18 @@ const HalDisplay = platform.Display;
 const ButtonId = platform.ButtonId;
 const log = Board.log;
 
-const snake = @import("snake.zig");
+const pet = @import("pet.zig");
+const breakout = @import("breakout.zig");
+const falldown = @import("falldown.zig");
+const tetris = @import("tetris.zig");
+const jump = @import("jump.zig");
 const led_demo = @import("led_demo.zig");
 
 // ============================================================================
 // State
 // ============================================================================
 
-const AppId = enum { menu, snake, led_demo, about };
+const AppId = enum { menu, pet, breakout, falldown, tetris, jump, led_demo, about };
 const PowerState = enum { off, booting, on, shutting_down };
 
 var board: Board = undefined;
@@ -46,7 +50,7 @@ var power_hold_start: u64 = 0;
 const POWER_HOLD_MS = 3000; // 3 seconds
 
 // LVGL screens
-var scr_cards: [3]?*c.lv_obj_t = .{ null, null, null };
+var scr_cards: [menu_entries.len]?*c.lv_obj_t = [_]?*c.lv_obj_t{null} ** menu_entries.len;
 var scr_about: ?*c.lv_obj_t = null;
 var scr_power: ?*c.lv_obj_t = null;
 var lbl_power: ?*c.lv_obj_t = null;
@@ -56,9 +60,13 @@ var power_bar: ?*c.lv_obj_t = null;
 const LED_IDLE = hal.Color.rgb(0, 120, 255);
 
 // LVGL symbols (Font Awesome glyphs in Montserrat)
-const SYM_PLAY = "\xEF\x80\x9B"; // game/snake
-const SYM_EYE = "\xEF\x81\xAE"; // LED/visual
-const SYM_SETTINGS = "\xEF\x80\x93"; // about/info
+const SYM_HEART = "\xEF\x80\x84";
+const SYM_PLAY = "\xEF\x80\x9B";
+const SYM_DOWN = "\xEF\x81\xB8";
+const SYM_LIST = "\xEF\x80\x8B";
+const SYM_UP = "\xEF\x81\xB7";
+const SYM_EYE = "\xEF\x81\xAE";
+const SYM_SETTINGS = "\xEF\x80\x93";
 
 const MenuEntry = struct {
     icon: [*:0]const u8,
@@ -67,7 +75,11 @@ const MenuEntry = struct {
 };
 
 const menu_entries = [_]MenuEntry{
-    .{ .icon = SYM_PLAY, .title = "Snake", .subtitle = "Classic arcade game" },
+    .{ .icon = SYM_HEART, .title = "Pet", .subtitle = "Virtual pet" },
+    .{ .icon = SYM_PLAY, .title = "Breakout", .subtitle = "Break the bricks" },
+    .{ .icon = SYM_DOWN, .title = "Fall Down", .subtitle = "100 floors" },
+    .{ .icon = SYM_LIST, .title = "Tetris", .subtitle = "Classic blocks" },
+    .{ .icon = SYM_UP, .title = "Jump", .subtitle = "Doodle jump" },
     .{ .icon = SYM_EYE, .title = "LED Demo", .subtitle = "Light animations" },
     .{ .icon = SYM_SETTINGS, .title = "About", .subtitle = "Device info" },
 };
@@ -227,7 +239,11 @@ fn stepOn() void {
     // Normal operation
     switch (current_app) {
         .menu => menuStep(),
-        .snake => snake.step(last_btn),
+        .pet => pet.step(last_btn),
+        .breakout => breakout.step(last_btn),
+        .falldown => falldown.step(last_btn),
+        .tetris => tetris.step(last_btn),
+        .jump => jump.step(last_btn),
         .led_demo => led_demo.step(&board, last_btn),
         .about => aboutStep(),
     }
@@ -281,7 +297,11 @@ fn stepShuttingDown() void {
 
         // Deinit current app
         switch (current_app) {
-            .snake => snake.deinit(),
+            .pet => pet.deinit(),
+            .breakout => breakout.deinit(),
+            .falldown => falldown.deinit(),
+            .tetris => tetris.deinit(),
+            .jump => jump.deinit(),
             .led_demo => led_demo.deinit(&board),
             else => {},
         }
@@ -338,7 +358,11 @@ fn updatePowerBar(held_ms: u64) void {
 
 fn switchTo(app: AppId) void {
     switch (current_app) {
-        .snake => snake.deinit(),
+        .pet => pet.deinit(),
+        .breakout => breakout.deinit(),
+        .falldown => falldown.deinit(),
+        .tetris => tetris.deinit(),
+        .jump => jump.deinit(),
         .led_demo => led_demo.deinit(&board),
         else => {},
     }
@@ -347,15 +371,15 @@ fn switchTo(app: AppId) void {
 
     switch (app) {
         .menu => {
-            // Restore Ultraman LEDs
-            for (0..9) |i| {
-                board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
-            }
+            for (0..9) |i| board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
             board.rgb_leds.refresh();
-            // Show current card
             if (scr_cards[menu_selection]) |scr| c.lv_screen_load(scr);
         },
-        .snake => snake.init(),
+        .pet => pet.init(),
+        .breakout => breakout.init(),
+        .falldown => falldown.init(),
+        .tetris => tetris.init(),
+        .jump => jump.init(),
         .led_demo => led_demo.init(&board),
         .about => aboutInit(),
     }
@@ -439,12 +463,8 @@ fn menuStep() void {
             .right, .vol_down => slideMenu(1),
             .left, .vol_up => slideMenu(-1),
             .confirm => {
-                switch (menu_selection) {
-                    0 => switchTo(.snake),
-                    1 => switchTo(.led_demo),
-                    2 => switchTo(.about),
-                    else => {},
-                }
+                const apps = [_]AppId{ .pet, .breakout, .falldown, .tetris, .jump, .led_demo, .about };
+                if (menu_selection < apps.len) switchTo(apps[menu_selection]);
             },
             else => {},
         }
