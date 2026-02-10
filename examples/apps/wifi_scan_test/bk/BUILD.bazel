@@ -1,7 +1,4 @@
-load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_config")
-load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -9,17 +6,8 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/https_speed_test:app_srcs"] + glob(["**/*"]),
+    srcs = ["//examples/apps/wifi_scan_test:app_srcs"] + glob(["**/*"]),
 )
-
-make_env_file(
-    name = "env",
-    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
-)
-
-bk_crypto(name = "crypto")
-bk_config(name = "kconfig", modules = [":crypto"])
-
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
@@ -44,16 +32,11 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns"],
+    deps = [":bk", "//lib/hal", "//lib/trait"],
     partition_table = ":partitions",
-    env = ":env",
-    ap_stack_size = 65536,  # 64KB for TLS
-    kconfig_ap = ":kconfig",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",
-        "//lib/platform/bk/armino:c_helpers_socket",
-        "//lib/platform/bk/armino:c_helpers_crypto",
     ],
 )
 

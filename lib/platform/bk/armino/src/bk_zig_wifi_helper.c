@@ -199,6 +199,64 @@ int bk_zig_wifi_sta_disconnect(void) {
 }
 
 /* ========================================================================
+ * WiFi Scan
+ * ======================================================================== */
+
+#define MAX_SCAN_APS 32
+
+typedef struct {
+    char ssid[33];
+    unsigned char bssid[6];
+    int rssi;
+    unsigned char channel;
+    unsigned char security;  /* wifi_security_t enum value */
+} bk_zig_scan_ap_t;
+
+static bk_zig_scan_ap_t s_scan_aps[MAX_SCAN_APS];
+static int s_scan_ap_count = 0;
+
+int bk_zig_wifi_scan_start(void) {
+    wifi_scan_config_t config = {0};
+    config.scan_type = 0; /* active scan */
+    return bk_wifi_scan_start(&config);
+}
+
+int bk_zig_wifi_scan_get_results(int *out_count) {
+    wifi_scan_result_t result = {0};
+    bk_err_t ret = bk_wifi_scan_get_result(&result);
+    if (ret != BK_OK) {
+        *out_count = 0;
+        return ret;
+    }
+
+    s_scan_ap_count = result.ap_num < MAX_SCAN_APS ? result.ap_num : MAX_SCAN_APS;
+    for (int i = 0; i < s_scan_ap_count; i++) {
+        memset(&s_scan_aps[i], 0, sizeof(bk_zig_scan_ap_t));
+        strncpy(s_scan_aps[i].ssid, result.aps[i].ssid, 32);
+        memcpy(s_scan_aps[i].bssid, result.aps[i].bssid, 6);
+        s_scan_aps[i].rssi = result.aps[i].rssi;
+        s_scan_aps[i].channel = result.aps[i].channel;
+        s_scan_aps[i].security = (unsigned char)result.aps[i].security;
+    }
+
+    *out_count = s_scan_ap_count;
+    bk_wifi_scan_free_result(&result);
+    return BK_OK;
+}
+
+int bk_zig_wifi_scan_get_ap(int index, char *ssid_out, unsigned char *bssid_out,
+                             int *rssi_out, unsigned char *channel_out,
+                             unsigned char *security_out) {
+    if (index < 0 || index >= s_scan_ap_count) return -1;
+    if (ssid_out) memcpy(ssid_out, s_scan_aps[index].ssid, 33);
+    if (bssid_out) memcpy(bssid_out, s_scan_aps[index].bssid, 6);
+    if (rssi_out) *rssi_out = s_scan_aps[index].rssi;
+    if (channel_out) *channel_out = s_scan_aps[index].channel;
+    if (security_out) *security_out = s_scan_aps[index].security;
+    return 0;
+}
+
+/* ========================================================================
  * Netif — get IP info
  * ======================================================================== */
 

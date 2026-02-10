@@ -98,6 +98,16 @@ pub const WifiDriver = struct {
         }
         return event;
     }
+
+    /// Start WiFi scan (non-blocking, results via scan_done event)
+    pub fn scanStart(_: *Self, _: anytype) !void {
+        armino.wifi.scanStart() catch return error.ScanFailed;
+    }
+
+    /// Get scan results (call after scan_done event)
+    pub fn scanGetResults(_: *Self) []const armino.wifi.ScanAp {
+        return armino.wifi.scanGetResults();
+    }
 };
 
 pub const wifi_spec = struct {

@@ -6,6 +6,9 @@ extern fn bk_zig_wifi_register_events() c_int;
 extern fn bk_zig_wifi_sta_connect(ssid: [*:0]const u8, password: [*:0]const u8) c_int;
 extern fn bk_zig_wifi_sta_disconnect() c_int;
 extern fn bk_zig_wifi_poll_event(out_type: *c_int, out_ip: *[4]u8, out_dns: *[4]u8) c_int;
+extern fn bk_zig_wifi_scan_start() c_int;
+extern fn bk_zig_wifi_scan_get_results(out_count: *c_int) c_int;
+extern fn bk_zig_wifi_scan_get_ap(index: c_int, ssid_out: [*]u8, bssid_out: *[6]u8, rssi_out: *c_int, channel_out: *u8, security_out: *u8) c_int;
 
 const EVT_CONNECTED: c_int = 1;
 const EVT_DISCONNECTED: c_int = 2;
@@ -51,4 +54,52 @@ pub fn popEvent() ?WifiEvent {
         EVT_SCAN_DONE => .scan_done,
         else => null,
     };
+}
+
+// ============================================================================
+// Scan
+// ============================================================================
+
+pub const ScanAp = struct {
+    ssid: [33]u8,
+    bssid: [6]u8,
+    rssi: i8,
+    channel: u8,
+    security: u8,
+
+    pub fn getSsid(self: *const ScanAp) []const u8 {
+        const len = @import("std").mem.indexOfScalar(u8, &self.ssid, 0) orelse self.ssid.len;
+        return self.ssid[0..len];
+    }
+};
+
+pub fn scanStart() !void {
+    if (bk_zig_wifi_scan_start() != 0) return error.ScanFailed;
+}
+
+var scan_results: [32]ScanAp = undefined;
+var scan_count: usize = 0;
+
+pub fn scanGetResults() []const ScanAp {
+    var count: c_int = 0;
+    if (bk_zig_wifi_scan_get_results(&count) != 0) return &[0]ScanAp{};
+    scan_count = @intCast(@max(0, @min(count, 32)));
+
+    for (0..scan_count) |i| {
+        var ssid_buf: [33]u8 = .{0} ** 33;
+        var bssid: [6]u8 = .{0} ** 6;
+        var rssi: c_int = 0;
+        var channel: u8 = 0;
+        var security: u8 = 0;
+        _ = bk_zig_wifi_scan_get_ap(@intCast(i), &ssid_buf, &bssid, &rssi, &channel, &security);
+        scan_results[i] = .{
+            .ssid = ssid_buf,
+            .bssid = bssid,
+            .rssi = @intCast(@max(-128, @min(127, rssi))),
+            .channel = channel,
+            .security = security,
+        };
+    }
+
+    return scan_results[0..scan_count];
 }

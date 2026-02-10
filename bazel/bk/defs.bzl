@@ -165,6 +165,7 @@ export BK_APP_ZIG="{app_zig}"
 export BK_ENV_FILE="{env_file}"
 export ARMINO_PATH="{armino_path}"
 export BK_PARTITION_CSV="{partition_csv}"
+export BK_AP_STACK_SIZE="{ap_stack_size}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -186,6 +187,7 @@ exec bash "$E/{build_sh}"
         env_file = ctx.file.env.path if ctx.file.env else "",
         armino_path = ctx.attr._armino_path[BuildSettingInfo].value if ctx.attr._armino_path and BuildSettingInfo in ctx.attr._armino_path else "",
         partition_csv = ctx.file.partition_table.path if ctx.file.partition_table else "",
+        ap_stack_size = str(ctx.attr.ap_stack_size),
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -280,6 +282,10 @@ bk_zig_app = rule(
         "partition_table": attr.label(
             allow_single_file = True,
             doc = "Partition table CSV (from bk_partition_table). If set, replaces auto_partitions.csv.",
+        ),
+        "ap_stack_size": attr.int(
+            default = 16384,
+            doc = "AP task stack size in bytes. Default 16KB. TLS apps need 65536 (64KB).",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

@@ -345,7 +345,8 @@ done
 
 cp "$AP_LIB" "$PROJECT_DIR/ap/libbk_zig_ap.a"
 
-cat > "$PROJECT_DIR/ap/ap_main.c" << 'APEOF'
+AP_STACK=${BK_AP_STACK_SIZE:-16384}
+cat > "$PROJECT_DIR/ap/ap_main.c" << APEOF
 #include "bk_private/bk_init.h"
 #include <components/system.h>
 #include <os/os.h>
@@ -354,10 +355,11 @@ static void zig_task(void *arg) { zig_main(); }
 int main(void) {
     bk_init();
     beken_thread_t t;
-    rtos_create_thread(&t, 4, "zig_ap", (beken_thread_function_t)zig_task, 16384, 0);
+    rtos_create_thread(&t, 4, "zig_ap", (beken_thread_function_t)zig_task, $AP_STACK, 0);
     return 0;
 }
 APEOF
+echo "[bk_build] AP task stack: $AP_STACK bytes"
 
 cat > "$PROJECT_DIR/ap/CMakeLists.txt" << APCMAKEOF
 set(incs .)
