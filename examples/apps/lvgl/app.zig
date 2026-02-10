@@ -1,6 +1,7 @@
 //! LVGL Demo App — Multi-app menu system
 //!
 //! Platform-independent. Features:
+//! - Long press power button 3s to boot / shutdown
 //! - Main menu with app selection
 //! - Snake game (playable with ADC buttons)
 //! - LED strip animation demo
@@ -27,22 +28,30 @@ const led_demo = @import("led_demo.zig");
 // ============================================================================
 
 const AppId = enum { menu, snake, led_demo, about };
+const PowerState = enum { off, booting, on, shutting_down };
 
 var board: Board = undefined;
 var display_driver: HalDisplay.DriverType = undefined;
 var hal_display: HalDisplay = undefined;
 var ui_ctx: ui.Context(HalDisplay) = undefined;
-var ready: bool = false;
+var hw_ready: bool = false;
 
+var power_state: PowerState = .off;
 var current_app: AppId = .menu;
 var menu_selection: u8 = 0;
 
-// Menu LVGL objects
+// Power button tracking
+var power_held: bool = false;
+var power_hold_start: u64 = 0;
+const POWER_HOLD_MS = 3000; // 3 seconds
+
+// LVGL screens
 var scr_menu: ?*c.lv_obj_t = null;
 var menu_labels: [3]?*c.lv_obj_t = .{ null, null, null };
-
-// About screen
 var scr_about: ?*c.lv_obj_t = null;
+var scr_power: ?*c.lv_obj_t = null;
+var lbl_power: ?*c.lv_obj_t = null;
+var power_bar: ?*c.lv_obj_t = null;
 
 const menu_items = [_][]const u8{ "Snake", "LED Demo", "About" };
 
@@ -51,11 +60,9 @@ const menu_items = [_][]const u8{ "Snake", "LED Demo", "About" };
 // ============================================================================
 
 var last_btn: ?ButtonId = null;
-var last_power: bool = false;
 
 fn pollInput() void {
     last_btn = null;
-    last_power = false;
 
     board.buttons.poll();
     while (board.buttons.nextEvent()) |evt| {
@@ -64,14 +71,28 @@ fn pollInput() void {
         }
     }
 
+    // Power button: track held state for long-press
     const t = board.uptime();
     if (board.button.poll(t)) |evt| {
-        if (evt.action == .press) last_power = true;
+        if (evt.action == .press) {
+            power_held = true;
+            power_hold_start = t;
+        }
+        if (evt.action == .release) {
+            power_held = false;
+        }
     }
 }
 
+fn powerHeldMs() u64 {
+    if (!power_held) return 0;
+    const t = board.uptime();
+    if (t < power_hold_start) return 0;
+    return t - power_hold_start;
+}
+
 // ============================================================================
-// Init
+// Init (hardware only — UI starts after power-on)
 // ============================================================================
 
 pub fn init() void {
@@ -82,11 +103,9 @@ pub fn init() void {
         return;
     };
 
-    // Status LED off
     board.rgb_leds.clear();
     board.rgb_leds.refresh();
 
-    // Display
     display_driver = HalDisplay.DriverType.init() catch {
         log.err("Display init failed", .{});
         return;
@@ -96,10 +115,12 @@ pub fn init() void {
         log.err("UI init failed", .{});
         return;
     };
-    ready = true;
+    hw_ready = true;
 
-    menuInit();
-    log.info("Ready", .{});
+    // Show power-off screen
+    powerScreenInit();
+    power_state = .off;
+    log.info("Hold POWER 3s to boot", .{});
 }
 
 // ============================================================================
@@ -107,20 +128,14 @@ pub fn init() void {
 // ============================================================================
 
 pub fn step() void {
-    if (!ready) return;
-
+    if (!hw_ready) return;
     pollInput();
 
-    switch (current_app) {
-        .menu => menuStep(),
-        .snake => snake.step(last_btn),
-        .led_demo => led_demo.step(&board, last_btn),
-        .about => aboutStep(),
-    }
-
-    // Back to menu from any app
-    if (current_app != .menu and last_btn != null and last_btn.? == .back) {
-        switchTo(.menu);
+    switch (power_state) {
+        .off => stepOff(),
+        .booting => stepBooting(),
+        .on => stepOn(),
+        .shutting_down => stepShuttingDown(),
     }
 
     ui_ctx.tick(16);
@@ -128,11 +143,163 @@ pub fn step() void {
 }
 
 // ============================================================================
+// Power States
+// ============================================================================
+
+fn stepOff() void {
+    // Wait for power button hold
+    if (power_held) {
+        power_state = .booting;
+        showPowerScreen("Booting...");
+    }
+}
+
+fn stepBooting() void {
+    const held = powerHeldMs();
+    updatePowerBar(held);
+
+    // LED progress: fill LEDs proportionally
+    const progress = @min(held, POWER_HOLD_MS);
+    const lit: u32 = @intCast(progress * 9 / POWER_HOLD_MS);
+    for (0..9) |i| {
+        if (i < lit) {
+            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 100, 255));
+        } else {
+            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 0, 0));
+        }
+    }
+    board.rgb_leds.refresh();
+
+    if (!power_held) {
+        // Released too early — back to off
+        power_state = .off;
+        board.rgb_leds.clear();
+        board.rgb_leds.refresh();
+        showPowerScreen("Hold POWER 3s");
+        return;
+    }
+
+    if (held >= POWER_HOLD_MS) {
+        // Boot complete
+        power_state = .on;
+        power_held = false;
+        log.info("Power ON", .{});
+        board.rgb_leds.clear();
+        board.rgb_leds.refresh();
+        menuInit();
+    }
+}
+
+fn stepOn() void {
+    // Normal operation
+    switch (current_app) {
+        .menu => menuStep(),
+        .snake => snake.step(last_btn),
+        .led_demo => led_demo.step(&board, last_btn),
+        .about => aboutStep(),
+    }
+
+    // Back to menu from any sub-app
+    if (current_app != .menu and last_btn != null and last_btn.? == .back) {
+        switchTo(.menu);
+    }
+
+    // Power button held → start shutdown
+    if (power_held and powerHeldMs() > 200) {
+        power_state = .shutting_down;
+        showPowerScreen("Shutting down...");
+    }
+}
+
+fn stepShuttingDown() void {
+    const held = powerHeldMs();
+    updatePowerBar(held);
+
+    // LED drain: LEDs turn off proportionally
+    const progress = @min(held, POWER_HOLD_MS);
+    const off_count: u32 = @intCast(progress * 9 / POWER_HOLD_MS);
+    for (0..9) |i| {
+        if (i < 9 - off_count) {
+            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(255, 50, 0));
+        } else {
+            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 0, 0));
+        }
+    }
+    board.rgb_leds.refresh();
+
+    if (!power_held) {
+        // Released too early — back to on
+        power_state = .on;
+        board.rgb_leds.clear();
+        board.rgb_leds.refresh();
+        if (scr_menu) |scr| c.lv_screen_load(scr);
+        return;
+    }
+
+    if (held >= POWER_HOLD_MS) {
+        // Shutdown complete
+        power_state = .off;
+        power_held = false;
+        log.info("Power OFF", .{});
+
+        // Deinit current app
+        switch (current_app) {
+            .snake => snake.deinit(),
+            .led_demo => led_demo.deinit(&board),
+            else => {},
+        }
+        current_app = .menu;
+        menu_selection = 0;
+
+        board.rgb_leds.clear();
+        board.rgb_leds.refresh();
+        showPowerScreen("Hold POWER 3s");
+    }
+}
+
+// ============================================================================
+// Power Screen (shown when off / booting / shutting down)
+// ============================================================================
+
+fn powerScreenInit() void {
+    scr_power = c.lv_obj_create(null);
+    if (scr_power == null) return;
+    c.lv_obj_set_style_bg_color(scr_power.?, c.lv_color_hex(0x000000), 0);
+
+    lbl_power = c.lv_label_create(scr_power.?);
+    c.lv_label_set_text(lbl_power, "Hold POWER 3s");
+    c.lv_obj_set_style_text_color(lbl_power, c.lv_color_hex(0x444466), 0);
+    c.lv_obj_align(lbl_power, c.LV_ALIGN_CENTER, 0, -20);
+
+    // Progress bar
+    power_bar = c.lv_bar_create(scr_power.?);
+    c.lv_obj_set_size(power_bar, 160, 8);
+    c.lv_bar_set_range(power_bar, 0, 100);
+    c.lv_bar_set_value(power_bar, 0, c.LV_ANIM_OFF);
+    c.lv_obj_align(power_bar, c.LV_ALIGN_CENTER, 0, 20);
+    c.lv_obj_set_style_bg_color(power_bar, c.lv_color_hex(0x111122), 0);
+    c.lv_obj_set_style_bg_color(power_bar, c.lv_color_hex(0x6c8cff), @intCast(c.LV_PART_INDICATOR));
+
+    c.lv_screen_load(scr_power.?);
+}
+
+fn showPowerScreen(text: [*:0]const u8) void {
+    if (lbl_power) |lbl| c.lv_label_set_text(lbl, text);
+    if (power_bar) |bar| c.lv_bar_set_value(bar, 0, c.LV_ANIM_OFF);
+    if (scr_power) |scr| c.lv_screen_load(scr);
+}
+
+fn updatePowerBar(held_ms: u64) void {
+    if (power_bar == null) return;
+    const pct: i32 = @intCast(@min(held_ms * 100 / POWER_HOLD_MS, 100));
+    c.lv_bar_set_value(power_bar, pct, c.LV_ANIM_OFF);
+}
+
+// ============================================================================
 // App switching
 // ============================================================================
 
 fn switchTo(app: AppId) void {
-    // Deinit current
     switch (current_app) {
         .snake => snake.deinit(),
         .led_demo => led_demo.deinit(&board),
@@ -146,15 +313,9 @@ fn switchTo(app: AppId) void {
             if (scr_menu) |scr| c.lv_screen_load(scr);
             updateMenuHighlight();
         },
-        .snake => {
-            snake.init();
-        },
-        .led_demo => {
-            led_demo.init(&board);
-        },
-        .about => {
-            aboutInit();
-        },
+        .snake => snake.init(),
+        .led_demo => led_demo.init(&board),
+        .about => aboutInit(),
     }
 }
 
@@ -167,13 +328,11 @@ fn menuInit() void {
     if (scr_menu == null) return;
     c.lv_obj_set_style_bg_color(scr_menu.?, c.lv_color_hex(0x1a1a2e), 0);
 
-    // Title
     const title = c.lv_label_create(scr_menu.?);
     c.lv_label_set_text(title, "embed-zig");
     c.lv_obj_set_style_text_color(title, c.lv_color_hex(0x6c8cff), 0);
     c.lv_obj_align(title, c.LV_ALIGN_TOP_MID, 0, 20);
 
-    // Menu items
     for (0..menu_items.len) |i| {
         const lbl = c.lv_label_create(scr_menu.?);
         c.lv_label_set_text(lbl, menu_items[i].ptr);
@@ -257,6 +416,4 @@ fn aboutInit() void {
     c.lv_screen_load(scr_about.?);
 }
 
-fn aboutStep() void {
-    // Nothing to update, back handled in main step
-}
+fn aboutStep() void {}
