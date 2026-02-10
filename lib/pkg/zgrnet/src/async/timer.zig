@@ -232,7 +232,10 @@ pub const SimpleTimerService = struct {
         var i: usize = 0;
         while (i < self.timers.items.len) {
             const entry = &self.timers.items[i];
-            if (!entry.cancelled and entry.fire_at <= now) {
+            if (entry.cancelled) {
+                // Remove cancelled timers to prevent unbounded list growth
+                _ = self.timers.swapRemove(i);
+            } else if (entry.fire_at <= now) {
                 to_fire.append(self.allocator, entry.task) catch {};
                 _ = self.timers.swapRemove(i);
             } else {

@@ -224,7 +224,7 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
                 // Session end: 10s no data after first packet
                 if (total_packets > 0 and (now - start) > 10000) {
                     const elapsed = now - start;
-                    const kbps = if (elapsed > 0) (total_bytes * 2 * 1000) / elapsed / 1024 else 0;
+                    const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
                     log.info("Session done: {d} pkts, {d} KB/s, {d} disconnects", .{ total_packets, kbps, disconnect_count });
                     printMem("done");
                     return;
@@ -253,7 +253,7 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
         if (total_packets > 0 and total_packets % 50 == 0 and total_packets != last_logged_packets) {
             last_logged_packets = total_packets;
             const elapsed = now - start;
-            const kbps = if (elapsed > 0) (total_bytes * 2 * 1000) / elapsed / 1024 else 0;
+            const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
             log.info("{d} pkts, {d} KB/s, disc={d}", .{ total_packets, kbps, disconnect_count });
         }
     }
