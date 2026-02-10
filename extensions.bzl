@@ -114,6 +114,68 @@ audio_libs = module_extension(
 )
 
 # =============================================================================
+# LVGL UI Library
+# =============================================================================
+
+_LVGL_VERSION = "9.2.2"
+
+def _lvgl_repo_impl(ctx):
+    """Download and setup LVGL source.
+
+    Uses curl fallback for large archive (68MB) — Bazel's built-in Java
+    HTTP client hits Premature EOF on large GitHub tarballs.
+    """
+    url = "https://github.com/lvgl/lvgl/archive/refs/tags/v{}.tar.gz".format(_LVGL_VERSION)
+    sha256 = "129b4e00e06639fa79d7e8a6cab3c1ecce2445b1a246652ccd34f22e7b17ad6f"
+    archive = "lvgl.tar.gz"
+
+    # Try Bazel native download first, fall back to curl for large files
+    dl = ctx.download(
+        url = url,
+        output = archive,
+        sha256 = sha256,
+    )
+    if not dl.success:
+        ctx.execute(["curl", "-sL", "-o", archive, url], timeout = 300)
+    ctx.extract(archive, stripPrefix = "lvgl-{}".format(_LVGL_VERSION))
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+# All C source files (excluding platform-specific drivers and GPU backends)
+filegroup(
+    name = "srcs",
+    srcs = glob(["src/**/*.c"], exclude = [
+        "src/drivers/**",
+        "src/draw/nxp/**",
+        "src/draw/renesas/**",
+        "src/draw/sdl/**",
+        "src/draw/vg_lite/**",
+    ]),
+)
+
+# All headers (for include path auto-detection).
+# Exclude thorvg/rapidjson/msinttypes — its stdint.h shadows system <stdint.h>.
+filegroup(
+    name = "headers",
+    srcs = glob(["src/**/*.h", "*.h"], exclude = [
+        "src/libs/thorvg/rapidjson/msinttypes/**",
+    ]),
+)
+""")
+
+_lvgl_repo = repository_rule(
+    implementation = _lvgl_repo_impl,
+)
+
+def _lvgl_libs_impl(ctx):
+    """Module extension for LVGL library."""
+    _lvgl_repo(name = "lvgl")
+
+lvgl_libs = module_extension(
+    implementation = _lvgl_libs_impl,
+)
+
+# =============================================================================
 # Zig Toolchain (with Xtensa support)
 # =============================================================================
 

@@ -27,6 +27,13 @@ audio_libs = use_extension("//:extensions.bzl", "audio_libs")
 use_repo(audio_libs, "opus", "ogg")
 
 # =============================================================================
+# LVGL UI library
+# =============================================================================
+
+lvgl_libs = use_extension("//:extensions.bzl", "lvgl_libs")
+use_repo(lvgl_libs, "lvgl")
+
+# =============================================================================
 # Zig toolchain extension (with Xtensa support)
 # =============================================================================
 
