@@ -266,11 +266,14 @@ pub const EpollIO = struct {
             }
 
             // EPOLLERR and EPOLLHUP are always reported by the kernel even
-            // if not explicitly requested. Treat them as read-readiness so
-            // the user's read callback can detect the error / hangup via
-            // recv() returning 0 or an error.
-            const is_read = (ev & EPOLL_IN != 0) or (ev & EPOLL_ERR != 0) or (ev & EPOLL_HUP != 0);
-            const is_write = (ev & EPOLL_OUT != 0);
+            // if not explicitly requested. Route them to BOTH read and write
+            // callbacks so that write-only registrations (e.g. non-blocking
+            // connect()) are notified of errors — matching kqueue's behavior
+            // where EV_EOF/errors are delivered on whichever filter is
+            // registered, including EVFILT_WRITE.
+            const has_error = (ev & EPOLL_ERR != 0) or (ev & EPOLL_HUP != 0);
+            const is_read = (ev & EPOLL_IN != 0) or has_error;
+            const is_write = (ev & EPOLL_OUT != 0) or has_error;
 
             if (is_read) {
                 // Look up fresh each time — a previous callback in this
