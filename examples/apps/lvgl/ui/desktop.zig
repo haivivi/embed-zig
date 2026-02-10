@@ -1,35 +1,26 @@
 //! Desktop — Ultraman splash screen with starry background
 
-const c = @import("lvgl").c;
+const ui = @import("ui");
 const theme = @import("../theme.zig");
 const header = @import("header.zig");
 const assets = @import("../assets.zig");
 
-pub var screen: ?*c.lv_obj_t = null;
+pub var screen: ?ui.Obj = null;
 
 pub fn create() void {
-    screen = c.lv_obj_create(null);
-    if (screen == null) return;
-    const scr = screen.?;
-    theme.styleScreen(scr);
+    screen = ui.Obj.createScreen();
+    const scr = screen orelse return;
+    _ = scr.bgColor(theme.black);
 
-    // Background image
     if (assets.imgBg()) |src| {
-        const bg = c.lv_image_create(scr);
-        c.lv_image_set_src(bg, src);
-        c.lv_obj_align(bg, c.LV_ALIGN_CENTER, 0, 0);
+        _ = (ui.Image.create(scr) orelse return).src(src).center();
     }
-
-    // Ultraman character
     if (assets.imgUltraman()) |src| {
-        const ultra = c.lv_image_create(scr);
-        c.lv_image_set_src(ultra, src);
-        c.lv_obj_align(ultra, c.LV_ALIGN_CENTER, 0, 0);
+        _ = (ui.Image.create(scr) orelse return).src(src).center();
     }
-
     _ = header.create(scr);
 }
 
 pub fn show() void {
-    if (screen) |scr| c.lv_screen_load(scr);
+    if (screen) |scr| scr.load();
 }

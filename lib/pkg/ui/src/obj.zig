@@ -62,7 +62,7 @@ pub fn pos(self: Self, x: i32, y: i32) Self {
 // Alignment
 // ============================================================================
 
-pub const Align = enum(c_int) {
+    pub const Align = enum(c_uint) {
     top_left = c.LV_ALIGN_TOP_LEFT,
     top_mid = c.LV_ALIGN_TOP_MID,
     top_right = c.LV_ALIGN_TOP_RIGHT,
@@ -192,29 +192,29 @@ pub fn textFont(self: Self, font: *const c.lv_font_t) Self {
 // Flex Layout
 // ============================================================================
 
-pub const FlexFlow = enum(c_int) {
+    pub const FlexFlow = enum(c_uint) {
     row = c.LV_FLEX_FLOW_ROW,
     column = c.LV_FLEX_FLOW_COLUMN,
     row_wrap = c.LV_FLEX_FLOW_ROW_WRAP,
     column_wrap = c.LV_FLEX_FLOW_COLUMN_WRAP,
 };
 
-pub const FlexAlign = enum(c_int) {
-    start = c.LV_FLEX_ALIGN_START,
-    end_ = c.LV_FLEX_ALIGN_END,
-    center = c.LV_FLEX_ALIGN_CENTER,
-    space_between = c.LV_FLEX_ALIGN_SPACE_BETWEEN,
-    space_around = c.LV_FLEX_ALIGN_SPACE_AROUND,
-    space_evenly = c.LV_FLEX_ALIGN_SPACE_EVENLY,
-};
+    pub const FlexAlign = enum(c_uint) {
+        start = c.LV_FLEX_ALIGN_START,
+        end_ = c.LV_FLEX_ALIGN_END,
+        center = c.LV_FLEX_ALIGN_CENTER,
+        space_between = c.LV_FLEX_ALIGN_SPACE_BETWEEN,
+        space_around = c.LV_FLEX_ALIGN_SPACE_AROUND,
+        space_evenly = c.LV_FLEX_ALIGN_SPACE_EVENLY,
+    };
 
 pub fn flexFlow(self: Self, flow: FlexFlow) Self {
     c.lv_obj_set_flex_flow(self.ptr, @intFromEnum(flow));
     return self;
 }
 
-pub fn flexGrow(self: Self, grow: i32) Self {
-    c.lv_obj_set_flex_grow(self.ptr, grow);
+    pub fn flexGrow(self: Self, grow: u8) Self {
+        c.lv_obj_set_flex_grow(self.ptr, grow);
     return self;
 }
 
@@ -266,7 +266,7 @@ pub fn load(self: Self) void {
     c.lv_screen_load(self.ptr);
 }
 
-pub const ScreenAnim = enum(c_int) {
+    pub const ScreenAnim = enum(c_uint) {
     none = c.LV_SCR_LOAD_ANIM_NONE,
     fade_in = c.LV_SCR_LOAD_ANIM_FADE_IN,
     move_left = c.LV_SCR_LOAD_ANIM_MOVE_LEFT,

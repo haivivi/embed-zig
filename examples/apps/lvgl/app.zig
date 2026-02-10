@@ -6,8 +6,6 @@
 
 const hal = @import("hal");
 const ui = @import("ui");
-const lvgl = @import("lvgl");
-const c = lvgl.c;
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
