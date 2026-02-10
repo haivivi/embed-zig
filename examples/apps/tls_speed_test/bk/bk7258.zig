@@ -9,6 +9,7 @@ pub const Hardware = struct {
 
 pub const socket = board.socket;
 pub const crypto = board.crypto;
+pub const allocator = board.heap.psram;
 pub const RtcDriver = board.RtcDriver;
 
 pub const rtc_spec = struct {

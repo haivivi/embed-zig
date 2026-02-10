@@ -26,3 +26,4 @@ pub const speaker = @import("speaker.zig");
 pub const crypto = @import("crypto.zig");
 pub const kvs = @import("kvs.zig");
 pub const adc = @import("adc.zig");
+pub const heap = @import("heap.zig");

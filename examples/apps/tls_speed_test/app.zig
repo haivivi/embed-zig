@@ -66,11 +66,8 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     log.info("TLS handshake...", .{});
     const hs_start = Board.time.getTimeMs();
 
-    var tls_buf: [32768]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&tls_buf);
-
     var tls_client = TlsClient.init(&sock, .{
-        .allocator = fba.allocator(),
+        .allocator = platform.allocator,
         .hostname = "localhost",
         .skip_verify = true,
         .timeout_ms = 30000,

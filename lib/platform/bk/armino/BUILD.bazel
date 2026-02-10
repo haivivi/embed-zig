@@ -64,6 +64,12 @@ filegroup(
     srcs = ["src/bk_zig_adc_helper.c"],
 )
 
+# Heap helper (PSRAM + SRAM allocator)
+filegroup(
+    name = "c_helpers_heap",
+    srcs = ["src/bk_zig_heap_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

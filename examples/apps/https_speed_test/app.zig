@@ -70,12 +70,8 @@ fn runPublicTest(
     const Crypto = Board.crypto;
     const TlsClient = tls.Client(Board.socket, Crypto);
 
-    // Fixed buffer allocator for TLS (no heap needed)
-    var tls_buf: [32768]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&tls_buf);
-
     var tls_client = TlsClient.init(&sock, .{
-        .allocator = fba.allocator(),
+        .allocator = platform.allocator,
         .hostname = host,
         .skip_verify = skip_verify,
         .timeout_ms = 30000,

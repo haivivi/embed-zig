@@ -33,6 +33,7 @@ pub const socket = idf.socket.Socket;
 // ============================================================================
 
 pub const crypto = board.crypto;
+pub const allocator = esp.idf.heap.psram;
 
 // ============================================================================
 // Drivers

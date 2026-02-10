@@ -24,3 +24,5 @@ const spec = struct {
 };
 
 pub const Board = hal.Board(spec);
+
+pub const allocator = hw.allocator;
