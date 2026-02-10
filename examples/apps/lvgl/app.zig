@@ -81,26 +81,30 @@ var last_btn: ?ButtonId = null;
 fn pollInput() void {
     last_btn = null;
 
+    // Poll hardware (pushes events to Board queue via callbacks)
     board.buttons.poll();
-    while (board.buttons.nextEvent()) |evt| {
-        if (evt.action == .press or evt.action == .click) {
-            last_btn = evt.id;
-        }
-    }
-
-    // Power button: track held state for long-press
     const t = board.uptime();
-    if (board.button.poll(t)) |evt| {
-        switch (evt.action) {
-            .press => {
-                power_held = true;
-                power_hold_start = t;
-            },
-            .release => {
-                power_held = false;
+    _ = board.button.poll(t);
+
+    // Drain the Board event queue (button_group events go here via callback)
+    while (board.nextEvent()) |event| {
+        switch (event) {
+            .button => |btn| {
+                if (btn.action == .press or btn.action == .click) {
+                    last_btn = btn.id;
+                }
             },
             else => {},
         }
+    }
+
+    // Power button: track raw held state directly (not through Board queue)
+    const raw_power = board.button.driver.isPressed();
+    if (raw_power and !power_held) {
+        power_held = true;
+        power_hold_start = t;
+    } else if (!raw_power) {
+        power_held = false;
     }
 }
 

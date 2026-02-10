@@ -316,7 +316,9 @@ body {
     letter-spacing: 0.05em;
 }
 
-.log-clear {
+.log-actions { display: flex; gap: 6px; }
+
+.log-btn {
     appearance: none;
     border: 1px solid var(--border);
     background: transparent;
@@ -325,9 +327,10 @@ body {
     padding: 2px 8px;
     border-radius: 4px;
     cursor: pointer;
+    font-family: var(--font);
 }
 
-.log-clear:hover { border-color: var(--accent); color: var(--accent); }
+.log-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 .log-content {
     padding: 12px 16px;
