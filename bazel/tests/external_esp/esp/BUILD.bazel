@@ -1,9 +1,14 @@
 # Opus External Repo Test — ESP Platform
 #
-# This BUILD mirrors the giztoy chatgear ESP BUILD:
+# This BUILD mirrors the giztoy chatgear ESP BUILD as closely as possible:
 # - zig_static_library cross-compiles opus for xtensa
 # - esp_zig_app links it into the ESP app
+# - Multiple deps (channel, waitgroup, cancellation) to match real usage
 # The ONLY difference from internal builds is @embed_zig// prefix.
+#
+# This test is designed to catch the InstrFetchProhibited crash that occurs
+# when opus is used from an external repo with many deps (the minimal test
+# with fewer deps may pass while the real chatgear app crashes).
 
 load("@embed_zig//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 load("@embed_zig//bazel/zig:defs.bzl", "zig_static_library")
@@ -51,6 +56,11 @@ esp_zig_app(
         ":esp",
         "@embed_zig//lib/hal",
         "@embed_zig//lib/trait",
+        # Include the same deps as giztoy chatgear to reproduce module-count
+        # sensitive issues (e.g., @cImport resolution with many modules)
+        "@embed_zig//lib/pkg/channel",
+        "@embed_zig//lib/pkg/waitgroup",
+        "@embed_zig//lib/pkg/cancellation",
         "@embed_zig//third_party/opus:opus_fixed",
     ],
     static_libs = [

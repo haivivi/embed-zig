@@ -1,12 +1,23 @@
-//! Minimal Opus Test — External Repo
+//! Opus Test — External Repo (simulates giztoy chatgear dep set)
 //!
-//! Tests opus encoder/decoder init and a single encode/decode cycle.
-//! If this crashes with InstrFetchProhibited, the external repo
-//! cross-compilation is broken.
+//! Tests opus encoder/decoder init and a single encode/decode cycle,
+//! with the same dependency set as giztoy chatgear (channel, waitgroup,
+//! cancellation). If this crashes with InstrFetchProhibited, the external
+//! repo cross-compilation is broken.
+//!
+//! The extra deps exercise module-count-sensitive code paths in the
+//! Zig compiler (e.g., @cImport resolution with many -M modules).
 
 const std = @import("std");
 const idf = @import("idf");
 const opus = @import("opus");
+
+// Import extra deps to match giztoy chatgear's module set.
+// Even if unused, they affect the build.zig module graph and
+// potentially the @cImport resolution order.
+const Channel = @import("channel").Channel;
+const WaitGroup = @import("waitgroup").WaitGroup;
+const CancellationToken = @import("cancellation").CancellationToken;
 
 const heap = idf.heap;
 const log = std.log.scoped(.opus_test);
@@ -17,7 +28,18 @@ const FRAME_MS: u32 = 20;
 const FRAME_SAMPLES: usize = SAMPLE_RATE * FRAME_MS / 1000; // 320
 
 pub fn run(_: anytype) void {
-    log.info("=== Opus External Repo Test ===", .{});
+    log.info("=== Opus External Repo Test (extended deps) ===", .{});
+
+    // Verify extra deps are resolvable (compile-time check)
+    log.info("Channel size: {}, WaitGroup size: {}, CancellationToken size: {}", .{
+        @sizeOf(Channel([]const u8, 1)),
+        @sizeOf(WaitGroup(struct {
+            pub const Mutex = std.Thread.Mutex;
+            pub const Condition = std.Thread.Mutex.Condition;
+            pub fn spawn(_: anytype, _: anytype, _: anytype) !void {}
+        })),
+        @sizeOf(CancellationToken),
+    });
 
     // 1. Print opus version
     log.info("Opus version: {s}", .{opus.getVersionString()});
