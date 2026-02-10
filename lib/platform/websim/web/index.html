@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim — embed-zig Board Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="sim-container">
+        <header class="sim-header">
+            <h1>embed-zig <span class="accent">WebSim</span></h1>
+            <span class="status" id="status">Loading...</span>
+        </header>
+
+        <div class="board">
+            <!-- Display area (for LVGL, hidden initially) -->
+            <div class="display-area" id="displayArea" style="display:none">
+                <canvas id="displayCanvas" width="320" height="240"></canvas>
+            </div>
+
+            <!-- LED indicators -->
+            <div class="component-row">
+                <div class="component-label">LED</div>
+                <div class="leds" id="ledContainer">
+                    <div class="led" id="led-0"></div>
+                </div>
+            </div>
+
+            <!-- Button -->
+            <div class="component-row">
+                <div class="component-label">BOOT</div>
+                <button class="hw-button" id="btnBoot">
+                    <span class="btn-inner">BOOT</span>
+                </button>
+                <div class="hint">Click or press Space</div>
+            </div>
+        </div>
+
+        <!-- Log panel -->
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <button class="log-clear" id="logClear">Clear</button>
+            </div>
+            <div class="log-content" id="logContent"></div>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

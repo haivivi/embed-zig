@@ -1,0 +1,21 @@
+load("//bazel/zig:defs.bzl", "zig_module")
+
+package(default_visibility = ["//visibility:public"])
+
+# websim is a zig_module (not zig_library) because it targets wasm32-freestanding
+# and cannot be compiled for the host platform. The actual compilation happens
+# in the websim_app rule which cross-compiles everything to WASM.
+zig_module(
+    name = "websim",
+    main = "src/websim.zig",
+    srcs = glob(["src/**/*.zig"]),
+    module_name = "websim",
+    deps = ["//lib/hal"],
+)
+
+filegroup(
+    name = "web_shell",
+    srcs = glob(["web/**"]),
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
