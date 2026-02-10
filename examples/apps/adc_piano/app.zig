@@ -129,7 +129,7 @@ pub fn run(_: anytype) void {
         Board.time.sleepMs(10);
     }
 
-    // Debug: print ADC raw value periodically
+    // Debug counter
     var debug_counter: u32 = 0;
 
     phase = 0;
@@ -176,12 +176,11 @@ pub fn run(_: anytype) void {
             Board.time.sleepMs(5);
         }
 
-        // Debug: print raw ADC every ~2 seconds
+        // Debug: full GPIO scan every ~3 seconds
         debug_counter += 1;
-        if (debug_counter >= 200) {
+        if (debug_counter >= 600) {
             debug_counter = 0;
-            const raw = board.buttons.getLastRaw();
-            log.info("[DEBUG] ADC raw={}", .{raw});
+            platform.Hardware.debugScan();
         }
     }
 }

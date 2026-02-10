@@ -69,6 +69,7 @@ const std = @import("std");
 const trait = @import("trait");
 
 const button_group_mod = @import("button_group.zig");
+const button_matrix_mod = @import("button_matrix.zig");
 const button_mod = @import("button.zig");
 const event_mod = @import("event.zig");
 const rgb_led_strip_mod = @import("led_strip.zig");
@@ -139,12 +140,13 @@ pub fn SimpleQueue(comptime T: type, comptime capacity: usize) type {
 // Spec Analysis
 // ============================================================================
 
-const PeripheralKind = enum { button_group, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, imu, motion, unknown };
+const PeripheralKind = enum { button_group, button_matrix, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, imu, motion, unknown };
 
 fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (@typeInfo(T) != .@"struct") return .unknown;
     if (!@hasDecl(T, "_hal_marker")) return .unknown;
     if (button_group_mod.is(T)) return .button_group;
+    if (button_matrix_mod.is(T)) return .button_matrix;
     if (button_mod.is(T)) return .button;
     if (rgb_led_strip_mod.is(T)) return .rgb_led_strip;
     if (led_mod.is(T)) return .led;
@@ -163,6 +165,7 @@ fn getPeripheralKind(comptime T: type) PeripheralKind {
 fn SpecAnalysis(comptime spec: type) type {
     return struct {
         pub const button_group_count = countType(spec, .button_group);
+        pub const button_matrix_count = countType(spec, .button_matrix);
         pub const button_count = countType(spec, .button);
         pub const rgb_led_strip_count = countType(spec, .rgb_led_strip);
         pub const led_count = countType(spec, .led);
@@ -175,7 +178,7 @@ fn SpecAnalysis(comptime spec: type) type {
         pub const switch_count = countType(spec, .switch_);
         pub const imu_count = countType(spec, .imu);
         pub const motion_count = countType(spec, .motion);
-        pub const has_buttons = button_group_count > 0 or button_count > 0;
+        pub const has_buttons = button_group_count > 0 or button_matrix_count > 0 or button_count > 0;
         pub const ButtonId = extractButtonId(spec);
 
         // RtcReader type (required) - spec.rtc is already a HAL type
@@ -203,13 +206,14 @@ fn SpecAnalysis(comptime spec: type) type {
                     return @field(s, "ButtonId");
                 }
             }
-            // Then try to extract from ButtonGroup
+            // Then try to extract from ButtonGroup or ButtonMatrix
             for (@typeInfo(s).@"struct".decls) |decl| {
                 if (@hasDecl(s, decl.name)) {
                     const F = @TypeOf(@field(s, decl.name));
                     if (@typeInfo(F) == .type) {
                         const T = @field(s, decl.name);
                         if (button_group_mod.is(T)) return T.ButtonIdType;
+                        if (button_matrix_mod.is(T)) return T.ButtonIdType;
                     }
                 }
             }
@@ -274,8 +278,15 @@ pub fn Board(comptime spec: type) type {
     const RtcDriverType = analysis.RtcDriverType;
 
     // Extract types from HAL components in spec (optional)
-    const ButtonGroupType = if (analysis.button_group_count > 0) getButtonGroupType(spec) else void;
-    const ButtonGroupDriverType = if (analysis.button_group_count > 0) ButtonGroupType.DriverType else void;
+    // ButtonGroup or ButtonMatrix → unified "buttons" field
+    const has_button_group = analysis.button_group_count > 0 or analysis.button_matrix_count > 0;
+    const ButtonGroupType = if (analysis.button_group_count > 0)
+        getButtonGroupType(spec)
+    else if (analysis.button_matrix_count > 0)
+        getButtonMatrixType(spec)
+    else
+        void;
+    const ButtonGroupDriverType = if (has_button_group) ButtonGroupType.DriverType else void;
     const ButtonType = if (analysis.button_count > 0) getButtonType(spec) else void;
     const ButtonDriverType = if (analysis.button_count > 0) ButtonType.DriverType else void;
     const RgbLedStripType = if (analysis.rgb_led_strip_count > 0) getRgbLedStripType(spec) else void;
@@ -387,8 +398,8 @@ pub fn Board(comptime spec: type) type {
         rtc: RtcReaderType,
 
         // ButtonGroup (if present)
-        buttons_driver: if (analysis.button_group_count > 0) ButtonGroupDriverType else void,
-        buttons: if (analysis.button_group_count > 0) ButtonGroupType else void,
+        buttons_driver: if (has_button_group) ButtonGroupDriverType else void,
+        buttons: if (has_button_group) ButtonGroupType else void,
 
         // Button (if present)
         button_driver: if (analysis.button_count > 0) ButtonDriverType else void,
@@ -456,7 +467,7 @@ pub fn Board(comptime spec: type) type {
             errdefer self.rtc_driver.deinit();
 
             // Initialize ButtonGroup driver
-            if (analysis.button_group_count > 0) {
+            if (has_button_group) {
                 self.buttons_driver = try ButtonGroupDriverType.init();
                 errdefer self.buttons_driver.deinit();
             }
@@ -471,7 +482,7 @@ pub fn Board(comptime spec: type) type {
             if (analysis.rgb_led_strip_count > 0) {
                 self.rgb_leds_driver = try RgbLedStripDriverType.init();
                 errdefer {
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -481,7 +492,7 @@ pub fn Board(comptime spec: type) type {
                 self.led_driver = try LedDriverType.init();
                 errdefer {
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -492,7 +503,7 @@ pub fn Board(comptime spec: type) type {
                 errdefer {
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -513,7 +524,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -526,7 +537,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -540,7 +551,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -555,7 +566,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
                 // Call initInPlace if driver supports it (for pointer-based init)
@@ -574,7 +585,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
                 // Call initInPlace if driver supports it (for pointer-based init)
@@ -594,7 +605,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -611,7 +622,7 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
@@ -629,14 +640,14 @@ pub fn Board(comptime spec: type) type {
                     if (analysis.wifi_count > 0) self.wifi_driver.deinit();
                     if (analysis.led_count > 0) self.led_driver.deinit();
                     if (analysis.rgb_led_strip_count > 0) self.rgb_leds_driver.deinit();
-                    if (analysis.button_group_count > 0) self.buttons_driver.deinit();
+                    if (has_button_group) self.buttons_driver.deinit();
                     if (analysis.button_count > 0) self.button_driver.deinit();
                 }
             }
 
             // Initialize HAL wrappers with driver pointers (now pointing to correct locations)
             self.rtc = RtcReaderType.init(&self.rtc_driver);
-            if (analysis.button_group_count > 0) {
+            if (has_button_group) {
                 self.buttons = ButtonGroupType.init(&self.buttons_driver, &uptimeWrapper);
                 // Register callback for direct event push
                 self.buttons.setCallback(buttonEventCallback, @ptrCast(&self.events));
@@ -735,7 +746,7 @@ pub fn Board(comptime spec: type) type {
             if (analysis.button_count > 0) {
                 self.button_driver.deinit();
             }
-            if (analysis.button_group_count > 0) {
+            if (has_button_group) {
                 self.buttons_driver.deinit();
             }
             self.rtc_driver.deinit();
@@ -833,7 +844,7 @@ pub fn Board(comptime spec: type) type {
 
         /// Button event callback for direct push (called from ButtonGroup.poll)
         /// This converts ButtonGroup.Event to Board.Event and pushes to board queue
-        fn buttonEventCallback(ctx: ?*anyopaque, btn_event: if (analysis.button_group_count > 0) ButtonGroupType.Event else void) void {
+        fn buttonEventCallback(ctx: ?*anyopaque, btn_event: if (has_button_group) ButtonGroupType.Event else void) void {
             if (analysis.button_group_count == 0) return;
             if (ctx == null) return;
             const queue: *EventQueueType = @ptrCast(@alignCast(ctx));
@@ -894,6 +905,19 @@ fn getButtonGroupType(comptime spec: type) type {
         }
     }
     @compileError("No ButtonGroup found in spec");
+}
+
+fn getButtonMatrixType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (button_matrix_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No ButtonMatrix found in spec");
 }
 
 fn getButtonType(comptime spec: type) type {

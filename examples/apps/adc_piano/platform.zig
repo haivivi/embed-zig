@@ -1,7 +1,7 @@
 //! Platform Configuration — ADC Piano
 //!
 //! ESP: Korvo-2 V3 (ADC buttons + ES8311 speaker)
-//! BK:  BK7258 (ADC buttons on SARADC ch4 + onboard DAC speaker)
+//! BK:  BK7258 (Matrix keys on GPIO 6/7/8 + onboard DAC speaker)
 
 const hal = @import("hal");
 const build_options = @import("build_options");
@@ -16,7 +16,7 @@ else switch (build_options.board) {
 
 pub const Hardware = hw.Hardware;
 
-/// 4 piano keys mapped to ADC buttons
+/// 4 piano keys
 pub const ButtonId = enum(u8) {
     do_ = 0,
     re = 1,
@@ -35,15 +35,23 @@ pub const ButtonId = enum(u8) {
 
 const OuterButtonId = ButtonId;
 
+/// Board spec — uses button_group for ESP (ADC), button_matrix for BK (GPIO matrix)
 const spec = struct {
     pub const meta = .{ .id = hw.Hardware.name };
     pub const ButtonId = OuterButtonId;
     pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
     pub const log = hw.log;
     pub const time = hw.time;
-    pub const buttons = hal.button_group.from(hw.button_group_spec, OuterButtonId);
     pub const speaker = hal.mono_speaker.from(hw.speaker_spec);
     pub const pa_switch = hal.switch_.from(hw.pa_switch_spec);
+
+    // Button input: ADC group (ESP) or GPIO matrix (BK)
+    pub const buttons = if (@hasDecl(hw, "button_group_spec"))
+        hal.button_group.from(hw.button_group_spec, OuterButtonId)
+    else if (@hasDecl(hw, "button_matrix_spec"))
+        hal.button_matrix.from(hw.button_matrix_spec, OuterButtonId)
+    else
+        @compileError("no button spec found in hw");
 };
 
 pub const Board = hal.Board(spec);

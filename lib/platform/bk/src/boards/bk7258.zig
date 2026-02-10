@@ -127,6 +127,93 @@ pub fn ButtonDriver(comptime gpio_pin: u32, comptime active_low: bool) type {
 }
 
 // ============================================================================
+// Matrix Key Driver (3 GPIOs → 5 keys via matrix scan)
+// ============================================================================
+
+/// BK7258 V3.2 matrix keyboard driver.
+/// 3 GPIOs form a matrix yielding up to 5 keys:
+///   K1: gpio[0] input pull-up, read directly (active LOW)
+///   K2: gpio[1] input pull-up, read directly (active LOW)
+///   K3: gpio[2] input pull-up, read directly (active LOW)
+///   K4: gpio[0] output HIGH → gpio[1] pull-down read (active HIGH)
+///   K5: gpio[2] output HIGH → gpio[1] pull-down read (active HIGH)
+///
+/// Reference: armino/ap/components/key/key_main.c matrix_key_get_value()
+pub fn MatrixKeyDriver(comptime gpio_pins: [3]u32, comptime num_keys: comptime_int) type {
+    return struct {
+        const Self = @This();
+        const hw_gpio = armino.gpio;
+        const g0 = gpio_pins[0]; // GPIO 6
+        const g1 = gpio_pins[1]; // GPIO 7
+        const g2 = gpio_pins[2]; // GPIO 8
+
+        initialized: bool = false,
+
+        pub fn init() !Self {
+            // Disable second functions (QSPI etc.) and set as input + pull-up
+            hw_gpio.setAsInputPullup(g0) catch return error.InitFailed;
+            hw_gpio.setAsInputPullup(g1) catch return error.InitFailed;
+            hw_gpio.setAsInputPullup(g2) catch return error.InitFailed;
+            return .{ .initialized = true };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.initialized = false;
+        }
+
+        /// Scan all keys. Returns array of pressed states.
+        pub fn scanKeys(_: *Self) [num_keys]bool {
+            var result: [num_keys]bool = .{false} ** num_keys;
+
+            // --- Direct reads (K1-K3): input + pull-up, active LOW ---
+            // Uses setAsInputPullup which calls gpio_dev_unmap + proper config
+            hw_gpio.setAsInputPullup(g0) catch {};
+            hw_gpio.setAsInputPullup(g1) catch {};
+            hw_gpio.setAsInputPullup(g2) catch {};
+
+            // Settle time for pull-ups after unmap
+            for (0..200) |_| asm volatile ("nop");
+
+            result[0] = !hw_gpio.getInput(g0); // K1
+            result[1] = !hw_gpio.getInput(g1); // K2
+            result[2] = !hw_gpio.getInput(g2); // K3
+
+            // --- Matrix scan (K4): g0 output HIGH → g1 pull-down read ---
+            if (num_keys > 3) {
+                hw_gpio.setAsOutput(g0) catch {};
+                hw_gpio.setOutput(g0, true);
+                hw_gpio.setAsInputPulldown(g1) catch {};
+
+                for (0..200) |_| asm volatile ("nop");
+
+                result[3] = hw_gpio.getInput(g1); // K4: active HIGH
+
+                // Restore to input pull-up
+                hw_gpio.setAsInputPullup(g0) catch {};
+                hw_gpio.setAsInputPullup(g1) catch {};
+            }
+
+            // --- Matrix scan (K5): g2 output HIGH → g1 pull-down read ---
+            if (num_keys > 4) {
+                hw_gpio.setAsOutput(g2) catch {};
+                hw_gpio.setOutput(g2, true);
+                hw_gpio.setAsInputPulldown(g1) catch {};
+
+                for (0..200) |_| asm volatile ("nop");
+
+                result[4] = hw_gpio.getInput(g1); // K5: active HIGH
+
+                // Restore
+                hw_gpio.setAsInputPullup(g2) catch {};
+                hw_gpio.setAsInputPullup(g1) catch {};
+            }
+
+            return result;
+        }
+    };
+}
+
+// ============================================================================
 // LED Driver (PWM-based single LED)
 // ============================================================================
 

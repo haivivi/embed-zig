@@ -22,6 +22,8 @@ pub const Hardware = struct {
     pub const sample_rate: u32 = board.sample_rate;
     pub const adc_channel: idf.adc.AdcChannel = @enumFromInt(board.adc_channel);
     pub const pa_enable_gpio: u8 = board.pa_gpio;
+
+    pub fn debugScan() void {} // no-op on ESP
 };
 
 // ============================================================================
