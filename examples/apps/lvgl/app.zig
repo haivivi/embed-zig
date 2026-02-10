@@ -1,84 +1,73 @@
-//! WebSim standard board — LVGL hello + button handling
+//! LVGL Demo App — Platform Independent
 //!
-//! Demonstrates:
-//! - 240x240 LVGL display rendering to canvas
-//! - 7 ADC button input
-//! - Power button
-//! - LED status indicator
+//! Shows a 240x240 UI with centered label that updates on button press.
+//! Platform wiring is done in platform.zig.
 
 const hal = @import("hal");
-const websim = @import("websim");
 const ui = @import("ui");
-const platform = @import("platform.zig");
 
+const platform = @import("platform.zig");
 const Board = platform.Board;
-const ButtonId = platform.ButtonId;
 const HalDisplay = platform.Display;
+const ButtonId = platform.ButtonId;
+const log = Board.log;
 
 var board: Board = undefined;
-var initialized: bool = false;
-
-// Display (managed separately — not yet in hal.Board)
 var display_driver: HalDisplay.DriverType = undefined;
 var hal_display: HalDisplay = undefined;
 var ui_ctx: ui.Context(HalDisplay) = undefined;
-var ui_initialized: bool = false;
 
-// UI elements
 var label_status: ?ui.Label = null;
+var ui_ready: bool = false;
 
 pub fn init() void {
-    websim.sal.log.info("Standard Board -- WebSim", .{});
-    websim.sal.log.info("Arrows=nav Enter=OK Esc=back R=rec Space=power", .{});
+    log.info("LVGL Demo App", .{});
 
     board.init() catch {
-        websim.sal.log.err("Board init failed", .{});
+        log.err("Board init failed", .{});
         return;
     };
-    initialized = true;
 
-    // Set status LED to dim blue
+    // Status LED: dim blue
     board.rgb_leds.setColor(hal.Color.rgb(0, 0, 40));
     board.rgb_leds.refresh();
 
-    // Init display driver + LVGL
+    // Init display
     display_driver = HalDisplay.DriverType.init() catch {
-        websim.sal.log.err("Display driver init failed", .{});
+        log.err("Display init failed", .{});
         return;
     };
     hal_display = HalDisplay.init(&display_driver);
     ui_ctx = ui.init(HalDisplay, &hal_display, .{ .buf_lines = 20 }) catch {
-        websim.sal.log.err("UI init failed", .{});
+        log.err("UI init failed", .{});
         return;
     };
-    ui_initialized = true;
+    ui_ready = true;
 
-    // Create UI: centered label
-    const label = ui.Label.create(ui_ctx.screen());
-    label.setText("Hello WebSim!");
-    label.center();
-    label_status = label;
+    // Create UI
+    const lbl = ui.Label.create(ui_ctx.screen());
+    lbl.setText("Hello LVGL!");
+    lbl.center();
+    label_status = lbl;
 
-    websim.sal.log.info("LVGL display ready (240x240)", .{});
+    log.info("Ready! Use buttons to interact", .{});
 }
 
 pub fn step() void {
-    if (!initialized) return;
-
-    // Poll ADC button group
+    // Poll ADC buttons
     board.buttons.poll();
     while (board.buttons.nextEvent()) |evt| {
         if (evt.action == .press or evt.action == .click) {
-            handleButton(evt.id);
+            onButton(evt.id);
         }
     }
 
     // Poll power button
-    const current_time = board.uptime();
-    if (board.button.poll(current_time)) |evt| {
+    const t = board.uptime();
+    if (board.button.poll(t)) |evt| {
         if (evt.action == .press) {
-            websim.sal.log.info("Power button pressed", .{});
-            board.rgb_leds.setColor(hal.Color.rgb(255, 255, 255));
+            log.info("Power", .{});
+            board.rgb_leds.setColor(hal.Color.white);
             board.rgb_leds.refresh();
         }
         if (evt.action == .release) {
@@ -88,13 +77,13 @@ pub fn step() void {
     }
 
     // LVGL tick + render
-    if (ui_initialized) {
-        ui_ctx.tick(16); // ~60fps
+    if (ui_ready) {
+        ui_ctx.tick(16);
         _ = ui_ctx.handler();
     }
 }
 
-fn handleButton(id: ButtonId) void {
+fn onButton(id: ButtonId) void {
     const name: [*:0]const u8 = switch (id) {
         .vol_up => "VOL+",
         .vol_down => "VOL-",
@@ -104,11 +93,10 @@ fn handleButton(id: ButtonId) void {
         .confirm => "OK",
         .rec => "REC",
     };
-    websim.sal.log.info("Key: {s}", .{name});
+    log.info("Key: {s}", .{name});
 
-    // Update label text
-    if (label_status) |label| {
-        label.setText(switch (id) {
+    if (label_status) |lbl| {
+        lbl.setText(switch (id) {
             .vol_up => "Volume Up",
             .vol_down => "Volume Down",
             .left => "< Left",
@@ -119,7 +107,6 @@ fn handleButton(id: ButtonId) void {
         });
     }
 
-    // LED color per button
     board.rgb_leds.setColor(switch (id) {
         .vol_up => hal.Color.rgb(0, 200, 0),
         .vol_down => hal.Color.rgb(0, 100, 0),
@@ -130,9 +117,4 @@ fn handleButton(id: ButtonId) void {
         .rec => hal.Color.rgb(255, 0, 0),
     });
     board.rgb_leds.refresh();
-}
-
-// Generate WASM exports
-comptime {
-    websim.wasm.exportAll(@This());
 }
