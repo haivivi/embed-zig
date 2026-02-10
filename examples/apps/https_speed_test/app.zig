@@ -205,7 +205,14 @@ pub fn run(env: anytype) void {
             .connected => {
                 Board.time.sleepMs(1000);
                 const dns_server = if (dhcp_dns[0] != 0) dhcp_dns else [4]u8{ 223, 5, 5, 5 };
-                runPublicTest(dns_server, "httpbin.org", "/get", "HTTPS GET (skip verify)", true);
+
+                // Small test first
+                runPublicTest(dns_server, "httpbin.org", "/get", "HTTPS small (httpbin)", true);
+                Board.time.sleepMs(2000);
+
+                // Larger download test (~100KB)
+                runPublicTest(dns_server, "httpbin.org", "/bytes/102400", "HTTPS 100KB download", true);
+
                 state = .running_tests;
             },
             .running_tests => {
