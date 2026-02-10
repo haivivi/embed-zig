@@ -46,7 +46,7 @@ pub fn timerHandler() u32 {
 // Display
 // =============================================================================
 
-pub const FlushCb = *const fn (?*c.lv_display_t, ?*const c.lv_area_t, ?*u8) callconv(.C) void;
+pub const FlushCb = *const fn (?*c.lv_display_t, ?*const c.lv_area_t, ?*u8) callconv(.c) void;
 
 /// Create a new display with the given resolution.
 pub fn displayCreate(hor_res: i32, ver_res: i32) ?*c.lv_display_t {

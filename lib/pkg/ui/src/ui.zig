@@ -51,6 +51,7 @@ const hal = @import("hal");
 // Re-export sub-modules
 pub const Label = @import("label.zig");
 pub const Obj = @import("obj.zig");
+pub const MemDisplay = @import("mem_display.zig").MemDisplay;
 
 // ============================================================================
 // UI Context
@@ -103,40 +104,6 @@ pub fn Context(comptime DisplayDriver: type) type {
     };
 }
 
-/// LVGL flush callback — bridges LVGL rendering to HAL display driver.
-///
-/// This is called by LVGL when a display region has been rendered and
-/// needs to be sent to the physical display. We convert the LVGL types
-/// to HAL types and call the driver's flush method.
-fn flushCb(
-    lv_disp: ?*c.lv_display_t,
-    lv_area: ?*const c.lv_area_t,
-    px_map: ?*u8,
-) callconv(.C) void {
-    if (lv_area == null or px_map == null or lv_disp == null) return;
-
-    const area = lv_area.?;
-    const hal_area = hal.DisplayArea{
-        .x1 = @intCast(area.x1),
-        .y1 = @intCast(area.y1),
-        .x2 = @intCast(area.x2),
-        .y2 = @intCast(area.y2),
-    };
-
-    // Retrieve the HAL display driver pointer from LVGL's user_data
-    const driver_ptr: ?*anyopaque = c.lv_display_get_user_data(lv_disp.?);
-    if (driver_ptr) |ptr| {
-        // We store a FlushFn pointer in user_data
-        const flush_fn: *const FlushFn = @ptrCast(@alignCast(ptr));
-        flush_fn.*(hal_area, px_map.?);
-    }
-
-    c.lv_display_flush_ready(lv_disp.?);
-}
-
-/// Type-erased flush function pointer
-const FlushFn = fn (hal.DisplayArea, [*]const u8) void;
-
 /// Initialize LVGL and bind it to a HAL display driver.
 ///
 /// `driver` must be a pointer to a HAL display driver type created by
@@ -145,6 +112,37 @@ const FlushFn = fn (hal.DisplayArea, [*]const u8) void;
 ///
 /// Returns a Context that manages the LVGL lifecycle.
 pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) !Context(HalDisplay) {
+    // Comptime-specialized adapter: creates a C-callable flush callback
+    // that captures the HAL display type and driver pointer via statics.
+    const Adapter = struct {
+        var hal_display: *HalDisplay = undefined;
+
+        /// C-compatible flush callback for LVGL.
+        /// Specialized at comptime for the concrete HalDisplay type.
+        fn flushCb(
+            lv_disp: ?*c.lv_display_t,
+            lv_area: ?*const c.lv_area_t,
+            px_map: ?*u8,
+        ) callconv(.c) void {
+            if (lv_area == null or px_map == null) return;
+
+            const area = lv_area.?;
+            const hal_area = hal.DisplayArea{
+                .x1 = @intCast(area.x1),
+                .y1 = @intCast(area.y1),
+                .x2 = @intCast(area.x2),
+                .y2 = @intCast(area.y2),
+            };
+
+            hal_display.flush(hal_area, @ptrCast(px_map.?));
+
+            if (lv_disp) |d| c.lv_display_flush_ready(d);
+        }
+
+        var draw_buf: [@as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp) * 20]u8 = undefined;
+    };
+    Adapter.hal_display = display;
+
     // Initialize LVGL core
     c.lv_init();
 
@@ -159,42 +157,22 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) 
     const line_bytes = @as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp);
     const buf_size = line_bytes * @as(u32, buf_lines);
 
-    // Use a static buffer for the draw buffer (LVGL requires it to persist)
-    const S = struct {
-        var draw_buf: [320 * 240 * 2]u8 = undefined; // max 320x240 RGB565
-    };
-
-    // Validate buffer fits
-    if (buf_size > S.draw_buf.len) return error.BufferTooSmall;
-
     // Set draw buffers (single buffer, partial rendering mode)
     c.lv_display_set_buffers(
         lv_disp,
-        &S.draw_buf,
+        &Adapter.draw_buf,
         null,
-        buf_size,
+        @min(buf_size, Adapter.draw_buf.len),
         c.LV_DISPLAY_RENDER_MODE_PARTIAL,
     );
 
-    // Store a pointer to a static flush wrapper that captures the display driver
-    const Adapter = struct {
-        var hal_display: *HalDisplay = undefined;
-
-        fn flush(area: hal.DisplayArea, color_data: [*]const u8) void {
-            hal_display.flush(area, color_data);
-        }
-
-        const flush_fn: FlushFn = flush;
-    };
-    Adapter.hal_display = display;
-
-    c.lv_display_set_user_data(lv_disp, @constCast(@ptrCast(&Adapter.flush_fn)));
-    c.lv_display_set_flush_cb(lv_disp, flushCb);
+    // Set the comptime-specialized C flush callback
+    c.lv_display_set_flush_cb(lv_disp, Adapter.flushCb);
 
     return .{
         .display = display,
         .lv_display = lv_disp,
-        .buf1 = S.draw_buf[0..buf_size],
+        .buf1 = &Adapter.draw_buf,
     };
 }
 
@@ -202,9 +180,88 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) 
 // Tests
 // ============================================================================
 
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
     _ = Label;
     _ = Obj;
+    _ = @import("mem_display.zig");
+}
+
+test "LVGL init and deinit" {
+    const Disp = MemDisplay(320, 240, .rgb565);
+    const HalDisp = hal.display.from(Disp.spec);
+
+    var driver = Disp.create();
+    var display = HalDisp.init(&driver);
+
+    var ctx = try init(HalDisp, &display, .{});
+    defer ctx.deinit();
+
+    // Should have a valid screen
+    const scr = ctx.screen();
+    _ = scr.raw(); // Should not crash
+}
+
+test "LVGL create label and tick" {
+    const Disp = MemDisplay(320, 240, .rgb565);
+    const HalDisp = hal.display.from(Disp.spec);
+
+    var driver = Disp.create();
+    var display = HalDisp.init(&driver);
+
+    var ctx = try init(HalDisp, &display, .{});
+    defer ctx.deinit();
+
+    // Create a label on the active screen
+    const label = Label.create(ctx.screen());
+    label.setText("Hello LVGL!");
+    label.center();
+
+    // Run a few tick/handler cycles to trigger rendering
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) {
+        ctx.tick(5);
+        _ = ctx.handler();
+    }
+
+    // Verify flush was called (LVGL should have rendered something)
+    try @import("std").testing.expect(driver.flush_count > 0);
+}
+
+test "LVGL multiple widgets" {
+    const Disp = MemDisplay(320, 240, .rgb565);
+    const HalDisp = hal.display.from(Disp.spec);
+
+    var driver = Disp.create();
+    var display = HalDisp.init(&driver);
+
+    var ctx = try init(HalDisp, &display, .{});
+    defer ctx.deinit();
+
+    // Create multiple widgets
+    const label1 = Label.create(ctx.screen());
+    label1.setText("Label 1");
+    label1.setPos(10, 10);
+
+    const label2 = Label.create(ctx.screen());
+    label2.setText("Label 2");
+    label2.setPos(10, 50);
+
+    // Run tick/handler to render
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) {
+        ctx.tick(5);
+        _ = ctx.handler();
+    }
+
+    // Verify rendering happened
+    try @import("std").testing.expect(driver.flush_count > 0);
+
+    // Verify framebuffer has content (labels rendered pixels)
+    try @import("std").testing.expect(driver.hasAnyContent());
 }
