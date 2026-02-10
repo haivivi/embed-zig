@@ -57,12 +57,14 @@ fn shouldDrop() bool {
 fn kcpOutput(data: []const u8, _: ?*anyopaque) void {
     g_mutex.lock();
     defer g_mutex.unlock();
+    var ct: [max_pkt]u8 = undefined;
+    // Always encrypt to keep Noise nonce in sync
+    g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
+    // Simulate send loss AFTER encrypt (bilateral mode only)
     if (g_loss_bilateral and shouldDrop()) {
         g_pkts_dropped_send += 1;
         return;
     }
-    var ct: [max_pkt]u8 = undefined;
-    g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
     g_pkts_sent += 1;
 }
@@ -244,11 +246,14 @@ pub fn main() !void {
             while (true) {
                 var udp_buf: [max_pkt]u8 = undefined;
                 const udp_len = posix.recvfrom(sock, &udp_buf, 0, null, null) catch break;
-                // Recv-only loss (always applied) or bilateral
-                if (shouldDrop()) { g_pkts_dropped_recv += 1; continue; }
                 if (udp_len > tag_size) {
                     var pt: [max_pkt]u8 = undefined;
+                    // Always decrypt to keep Noise nonce in sync
                     recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
+                    // Simulate loss AFTER decrypt, BEFORE KCP input
+                    // This tests KCP's resilience to transport loss without
+                    // breaking Noise nonce synchronization.
+                    if (shouldDrop()) { g_pkts_dropped_recv += 1; continue; }
                     _ = kcp_inst.input(pt[0 .. udp_len - tag_size]);
                 }
             }
