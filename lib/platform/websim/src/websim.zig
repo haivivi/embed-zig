@@ -30,8 +30,8 @@
 //! pub const isRunning = websim.sal.isRunning;
 //! ```
 
-pub const drivers = @import("drivers.zig");
-pub const state_mod = @import("state.zig");
+pub const drivers = @import("impl/drivers.zig");
+pub const state_mod = @import("impl/state.zig");
 pub const wasm = @import("wasm.zig");
 
 // Re-export driver types for board definitions
