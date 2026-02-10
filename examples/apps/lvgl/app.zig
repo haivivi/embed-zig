@@ -20,13 +20,12 @@ const desktop = @import("ui/desktop.zig");
 const menu = @import("ui/menu.zig");
 const settings = @import("ui/settings.zig");
 const game_list = @import("ui/game_list.zig");
-const breakout = @import("breakout.zig");
 
 // ============================================================================
 // State
 // ============================================================================
 
-const Screen = enum { desktop, menu, settings, game_list, breakout };
+const Screen = enum { desktop, menu, settings, game_list };
 
 var board: Board = undefined;
 var display_driver: HalDisplay.DriverType = undefined;
@@ -100,24 +99,12 @@ pub fn step() void {
     _ = board.button.poll(t);
 
     // Route input to current screen
-    // Breakout runs its own step logic (physics each frame)
-    if (current_screen == .breakout) {
-        breakout.step(last_btn);
-    }
-
     if (last_btn) |btn| {
         switch (current_screen) {
             .desktop => desktopInput(btn),
             .menu => menuInput(btn),
             .settings => settingsInput(btn),
             .game_list => gameListInput(btn),
-            .breakout => {
-                if (btn == .back) {
-                    breakout.deinit();
-                    current_screen = .game_list;
-                    game_list.show();
-                }
-            },
         }
     }
 
@@ -194,11 +181,7 @@ fn gameListInput(btn: ButtonId) void {
         .vol_up, .left => game_list.scrollUp(),
         .vol_down, .right => game_list.scrollDown(),
         .confirm => {
-            if (game_list.index == 0) {
-                // Launch breakout
-                breakout.init();
-                current_screen = .breakout;
-            }
+            // Games not implemented yet — TODO: redesign UI state rendering
         },
         .back => {
             current_screen = .menu;
