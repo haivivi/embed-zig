@@ -1,0 +1,14 @@
+# External ESP test — mirrors main workspace .bazelrc settings
+
+# Repository + disk cache
+common --repository_cache=~/.cache/bazel-repo
+build --disk_cache=~/.cache/bazel-disk
+
+# PATH for C compiler
+build --action_env=PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
+build --host_action_env=PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
+
+# ESP-IDF environment
+build --action_env=IDF_PATH
+build --action_env=ADF_PATH
+build --action_env=HOME
