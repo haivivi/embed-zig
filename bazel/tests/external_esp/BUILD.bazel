@@ -1,0 +1,9 @@
+# Root BUILD file for external ESP opus test.
+# App sources are in the esp/ subdirectory's BUILD (same pattern as internal apps).
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
+)

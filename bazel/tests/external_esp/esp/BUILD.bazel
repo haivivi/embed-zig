@@ -1,0 +1,65 @@
+# Opus External Repo Test — ESP Platform
+#
+# This BUILD mirrors the giztoy chatgear ESP BUILD:
+# - zig_static_library cross-compiles opus for xtensa
+# - esp_zig_app links it into the ESP app
+# The ONLY difference from internal builds is @embed_zig// prefix.
+
+load("@embed_zig//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+load("@embed_zig//bazel/zig:defs.bzl", "zig_static_library")
+load("@esp_sysroot//:defs.bzl", "NEWLIB_INCLUDE")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+# Cross-compile opus for xtensa — same as internal, but with @embed_zig// prefix
+zig_static_library(
+    name = "opus_xtensa",
+    lib = "@embed_zig//third_party/opus:opus_fixed",
+    target = "xtensa-freestanding-none",
+    optimize = "ReleaseSafe",
+    system_include_dirs = [NEWLIB_INCLUDE],
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = [
+        "driver",
+    ],
+    force_link = [
+        "${RUNTIME_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/runtime/runtime.cmake)",
+    ],
+    extra_c_sources = [
+        "RUNTIME_C_SOURCES",
+    ],
+    deps = [
+        ":idf",
+        ":esp",
+        "@embed_zig//lib/hal",
+        "@embed_zig//lib/trait",
+        "@embed_zig//third_party/opus:opus_fixed",
+    ],
+    static_libs = [
+        ":opus_xtensa",
+    ],
+    sdkconfig = "@embed_zig//examples/esp:esp32s3",
+    app_config = "@embed_zig//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)

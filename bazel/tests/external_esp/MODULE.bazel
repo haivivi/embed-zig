@@ -1,0 +1,22 @@
+"""Test: external repo using opus xtensa cross-compilation from embed_zig.
+
+Reproduces the InstrFetchProhibited crash that occurs when opus is
+cross-compiled via zig_static_library from an external repo context.
+"""
+
+module(
+    name = "test_external_esp",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "embed_zig", version = "0.1.0")
+local_path_override(
+    module_name = "embed_zig",
+    path = "../../..",
+)
+
+# rules_go is needed transitively (embed_zig's help tool is a go_binary).
+bazel_dep(name = "rules_go", version = "0.59.0")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.22.5")
