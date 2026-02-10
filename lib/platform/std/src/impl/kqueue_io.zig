@@ -78,6 +78,11 @@ const RawKeventError = error{
 };
 
 /// kqueue-based I/O service implementing the IOService trait contract.
+///
+/// Thread safety: all public methods are safe to call from any thread.
+/// Internally protected by a Mutex. Callbacks are invoked WITHOUT the
+/// lock held, so callbacks may safely call registerRead/registerWrite/
+/// unregister on the same KqueueIO instance.
 pub const KqueueIO = struct {
     const Self = @This();
     const max_events = 64;
@@ -113,10 +118,17 @@ pub const KqueueIO = struct {
         write_registered: bool,
     };
 
+    /// Pending callback snapshot — used to invoke callbacks outside the lock.
+    const PendingCallback = struct {
+        cb: ReadyCallback,
+        fd: posix.fd_t,
+    };
+
     kq: posix.fd_t,
     allocator: Allocator,
     registrations: std.AutoHashMap(posix.fd_t, Entry),
     events: [max_events]posix.system.Kevent,
+    mutex: std.Thread.Mutex,
 
     pub fn init(allocator: Allocator) !Self {
         const kq = try posix.kqueue();
@@ -138,6 +150,7 @@ pub const KqueueIO = struct {
             .allocator = allocator,
             .registrations = std.AutoHashMap(posix.fd_t, Entry).init(allocator),
             .events = undefined,
+            .mutex = .{},
         };
     }
 
@@ -158,8 +171,11 @@ pub const KqueueIO = struct {
 
     /// Shared implementation for registering a filter on a file descriptor.
     fn registerFilter(self: *Self, fd: posix.fd_t, filter: i8, callback: ReadyCallback) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const result = self.registrations.getOrPut(fd) catch |err| {
-                std.log.warn("KqueueIO: failed to update registration map for fd {d}: {s}", .{ fd, @errorName(err) });
+            std.log.warn("KqueueIO: failed to update registration map for fd {d}: {s}", .{ fd, @errorName(err) });
             return;
         };
         const is_new = !result.found_existing;
@@ -213,7 +229,11 @@ pub const KqueueIO = struct {
 
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
-        if (self.registrations.fetchRemove(fd)) |entry| {
+        self.mutex.lock();
+        const removed = self.registrations.fetchRemove(fd);
+        self.mutex.unlock();
+
+        if (removed) |entry| {
             var changelist: [2]posix.system.Kevent = undefined;
             var count: usize = 0;
 
@@ -252,12 +272,18 @@ pub const KqueueIO = struct {
     /// Poll for I/O events and invoke callbacks.
     /// Pass -1 for timeout_ms to block indefinitely.
     /// Returns the number of events processed.
+    ///
+    /// Thread safety: kevent runs WITHOUT the lock (allows other threads
+    /// to register/unregister while we block). Callbacks are snapshotted
+    /// under the lock, then invoked without it (allows callbacks to call
+    /// registerRead/registerWrite/unregister).
     pub fn poll(self: *Self, timeout_ms: i32) usize {
         const ts: ?posix.timespec = if (timeout_ms >= 0) .{
             .sec = @intCast(@divFloor(timeout_ms, 1000)),
             .nsec = @intCast(@mod(timeout_ms, 1000) * 1_000_000),
         } else null;
 
+        // kevent without lock — may block, must not hold lock
         const n = rawKevent(
             self.kq,
             &[_]posix.system.Kevent{},
@@ -265,8 +291,11 @@ pub const KqueueIO = struct {
             if (ts) |*t| t else null,
         ) catch return 0;
 
-        // Process events and invoke callbacks
-        var processed: usize = 0;
+        // Snapshot callbacks under lock
+        var pending: [max_events]PendingCallback = undefined;
+        var pending_count: usize = 0;
+
+        self.mutex.lock();
         for (self.events[0..n]) |event| {
             // Skip wake events — they just interrupt the poll
             if (event.filter == posix.system.EVFILT.USER and event.ident == wake_ident) {
@@ -277,16 +306,23 @@ pub const KqueueIO = struct {
 
             if (self.registrations.get(fd)) |entry| {
                 if (event.filter == posix.system.EVFILT.READ) {
-                    entry.read_cb.call(fd);
-                    processed += 1;
+                    pending[pending_count] = .{ .cb = entry.read_cb, .fd = fd };
+                    pending_count += 1;
                 } else if (event.filter == posix.system.EVFILT.WRITE) {
-                    entry.write_cb.call(fd);
-                    processed += 1;
+                    pending[pending_count] = .{ .cb = entry.write_cb, .fd = fd };
+                    pending_count += 1;
                 }
             }
         }
+        self.mutex.unlock();
 
-        return processed;
+        // Invoke callbacks WITHOUT the lock — callbacks may safely call
+        // registerRead/registerWrite/unregister on this KqueueIO instance.
+        for (pending[0..pending_count]) |p| {
+            p.cb.call(p.fd);
+        }
+
+        return pending_count;
     }
 
     /// Interrupt a blocking poll() call from another thread.
@@ -633,4 +669,108 @@ test "KqueueIO read and write on same fd" {
     try std.testing.expect(count >= 2);
     try std.testing.expect(read_called);
     try std.testing.expect(write_called);
+}
+
+test "KqueueIO callback re-registers (no deadlock)" {
+    // Regression test: callback calls registerRead on the same IO instance.
+    // Before Mutex fix, this could deadlock or data-race on the HashMap.
+    var io = try KqueueIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    const pipe_fds = try posix.pipe();
+    defer posix.close(pipe_fds[0]);
+    defer posix.close(pipe_fds[1]);
+
+    const pipe2_fds = try posix.pipe();
+    defer posix.close(pipe2_fds[0]);
+    defer posix.close(pipe2_fds[1]);
+
+    const Ctx = struct {
+        io: *KqueueIO,
+        new_fd: posix.fd_t,
+        original_called: bool = false,
+        reregistered_called: bool = false,
+    };
+
+    var ctx = Ctx{ .io = &io, .new_fd = pipe2_fds[0] };
+
+    // Register read on pipe_fds[0]. The callback registers read on pipe2_fds[0].
+    io.registerRead(pipe_fds[0], .{
+        .ptr = @ptrCast(&ctx),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *Ctx = @ptrCast(@alignCast(ptr.?));
+                c.original_called = true;
+                // Re-register from within callback — must not deadlock
+                c.io.registerRead(c.new_fd, .{
+                    .ptr = @ptrCast(c),
+                    .callback = struct {
+                        fn cb2(ptr2: ?*anyopaque, _: posix.fd_t) void {
+                            const c2: *Ctx = @ptrCast(@alignCast(ptr2.?));
+                            c2.reregistered_called = true;
+                        }
+                    }.cb2,
+                });
+            }
+        }.cb,
+    });
+
+    // Trigger the first callback
+    _ = try posix.write(pipe_fds[1], "trigger");
+    _ = io.poll(100);
+    try std.testing.expect(ctx.original_called);
+
+    // Trigger the re-registered callback
+    _ = try posix.write(pipe2_fds[1], "trigger2");
+    _ = io.poll(100);
+    try std.testing.expect(ctx.reregistered_called);
+}
+
+test "KqueueIO concurrent register while polling" {
+    // Test thread safety: one thread polls while another registers/unregisters.
+    var io = try KqueueIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    var stop = std.atomic.Value(bool).init(false);
+    var events_seen = std.atomic.Value(u32).init(0);
+
+    // Poller thread
+    const poller = try std.Thread.spawn(.{}, struct {
+        fn run(io_ptr: *KqueueIO, stop_flag: *std.atomic.Value(bool), seen: *std.atomic.Value(u32)) void {
+            while (!stop_flag.load(.acquire)) {
+                const n = io_ptr.poll(10);
+                if (n > 0) _ = seen.fetchAdd(@intCast(n), .monotonic);
+            }
+        }
+    }.run, .{ &io, &stop, &events_seen });
+
+    // Register/unregister from this thread while poller is running
+    var sockets: [16]posix.fd_t = undefined;
+    for (&sockets) |*s| {
+        s.* = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    }
+    defer for (sockets) |s| posix.close(s);
+
+    // Rapid register/unregister cycles
+    for (0..10) |_| {
+        for (sockets) |s| {
+            io.registerWrite(s, .{
+                .ptr = null,
+                .callback = struct {
+                    fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+                }.cb,
+            });
+        }
+        std.Thread.sleep(1 * std.time.ns_per_ms);
+        for (sockets) |s| {
+            io.unregister(s);
+        }
+    }
+
+    stop.store(true, .release);
+    io.wake();
+    poller.join();
+
+    // No crash = success. Events seen is a bonus check.
+    try std.testing.expectEqual(@as(u32, 0), io.registrations.count());
 }
