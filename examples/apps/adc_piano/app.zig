@@ -20,17 +20,19 @@ const NOTE_RE: u32 = 294; // D4
 const NOTE_MI: u32 = 330; // E4
 const NOTE_FA: u32 = 349; // F4
 
-// Sine wave amplitude (reduced to avoid clipping)
+const SAMPLE_RATE = platform.Hardware.sample_rate;
+
+// Sine wave amplitude
 const SINE_AMPLITUDE: f32 = 12000.0;
 
 /// Generate a sine wave tone at specified frequency
-fn generateSineWave(buffer: []i16, sample_rate: u32, frequency: u32, phase: *f32) void {
+fn generateSineWave(buffer: []i16, frequency: u32, phase: *f32) void {
     if (frequency == 0) {
         @memset(buffer, 0);
         return;
     }
 
-    const phase_increment = @as(f32, @floatFromInt(frequency)) * 2.0 * std.math.pi / @as(f32, @floatFromInt(sample_rate));
+    const phase_increment = @as(f32, @floatFromInt(frequency)) * 2.0 * std.math.pi / @as(f32, @floatFromInt(SAMPLE_RATE));
 
     for (buffer) |*sample| {
         sample.* = @intFromFloat(@sin(phase.*) * SINE_AMPLITUDE);
@@ -59,10 +61,34 @@ fn noteName(id: platform.ButtonId) []const u8 {
     };
 }
 
+/// Play a fixed-duration note (blocking)
+fn playNote(board: *Board, buffer: []i16, freq: u32, duration_ms: u32, phase: *f32) void {
+    phase.* = 0;
+    const duration_samples = SAMPLE_RATE * duration_ms / 1000;
+    var played: u32 = 0;
+    while (played < duration_samples) {
+        generateSineWave(buffer, freq, phase);
+        const written = board.speaker.write(buffer) catch 0;
+        played += @intCast(written);
+    }
+}
+
+/// Write silence to flush the DMA buffer
+fn flushSilence(board: *Board, buffer: []i16, duration_ms: u32) void {
+    @memset(buffer, 0);
+    const flush_samples = SAMPLE_RATE * duration_ms / 1000;
+    var flushed: u32 = 0;
+    while (flushed < flush_samples) {
+        const written = board.speaker.write(buffer) catch 0;
+        flushed += @intCast(written);
+    }
+}
+
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
     log.info("  ADC Piano — Do Re Mi Fa", .{});
     log.info("  Board: {s}", .{Board.meta.id});
+    log.info("  Sample rate: {} Hz", .{SAMPLE_RATE});
     log.info("==========================================", .{});
 
     var board: Board = undefined;
@@ -83,40 +109,32 @@ pub fn run(_: anytype) void {
 
     log.info("Playing startup melody: Do Re Mi...", .{});
 
-    // Play startup melody: Do Re Mi
     var buffer: [160]i16 = undefined;
     var phase: f32 = 0;
-    const startup_notes = [_]u32{ NOTE_DO, NOTE_RE, NOTE_MI };
-    for (startup_notes) |freq| {
-        phase = 0;
-        const duration_samples = platform.Hardware.sample_rate * 300 / 1000; // 300ms per note
-        var played: u32 = 0;
-        while (played < duration_samples) {
-            generateSineWave(&buffer, platform.Hardware.sample_rate, freq, &phase);
-            const written = board.speaker.write(&buffer) catch 0;
-            played += @intCast(written);
-        }
-        // Brief silence between notes
-        @memset(&buffer, 0);
-        var gap: u32 = 0;
-        const gap_samples = platform.Hardware.sample_rate * 50 / 1000; // 50ms gap
-        while (gap < gap_samples) {
-            const written = board.speaker.write(&buffer) catch 0;
-            gap += @intCast(written);
-        }
-    }
+
+    // Startup melody: Do Re Mi (confirms speaker works)
+    playNote(&board, &buffer, NOTE_DO, 300, &phase);
+    flushSilence(&board, &buffer, 80);
+    playNote(&board, &buffer, NOTE_RE, 300, &phase);
+    flushSilence(&board, &buffer, 80);
+    playNote(&board, &buffer, NOTE_MI, 400, &phase);
+    flushSilence(&board, &buffer, 300); // longer flush to fully clear DMA
 
     log.info("Ready! Press buttons to play notes.", .{});
 
     // Discard initial ADC readings (settling time)
-    for (0..20) |_| {
+    for (0..30) |_| {
         board.buttons.poll();
         while (board.nextEvent()) |_| {}
         Board.time.sleepMs(10);
     }
 
+    // Debug: print ADC raw value periodically
+    var debug_counter: u32 = 0;
+
     phase = 0;
     var current_freq: u32 = 0;
+    var prev_freq: u32 = 0;
 
     while (Board.isRunning()) {
         // Poll ADC buttons
@@ -134,7 +152,7 @@ pub fn run(_: anytype) void {
                             phase = 0; // reset phase for clean attack
                         },
                         .release => {
-                            current_freq = 0; // silence
+                            current_freq = 0;
                         },
                         else => {},
                     }
@@ -143,12 +161,27 @@ pub fn run(_: anytype) void {
             }
         }
 
-        // Continuously write audio (tone or silence)
-        generateSineWave(&buffer, platform.Hardware.sample_rate, current_freq, &phase);
-        _ = board.speaker.write(&buffer) catch {};
+        // When switching from tone to silence, flush the DMA buffer
+        if (prev_freq != 0 and current_freq == 0) {
+            flushSilence(&board, &buffer, 200);
+        }
+        prev_freq = current_freq;
 
-        if (current_freq == 0) {
+        if (current_freq != 0) {
+            // Playing a tone — write audio continuously
+            generateSineWave(&buffer, current_freq, &phase);
+            _ = board.speaker.write(&buffer) catch {};
+        } else {
+            // Idle — just poll buttons, don't write audio
             Board.time.sleepMs(5);
+        }
+
+        // Debug: print raw ADC every ~2 seconds
+        debug_counter += 1;
+        if (debug_counter >= 200) {
+            debug_counter = 0;
+            const raw = board.buttons.getLastRaw();
+            log.info("[DEBUG] ADC raw={}", .{raw});
         }
     }
 }
