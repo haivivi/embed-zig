@@ -1,4 +1,5 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk/partition:presets.bzl", "bk7258_default_partitions")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,6 +8,7 @@ filegroup(
     srcs = ["//examples/apps/nvs_storage:app_srcs"] + glob(["**/*"]),
 )
 
+bk7258_default_partitions()
 bk_modules()
 
 bk_zig_app(
@@ -14,6 +16,7 @@ bk_zig_app(
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait"],
+    partition_table = ":partitions",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_kvs",

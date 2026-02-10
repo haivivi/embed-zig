@@ -2,6 +2,7 @@ load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
 load("//bazel/bk/kconfig:defs.bzl", "bk_config")
 load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
+load("//bazel/bk/partition:presets.bzl", "bk7258_default_partitions")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,6 +19,7 @@ make_env_file(
 bk_crypto(name = "crypto")
 bk_config(name = "kconfig", modules = [":crypto"])
 
+bk7258_default_partitions()
 bk_modules()
 
 bk_zig_app(
@@ -25,6 +27,7 @@ bk_zig_app(
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns"],
+    partition_table = ":partitions",
     env = ":env",
     kconfig_ap = ":kconfig",
     c_helpers = [

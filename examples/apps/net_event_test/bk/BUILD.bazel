@@ -1,5 +1,6 @@
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk/partition:presets.bzl", "bk7258_default_partitions")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -13,6 +14,7 @@ make_env_file(
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
 )
 
+bk7258_default_partitions()
 bk_modules()
 
 bk_zig_app(
@@ -20,6 +22,7 @@ bk_zig_app(
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait"],
+    partition_table = ":partitions",
     env = ":env",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
