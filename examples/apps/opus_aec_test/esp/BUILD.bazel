@@ -22,6 +22,7 @@ zig_static_library(
     name = "opus_xtensa",
     lib = "//third_party/opus:opus_fixed",
     target = "xtensa-freestanding-none",
+    cpu = "esp32s3",
     optimize = "ReleaseSafe",
     system_include_dirs = [NEWLIB_INCLUDE],
 )

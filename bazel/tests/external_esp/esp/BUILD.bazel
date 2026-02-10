@@ -23,6 +23,7 @@ zig_static_library(
     name = "opus_xtensa",
     lib = "@embed_zig//third_party/opus:opus_fixed",
     target = "xtensa-freestanding-none",
+    cpu = "esp32s3",
     optimize = "ReleaseSafe",
     system_include_dirs = [NEWLIB_INCLUDE],
 )
@@ -56,7 +57,7 @@ esp_zig_app(
         ":opus_xtensa",
     ],
     sdkconfig = "@embed_zig//examples/esp:esp32s3",
-    app_config = "@embed_zig//examples/esp:app_internal",
+    app_config = "@embed_zig//examples/esp:app",
 )
 
 esp_flash(
