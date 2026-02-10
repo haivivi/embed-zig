@@ -14,13 +14,15 @@
         </header>
 
         <div class="device">
-            <!-- Front face: LED diamond + REC button -->
+            <!-- Front face: LED diamond under frosted REC dome -->
             <div class="face front">
                 <div class="face-label">Front</div>
-                <div class="led-strip" id="ledContainer"></div>
-                <button class="hw-button rec-btn adc-btn" data-adc="2000" data-name="rec">
-                    <span class="btn-inner">&#9679; REC</span>
-                </button>
+                <div class="rec-dome-wrap">
+                    <div class="led-strip" id="ledContainer"></div>
+                    <button class="rec-dome adc-btn" data-adc="2000" data-name="rec">
+                        <span class="rec-label">REC</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Back face: screen + nav keys -->

@@ -96,60 +96,96 @@ body {
     opacity: 0.5;
 }
 
-/* Front face: LED diamond + REC */
+/* Front face: frosted REC dome over LED diamond */
 .front {
     max-width: 180px;
     justify-content: center;
 }
 
-/* LED strip — diamond: 1-2-3-2-1 */
+/* Dome wrapper — positions LEDs behind the frosted overlay */
+.rec-dome-wrap {
+    position: relative;
+    width: 120px;
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* LED strip — diamond: 1-2-3-2-1 (behind the dome) */
 .led-strip {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
+    z-index: 1;
 }
 
 .led-row {
     display: flex;
-    gap: 4px;
+    gap: 5px;
 }
 
 .led {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
-    background: var(--surface-2);
-    border: 1.5px solid var(--border);
-    transition: all 0.1s ease;
+    background: rgba(30, 30, 40, 0.6);
+    border: none;
+    transition: all 0.15s ease;
 }
 
 .led.lit {
-    border-color: transparent;
-    box-shadow: 0 0 10px var(--led-color, #4ade80),
-                0 0 3px var(--led-color, #4ade80);
+    box-shadow: 0 0 16px 4px var(--led-color, #4ade80),
+                0 0 6px 1px var(--led-color, #4ade80);
+    background: var(--led-color, #4ade80);
 }
 
-/* REC button */
-.rec-btn {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
+/* Frosted dome overlay — the REC button itself */
+.rec-dome {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border: none;
+    appearance: none;
+    cursor: pointer;
+    border-radius: 50% / 50%;
+    background: rgba(20, 22, 30, 0.35);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1.5px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 18px;
+    transition: all 0.1s ease;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-.rec-btn .btn-inner {
-    border-radius: 50%;
+.rec-dome:hover {
+    background: rgba(20, 22, 30, 0.25);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.rec-dome:active,
+.rec-dome.pressed {
+    background: rgba(150, 30, 30, 0.3);
+    border-color: rgba(248, 113, 113, 0.3);
+}
+
+.rec-label {
+    font-family: var(--mono);
     font-size: 10px;
-    padding: 0;
-    color: var(--red);
-    flex-direction: column;
-    gap: 2px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: rgba(248, 113, 113, 0.6);
+    text-transform: uppercase;
 }
 
-.rec-btn:active .btn-inner,
-.rec-btn.pressed .btn-inner {
-    color: #fff;
-    background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%);
+.rec-dome:active .rec-label,
+.rec-dome.pressed .rec-label {
+    color: rgba(248, 113, 113, 1);
 }
 
 /* Back face: screen + nav */
