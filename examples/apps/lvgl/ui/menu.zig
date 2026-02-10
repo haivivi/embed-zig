@@ -14,11 +14,11 @@ var dots: [5]?ui.Obj = .{null} ** 5;
 pub var index: u8 = 0;
 
 const menu_titles = [_][*:0]const u8{
-    "\xe5\xa5\xa5\xe7\x89\xb9\xe9\x9b\x86\xe7\xbb\x93", // 奥特集结
-    "\xe8\xb6\x85\xe8\x83\xbd\xe9\xa9\xaf\xe5\x8c\x96", // 超能驯化
-    "\xe5\xae\x88\xe6\x8a\xa4\xe8\x81\x94\xe7\xbb\x9c", // 守护联络
-    "\xe7\xa7\xaf\xe5\x88\x86",                           // 积分
-    "\xe8\xae\xbe\xe7\xbd\xae",                           // 设置
+    "奥特集结",
+    "超能驯化",
+    "守护联络",
+    "积分",
+    "设置",
 };
 
 pub fn create() void {
