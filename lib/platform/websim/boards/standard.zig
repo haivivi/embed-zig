@@ -1,11 +1,11 @@
-//! Standard Board — 240x240 screen + 7 ADC buttons + power button + audio
+//! Standard Board — 240x240 screen + 7 ADC buttons + power button + LED strip
 //!
 //! Generic embedded board with:
 //! - 240x240 SPI LCD (RGB565)
 //! - 7 ADC buttons: vol+, vol-, left, right, back, confirm, rec
 //! - 1 power button (independent GPIO)
+//! - 9 LED strip (WS2812 style)
 //! - AEC audio system (speaker + mic) — TODO
-//! - 1 status LED
 
 const hal = @import("hal");
 const drivers = @import("../impl/drivers.zig");
@@ -50,13 +50,16 @@ pub const adc_values = [_]u16{ 200, 500, 800, 1100, 1400, 1700, 2000 };
 // LED Driver (adapts hal.Color to websim.Color)
 // ============================================================================
 
+pub const led_count: u32 = 9;
+
 pub const LedDriver = struct {
     const Self = @This();
     count: u32,
 
     pub fn init() !Self {
-        state.state.addLog("WebSim: LED initialized");
-        return .{ .count = state.state.led_count };
+        state.state.led_count = led_count;
+        state.state.addLog("WebSim: LED strip (9) initialized");
+        return .{ .count = led_count };
     }
 
     pub fn deinit(_: *Self) void {}
