@@ -1,67 +1,62 @@
-//! LVGL Label widget wrapper
-//!
-//! Labels display text on screen. Most common widget for embedded UIs.
+//! LVGL Label — Zig-native wrapper
 
-const lvgl = @import("lvgl");
-const c = lvgl.c;
+const c = @import("lvgl").c;
 const Obj = @import("obj.zig");
 
 const Self = @This();
-
-/// Underlying object
 obj: Obj,
 
-/// Create a label widget as a child of `parent`
-pub fn create(parent: Obj) Self {
-    const ptr = c.lv_label_create(parent.raw()) orelse unreachable;
-    return .{ .obj = Obj.wrap(ptr) };
+pub fn create(parent: Obj) ?Self {
+    const p = c.lv_label_create(parent.ptr) orelse return null;
+    return .{ .obj = .{ .ptr = p } };
 }
 
-/// Set label text (static string, must outlive the label)
-pub fn setText(self: Self, text: [*:0]const u8) void {
-    c.lv_label_set_text(self.obj.ptr, text);
+pub fn text(self: Self, t: [*:0]const u8) Self {
+    c.lv_label_set_text(self.obj.ptr, t);
+    return self;
 }
 
-/// Set label text with a format string
-pub fn setTextStatic(self: Self, text: [*:0]const u8) void {
-    c.lv_label_set_text_static(self.obj.ptr, text);
+pub fn textStatic(self: Self, t: [*:0]const u8) Self {
+    c.lv_label_set_text_static(self.obj.ptr, t);
+    return self;
 }
 
-/// Set long mode (how to handle text longer than the label width)
-pub fn setLongMode(self: Self, mode: c.lv_label_long_mode_t) void {
-    c.lv_label_set_long_mode(self.obj.ptr, mode);
+// Delegate style methods to Obj
+pub fn setAlign(self: Self, a: Obj.Align, x: i32, y: i32) Self {
+    _ = self.obj.setAlign(a, x, y);
+    return self;
 }
 
-// ============================================================================
-// Obj delegation — common operations
-// ============================================================================
-
-/// Center in parent
-pub fn center(self: Self) void {
-    self.obj.center();
+pub fn center(self: Self) Self {
+    _ = self.obj.center();
+    return self;
 }
 
-/// Align relative to parent
-pub fn setAlign(self: Self, alignment: c.lv_align_t, x_ofs: i32, y_ofs: i32) void {
-    self.obj.setAlign(alignment, x_ofs, y_ofs);
+pub fn color(self: Self, hex: u32) Self {
+    _ = self.obj.textColor(hex);
+    return self;
 }
 
-/// Set size
-pub fn setSize(self: Self, w: i32, h: i32) void {
-    self.obj.setSize(w, h);
+pub fn font(self: Self, f: *const c.lv_font_t) Self {
+    _ = self.obj.textFont(f);
+    return self;
 }
 
-/// Set position
-pub fn setPos(self: Self, x: i32, y: i32) void {
-    self.obj.setPos(x, y);
+pub fn hide(self: Self) Self {
+    _ = self.obj.hide();
+    return self;
 }
 
-/// Delete this label
-pub fn delete(self: Self) void {
-    self.obj.delete();
+pub fn show(self: Self) Self {
+    _ = self.obj.show();
+    return self;
 }
 
-/// Get raw LVGL object pointer
+pub fn setHidden(self: Self, hidden: bool) Self {
+    _ = self.obj.setHidden(hidden);
+    return self;
+}
+
 pub fn raw(self: Self) *c.lv_obj_t {
-    return self.obj.raw();
+    return self.obj.ptr;
 }
