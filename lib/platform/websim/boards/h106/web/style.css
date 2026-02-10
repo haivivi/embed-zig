@@ -102,62 +102,51 @@ body {
     justify-content: center;
 }
 
-/* Dome wrapper — positions LEDs behind the frosted overlay */
+/* Dome wrapper — positions LED glow canvas + frosted overlay */
 .rec-dome-wrap {
     position: relative;
-    width: 100px;
-    height: 120px;
+    width: 120px;
+    height: 150px;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-/* LED strip — diamond: 1-2-3-2-1 (behind the dome) */
+/* LED glow canvas — renders soft light blobs behind the dome */
+#ledGlowCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    border-radius: 50% / 50%;
+}
+
+/* LED strip — hidden dots, only used for data; glow drawn on canvas */
 .led-strip {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    z-index: 1;
+    display: none;
 }
 
-.led-row {
-    display: flex;
-    gap: 6px;
-}
-
-.led {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: rgba(30, 30, 40, 0.6);
-    border: none;
-    transition: all 0.15s ease;
-}
-
-.led.lit {
-    box-shadow: 0 0 14px 4px var(--led-color, #4ade80),
-                0 0 5px 1px var(--led-color, #4ade80);
-    background: var(--led-color, #4ade80);
-}
-
-/* Frosted dome overlay — the REC button itself */
+/* Frosted dome overlay — the REC button */
 .rec-dome {
     position: absolute;
-    inset: 6px 4px;
+    inset: 0;
     z-index: 2;
     border: none;
     appearance: none;
     cursor: pointer;
     border-radius: 50% / 50%;
-    background: rgba(20, 22, 30, 0.35);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    border: 1.5px solid rgba(255, 255, 255, 0.06);
+    background: rgba(18, 20, 28, 0.55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04),
+                inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+                0 2px 8px rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    padding-bottom: 14px;
+    padding-bottom: 16px;
     transition: all 0.1s ease;
     user-select: none;
     -webkit-user-select: none;
