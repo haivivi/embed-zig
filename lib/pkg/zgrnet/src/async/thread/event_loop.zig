@@ -271,28 +271,12 @@ pub const EventLoop = struct {
 
     fn timerSchedule(ptr: *anyopaque, delay_ms: u32, task: Task) TimerHandle {
         const self: *Self = @ptrCast(@alignCast(ptr));
-
-        const id = self.timers.next_id;
-        self.timers.next_id += 1;
-
-        self.timers.entries.append(self.allocator, .{
-            .id = id,
-            .fire_at = self.current_time_ms + delay_ms,
-            .task = task,
-            .cancelled = false,
-        }) catch return TimerHandle.null_handle;
-
-        return .{ .id = id };
+        return self.schedule(delay_ms, task);
     }
 
     fn timerCancel(ptr: *anyopaque, handle: TimerHandle) void {
         const self: *Self = @ptrCast(@alignCast(ptr));
-        for (self.timers.entries.items) |*entry| {
-            if (entry.id == handle.id) {
-                entry.cancelled = true;
-                return;
-            }
-        }
+        self.cancel(handle);
     }
 
     fn timerNowMs(ptr: *anyopaque) u64 {

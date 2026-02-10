@@ -263,8 +263,12 @@ pub fn main() !void {
                     } else {
                         blocks_corrupted += 1;
                     }
-                    next_recv += 1;
+                } else {
+                    // Unexpected size — count as corrupted to avoid silent hang
+                    blocks_corrupted += 1;
+                    std.debug.print("  WARN: block {d} unexpected size {d}\n", .{ next_recv, kcp_len });
                 }
+                next_recv += 1;
             }
 
             if (now - start > 30000) {
