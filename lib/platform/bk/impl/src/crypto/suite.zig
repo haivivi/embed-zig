@@ -238,18 +238,23 @@ pub const X25519 = struct {
     pub const shared_length = 32;
     pub const seed_length = 32;
 
+    const Curve = @import("std").crypto.dh.X25519;
+
     pub const KeyPair = struct {
         secret_key: [32]u8,
         public_key: [32]u8,
 
-        pub fn generateDeterministic(seed: [32]u8) crypto.Error!KeyPair {
-            const kp = crypto.x25519Keypair(seed) catch return error.CryptoError;
-            return .{ .secret_key = kp.secret_key, .public_key = kp.public_key };
+        pub fn generateDeterministic(seed: [32]u8) !KeyPair {
+            const kp = try Curve.KeyPair.generateDeterministic(seed);
+            return .{
+                .secret_key = kp.secret_key,
+                .public_key = kp.public_key,
+            };
         }
     };
 
-    pub fn scalarmult(sk: [32]u8, pk: [32]u8) crypto.Error![32]u8 {
-        return crypto.x25519Scalarmult(sk, pk);
+    pub fn scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
+        return Curve.scalarmult(sk, pk);
     }
 };
 
