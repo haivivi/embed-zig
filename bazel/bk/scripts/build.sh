@@ -373,12 +373,40 @@ cd "$ARMINO_PATH"
 rm -rf "build/bk7258/$PROJECT"
 make bk7258 PROJECT="$PROJECT" PROJECT_DIR="$PROJECT_DIR" BUILD_DIR="$WORK/build" 2>&1
 
-ALL_APP="$WORK/build/bk7258/$PROJECT/package/all-app.bin"
+PACKAGE_DIR="$WORK/build/bk7258/$PROJECT/package"
+ALL_APP="$PACKAGE_DIR/all-app.bin"
 if [ ! -f "$ALL_APP" ]; then
     echo "[bk_build] Error: all-app.bin not found"
     exit 1
 fi
 
+# Log package contents for debugging
+echo "[bk_build] Package contents:"
+ls -la "$PACKAGE_DIR/" 2>/dev/null | while read line; do echo "[bk_build]   $line"; done
+# Find individual AP/CP binaries
+AP_BIN=$(find "$WORK/build/bk7258/$PROJECT" -name "app.bin" -path "*bk7258_ap*" | head -1)
+CP_BIN=$(find "$WORK/build/bk7258/$PROJECT" -name "app.bin" -path "*bk7258*" ! -path "*bk7258_ap*" | head -1)
+echo "[bk_build] AP binary: $AP_BIN ($(wc -c < "$AP_BIN" 2>/dev/null || echo 0) bytes)"
+echo "[bk_build] CP binary: $CP_BIN ($(wc -c < "$CP_BIN" 2>/dev/null || echo 0) bytes)"
+
+# Log partition info if available
+PARTITION_DIR="$WORK/build/bk7258/$PROJECT/partitions"
+if [ -d "$PARTITION_DIR" ]; then
+    echo "[bk_build] Partition info:"
+    cat "$PARTITION_DIR/partitions.csv" 2>/dev/null | while read line; do echo "[bk_build]   $line"; done
+fi
+
 cp "$ALL_APP" "$BK_BIN_OUT"
+
+# Copy AP-only binary + partition CSV for app-only flash
+if [ -n "$AP_BIN" ] && [ -f "$AP_BIN" ]; then
+    cp "$AP_BIN" "$BK_AP_BIN_OUT"
+    echo "[bk_build] AP-only: $BK_AP_BIN_OUT ($(wc -c < "$BK_AP_BIN_OUT") bytes)"
+else
+    # Fallback: copy all-app.bin as AP bin
+    cp "$ALL_APP" "$BK_AP_BIN_OUT"
+fi
+cp "$PARTITION_DIR/partitions.csv" "$BK_PARTITIONS_OUT" 2>/dev/null || echo "Name,Offset" > "$BK_PARTITIONS_OUT"
+
 echo "[bk_build] Output: $BK_BIN_OUT ($(wc -c < "$BK_BIN_OUT") bytes)"
 echo "[bk_build] Done!"

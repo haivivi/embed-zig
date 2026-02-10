@@ -77,6 +77,8 @@ def _bk_zig_app_impl(ctx):
 
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
+    ap_bin_file = ctx.actions.declare_file("{}_ap.bin".format(project_name))
+    partition_file = ctx.actions.declare_file("{}_partitions.csv".format(project_name))
 
     # Get AP and CP source files
     ap_files = ctx.attr.ap.files.to_list()
@@ -147,6 +149,8 @@ export E="$(pwd)"
 export ZIG_BIN="$E/{zig_bin}"
 export BK_PROJECT_NAME="{project_name}"
 export BK_BIN_OUT="$E/{bin_out}"
+export BK_AP_BIN_OUT="$E/{ap_bin_out}"
+export BK_PARTITIONS_OUT="$E/{partitions_out}"
 export BK_C_HELPERS="{c_helpers}"
 export BK_AP_ZIG="{ap_zig}"
 export BK_CP_ZIG="{cp_zig}"
@@ -164,6 +168,8 @@ exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
         bin_out = bin_file.path,
+        ap_bin_out = ap_bin_file.path,
+        partitions_out = partition_file.path,
         zig_bin = zig_bin.path if zig_bin else "zig",
         c_helpers = c_helper_paths,
         ap_zig = app_zig.path,
@@ -203,7 +209,7 @@ exec bash "$E/{build_sh}"
     ctx.actions.run_shell(
         command = wrapper.path,
         inputs = inputs,
-        outputs = [bin_file],
+        outputs = [bin_file, ap_bin_file, partition_file],
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
@@ -215,8 +221,8 @@ exec bash "$E/{build_sh}"
 
     return [
         DefaultInfo(
-            files = depset([bin_file]),
-            runfiles = ctx.runfiles(files = [bin_file]),
+            files = depset([bin_file, ap_bin_file, partition_file]),
+            runfiles = ctx.runfiles(files = [bin_file, ap_bin_file, partition_file]),
         ),
     ]
 
@@ -286,14 +292,19 @@ bk_zig_app = rule(
 # =============================================================================
 
 def _bk_flash_impl(ctx):
-    """Flash all-app.bin to BK7258 via bk_loader."""
+    """Flash BK7258 binary via bk_loader. Supports --app-only for AP-only flash."""
 
     app_files = ctx.attr.app.files.to_list()
     bin_file = None
+    ap_bin_file = None
+    partition_file = None
     for f in app_files:
-        if f.path.endswith(".bin"):
+        if f.basename.endswith("_ap.bin"):
+            ap_bin_file = f
+        elif f.basename.endswith("_partitions.csv"):
+            partition_file = f
+        elif f.path.endswith(".bin") and not bin_file:
             bin_file = f
-            break
     if not bin_file:
         fail("No .bin file found in app target")
 
@@ -313,6 +324,14 @@ if [ ! -d "$RUNFILES" ]; then
     RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 fi
 
+# Parse CLI args
+APP_ONLY=0
+for arg in "$@"; do
+    case $arg in
+        --app-only) APP_ONLY=1 ;;
+    esac
+done
+
 BK_LOADER="{bk_loader}"
 source "$RUNFILES/{common_sh}"
 if [ -z "$BK_LOADER" ] || [ ! -x "$BK_LOADER" ]; then
@@ -327,15 +346,36 @@ if lsof "$PORT" >/dev/null 2>&1; then
     sleep 0.5
 fi
 
-echo "[bk_flash] Flashing $RUNFILES/{bin} to $PORT at {baud} baud..."
-echo "[bk_flash] bk_loader: $BK_LOADER"
-"$BK_LOADER" download \\
-    -p "$PORT" \\
-    -b {baud} \\
-    --reset_baudrate {baud} \\
-    --reset_type 1 \\
-    -i "$RUNFILES/{bin}" \\
-    --reboot
+if [ "$APP_ONLY" = "1" ] && [ -f "$RUNFILES/{ap_bin}" ] && [ -f "$RUNFILES/{partitions}" ]; then
+    # App-only flash: only AP partition at its offset
+    # WARNING: BK bootloader may verify full image CRC — app-only may cause boot loop.
+    # Use only when CP hasn't changed and you know it works.
+    AP_OFFSET=$(grep "primary_ap_app" "$RUNFILES/{partitions}" | cut -d',' -f2)
+    if [ -z "$AP_OFFSET" ]; then
+        echo "[bk_flash] Error: cannot find primary_ap_app offset in partition table"
+        exit 1
+    fi
+    echo "[bk_flash] APP-ONLY (experimental): flashing AP to $PORT at offset $AP_OFFSET ({baud} baud)"
+    echo "[bk_flash] WARNING: if device boot-loops, use full flash (without --app-only)"
+    "$BK_LOADER" download \\
+        -p "$PORT" \\
+        -b {baud} \\
+        --reset_baudrate {baud} \\
+        --reset_type 1 \\
+        -i "$RUNFILES/{ap_bin}" \\
+        -s "$AP_OFFSET" \\
+        --reboot
+else
+    # Full flash: all-app.bin (bootloader + CP + AP)
+    echo "[bk_flash] Flashing all-app.bin to $PORT ({baud} baud)"
+    "$BK_LOADER" download \\
+        -p "$PORT" \\
+        -b {baud} \\
+        --reset_baudrate {baud} \\
+        --reset_type 1 \\
+        -i "$RUNFILES/{bin}" \\
+        --reboot
+fi
 
 echo "[bk_flash] Done!"
 """.format(
@@ -344,6 +384,8 @@ echo "[bk_flash] Done!"
         baud = baud,
         bk_loader = bk_loader,
         bin = bin_file.short_path,
+        ap_bin = ap_bin_file.short_path if ap_bin_file else "",
+        partitions = partition_file.short_path if partition_file else "",
     )
 
     ctx.actions.write(
@@ -352,10 +394,16 @@ echo "[bk_flash] Done!"
         is_executable = True,
     )
 
+    all_files = [bin_file] + script_files
+    if ap_bin_file:
+        all_files.append(ap_bin_file)
+    if partition_file:
+        all_files.append(partition_file)
+
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = [bin_file] + script_files),
+            runfiles = ctx.runfiles(files = all_files),
         ),
     ]
 
