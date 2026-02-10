@@ -244,15 +244,24 @@ int bk_zig_wifi_scan_get_results(int *out_count) {
     return BK_OK;
 }
 
-int bk_zig_wifi_scan_get_ap(int index, char *ssid_out, unsigned char *bssid_out,
-                             int *rssi_out, unsigned char *channel_out,
-                             unsigned char *security_out) {
-    if (index < 0 || index >= s_scan_ap_count) return -1;
-    if (ssid_out) memcpy(ssid_out, s_scan_aps[index].ssid, 33);
-    if (bssid_out) memcpy(bssid_out, s_scan_aps[index].bssid, 6);
-    if (rssi_out) *rssi_out = s_scan_aps[index].rssi;
-    if (channel_out) *channel_out = s_scan_aps[index].channel;
-    if (security_out) *security_out = s_scan_aps[index].security;
+/* Flat struct with fixed layout for Zig FFI (no alignment surprises) */
+typedef struct {
+    char ssid[33];           /* 0-32: SSID (null-terminated) */
+    unsigned char bssid[6];  /* 33-38: BSSID */
+    signed char rssi;        /* 39: RSSI in dBm */
+    unsigned char channel;   /* 40: channel number */
+    unsigned char security;  /* 41: wifi_security_t value */
+    unsigned char _pad[2];   /* 42-43: padding to 44 bytes */
+} bk_zig_scan_ap_flat_t;    /* total: 44 bytes, no alignment gaps */
+
+int bk_zig_wifi_scan_get_ap_flat(int index, bk_zig_scan_ap_flat_t *out) {
+    if (index < 0 || index >= s_scan_ap_count || !out) return -1;
+    memset(out, 0, sizeof(*out));
+    memcpy(out->ssid, s_scan_aps[index].ssid, 33);
+    memcpy(out->bssid, s_scan_aps[index].bssid, 6);
+    out->rssi = (signed char)s_scan_aps[index].rssi;
+    out->channel = s_scan_aps[index].channel;
+    out->security = s_scan_aps[index].security;
     return 0;
 }
 

@@ -105,8 +105,43 @@ pub const WifiDriver = struct {
     }
 
     /// Get scan results (call after scan_done event)
-    pub fn scanGetResults(_: *Self) []const armino.wifi.ScanAp {
-        return armino.wifi.scanGetResults();
+    /// Returns HAL-compatible ApInfo by converting from armino's ScanAp format
+    pub fn scanGetResults(_: *Self) []const ApInfo {
+        const raw = armino.wifi.scanGetResults();
+        for (raw, 0..) |ap, i| {
+            const ssid_full = ap.getSsid();
+            const ssid_len: u8 = @intCast(@min(ssid_full.len, 32));
+            var ssid32: [32]u8 = .{0} ** 32;
+            @memcpy(ssid32[0..ssid_len], ssid_full[0..ssid_len]);
+            scan_results_hal[i] = .{
+                .ssid = ssid32,
+                .ssid_len = ssid_len,
+                .bssid = ap.bssid,
+                .channel = ap.channel,
+                .rssi = ap.rssi,
+                .auth_mode = securityToAuthMode(ap.security),
+            };
+        }
+        return scan_results_hal[0..raw.len];
+    }
+
+    const wifi_hal = @import("hal").wifi;
+    const ApInfo = wifi_hal.ApInfo;
+    const AuthMode = wifi_hal.AuthMode;
+
+    var scan_results_hal: [32]ApInfo = undefined;
+
+    fn securityToAuthMode(sec: u8) AuthMode {
+        return switch (sec) {
+            0 => .open,       // WIFI_SECURITY_NONE
+            1 => .wep,        // WIFI_SECURITY_WEP
+            2, 3, 4 => .wpa_psk,   // WIFI_SECURITY_WPA_*
+            5, 6, 7 => .wpa2_psk,  // WIFI_SECURITY_WPA2_*
+            8 => .wpa3_psk,        // WIFI_SECURITY_WPA3_SAE
+            9 => .wpa2_wpa3_psk,   // WIFI_SECURITY_WPA3_WPA2_MIXED
+            10 => .wpa2_enterprise, // WIFI_SECURITY_EAP
+            else => .open,
+        };
     }
 };
 

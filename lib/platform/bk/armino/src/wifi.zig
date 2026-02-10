@@ -8,7 +8,17 @@ extern fn bk_zig_wifi_sta_disconnect() c_int;
 extern fn bk_zig_wifi_poll_event(out_type: *c_int, out_ip: *[4]u8, out_dns: *[4]u8) c_int;
 extern fn bk_zig_wifi_scan_start() c_int;
 extern fn bk_zig_wifi_scan_get_results(out_count: *c_int) c_int;
-extern fn bk_zig_wifi_scan_get_ap(index: c_int, ssid_out: [*]u8, bssid_out: *[6]u8, rssi_out: *c_int, channel_out: *u8, security_out: *u8) c_int;
+extern fn bk_zig_wifi_scan_get_ap_flat(index: c_int, out: *ScanApFlat) c_int;
+
+/// Flat struct matching C bk_zig_scan_ap_flat_t (packed, no alignment gaps)
+const ScanApFlat = extern struct {
+    ssid: [33]u8,      // 0-32
+    bssid: [6]u8,      // 33-38
+    rssi: i8,          // 39
+    channel: u8,       // 40
+    security: u8,      // 41
+    _pad: [2]u8,       // 42-43
+};
 
 const EVT_CONNECTED: c_int = 1;
 const EVT_DISCONNECTED: c_int = 2;
@@ -86,19 +96,16 @@ pub fn scanGetResults() []const ScanAp {
     scan_count = @intCast(@max(0, @min(count, 32)));
 
     for (0..scan_count) |i| {
-        var ssid_buf: [33]u8 = .{0} ** 33;
-        var bssid: [6]u8 = .{0} ** 6;
-        var rssi: c_int = 0;
-        var channel: u8 = 0;
-        var security: u8 = 0;
-        _ = bk_zig_wifi_scan_get_ap(@intCast(i), &ssid_buf, &bssid, &rssi, &channel, &security);
-        scan_results[i] = .{
-            .ssid = ssid_buf,
-            .bssid = bssid,
-            .rssi = @intCast(@max(-128, @min(127, rssi))),
-            .channel = channel,
-            .security = security,
-        };
+        var flat: ScanApFlat = undefined;
+        if (bk_zig_wifi_scan_get_ap_flat(@intCast(i), &flat) == 0) {
+            scan_results[i] = .{
+                .ssid = flat.ssid,
+                .bssid = flat.bssid,
+                .rssi = flat.rssi,
+                .channel = flat.channel,
+                .security = flat.security,
+            };
+        }
     }
 
     return scan_results[0..scan_count];
