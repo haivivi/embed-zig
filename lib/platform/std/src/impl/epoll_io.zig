@@ -84,10 +84,29 @@ fn rawEpollWait(epfd: i32, events: []linux.epoll_event, timeout: i32) usize {
     }
 }
 
+/// Helper: convert linux.EPOLL packed struct constants to u32.
+/// In Zig 0.14+, linux.EPOLL.IN/OUT etc. are packed struct(u32) values,
+/// not plain u32. This helper ensures consistent conversion. If the
+/// type is already u32 (future Zig versions), @bitCast is a no-op.
+inline fn epollToU32(val: anytype) u32 {
+    return @bitCast(val);
+}
+
 /// epoll-based I/O service implementing the IOService trait contract.
 pub const EpollIO = struct {
     const Self = @This();
     const max_events = 64;
+
+    // Pre-computed u32 constants for EPOLL flags.
+    // linux.EPOLL.IN/OUT are packed struct(u32) in Zig 0.14+; we convert
+    // once here so the rest of the code uses plain u32 arithmetic.
+    const EPOLL_IN: u32 = epollToU32(linux.EPOLL.IN);
+    const EPOLL_OUT: u32 = epollToU32(linux.EPOLL.OUT);
+    const EPOLL_ERR: u32 = epollToU32(linux.EPOLL.ERR);
+    const EPOLL_HUP: u32 = epollToU32(linux.EPOLL.HUP);
+    const EPOLL_CTL_ADD: u32 = epollToU32(linux.EPOLL.CTL_ADD);
+    const EPOLL_CTL_MOD: u32 = epollToU32(linux.EPOLL.CTL_MOD);
+    const EPOLL_CTL_DEL: u32 = epollToU32(linux.EPOLL.CTL_DEL);
 
     /// Callback invoked when a file descriptor is ready for I/O.
     pub const ReadyCallback = struct {
@@ -125,19 +144,20 @@ pub const EpollIO = struct {
     events: [max_events]linux.epoll_event,
 
     pub fn init(allocator: Allocator) !Self {
-        const epfd = try posix.epoll_create1(linux.EPOLL.CLOEXEC);
+        // EPOLL_CLOEXEC — linux.EPOLL.CLOEXEC is packed struct(u32) in Zig 0.14+
+        const epfd = try posix.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
         errdefer posix.close(epfd);
 
-        // Create eventfd for wake() signaling
-        const wake_fd = try posix.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+        // EFD_CLOEXEC | EFD_NONBLOCK — same packed struct conversion
+        const wake_fd = try posix.eventfd(0, epollToU32(linux.EFD.CLOEXEC | linux.EFD.NONBLOCK));
         errdefer posix.close(wake_fd);
 
         // Register eventfd with epoll
         var wake_event = linux.epoll_event{
-            .events = linux.EPOLL.IN,
+            .events = EPOLL_IN,
             .data = .{ .fd = wake_fd },
         };
-        try rawEpollCtl(epfd, linux.EPOLL.CTL_ADD, wake_fd, &wake_event);
+        try rawEpollCtl(epfd, EPOLL_CTL_ADD, wake_fd, &wake_event);
 
         return .{
             .epfd = epfd,
@@ -156,12 +176,12 @@ pub const EpollIO = struct {
 
     /// Register a file descriptor for read readiness.
     pub fn registerRead(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, linux.EPOLL.IN, callback, true);
+        self.registerEvents(fd, EPOLL_IN, callback, true);
     }
 
     /// Register a file descriptor for write readiness.
     pub fn registerWrite(self: *Self, fd: posix.fd_t, callback: ReadyCallback) void {
-        self.registerEvents(fd, linux.EPOLL.OUT, callback, false);
+        self.registerEvents(fd, EPOLL_OUT, callback, false);
     }
 
     /// Shared implementation for registering events on a file descriptor.
@@ -198,7 +218,7 @@ pub const EpollIO = struct {
                 .events = new_events,
                 .data = .{ .fd = fd },
             };
-            const op: u32 = if (is_new) linux.EPOLL.CTL_ADD else linux.EPOLL.CTL_MOD;
+            const op: u32 = if (is_new) EPOLL_CTL_ADD else EPOLL_CTL_MOD;
             rawEpollCtl(self.epfd, op, fd, &ev) catch |err| {
                 std.log.warn("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
@@ -214,7 +234,7 @@ pub const EpollIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         if (self.registrations.fetchRemove(fd)) |_| {
-            rawEpollCtl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
+            rawEpollCtl(self.epfd, EPOLL_CTL_DEL, fd, null) catch |err| {
                 std.log.warn("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
         }
@@ -229,6 +249,7 @@ pub const EpollIO = struct {
         var processed: usize = 0;
         for (self.events[0..n]) |event| {
             const fd = event.data.fd;
+            const ev = @as(u32, @bitCast(event.events));
 
             // Skip wake events — just drain the eventfd
             if (fd == self.wake_fd) {
@@ -237,12 +258,27 @@ pub const EpollIO = struct {
                 continue;
             }
 
-            if (self.registrations.get(fd)) |entry| {
-                if (event.events & linux.EPOLL.IN != 0) {
+            // EPOLLERR and EPOLLHUP are always reported by the kernel even
+            // if not explicitly requested. Treat them as read-readiness so
+            // the user's read callback can detect the error / hangup via
+            // recv() returning 0 or an error.
+            const is_read = (ev & EPOLL_IN != 0) or (ev & EPOLL_ERR != 0) or (ev & EPOLL_HUP != 0);
+            const is_write = (ev & EPOLL_OUT != 0);
+
+            if (is_read) {
+                // Look up fresh each time — a previous callback in this
+                // loop iteration (or the write callback below) may have
+                // modified registrations.
+                if (self.registrations.get(fd)) |entry| {
                     entry.read_cb.call(fd);
                     processed += 1;
                 }
-                if (event.events & linux.EPOLL.OUT != 0) {
+            }
+            if (is_write) {
+                // Re-lookup: the read callback above (or a callback for a
+                // different fd earlier in the loop) may have unregistered
+                // this fd or changed the write callback.
+                if (self.registrations.get(fd)) |entry| {
                     entry.write_cb.call(fd);
                     processed += 1;
                 }
