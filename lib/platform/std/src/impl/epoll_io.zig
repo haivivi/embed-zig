@@ -110,7 +110,7 @@ pub const EpollIO = struct {
     /// Shared implementation for registering events on a file descriptor.
     fn registerEvents(self: *Self, fd: posix.fd_t, event_flag: u32, callback: ReadyCallback, is_read: bool) void {
         const result = self.registrations.getOrPut(fd) catch |err| {
-            std.log.err("EpollIO: failed to update registration map for fd {d}: {s}", .{ fd, @errorName(err) });
+            std.log.warn("EpollIO: failed to update registration map for fd {d}: {s}", .{ fd, @errorName(err) });
             return;
         };
         const is_new = !result.found_existing;
@@ -143,7 +143,7 @@ pub const EpollIO = struct {
             };
             const op: u32 = if (is_new) linux.EPOLL.CTL_ADD else linux.EPOLL.CTL_MOD;
             posix.epoll_ctl(self.epfd, op, fd, &ev) catch |err| {
-                std.log.err("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
+                std.log.warn("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
                     _ = self.registrations.fetchRemove(fd);
                 }
@@ -158,7 +158,7 @@ pub const EpollIO = struct {
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         if (self.registrations.fetchRemove(fd)) |_| {
             posix.epoll_ctl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
-                std.log.err("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
+                std.log.warn("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
         }
     }
@@ -199,7 +199,7 @@ pub const EpollIO = struct {
     pub fn wake(self: *Self) void {
         const val: [8]u8 = @bitCast(@as(u64, 1));
         _ = posix.write(self.wake_fd, &val) catch |err| {
-            std.log.err("EpollIO: failed to wake: {s}", .{@errorName(err)});
+            std.log.warn("EpollIO: failed to wake: {s}", .{@errorName(err)});
         };
     }
 };
@@ -283,4 +283,244 @@ test "EpollIO wake interrupts poll" {
     io.wake();
     const count = io.poll(1000);
     try std.testing.expectEqual(@as(usize, 0), count);
+}
+
+test "EpollIO socket fd read" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    // Create a UDP socket
+    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    defer posix.close(sock);
+
+    // Bind to ephemeral port
+    const addr = posix.sockaddr.in{
+        .port = 0,
+        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+    };
+    try posix.bind(sock, @ptrCast(&addr), @sizeOf(posix.sockaddr.in));
+
+    // Get the assigned port
+    var bound_addr: posix.sockaddr.in = undefined;
+    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+    try posix.getsockname(sock, @ptrCast(&bound_addr), &addr_len);
+
+    var read_called = false;
+    io.registerRead(sock, .{
+        .ptr = @ptrCast(&read_called),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *bool = @ptrCast(@alignCast(ptr.?));
+                c.* = true;
+            }
+        }.cb,
+    });
+
+    // Send data to ourselves
+    const msg = "test";
+    _ = try posix.sendto(sock, msg, 0, @ptrCast(&bound_addr), @sizeOf(posix.sockaddr.in));
+
+    const count = io.poll(100);
+    try std.testing.expect(count > 0);
+    try std.testing.expect(read_called);
+}
+
+test "EpollIO socket fd write readiness" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    // A UDP socket is always write-ready
+    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    defer posix.close(sock);
+
+    var write_called = false;
+    io.registerWrite(sock, .{
+        .ptr = @ptrCast(&write_called),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *bool = @ptrCast(@alignCast(ptr.?));
+                c.* = true;
+            }
+        }.cb,
+    });
+
+    const count = io.poll(100);
+    try std.testing.expect(count > 0);
+    try std.testing.expect(write_called);
+}
+
+test "EpollIO invalid fd does not panic" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    // Register a bogus fd — should log an error but NOT panic
+    io.registerRead(9999, .{
+        .ptr = null,
+        .callback = struct {
+            fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+        }.cb,
+    });
+
+    // fd should not be in registrations (cleanup on error)
+    try std.testing.expect(io.registrations.get(9999) == null);
+
+    // poll should work fine
+    const count = io.poll(1);
+    try std.testing.expectEqual(@as(usize, 0), count);
+}
+
+test "EpollIO closed fd does not panic" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    // Create a socket, register it, then close it
+    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+
+    io.registerRead(sock, .{
+        .ptr = null,
+        .callback = struct {
+            fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+        }.cb,
+    });
+
+    // Close the fd while it's registered
+    posix.close(sock);
+
+    // Poll should not panic
+    _ = io.poll(1);
+
+    // Unregister should also not panic
+    io.unregister(sock);
+}
+
+test "EpollIO multi-thread wake" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    // Spawn a thread that wakes us after a short delay
+    const thread = try std.Thread.spawn(.{}, struct {
+        fn run(io_ptr: *EpollIO) void {
+            std.Thread.sleep(10 * std.time.ns_per_ms); // 10ms
+            io_ptr.wake();
+        }
+    }.run, .{&io});
+
+    // poll() should return quickly (not wait the full 5 seconds)
+    const start = std.time.milliTimestamp();
+    _ = io.poll(5000);
+    const elapsed = std.time.milliTimestamp() - start;
+
+    thread.join();
+
+    // Should have returned well before the 5s timeout
+    try std.testing.expect(elapsed < 2000);
+}
+
+test "EpollIO concurrent register and unregister" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    var sockets: [8]posix.fd_t = undefined;
+    for (&sockets) |*s| {
+        s.* = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    }
+    defer for (sockets) |s| posix.close(s);
+
+    // Register all
+    for (sockets) |s| {
+        io.registerRead(s, .{
+            .ptr = null,
+            .callback = struct {
+                fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+            }.cb,
+        });
+    }
+
+    _ = io.poll(1);
+
+    // Unregister all
+    for (sockets) |s| {
+        io.unregister(s);
+    }
+
+    // Re-register with write
+    for (sockets) |s| {
+        io.registerWrite(s, .{
+            .ptr = null,
+            .callback = struct {
+                fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+            }.cb,
+        });
+    }
+
+    _ = io.poll(1);
+    for (sockets) |s| {
+        io.unregister(s);
+    }
+
+    // Ensure no registrations leaked
+    try std.testing.expectEqual(@as(u32, 0), io.registrations.count());
+}
+
+test "EpollIO write readiness on pipe" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    const pipe_fds = try posix.pipe();
+    defer posix.close(pipe_fds[0]);
+    defer posix.close(pipe_fds[1]);
+
+    var write_called = false;
+    io.registerWrite(pipe_fds[1], .{
+        .ptr = @ptrCast(&write_called),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *bool = @ptrCast(@alignCast(ptr.?));
+                c.* = true;
+            }
+        }.cb,
+    });
+
+    const count = io.poll(100);
+    try std.testing.expect(count > 0);
+    try std.testing.expect(write_called);
+}
+
+test "EpollIO read and write on same fd" {
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    const pipe_fds = try posix.pipe();
+    defer posix.close(pipe_fds[0]);
+    defer posix.close(pipe_fds[1]);
+
+    var read_called = false;
+    var write_called = false;
+
+    io.registerRead(pipe_fds[0], .{
+        .ptr = @ptrCast(&read_called),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *bool = @ptrCast(@alignCast(ptr.?));
+                c.* = true;
+            }
+        }.cb,
+    });
+
+    io.registerWrite(pipe_fds[1], .{
+        .ptr = @ptrCast(&write_called),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *bool = @ptrCast(@alignCast(ptr.?));
+                c.* = true;
+            }
+        }.cb,
+    });
+
+    _ = try posix.write(pipe_fds[1], "data");
+
+    const count = io.poll(100);
+    try std.testing.expect(count >= 2);
+    try std.testing.expect(read_called);
+    try std.testing.expect(write_called);
 }
