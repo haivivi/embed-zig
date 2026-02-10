@@ -285,7 +285,7 @@ pub fn main() !void {
         grand_throughput += throughput;
     }
 
-    const avg = grand_throughput / rounds;
+    const avg = if (rounds > 0) grand_throughput / rounds else 0;
     const total_dropped = g_pkts_dropped_send + g_pkts_dropped_recv;
     std.debug.print("{d}/{d} verified, {d} corrupt, {d} KB/s, dropped: {d} (send:{d} recv:{d}), integrity: {s}\n", .{
         grand_verified,

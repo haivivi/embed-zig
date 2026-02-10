@@ -168,6 +168,7 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
 
     var total_bytes: usize = 0;
     var total_packets: usize = 0;
+    var last_logged_packets: usize = 0;
     var disconnect_count: u32 = 0;
     const start = Board.time.getTimeMs();
 
@@ -249,7 +250,8 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
             total_packets += 1;
         }
 
-        if (total_packets > 0 and total_packets % 50 == 0) {
+        if (total_packets > 0 and total_packets % 50 == 0 and total_packets != last_logged_packets) {
+            last_logged_packets = total_packets;
             const elapsed = now - start;
             const kbps = if (elapsed > 0) (total_bytes * 2 * 1000) / elapsed / 1024 else 0;
             log.info("{d} pkts, {d} KB/s, disc={d}", .{ total_packets, kbps, disconnect_count });
