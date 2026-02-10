@@ -1,6 +1,7 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
 load("//bazel/bk/kconfig:defs.bzl", "bk_audio", "bk_config")
-load("//bazel/bk/partition:presets.bzl", "bk7258_default_partitions")
+load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
+load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,7 +13,24 @@ filegroup(
 bk_audio(name = "audio")
 bk_config(name = "kconfig", modules = [":audio"])
 
-bk7258_default_partitions()
+
+# Partition table (BK7258, 8MB flash — all offsets explicit)
+bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
+bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")
+bk_partition_entry(name = "part_ap", partition_name = "primary_ap_app", type = "code", partition_size = "1156K")
+bk_partition_entry(name = "part_ota", partition_name = "ota", type = "data", partition_size = "1428K", write = True)
+bk_partition_entry(name = "part_usr_config", partition_name = "usr_config", type = "data", partition_size = "60K", write = True)
+bk_partition_entry(name = "part_easyflash", partition_name = "easyflash", type = "data", partition_size = "8K", offset = "0x7fa000", write = True)
+bk_partition_entry(name = "part_easyflash_ap", partition_name = "easyflash_ap", type = "data", partition_size = "8K", offset = "0x7fc000", write = True)
+bk_partition_entry(name = "part_sys_rf", partition_name = "sys_rf", type = "data", partition_size = "4K", offset = "0x7fe000", write = True)
+bk_partition_entry(name = "part_sys_net", partition_name = "sys_net", type = "data", partition_size = "4K", offset = "0x7ff000", write = True)
+
+bk_partition_table(
+    name = "partitions",
+    entries = [":part_bootloader", ":part_cp", ":part_ap", ":part_ota", ":part_usr_config",
+               ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"],
+)
+
 bk_modules()
 
 bk_zig_app(
