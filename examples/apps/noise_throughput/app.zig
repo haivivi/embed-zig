@@ -1,8 +1,7 @@
-//! Noise + KCP Resilience Test — ESP32 responder
+//! Noise + KCP Stream Throughput Test — ESP32 responder
 //!
-//! Listens on UDP, performs Noise IK handshake, then uses KCP reliable
-//! transport for echo with data integrity verification.
-//! Supports WiFi chaos mode: periodic disconnect/reconnect to test KCP resilience.
+//! Uses Mux in manual polling mode (proven reliable).
+//! Recv + Update + Echo all in one thread.
 
 const std = @import("std");
 
@@ -12,11 +11,13 @@ const log = Board.log;
 
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
-const kcp_mod = zgrnet.kcp;
+const kcp_stream_mod = zgrnet.kcp_stream;
 
 const esp_mod = @import("esp");
 const IdfSocket = esp_mod.idf.socket.Socket;
 const idf_heap = esp_mod.idf.heap;
+
+const EspRt = esp_mod.idf.runtime;
 
 const EspCryptoChacha = struct {
     pub const Blake2s256 = crypto_suite.Blake2s256;
@@ -32,18 +33,13 @@ const EspCryptoChacha = struct {
 const Noise = zgrnet.noise.Protocol(EspCryptoChacha);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
-const Kcp = kcp_mod.Kcp;
+const MuxType = kcp_stream_mod.Mux(EspRt);
+const StreamType = kcp_stream_mod.Stream(EspRt);
 const tag_size = zgrnet.tag_size;
-const key_size = zgrnet.key_size;
 
 const listen_port: u16 = 9999;
 const max_pkt: usize = 2048;
 const allocator = esp_mod.idf.heap.psram;
-
-// WiFi chaos config
-const chaos_enabled = false;
-const chaos_on_ms: u64 = 3000; // WiFi ON duration
-const chaos_off_ms: u64 = 2000; // WiFi OFF duration
 
 fn printMem(label: []const u8) void {
     const internal = idf_heap.heap_caps_get_free_size(idf_heap.MALLOC_CAP_8BIT);
@@ -51,23 +47,22 @@ fn printMem(label: []const u8) void {
     log.info("[mem] {s}: internal={d}KB psram={d}KB", .{ label, internal / 1024, psram / 1024 });
 }
 
-// Global state for KCP output callback
+// Global state for Mux output (single-threaded, no lock needed)
 var g_send_cs: *Noise.CipherState = undefined;
 var g_sock: *IdfSocket = undefined;
 var g_peer_addr: esp_mod.idf.socket.Address = undefined;
 var g_peer_port: u16 = 0;
 
-fn kcpOutput(data: []const u8, _: ?*anyopaque) void {
+fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
     var ct: [max_pkt]u8 = undefined;
     g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     _ = g_sock.sendToAddr(g_peer_addr, g_peer_port, ct[0 .. data.len + tag_size]) catch {};
 }
 
+fn onNewStream(_: *anyopaque, _: ?*anyopaque) void {}
+
 pub fn run(env: anytype) void {
-    log.info("=== Noise + KCP Resilience Test (Responder) ===", .{});
-    if (chaos_enabled) {
-        log.info("CHAOS MODE: WiFi {d}ms on / {d}ms off", .{ chaos_on_ms, chaos_off_ms });
-    }
+    log.info("=== Noise + KCP Stream Test (Responder) ===", .{});
     printMem("boot");
 
     var b: Board = undefined;
@@ -83,10 +78,7 @@ pub fn run(env: anytype) void {
             switch (event) {
                 .wifi => |we| switch (we) {
                     .connected => log.info("WiFi connected", .{}),
-                    .disconnected => |r| {
-                        log.warn("WiFi disc: {}", .{r});
-                        b.wifi.connect(env.wifi_ssid, env.wifi_password);
-                    },
+                    .disconnected => |r| { log.warn("WiFi disc: {}", .{r}); b.wifi.connect(env.wifi_ssid, env.wifi_password); },
                     else => {},
                 },
                 .net => |ne| switch (ne) {
@@ -112,20 +104,45 @@ pub fn run(env: anytype) void {
 
     while (Board.isRunning()) {
         log.info("Waiting for peer...", .{});
-        handlePeer(&sock, &b, env) catch |err| {
+        handlePeer(&sock) catch |err| {
             log.err("Peer error: {}. Next...", .{err});
         };
     }
 }
 
-fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
-    // Key exchange
+fn handlePeer(sock: *IdfSocket) !void {
+    // Key exchange — drain stale packets, then wait for 32-byte public key
     var pk_buf: [max_pkt]u8 = undefined;
-    const pk_result = sock.recvFromAddr(&pk_buf) catch return error.RecvFailed;
-    if (pk_result.len != 32) return error.InvalidKeyLength;
-    _ = Key.fromBytes(pk_buf[0..32].*);
-    const peer_addr = pk_result.addr;
-    const peer_port = pk_result.port;
+    var peer_addr: esp_mod.idf.socket.Address = undefined;
+    var peer_port: u16 = 0;
+    var got_key = false;
+
+    sock.setRecvTimeout(200);
+    while (true) {
+        const pk_result = sock.recvFromAddr(&pk_buf) catch break;
+        if (pk_result.len == 32) {
+            _ = Key.fromBytes(pk_buf[0..32].*);
+            peer_addr = pk_result.addr;
+            peer_port = pk_result.port;
+            got_key = true;
+            break;
+        }
+    }
+    if (!got_key) {
+        sock.setRecvTimeout(30000);
+        while (true) {
+            const pk_result = sock.recvFromAddr(&pk_buf) catch |err| {
+                if (err == error.Timeout) continue;
+                return error.RecvFailed;
+            };
+            if (pk_result.len == 32) {
+                _ = Key.fromBytes(pk_buf[0..32].*);
+                peer_addr = pk_result.addr;
+                peer_port = pk_result.port;
+                break;
+            }
+        }
+    }
     log.info("Peer: {}.{}.{}.{}:{d}", .{ peer_addr.ipv4[0], peer_addr.ipv4[1], peer_addr.ipv4[2], peer_addr.ipv4[3], peer_port });
 
     var seed_buf: [32]u8 = undefined;
@@ -135,6 +152,7 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
 
     // Noise handshake
     var hs = try Noise.HandshakeState.init(.{ .pattern = .IK, .initiator = false, .local_static = local_kp });
+    sock.setRecvTimeout(5000);
     var msg1_buf: [max_pkt]u8 = undefined;
     const msg1_result = sock.recvFromAddr(&msg1_buf) catch return error.RecvFailed;
     var p1: [64]u8 = undefined;
@@ -148,113 +166,82 @@ fn handlePeer(sock: *IdfSocket, b: *Board, env: anytype) !void {
     log.info("Handshake OK!", .{});
     printMem("post-handshake");
 
-    // KCP setup
+    // Setup Mux (manual mode)
     g_send_cs = &send_cs;
     g_sock = sock;
     g_peer_addr = peer_addr;
     g_peer_port = peer_port;
 
-    var kcp_inst = Kcp.create(allocator, 1, kcpOutput, null) catch return error.KcpCreateFailed;
-    defer {
-        kcp_inst.deinit();
-        allocator.destroy(kcp_inst);
-    }
-    kcp_inst.setDefaultConfig();
+    var mux = MuxType.init(allocator, .{}, false, muxOutput, onNewStream, null) catch return error.MuxCreateFailed;
+    defer mux.deinit();
 
-    log.info("KCP echo loop...", .{});
-    printMem("kcp-ready");
+    sock.setRecvTimeout(5);
+    log.info("Mux ready, waiting for stream...", .{});
+    printMem("mux-ready");
 
-    sock.setRecvTimeout(10);
-
+    // Polling loop
     var total_bytes: usize = 0;
     var total_packets: usize = 0;
-    var last_logged_packets: usize = 0;
-    var disconnect_count: u32 = 0;
     const start = Board.time.getTimeMs();
-
-    // Chaos state
-    var wifi_is_on = true;
-    var chaos_next_toggle = start + chaos_on_ms;
+    var last_activity = start;
+    var stream: ?*StreamType = null;
 
     while (Board.isRunning()) {
         const now = Board.time.getTimeMs();
-        kcp_inst.update(@intCast(now & 0xFFFFFFFF));
 
-        // WiFi chaos: periodic disconnect/reconnect
-        if (chaos_enabled and now >= chaos_next_toggle) {
-            if (wifi_is_on) {
-                // Disconnect WiFi
-                b.wifi.disconnect();
-                wifi_is_on = false;
-                disconnect_count += 1;
-                chaos_next_toggle = now + chaos_off_ms;
-                log.warn("[chaos] WiFi OFF (#{d})", .{disconnect_count});
-            } else {
-                // Reconnect WiFi
-                b.wifi.connect(env.wifi_ssid, env.wifi_password);
-                wifi_is_on = true;
-                chaos_next_toggle = now + chaos_on_ms;
-                log.info("[chaos] WiFi ON", .{});
-            }
+        if (now - last_activity > 5000 and total_packets > 0) {
+            const elapsed = now - start;
+            const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
+            log.info("Session done: {d} pkts, {d} KB/s", .{ total_packets, kbps });
+            printMem("done");
+            return;
+        }
+        if (now - start > 20000 and total_packets == 0) {
+            log.info("No data, session timeout", .{});
+            return;
         }
 
-        // Drain WiFi events (handle reconnect)
-        while (b.nextEvent()) |event| {
-            switch (event) {
-                .wifi => |we| switch (we) {
-                    .connected => log.info("WiFi reconnected", .{}),
-                    .disconnected => {},
-                    else => {},
-                },
-                .net => |ne| switch (ne) {
-                    .dhcp_bound, .dhcp_renewed => |info| {
-                        const ip = info.ip;
-                        log.info("IP restored: {}.{}.{}.{}", .{ ip[0], ip[1], ip[2], ip[3] });
-                    },
-                    else => {},
-                },
-                else => {},
-            }
-        }
+        mux.update();
 
-        // UDP recv → Noise decrypt → KCP input
         var udp_buf: [max_pkt]u8 = undefined;
         const udp_len = sock.recvFrom(&udp_buf) catch |err| {
             if (err == error.Timeout) {
-                // Session end: 10s no data after first packet
-                if (total_packets > 0 and (now - start) > 10000) {
-                    const elapsed = now - start;
-                    const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
-                    log.info("Session done: {d} pkts, {d} KB/s, {d} disconnects", .{ total_packets, kbps, disconnect_count });
-                    printMem("done");
-                    return;
+                if (stream == null) {
+                    stream = mux.tryAcceptStream();
+                    if (stream != null) log.info("Stream accepted!", .{});
                 }
                 continue;
             }
-            continue; // Ignore other errors during chaos
+            continue;
         };
 
         if (udp_len > tag_size) {
             var pt: [max_pkt]u8 = undefined;
             recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
-            _ = kcp_inst.input(pt[0 .. udp_len - tag_size]);
+            mux.input(pt[0 .. udp_len - tag_size]) catch continue;
+            last_activity = now;
         }
 
-        // KCP recv → echo back
-        var recv_buf: [max_pkt]u8 = undefined;
-        while (true) {
-            const kcp_len = kcp_inst.recv(&recv_buf);
-            if (kcp_len <= 0) break;
-            _ = kcp_inst.send(recv_buf[0..@intCast(kcp_len)]);
-            total_bytes += @intCast(kcp_len);
-            total_packets += 1;
+        if (stream == null) {
+            stream = mux.tryAcceptStream();
+            if (stream != null) log.info("Stream accepted!", .{});
         }
 
-        if (total_packets > 0 and total_packets % 50 == 0 and total_packets != last_logged_packets) {
-            last_logged_packets = total_packets;
-            const elapsed = now - start;
-            const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
-            log.info("{d} pkts, {d} KB/s, disc={d}", .{ total_packets, kbps, disconnect_count });
+        if (stream) |s| {
+            var read_buf: [2048]u8 = undefined;
+            const n = s.read(&read_buf) catch continue;
+            if (n > 0) {
+                _ = s.write(read_buf[0..n]) catch {};
+                total_bytes += n;
+                total_packets += 1;
+                last_activity = now;
+
+                if (total_packets % 50 == 0) {
+                    const elapsed = now - start;
+                    const kbps = if (elapsed > 0) (@as(u64, total_bytes) * 2 * 1000) / elapsed / 1024 else 0;
+                    log.info("{d} pkts, {d} KB/s", .{ total_packets, kbps });
+                }
+            }
         }
     }
 }

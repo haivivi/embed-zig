@@ -23,17 +23,8 @@ pub const noise = @import("noise/mod.zig");
 
 // KCP reliable transport
 pub const kcp = @import("kcp/kcp.zig");
-
-// KCP Stream/Mux (not available on freestanding — uses thread primitives in tests)
-// Import via kcp/mod.zig for the full API
-pub const kcp_stream = if (@import("builtin").os.tag != .freestanding)
-    @import("kcp/stream.zig")
-else
-    struct {};
-pub const kcp_mod = if (@import("builtin").os.tag != .freestanding)
-    @import("kcp/mod.zig")
-else
-    struct {};
+pub const kcp_stream = @import("kcp/stream.zig");
+pub const kcp_mod = @import("kcp/mod.zig");
 
 // Re-export noise non-generic types for convenience
 pub const Key = noise.Key;

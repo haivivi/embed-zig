@@ -70,6 +70,56 @@ pub const Mutex = struct {
 };
 
 // ============================================================================
+// Condition - Condition Variable (for Mux/Stream Runtime trait)
+// ============================================================================
+
+/// Condition variable implemented with FreeRTOS binary semaphore.
+/// Simplified: supports single waiter (sufficient for Stream.readBlocking).
+pub const Condition = struct {
+    sem: c.SemaphoreHandle_t,
+
+    pub const TimedWaitResult = enum { signaled, timed_out };
+
+    pub fn init() Condition {
+        return .{ .sem = c.xSemaphoreCreateBinary() };
+    }
+
+    pub fn deinit(self: *Condition) void {
+        if (self.sem != null) {
+            c.vSemaphoreDelete(self.sem);
+            self.sem = null;
+        }
+    }
+
+    /// Wait for signal (releases mutex, blocks, re-acquires mutex).
+    pub fn wait(self: *Condition, mutex: *Mutex) void {
+        mutex.unlock();
+        _ = c.xSemaphoreTake(self.sem, c.portMAX_DELAY);
+        mutex.lock();
+    }
+
+    /// Wait with timeout (nanoseconds).
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
+        const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, std.math.maxInt(u32)));
+        const ticks = if (timeout_ms > 0) timeout_ms / c.portTICK_PERIOD_MS else 1;
+        mutex.unlock();
+        const result = c.xSemaphoreTake(self.sem, ticks);
+        mutex.lock();
+        return if (result == c.pdTRUE) .signaled else .timed_out;
+    }
+
+    /// Signal one waiter.
+    pub fn signal(self: *Condition) void {
+        _ = c.xSemaphoreGive(self.sem);
+    }
+
+    /// Signal all waiters (for single-waiter, same as signal).
+    pub fn broadcast(self: *Condition) void {
+        _ = c.xSemaphoreGive(self.sem);
+    }
+};
+
+// ============================================================================
 // Semaphore - Counting Semaphore
 // ============================================================================
 

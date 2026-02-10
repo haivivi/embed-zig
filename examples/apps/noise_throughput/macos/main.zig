@@ -1,10 +1,11 @@
 //! Noise + KCP Stream Throughput Test — Mac initiator
 //!
-//! Uses Mux/Stream (with timeout) over Noise/UDP.
+//! Uses Mux auto mode (start/stop) over Noise/UDP.
+//! send_cs is protected by send_mutex (called from main + updateLoop).
+//! recv_cs is only used from recvLoop (no lock needed).
 //!
 //! Usage:
 //!   noise_throughput <ip> [port] [kb] [rounds] [loss%] [loss_mode]
-//!     loss_mode: 0=recv-only (default), 1=bilateral
 
 const std = @import("std");
 const posix = std.posix;
@@ -22,7 +23,6 @@ const DesktopCrypto = struct {
     pub const Rng = crypto_suite.Rng;
 };
 
-/// Desktop Runtime for Mux/Stream
 const DesktopRt = struct {
     pub const Mutex = struct {
         inner: std.Thread.Mutex = .{},
@@ -47,13 +47,20 @@ const DesktopRt = struct {
     pub fn nowMs() u64 {
         return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
     }
+    pub fn spawn(_: [:0]const u8, func: *const fn (?*anyopaque) void, ctx: ?*anyopaque, _: anytype) !void {
+        _ = try std.Thread.spawn(.{}, struct {
+            fn run(f: *const fn (?*anyopaque) void, c: ?*anyopaque) void { f(c); }
+        }.run, .{ func, ctx });
+    }
+    pub fn sleepMs(ms: u32) void {
+        std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
+    }
 };
 
 const Noise = zgrnet.noise.Protocol(DesktopCrypto);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const tag_size = zgrnet.tag_size;
-const Kcp = kcp_raw.Kcp;
 const MuxType = kcp_stream_mod.Mux(DesktopRt);
 const StreamType = kcp_stream_mod.Stream(DesktopRt);
 
@@ -62,21 +69,21 @@ const default_total_kb: usize = 64;
 const default_rounds: usize = 1;
 const max_pkt: usize = 2048;
 const chunk_size: usize = 1024;
-const stream_timeout_ns: u64 = 10 * std.time.ns_per_s; // 10s read timeout
+const stream_timeout_ns: u64 = 30 * std.time.ns_per_s;
 
-// Global state
+// Global state — separated send/recv (no shared lock!)
 var g_sock: posix.socket_t = undefined;
 var g_dest_addr: *const posix.sockaddr = undefined;
 var g_dest_len: posix.socklen_t = undefined;
 var g_send_cs: *Noise.CipherState = undefined;
 var g_recv_cs: *Noise.CipherState = undefined;
-var g_mutex: std.Thread.Mutex = .{};
 var g_loss_pct: u8 = 0;
 var g_loss_bilateral: bool = false;
 var g_pkts_sent: u64 = 0;
 var g_pkts_dropped_send: u64 = 0;
 var g_pkts_dropped_recv: u64 = 0;
 var g_mux: *MuxType = undefined;
+var g_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 fn shouldDrop() bool {
     if (g_loss_pct == 0) return false;
@@ -87,10 +94,11 @@ fn shouldDrop() bool {
     return rng_buf[0] < threshold;
 }
 
-/// Mux output: Noise encrypt + UDP send
+/// Mux output: encrypt + UDP send.
+/// Called from main (openStream/write/close) and updateThread.
+/// No lock needed — stream.write no longer flushes, so all KCP output
+/// goes through updateThread exclusively. Only SYN/FIN from main.
 fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
-    g_mutex.lock();
-    defer g_mutex.unlock();
     var ct: [max_pkt]u8 = undefined;
     g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     if (g_loss_bilateral and shouldDrop()) {
@@ -99,6 +107,18 @@ fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
     }
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
     g_pkts_sent += 1;
+}
+
+/// Mux recv: UDP recv + decrypt.
+/// Called from Mux's recvLoop thread ONLY. No lock needed.
+fn muxRecv(buf: []u8, _: ?*anyopaque) anyerror!usize {
+    var udp_buf: [max_pkt]u8 = undefined;
+    const udp_len = posix.recvfrom(g_sock, &udp_buf, 0, null, null) catch return error.Timeout;
+    if (udp_len <= tag_size) return error.Timeout;
+    const pt_len = udp_len - tag_size;
+    g_recv_cs.decrypt(udp_buf[0..udp_len], "", buf[0..pt_len]) catch return error.Timeout;
+    if (shouldDrop()) { g_pkts_dropped_recv += 1; return error.Timeout; }
+    return pt_len;
 }
 
 fn onNewStream(_: *anyopaque, _: ?*anyopaque) void {}
@@ -112,34 +132,6 @@ fn verifyBlock(buf: []const u8, block_num: u32) bool {
         if (b != @as(u8, @intCast((block_num ^ @as(u32, @intCast(i))) & 0xFF))) return false;
     }
     return true;
-}
-
-/// UDP recv thread: decrypt + feed to Mux
-fn recvThread() void {
-    while (true) {
-        var udp_buf: [max_pkt]u8 = undefined;
-        const udp_len = posix.recvfrom(g_sock, &udp_buf, 0, null, null) catch continue;
-        if (udp_len > tag_size) {
-            var pt: [max_pkt]u8 = undefined;
-            g_mutex.lock();
-            g_recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch {
-                g_mutex.unlock();
-                continue;
-            };
-            g_mutex.unlock();
-            // Loss simulation after decrypt
-            if (shouldDrop()) { g_pkts_dropped_recv += 1; continue; }
-            g_mux.input(pt[0 .. udp_len - tag_size]) catch continue;
-        }
-    }
-}
-
-/// Mux update thread
-fn updateThread() void {
-    while (true) {
-        g_mux.update();
-        std.Thread.sleep(1 * std.time.ns_per_ms);
-    }
 }
 
 pub fn main() !void {
@@ -176,8 +168,8 @@ pub fn main() !void {
     const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
     defer posix.close(sock);
 
-    const timeout_val = posix.timeval{ .sec = 5, .usec = 0 };
-    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout_val));
+    const hs_timeout = posix.timeval{ .sec = 5, .usec = 0 };
+    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&hs_timeout));
     const buf_size: u32 = 256 * 1024;
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVBUF, std.mem.asBytes(&buf_size));
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.SNDBUF, std.mem.asBytes(&buf_size));
@@ -185,14 +177,21 @@ pub fn main() !void {
     const dest_addr: *const posix.sockaddr = @ptrCast(&peer_addr.any);
     const dest_len = peer_addr.getOsSockLen();
 
-    // Key exchange + handshake
-    _ = try posix.sendto(sock, &local_kp.public.data, 0, dest_addr, dest_len);
+    // Key exchange
     var peer_pk_buf: [32]u8 = undefined;
-    _ = posix.recvfrom(sock, &peer_pk_buf, 0, null, null) catch {
+    var key_exchange_ok = false;
+    for (0..5) |_| {
+        _ = posix.sendto(sock, &local_kp.public.data, 0, dest_addr, dest_len) catch continue;
+        _ = posix.recvfrom(sock, &peer_pk_buf, 0, null, null) catch continue;
+        key_exchange_ok = true;
+        break;
+    }
+    if (!key_exchange_ok) {
         std.debug.print("ERROR: No response\n", .{});
         return;
-    };
+    }
 
+    // Noise handshake
     var hs = Noise.HandshakeState.init(.{
         .pattern = .IK,
         .initiator = true,
@@ -202,10 +201,21 @@ pub fn main() !void {
 
     var msg1_buf: [256]u8 = undefined;
     const msg1_len = hs.writeMessage("", &msg1_buf) catch return;
-    _ = try posix.sendto(sock, msg1_buf[0..msg1_len], 0, dest_addr, dest_len);
 
     var msg2_buf: [256]u8 = undefined;
-    const msg2_len = posix.recvfrom(sock, &msg2_buf, 0, null, null) catch return;
+    var msg2_len: usize = 0;
+    var hs_ok = false;
+    for (0..5) |_| {
+        _ = posix.sendto(sock, msg1_buf[0..msg1_len], 0, dest_addr, dest_len) catch continue;
+        msg2_len = posix.recvfrom(sock, &msg2_buf, 0, null, null) catch continue;
+        hs_ok = true;
+        break;
+    }
+    if (!hs_ok) {
+        std.debug.print("ERROR: Handshake timeout\n", .{});
+        return;
+    }
+
     var p: [64]u8 = undefined;
     _ = hs.readMessage(msg2_buf[0..msg2_len], &p) catch return;
     if (!hs.isFinished()) return;
@@ -218,19 +228,22 @@ pub fn main() !void {
     g_dest_len = dest_len;
     g_send_cs = &send_cs;
     g_recv_cs = &recv_cs;
+    g_stop.store(false, .release);
 
-    // Set non-blocking recv for recv thread
+    // Short recv timeout for recvLoop
     const short_timeout = posix.timeval{ .sec = 0, .usec = 10_000 };
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&short_timeout));
 
-    // Create Mux (client side)
+    // Create Mux with auto mode
     var mux = try MuxType.init(allocator, .{}, true, muxOutput, onNewStream, null);
     defer mux.deinit();
     g_mux = mux;
 
-    // Start background threads
-    _ = try std.Thread.spawn(.{}, recvThread, .{});
-    _ = try std.Thread.spawn(.{}, updateThread, .{});
+    // Start auto mode
+    try mux.start(muxRecv, null);
+
+    // Wait for recvLoop to be ready
+    std.Thread.sleep(100 * std.time.ns_per_ms);
 
     // Open stream
     var stream = try mux.openStream(0, &.{});
@@ -250,7 +263,6 @@ pub fn main() !void {
         var next_recv: u32 = 0;
         const start = std.time.milliTimestamp();
 
-        // Send all blocks
         while (blocks_sent < total_blocks) {
             var buf: [chunk_size]u8 = undefined;
             fillBlock(&buf, blocks_sent);
@@ -258,7 +270,6 @@ pub fn main() !void {
             blocks_sent += 1;
         }
 
-        // Receive echoes with timeout
         while (next_recv < total_blocks) {
             var recv_buf: [chunk_size]u8 = undefined;
             const n = stream.readBlocking(&recv_buf, stream_timeout_ns) catch |err| {
@@ -268,7 +279,7 @@ pub fn main() !void {
                 }
                 break;
             };
-            if (n == 0) break; // EOF
+            if (n == 0) break;
             if (n == chunk_size) {
                 if (verifyBlock(recv_buf[0..chunk_size], next_recv)) {
                     blocks_verified += 1;
@@ -303,4 +314,6 @@ pub fn main() !void {
         total_dropped,
         if (grand_corrupted == 0) "PASS" else "FAIL",
     });
+
+    mux.stop();
 }

@@ -1,17 +1,21 @@
 //! Stream - A multiplexed reliable stream over KCP.
 //!
-//! Uses comptime generics for zero-cost async primitives:
-//! - TimerServiceT: For KCP update scheduling (1ms interval)
-//! - Output is synchronous (caller provides callback)
+//! Generic over Runtime (Rt) for cross-platform sync primitives.
 //!
-//! ## Architecture
+//! ## Two usage modes:
 //!
+//! ### Manual mode (backward compatible):
 //! ```
-//! Mux<TimerServiceT>
-//!   ├── timer_service: *TimerServiceT (injected)
-//!   ├── streams: HashMap<u32, *Stream>
-//!   ├── update_handle: TimerHandle (KCP timer)
-//!   └── output_fn: callback to send data
+//! var mux = Mux.init(alloc, config, true, output_fn, on_new_stream, null);
+//! // Caller drives: mux.update(), mux.input(data)
+//! ```
+//!
+//! ### Auto mode (recommended):
+//! ```
+//! var mux = Mux.init(alloc, config, true, output_fn, on_new_stream, null);
+//! mux.start(recv_fn, null);   // spawns recvLoop + updateLoop
+//! // Just use stream.write() / stream.readBlocking()
+//! mux.stop();
 //! ```
 
 const std = @import("std");
@@ -51,10 +55,16 @@ pub const MuxConfig = struct {
     max_frame_size: usize = 32 * 1024,
     max_receive_buffer: usize = 16 * 1024 * 1024, // 16MB to allow larger transfers
     update_interval_ms: u32 = 1, // KCP update interval
+    spawn_stack_size: u32 = 16384, // Stack size for spawned threads (recvLoop, updateLoop)
 };
 
-/// Output callback type.
+/// Output callback type — sends a frame to the network (encrypt + UDP send).
 pub const OutputFn = *const fn (data: []const u8, user_data: ?*anyopaque) anyerror!void;
+
+/// Receive callback type — blocks until a packet arrives (UDP recv + decrypt).
+/// Returns the number of decrypted bytes written to buf, or error.
+/// Should return error.Timeout or error.Closed to allow the recv loop to check stop flag.
+pub const RecvFn = *const fn (buf: []u8, user_data: ?*anyopaque) anyerror!usize;
 
 /// Callback when a new stream is accepted (type-erased stream pointer).
 pub const OnNewStreamFn = *const fn (stream: *anyopaque, user_data: ?*anyopaque) void;
@@ -398,6 +408,8 @@ pub fn Stream(comptime Rt: type) type {
 ///   - Rt.Mutex: sync.Mutex trait
 ///   - Rt.Condition: sync.Condition trait (with timedWait)
 ///   - Rt.nowMs() -> u64: current time in milliseconds
+///   - Rt.spawn(name, fn, ctx, opts) -> !void: spawn a background thread/task
+///   - Rt.sleepMs(ms) -> void: sleep for milliseconds
 pub fn Mux(comptime Rt: type) type {
     const StreamType = Stream(Rt);
 
@@ -419,6 +431,11 @@ pub fn Mux(comptime Rt: type) type {
         // Accept queue for incoming streams (simple bounded buffer)
         accept_queue: AcceptQueue,
         accept_cond: Rt.Condition,
+
+        // Auto mode: recv callback + stop flag
+        recv_fn: ?RecvFn,
+        recv_user_data: ?*anyopaque,
+        stop_flag: std.atomic.Value(bool),
 
         const AcceptQueue = struct {
             buf: [16]?*StreamType = [_]?*StreamType{null} ** 16,
@@ -471,10 +488,72 @@ pub fn Mux(comptime Rt: type) type {
                 .ref_count = std.atomic.Value(u32).init(1),
                 .accept_queue = .{},
                 .accept_cond = Rt.Condition.init(),
+                .recv_fn = null,
+                .recv_user_data = null,
+                .stop_flag = std.atomic.Value(bool).init(false),
             };
 
             return self;
         }
+
+        // ================================================================
+        // Auto mode: start/stop (spawns recvLoop + updateLoop)
+        // ================================================================
+
+        /// Start auto mode: spawn recvLoop + updateLoop background threads.
+        /// After start(), just use stream.write() / stream.readBlocking().
+        /// Call stop() before deinit() to cleanly shut down.
+        pub fn start(self: *Self, recv_fn: RecvFn, recv_user_data: ?*anyopaque) !void {
+            self.recv_fn = recv_fn;
+            self.recv_user_data = recv_user_data;
+            self.stop_flag.store(false, .release);
+            try Rt.spawn("mux_recv", Self.recvLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
+            try Rt.spawn("mux_update", Self.updateLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
+        }
+
+        /// Stop auto mode: signal threads to exit and wait for them to drain.
+        pub fn stop(self: *Self) void {
+            self.stop_flag.store(true, .release);
+            // Give threads time to notice the stop flag and exit
+            Rt.sleepMs(50);
+        }
+
+        /// Entry point for recvLoop (matches Rt.spawn signature).
+        fn recvLoopEntry(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.recvLoop();
+        }
+
+        /// Entry point for updateLoop (matches Rt.spawn signature).
+        fn updateLoopEntry(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.updateLoop();
+        }
+
+        /// Receive loop: recv from transport → input to Mux.
+        fn recvLoop(self: *Self) void {
+            const recv_fn = self.recv_fn orelse return;
+            var buf: [2048]u8 = undefined;
+
+            while (!self.stop_flag.load(.acquire)) {
+                const n = recv_fn(&buf, self.recv_user_data) catch continue;
+                if (n > 0) {
+                    self.input(buf[0..n]) catch {};
+                }
+            }
+        }
+
+        /// Update loop: periodically flush KCP.
+        fn updateLoop(self: *Self) void {
+            while (!self.stop_flag.load(.acquire)) {
+                self.update();
+                Rt.sleepMs(self.config.update_interval_ms);
+            }
+        }
+
+        // ================================================================
+        // Manual mode (backward compatible)
+        // ================================================================
 
         /// Update all KCP streams. Call this periodically (every 1-10ms).
         pub fn update(self: *Self) void {
@@ -515,6 +594,11 @@ pub fn Mux(comptime Rt: type) type {
 
         /// Close the Mux.
         pub fn deinit(self: *Self) void {
+            // Stop auto-mode threads first
+            if (self.recv_fn != null) {
+                self.stop();
+            }
+
             self.closed.store(true, .release);
 
             // Wake up any blocked acceptStream
@@ -766,6 +850,14 @@ const TestRuntime = if (@import("builtin").os.tag != .freestanding) struct {
     };
     pub fn nowMs() u64 {
         return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
+    }
+    pub fn spawn(_: [:0]const u8, func: *const fn (?*anyopaque) void, ctx: ?*anyopaque, _: anytype) !void {
+        _ = try std.Thread.spawn(.{}, struct {
+            fn run(f: *const fn (?*anyopaque) void, c: ?*anyopaque) void { f(c); }
+        }.run, .{ func, ctx });
+    }
+    pub fn sleepMs(ms: u32) void {
+        std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
     }
 } else struct {};
 

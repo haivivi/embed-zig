@@ -86,6 +86,24 @@ pub const Condition = struct {
         mutex.lock();
     }
 
+    pub const TimedWaitResult = enum { signaled, timed_out };
+
+    /// Wait with timeout (nanoseconds).
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
+        _ = self.waiters.fetchAdd(1, .acq_rel);
+        const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, std.math.maxInt(u32)));
+        const ticks = if (timeout_ms > 0) timeout_ms / c.portTICK_PERIOD_MS else 1;
+        mutex.unlock();
+        const result = c.xSemaphoreTake(self.sem, ticks);
+        mutex.lock();
+        if (result != c.pdTRUE) {
+            // Timed out — decrement waiter count
+            _ = self.waiters.fetchSub(1, .acq_rel);
+            return .timed_out;
+        }
+        return .signaled;
+    }
+
     /// Wake one waiting thread.
     pub fn signal(self: *Condition) void {
         var current = self.waiters.load(.acquire);
@@ -114,6 +132,20 @@ pub const Condition = struct {
         }
     }
 };
+
+// ============================================================================
+// Time — for Mux/Stream Runtime trait
+// ============================================================================
+
+/// Current time in milliseconds (from FreeRTOS tick count).
+pub fn nowMs() u64 {
+    return @as(u64, c.xTaskGetTickCount()) * c.portTICK_PERIOD_MS;
+}
+
+/// Sleep for the specified number of milliseconds.
+pub fn sleepMs(ms: u32) void {
+    c.vTaskDelay(ms / c.portTICK_PERIOD_MS);
+}
 
 // ============================================================================
 // Spawn — FreeRTOS task creation
