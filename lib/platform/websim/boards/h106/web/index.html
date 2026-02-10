@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSim — embed-zig Board Simulator</title>
+    <title>WebSim — H106</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,47 +13,55 @@
             <span class="status" id="status">Loading...</span>
         </header>
 
-        <div class="board">
-            <!-- LED strip -->
-            <div class="led-strip" id="ledContainer"></div>
-
-            <!-- Screen row: vol- | display | vol+ -->
-            <div class="screen-row">
-                <button class="hw-button side-btn adc-btn" data-adc="200" data-name="vol-">
-                    <span class="btn-inner">VOL-</span>
-                </button>
-                <div class="display-area" id="displayArea">
-                    <canvas id="displayCanvas" width="240" height="240"></canvas>
-                </div>
-                <button class="hw-button side-btn adc-btn" data-adc="500" data-name="vol+">
-                    <span class="btn-inner">VOL+</span>
-                </button>
-            </div>
-
-            <!-- Row 1: back | power | ok -->
-            <div class="key-row">
-                <button class="hw-button key-btn adc-btn" data-adc="1400" data-name="back">
-                    <span class="btn-inner">BACK</span>
-                </button>
-                <button class="hw-button key-btn power-btn" id="btnPower">
-                    <span class="btn-inner">&#9211;</span>
-                </button>
-                <button class="hw-button key-btn adc-btn" data-adc="1700" data-name="confirm">
-                    <span class="btn-inner">OK</span>
-                </button>
-            </div>
-
-            <!-- Row 2: left | rec | right -->
-            <div class="key-row">
-                <button class="hw-button key-btn adc-btn" data-adc="800" data-name="left">
-                    <span class="btn-inner">&larr;</span>
-                </button>
-                <button class="hw-button key-btn rec-btn adc-btn" data-adc="2000" data-name="rec">
+        <div class="device">
+            <!-- Front face: LED diamond + REC button -->
+            <div class="face front">
+                <div class="face-label">Front</div>
+                <div class="led-strip" id="ledContainer"></div>
+                <button class="hw-button rec-btn adc-btn" data-adc="2000" data-name="rec">
                     <span class="btn-inner">&#9679; REC</span>
                 </button>
-                <button class="hw-button key-btn adc-btn" data-adc="1100" data-name="right">
-                    <span class="btn-inner">&rarr;</span>
-                </button>
+            </div>
+
+            <!-- Back face: screen + nav keys -->
+            <div class="face back">
+                <div class="face-label">Back</div>
+
+                <!-- Screen row: vol- | display | vol+ -->
+                <div class="screen-row">
+                    <button class="hw-button side-btn adc-btn" data-adc="200" data-name="vol-">
+                        <span class="btn-inner">VOL-</span>
+                    </button>
+                    <div class="display-area" id="displayArea">
+                        <canvas id="displayCanvas" width="240" height="240"></canvas>
+                    </div>
+                    <button class="hw-button side-btn adc-btn" data-adc="500" data-name="vol+">
+                        <span class="btn-inner">VOL+</span>
+                    </button>
+                </div>
+
+                <!-- Row 1: back | power | ok -->
+                <div class="key-row">
+                    <button class="hw-button key-btn adc-btn" data-adc="1400" data-name="back">
+                        <span class="btn-inner">BACK</span>
+                    </button>
+                    <button class="hw-button key-btn power-btn" id="btnPower">
+                        <span class="btn-inner">&#9211;</span>
+                    </button>
+                    <button class="hw-button key-btn adc-btn" data-adc="1700" data-name="confirm">
+                        <span class="btn-inner">OK</span>
+                    </button>
+                </div>
+
+                <!-- Row 2: left | right -->
+                <div class="key-row">
+                    <button class="hw-button key-btn adc-btn" data-adc="800" data-name="left">
+                        <span class="btn-inner">&larr;</span>
+                    </button>
+                    <button class="hw-button key-btn adc-btn" data-adc="1100" data-name="right">
+                        <span class="btn-inner">&rarr;</span>
+                    </button>
+                </div>
             </div>
         </div>
 
