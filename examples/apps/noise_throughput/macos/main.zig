@@ -46,9 +46,12 @@ var g_pkts_dropped_recv: u64 = 0;
 
 fn shouldDrop() bool {
     if (g_loss_pct == 0) return false;
+    if (g_loss_pct >= 100) return true;
     var rng_buf: [1]u8 = undefined;
     std.crypto.random.bytes(&rng_buf);
-    return rng_buf[0] < @as(u8, @intCast((@as(u16, g_loss_pct) * 256) / 100));
+    // threshold: 1% → 2, 50% → 128, 99% → 252 (fits in u8)
+    const threshold: u8 = @intCast((@as(u16, g_loss_pct) * 255) / 100);
+    return rng_buf[0] < threshold;
 }
 
 fn kcpOutput(data: []const u8, _: ?*anyopaque) void {

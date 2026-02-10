@@ -47,8 +47,10 @@ pub const ThreadExecutor = struct {
     worker_thread_id: ?std.Thread.Id,
 
     /// Initialize and start the executor.
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        var self = Self{
+    /// Returns a heap-allocated executor so the worker thread has a stable pointer.
+    pub fn init(allocator: std.mem.Allocator) !*Self {
+        const self = try allocator.create(Self);
+        self.* = Self{
             .queue = MpscQueue(Task).init(allocator),
             .thread = null,
             .running = std.atomic.Value(bool).init(true),
@@ -58,8 +60,8 @@ pub const ThreadExecutor = struct {
             .worker_thread_id = null,
         };
 
-        // Start the worker thread
-        self.thread = try std.Thread.spawn(.{}, workerLoop, .{&self});
+        // Start the worker thread (self is heap-allocated, pointer is stable)
+        self.thread = try std.Thread.spawn(.{}, workerLoop, .{self});
 
         return self;
     }
@@ -68,6 +70,7 @@ pub const ThreadExecutor = struct {
     pub fn deinit(self: *Self) void {
         self.stop();
         self.queue.deinit();
+        self.allocator.destroy(self);
     }
 
     /// Stop the executor gracefully.
@@ -159,7 +162,7 @@ pub const ThreadExecutorWithTimers = struct {
     const Self = @This();
 
     /// Base executor
-    thread_exec: ThreadExecutor,
+    thread_exec: *ThreadExecutor,
 
     /// Timer state
     timers: TimerState,
@@ -193,7 +196,7 @@ pub const ThreadExecutorWithTimers = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.thread_exec.deinit();
+        self.thread_exec.deinit(); // frees heap-allocated ThreadExecutor
         self.timers.entries.deinit(self.allocator);
     }
 
