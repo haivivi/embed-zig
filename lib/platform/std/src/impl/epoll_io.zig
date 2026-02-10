@@ -100,6 +100,11 @@ inline fn epollToU32(val: anytype) u32 {
 }
 
 /// epoll-based I/O service implementing the IOService trait contract.
+///
+/// Thread safety: all public methods are safe to call from any thread.
+/// Internally protected by a Mutex. Callbacks are invoked WITHOUT the
+/// lock held, so callbacks may safely call registerRead/registerWrite/
+/// unregister on the same EpollIO instance.
 pub const EpollIO = struct {
     const Self = @This();
     const max_events = 64;
@@ -144,11 +149,18 @@ pub const EpollIO = struct {
         events: u32, // EPOLLIN | EPOLLOUT bitmask
     };
 
+    /// Pending callback snapshot — used to invoke callbacks outside the lock.
+    const PendingCallback = struct {
+        cb: ReadyCallback,
+        fd: posix.fd_t,
+    };
+
     epfd: posix.fd_t,
     wake_fd: posix.fd_t, // eventfd for cross-thread wake
     allocator: Allocator,
     registrations: std.AutoHashMap(posix.fd_t, Entry),
     events: [max_events]linux.epoll_event,
+    mutex: std.Thread.Mutex,
 
     pub fn init(allocator: Allocator) !Self {
         // EPOLL_CLOEXEC — linux.EPOLL.CLOEXEC is packed struct(u32) in Zig 0.14+
@@ -172,6 +184,7 @@ pub const EpollIO = struct {
             .allocator = allocator,
             .registrations = std.AutoHashMap(posix.fd_t, Entry).init(allocator),
             .events = undefined,
+            .mutex = .{},
         };
     }
 
@@ -193,6 +206,9 @@ pub const EpollIO = struct {
 
     /// Shared implementation for registering events on a file descriptor.
     fn registerEvents(self: *Self, fd: posix.fd_t, event_flag: u32, callback: ReadyCallback, is_read: bool) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         const result = self.registrations.getOrPut(fd) catch |err| {
             std.log.warn("EpollIO: failed to update registration map for fd {d}: {s}", .{ fd, @errorName(err) });
             return;
@@ -240,7 +256,16 @@ pub const EpollIO = struct {
 
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         if (self.registrations.fetchRemove(fd)) |_| {
+            // Hold lock through kernel call to prevent race with concurrent
+            // registerRead/registerWrite on the same fd: without the lock,
+            // a concurrent register could ADD the fd to epoll, then our
+            // stale DELETE would silently remove it — leaving the fd in the
+            // HashMap but not monitored by the kernel.
+            // epoll_ctl DELETE is non-blocking, so holding the lock is safe.
             rawEpollCtl(self.epfd, EPOLL_CTL_DEL, fd, null) catch |err| {
                 std.log.warn("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
@@ -250,10 +275,20 @@ pub const EpollIO = struct {
     /// Poll for I/O events and invoke callbacks.
     /// Pass -1 for timeout_ms to block indefinitely.
     /// Returns the number of events processed.
+    ///
+    /// Thread safety: epoll_wait runs WITHOUT the lock (allows other
+    /// threads to register/unregister while we block). Callbacks are
+    /// snapshotted under the lock, then invoked without it (allows
+    /// callbacks to call registerRead/registerWrite/unregister).
     pub fn poll(self: *Self, timeout_ms: i32) usize {
+        // epoll_wait without lock — may block, must not hold lock
         const n = rawEpollWait(self.epfd, &self.events, timeout_ms);
 
-        var processed: usize = 0;
+        // Snapshot callbacks under lock
+        var pending: [max_events * 2]PendingCallback = undefined;
+        var pending_count: usize = 0;
+
+        self.mutex.lock();
         for (self.events[0..n]) |event| {
             const fd = event.data.fd;
             const ev = @as(u32, @bitCast(event.events));
@@ -275,31 +310,34 @@ pub const EpollIO = struct {
             const is_read = (ev & EPOLL_IN != 0) or has_error;
             const is_write = (ev & EPOLL_OUT != 0) or has_error;
 
-            if (is_read) {
-                // Look up fresh each time — a previous callback in this
-                // loop iteration (or the write callback below) may have
-                // modified registrations.
-                if (self.registrations.get(fd)) |entry| {
-                    if (entry.events & EPOLL_IN != 0) {
-                        entry.read_cb.call(fd);
-                        processed += 1;
-                    }
+            if (self.registrations.get(fd)) |entry| {
+                if (is_read and (entry.events & EPOLL_IN != 0)) {
+                    pending[pending_count] = .{ .cb = entry.read_cb, .fd = fd };
+                    pending_count += 1;
                 }
-            }
-            if (is_write) {
-                // Re-lookup: the read callback above (or a callback for a
-                // different fd earlier in the loop) may have unregistered
-                // this fd or changed the write callback.
-                if (self.registrations.get(fd)) |entry| {
-                    if (entry.events & EPOLL_OUT != 0) {
-                        entry.write_cb.call(fd);
-                        processed += 1;
-                    }
+                if (is_write and (entry.events & EPOLL_OUT != 0)) {
+                    pending[pending_count] = .{ .cb = entry.write_cb, .fd = fd };
+                    pending_count += 1;
                 }
             }
         }
+        self.mutex.unlock();
 
-        return processed;
+        // Invoke callbacks WITHOUT the lock — callbacks may safely call
+        // registerRead/registerWrite/unregister on this EpollIO instance.
+        //
+        // Design note: unlike the pre-Mutex code, we do NOT re-lookup
+        // registrations between read and write callbacks for the same fd.
+        // If a read callback calls unregister(fd), the snapshotted write
+        // callback still fires. This is the standard pattern for thread-safe
+        // event loops (libuv, tokio): snapshot-then-fire. The alternative
+        // (re-lookup under lock per callback) adds overhead and still has
+        // TOCTOU races. Callbacks must handle closed/reused fds gracefully.
+        for (pending[0..pending_count]) |p| {
+            p.cb.call(p.fd);
+        }
+
+        return pending_count;
     }
 
     /// Interrupt a blocking poll() call from another thread.
@@ -630,4 +668,108 @@ test "EpollIO read and write on same fd" {
     try std.testing.expect(count >= 2);
     try std.testing.expect(read_called);
     try std.testing.expect(write_called);
+}
+
+test "EpollIO callback re-registers (no deadlock)" {
+    // Regression test: callback calls registerRead on the same IO instance.
+    // Before Mutex fix, this could deadlock or data-race on the HashMap.
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    const pipe_fds = try posix.pipe();
+    defer posix.close(pipe_fds[0]);
+    defer posix.close(pipe_fds[1]);
+
+    const pipe2_fds = try posix.pipe();
+    defer posix.close(pipe2_fds[0]);
+    defer posix.close(pipe2_fds[1]);
+
+    const Ctx = struct {
+        io: *EpollIO,
+        new_fd: posix.fd_t,
+        original_called: bool = false,
+        reregistered_called: bool = false,
+    };
+
+    var ctx = Ctx{ .io = &io, .new_fd = pipe2_fds[0] };
+
+    // Register read on pipe_fds[0]. The callback registers read on pipe2_fds[0].
+    io.registerRead(pipe_fds[0], .{
+        .ptr = @ptrCast(&ctx),
+        .callback = struct {
+            fn cb(ptr: ?*anyopaque, _: posix.fd_t) void {
+                const c: *Ctx = @ptrCast(@alignCast(ptr.?));
+                c.original_called = true;
+                // Re-register from within callback — must not deadlock
+                c.io.registerRead(c.new_fd, .{
+                    .ptr = @ptrCast(c),
+                    .callback = struct {
+                        fn cb2(ptr2: ?*anyopaque, _: posix.fd_t) void {
+                            const c2: *Ctx = @ptrCast(@alignCast(ptr2.?));
+                            c2.reregistered_called = true;
+                        }
+                    }.cb2,
+                });
+            }
+        }.cb,
+    });
+
+    // Trigger the first callback
+    _ = try posix.write(pipe_fds[1], "trigger");
+    _ = io.poll(100);
+    try std.testing.expect(ctx.original_called);
+
+    // Trigger the re-registered callback
+    _ = try posix.write(pipe2_fds[1], "trigger2");
+    _ = io.poll(100);
+    try std.testing.expect(ctx.reregistered_called);
+}
+
+test "EpollIO concurrent register while polling" {
+    // Test thread safety: one thread polls while another registers/unregisters.
+    var io = try EpollIO.init(std.testing.allocator);
+    defer io.deinit();
+
+    var stop = std.atomic.Value(bool).init(false);
+    var events_seen = std.atomic.Value(u32).init(0);
+
+    // Poller thread
+    const poller = try std.Thread.spawn(.{}, struct {
+        fn run(io_ptr: *EpollIO, stop_flag: *std.atomic.Value(bool), seen: *std.atomic.Value(u32)) void {
+            while (!stop_flag.load(.acquire)) {
+                const n = io_ptr.poll(10);
+                if (n > 0) _ = seen.fetchAdd(@intCast(n), .monotonic);
+            }
+        }
+    }.run, .{ &io, &stop, &events_seen });
+
+    // Register/unregister from this thread while poller is running
+    var sockets: [16]posix.fd_t = undefined;
+    for (&sockets) |*s| {
+        s.* = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM | posix.SOCK.NONBLOCK, 0);
+    }
+    defer for (sockets) |s| posix.close(s);
+
+    // Rapid register/unregister cycles
+    for (0..10) |_| {
+        for (sockets) |s| {
+            io.registerWrite(s, .{
+                .ptr = null,
+                .callback = struct {
+                    fn cb(_: ?*anyopaque, _: posix.fd_t) void {}
+                }.cb,
+            });
+        }
+        std.Thread.sleep(1 * std.time.ns_per_ms);
+        for (sockets) |s| {
+            io.unregister(s);
+        }
+    }
+
+    stop.store(true, .release);
+    io.wake();
+    poller.join();
+
+    // No crash = success. Events seen is a bonus check.
+    try std.testing.expectEqual(@as(u32, 0), io.registrations.count());
 }
