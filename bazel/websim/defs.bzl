@@ -14,9 +14,7 @@ Usage:
     )
 
 Run:
-    bazel build //examples/websim/gpio_button
-    cd bazel-bin/examples/websim/gpio_button/gpio_button_site
-    python3 -m http.server 8080
+    bazel run //examples/websim/gpio_button:serve
 """
 
 load("//bazel/zig:defs.bzl", "ZigModuleInfo")
@@ -138,7 +136,7 @@ def _websim_app_impl(ctx):
         files = depset([site_dir, wasm_file]),
     )]
 
-websim_app = rule(
+_websim_build = rule(
     implementation = _websim_app_impl,
     attrs = {
         "srcs": attr.label_list(
@@ -162,10 +160,74 @@ websim_app = rule(
             default = "//lib/platform/websim:web_shell",
         ),
     },
-    doc = """Compile a Zig app to WASM and bundle with the WebSim web shell.
+    doc = "Internal: compile Zig app to WASM + bundle web shell.",
+)
 
-    Output: {name}_site/ directory containing app.wasm + HTML/JS/CSS.
-    Serve with any HTTP server to run in browser.
+# =============================================================================
+# websim_serve — Run the WebSim site with a local HTTP server
+# =============================================================================
+
+def _websim_serve_impl(ctx):
+    """Run the websim site with the Go HTTP server."""
+    site_dir = None
+    for f in ctx.attr.app[DefaultInfo].files.to_list():
+        if f.is_directory:
+            site_dir = f
+            break
+
+    if not site_dir:
+        fail("No site directory found in websim_app output")
+
+    server = ctx.executable._server
+    
+    # Create a runner script that passes the site directory to the server
+    run_script = ctx.actions.declare_file(ctx.label.name + "_run.sh")
+    ctx.actions.write(
+        output = run_script,
+        content = """#!/bin/bash
+exec "{server}" "{site_dir}" "$@"
+""".format(
+            server = server.short_path,
+            site_dir = site_dir.short_path,
+        ),
+        is_executable = True,
+    )
+
+    return [DefaultInfo(
+        executable = run_script,
+        runfiles = ctx.runfiles(
+            files = [site_dir],
+            transitive_files = ctx.attr._server[DefaultInfo].default_runfiles.files,
+        ),
+    )]
+
+_websim_serve = rule(
+    implementation = _websim_serve_impl,
+    executable = True,
+    attrs = {
+        "app": attr.label(
+            mandatory = True,
+            doc = "websim_build target",
+        ),
+        "_server": attr.label(
+            default = "//tools/websim_serve",
+            executable = True,
+            cfg = "exec",
+        ),
+    },
+    doc = "Serve a WebSim app with a local HTTP server.",
+)
+
+# =============================================================================
+# websim_app — High-level macro: build + serve
+# =============================================================================
+
+def websim_app(name, main, srcs, deps = [], visibility = None):
+    """Build a WebSim WASM app and create a serve target.
+
+    Creates two targets:
+        {name}       — Build WASM + bundle web shell
+        {name}_serve — Run local HTTP server (bazel run)
 
     Example:
         websim_app(
@@ -174,5 +236,22 @@ websim_app = rule(
             srcs = ["wasm_main.zig", "platform.zig"],
             deps = ["//lib/platform/websim", "//lib/hal"],
         )
-    """,
-)
+
+    Run:
+        bazel run //examples/websim/gpio_button:gpio_button_serve
+    """
+    _vis = visibility if visibility else ["//visibility:public"]
+
+    _websim_build(
+        name = name,
+        main = main,
+        srcs = srcs,
+        deps = deps,
+        visibility = _vis,
+    )
+
+    _websim_serve(
+        name = name + "_serve",
+        app = ":" + name,
+        visibility = _vis,
+    )
