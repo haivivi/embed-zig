@@ -26,6 +26,9 @@
 #define LV_USE_STDLIB_STRING  LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_BUILTIN
 
+/* Use standard inttypes.h — available on all targets we support
+ * (host, ESP via newlib, WASM via wasi-libc). */
+
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     #define LV_MEM_SIZE (48 * 1024U)    /* 48KB heap */
     #define LV_MEM_POOL_EXPAND_SIZE 0

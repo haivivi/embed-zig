@@ -35,12 +35,20 @@ pub const LOG_BUF_SIZE = 4096;
 pub const LOG_LINE_MAX = 128;
 pub const LOG_LINES_MAX = 32;
 
+/// Maximum number of ADC buttons
+pub const MAX_ADC_BUTTONS = 8;
+
+/// Display framebuffer size (240x240 RGB565 = 115200 bytes)
+pub const DISPLAY_WIDTH = 240;
+pub const DISPLAY_HEIGHT = 240;
+pub const DISPLAY_BPP = 2; // RGB565
+pub const DISPLAY_FB_SIZE = DISPLAY_WIDTH * DISPLAY_HEIGHT * DISPLAY_BPP;
+
 /// Shared state between WASM (Zig) and JS.
 ///
-/// JS reads this struct from WASM linear memory using the pointer
-/// returned by the exported `getStatePtr()` function.
+/// JS reads this via typed WASM export accessors (not raw memory offsets).
 pub const SharedState = struct {
-    // ======== Button State (offset 0) ========
+    // ======== Single Button (BOOT/Power) ========
     /// Current button pressed state (written by JS via exports)
     button_pressed: bool = false,
     /// Previous button state for edge detection (internal)
@@ -49,17 +57,34 @@ pub const SharedState = struct {
     button_latch: bool = false,
     _btn_pad: u8 = 0,
 
-    // ======== LED State (offset 4) ========
+    // ======== Power Button ========
+    power_pressed: bool = false,
+    power_prev: bool = false,
+    power_latch: bool = false,
+    _pwr_pad: u8 = 0,
+
+    // ======== ADC Button Group ========
+    /// Simulated ADC raw value — JS sets this based on which button is pressed.
+    /// 4095 = no button pressed. Each button maps to an ADC range.
+    adc_raw: u16 = 4095,
+
+    // ======== LED State ========
     /// Number of active LEDs
     led_count: u32 = 1,
     /// LED colors (r,g,b,pad per LED) — JS reads these to update DOM
     led_colors: [MAX_LEDS]Color = [_]Color{Color.black} ** MAX_LEDS,
 
-    // ======== Time (offset 72) ========
+    // ======== Time ========
     /// Current timestamp in ms (written by JS each frame)
     time_ms: u64 = 0,
     /// Start time for uptime calculation
     start_time_ms: u64 = 0,
+
+    // ======== Display Framebuffer ========
+    /// LVGL flush writes here, JS reads for canvas rendering
+    display_fb: [DISPLAY_FB_SIZE]u8 = [_]u8{0} ** DISPLAY_FB_SIZE,
+    /// Dirty flag: set by flush, cleared by JS after rendering
+    display_dirty: bool = false,
 
     // ======== Log Buffer ========
     /// Log line storage
@@ -77,27 +102,71 @@ pub const SharedState = struct {
     running: bool = true,
 
     // ================================================================
-    // Button API
+    // Single Button API (BOOT)
     // ================================================================
 
-    /// Called by JS (via WASM export) when button is pressed
     pub fn setButtonPressed(self: *SharedState, pressed: bool) void {
         self.button_pressed = pressed;
         if (pressed and !self.button_prev) {
-            // Rising edge: set latch
             self.button_latch = true;
         }
         self.button_prev = pressed;
     }
 
-    /// Poll button state for HAL driver.
-    /// Returns true if pressed OR if press latch is set.
-    /// Clears the latch after returning true.
     pub fn pollButtonState(self: *SharedState) bool {
         const held = self.button_pressed;
         const latched = self.button_latch;
         if (latched) self.button_latch = false;
         return held or latched;
+    }
+
+    // ================================================================
+    // Power Button API
+    // ================================================================
+
+    pub fn setPowerPressed(self: *SharedState, pressed: bool) void {
+        self.power_pressed = pressed;
+        if (pressed and !self.power_prev) {
+            self.power_latch = true;
+        }
+        self.power_prev = pressed;
+    }
+
+    pub fn pollPowerState(self: *SharedState) bool {
+        const held = self.power_pressed;
+        const latched = self.power_latch;
+        if (latched) self.power_latch = false;
+        return held or latched;
+    }
+
+    // ================================================================
+    // ADC Button Group API
+    // ================================================================
+
+    /// Read simulated ADC value (called by ButtonGroup driver)
+    pub fn readAdc(self: *const SharedState) u16 {
+        return self.adc_raw;
+    }
+
+    // ================================================================
+    // Display API
+    // ================================================================
+
+    /// Write pixels to the framebuffer (called by display flush)
+    pub fn displayFlush(self: *SharedState, x1: u16, y1: u16, x2: u16, y2: u16, data: [*]const u8) void {
+        const w = @as(u32, x2 - x1 + 1);
+        const line_bytes = w * DISPLAY_BPP;
+        var y: u16 = y1;
+        while (y <= y2) : (y += 1) {
+            const fb_offset = (@as(u32, y) * DISPLAY_WIDTH + @as(u32, x1)) * DISPLAY_BPP;
+            const src_offset = @as(u32, y - y1) * line_bytes;
+            if (fb_offset + line_bytes <= DISPLAY_FB_SIZE) {
+                const dst = self.display_fb[fb_offset..][0..line_bytes];
+                const src = data[src_offset..][0..line_bytes];
+                @memcpy(dst, src);
+            }
+        }
+        self.display_dirty = true;
     }
 
     // ================================================================

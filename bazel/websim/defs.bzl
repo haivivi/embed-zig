@@ -26,13 +26,28 @@ def _get_zig_bin(zig_toolchain_files):
             return f
     fail("Could not find zig binary in toolchain")
 
+def _decode_module(encoded):
+    """Decode a tab-separated module string (same format as zig/defs.bzl)."""
+    parts = encoded.split("\t")
+    return struct(
+        name = parts[0],
+        root_path = parts[1],
+        dep_names = parts[2].split(",") if len(parts) > 2 and parts[2] else [],
+        c_include_dirs = parts[3].split(",") if len(parts) > 3 and parts[3] else [],
+        link_libc = parts[4] == "1" if len(parts) > 4 else False,
+    )
+
 def _websim_app_impl(ctx):
-    """Compile a Zig app to WASM and bundle with the web shell."""
+    """Compile a Zig app to WASM and bundle with the web shell.
+
+    Cross-compiles everything (Zig + C) to wasm32-freestanding-none.
+    Cannot reuse host-compiled .a caches — must recompile C sources for WASM.
+    """
 
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
 
-    # Output: site directory containing .wasm + web shell
+    # Output
     site_dir = ctx.actions.declare_directory(ctx.label.name + "_site")
     wasm_file = ctx.actions.declare_file(ctx.label.name + ".wasm")
     cache_dir = ctx.actions.declare_directory(ctx.label.name + "_zig_cache")
@@ -42,58 +57,93 @@ def _websim_app_impl(ctx):
     for src in ctx.attr.srcs:
         all_srcs.extend(src.files.to_list())
 
-    # Collect dep module info for -M flags
+    # Collect dep module info
     dep_infos = []
     dep_src_files = []
+    dep_c_inputs = []
+    needs_libc = False
     for dep in ctx.attr.deps:
         if ZigModuleInfo in dep:
             info = dep[ZigModuleInfo]
             dep_infos.append(info)
             dep_src_files.extend(info.transitive_srcs.to_list())
+            dep_c_inputs.extend(info.transitive_c_inputs.to_list())
+            if info.own_link_libc:
+                needs_libc = True
 
-    # Build zig compile command
+    # Build zig args: cross-compile to WASM
     zig_args = [
         "build-exe",
-        "-target", "wasm32-freestanding-none",
+        "-target", "wasm32-wasi-musl",
         "-rdynamic",
-        "-fno-entry",
         "-O", "ReleaseSmall",
     ]
+
+    # Use -lc for musl headers (needed by @cImport for C header processing).
+    # LVGL with LV_STDLIB_BUILTIN provides its own malloc/string at runtime,
+    # but still needs standard type headers (stdint.h etc.) at compile time.
+    zig_args.append("-lc")
+
+    # Collect C include dirs from all deps (global -I, before C sources)
+    for info in dep_infos:
+        for inc_dir in info.own_c_include_dirs:
+            zig_args.extend(["-I", inc_dir])
+
+    # Collect C source args from deps that have C code.
+    # When cross-compiling, we must recompile C sources (can't use host .a cache).
+    for info in dep_infos:
+        if info.own_c_build_args:
+            zig_args.extend(info.own_c_build_args)
 
     # Main module
     main_file = ctx.file.main
     module_name = ctx.label.name
 
-    # Add dep modules
-    dep_names = []
-    for info in dep_infos:
-        dep_names.append(info.module_name)
-
+    dep_names = [info.module_name for info in dep_infos]
     for dep_name in dep_names:
         zig_args.extend(["--dep", dep_name])
     zig_args.append("-M{}={}".format(module_name, main_file.path))
 
-    # Add transitive module definitions
+    # Add all transitive module definitions (same as zig_static_library cross-compile)
+    # Modules without C includes first, modules with C includes last (Zig compiler bug workaround)
     seen = {module_name: True}
+    mods_no_inc = []
+    mods_with_inc = []
+
     for info in dep_infos:
         if info.module_name not in seen:
             seen[info.module_name] = True
-            inner_deps = info.direct_dep_names
-            for d in inner_deps:
-                zig_args.extend(["--dep", d])
-            zig_args.append("-M{}={}".format(info.module_name, info.root_source.path))
+            mod = struct(
+                name = info.module_name,
+                root_path = info.root_source.path,
+                dep_names = info.direct_dep_names,
+                c_include_dirs = info.own_c_include_dirs,
+                link_libc = info.own_link_libc,
+            )
+            if mod.c_include_dirs:
+                mods_with_inc.append(mod)
+            else:
+                mods_no_inc.append(mod)
+            if mod.link_libc:
+                needs_libc = True
 
-        # Add transitive deps
         for encoded in info.transitive_module_strings.to_list():
-            parts = encoded.split("\t")
-            name = parts[0]
-            root_path = parts[1]
-            sub_deps = parts[2].split(",") if len(parts) > 2 and parts[2] else []
-            if name not in seen:
-                seen[name] = True
-                for d in sub_deps:
-                    zig_args.extend(["--dep", d])
-                zig_args.append("-M{}={}".format(name, root_path))
+            mod = _decode_module(encoded)
+            if mod.name not in seen:
+                seen[mod.name] = True
+                if mod.link_libc:
+                    needs_libc = True
+                if mod.c_include_dirs:
+                    mods_with_inc.append(mod)
+                else:
+                    mods_no_inc.append(mod)
+
+    for mod in mods_no_inc + mods_with_inc:
+        for d in mod.dep_names:
+            zig_args.extend(["--dep", d])
+        zig_args.append("-M{}={}".format(mod.name, mod.root_path))
+        for inc_dir in mod.c_include_dirs:
+            zig_args.extend(["-I", inc_dir])
 
     zig_args.extend([
         "-femit-bin=" + wasm_file.path,
@@ -101,11 +151,11 @@ def _websim_app_impl(ctx):
         "--global-cache-dir", cache_dir.path,
     ])
 
-    # Compile WASM
+    # Compile WASM (fresh build, no cache reuse — all C sources recompiled for WASM)
     ctx.actions.run(
         executable = zig_bin,
         arguments = zig_args,
-        inputs = all_srcs + dep_src_files + zig_files,
+        inputs = all_srcs + dep_src_files + dep_c_inputs + zig_files,
         outputs = [wasm_file, cache_dir],
         env = {"HOME": cache_dir.path},
         mnemonic = "ZigWasmBuild",

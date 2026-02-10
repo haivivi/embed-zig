@@ -103,13 +103,6 @@ body {
     flex-shrink: 0;
 }
 
-.hint {
-    font-size: 11px;
-    color: var(--text-dim);
-    opacity: 0.6;
-    margin-left: auto;
-}
-
 /* LED indicators */
 .leds {
     display: flex;
@@ -131,7 +124,24 @@ body {
                 0 0 4px var(--led-color, #4ade80);
 }
 
-/* Hardware button */
+/* Display area (240x240 screen) */
+.display-area {
+    background: #000;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 2px solid var(--border);
+    display: flex;
+    justify-content: center;
+    align-self: center;
+}
+
+.display-area canvas {
+    image-rendering: pixelated;
+    width: 240px;
+    height: 240px;
+}
+
+/* Hardware buttons (shared) */
 .hw-button {
     appearance: none;
     border: none;
@@ -140,9 +150,11 @@ body {
     padding: 0;
     cursor: pointer;
     position: relative;
-    width: 80px;
     height: 36px;
+    min-width: 52px;
     transition: transform 0.05s ease;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .hw-button:active,
@@ -156,16 +168,18 @@ body {
     justify-content: center;
     width: 100%;
     height: 100%;
+    padding: 0 12px;
     border-radius: var(--radius-sm);
     background: linear-gradient(180deg, #3a3f52 0%, #2d3245 100%);
     border: 1px solid var(--border);
     border-bottom: 2px solid #1a1d27;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text);
     letter-spacing: 0.05em;
     transition: all 0.05s ease;
+    white-space: nowrap;
 }
 
 .hw-button:active .btn-inner,
@@ -179,20 +193,43 @@ body {
     border-color: var(--accent);
 }
 
-/* Display area (for LVGL canvas) */
-.display-area {
-    background: #000;
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-    border: 2px solid var(--border);
-    display: flex;
-    justify-content: center;
+/* ADC button grid */
+.button-grid {
+    align-items: flex-start;
 }
 
-.display-area canvas {
-    image-rendering: pixelated;
-    width: 100%;
-    height: auto;
+.adc-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1;
+}
+
+.adc-btn {
+    flex: 0 0 auto;
+}
+
+.rec-btn .btn-inner {
+    color: var(--red);
+}
+
+.rec-btn:active .btn-inner,
+.rec-btn.pressed .btn-inner {
+    color: #fff;
+    background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%);
+}
+
+/* Power button */
+.power-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+}
+
+.power-btn .btn-inner {
+    border-radius: 50%;
+    font-size: 16px;
+    padding: 0;
 }
 
 /* Log panel */
@@ -247,32 +284,12 @@ body {
     white-space: pre;
 }
 
-.log-content .log-line.info {
-    color: var(--green);
-}
-
-.log-content .log-line.error {
-    color: var(--red);
-}
-
-.log-content .log-line.warn {
-    color: var(--yellow);
-}
+.log-content .log-line.info { color: var(--green); }
+.log-content .log-line.error { color: var(--red); }
+.log-content .log-line.warn { color: var(--yellow); }
 
 /* Scrollbar */
-.log-content::-webkit-scrollbar {
-    width: 6px;
-}
-
-.log-content::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.log-content::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
-}
-
-.log-content::-webkit-scrollbar-thumb:hover {
-    background: var(--text-dim);
-}
+.log-content::-webkit-scrollbar { width: 6px; }
+.log-content::-webkit-scrollbar-track { background: transparent; }
+.log-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.log-content::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }

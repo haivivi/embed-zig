@@ -9,6 +9,8 @@ const state_mod = @import("state.zig");
 pub const SharedState = state_mod.SharedState;
 pub const Color = state_mod.Color;
 pub const MAX_LEDS = state_mod.MAX_LEDS;
+pub const DISPLAY_WIDTH = state_mod.DISPLAY_WIDTH;
+pub const DISPLAY_HEIGHT = state_mod.DISPLAY_HEIGHT;
 
 /// Global shared state
 pub const shared = &state_mod.state;
@@ -94,6 +96,73 @@ pub const LedDriver = struct {
     }
 
     pub fn refresh(_: *Self) void {}
+};
+
+// ============================================================================
+// Power Button Driver (single GPIO button)
+// ============================================================================
+
+pub const PowerButtonDriver = struct {
+    const Self = @This();
+
+    pub fn init() !Self {
+        shared.addLog("WebSim: Power button ready");
+        return .{};
+    }
+
+    pub fn deinit(_: *Self) void {}
+
+    pub fn isPressed(_: *const Self) bool {
+        return shared.pollPowerState();
+    }
+};
+
+// ============================================================================
+// ADC Button Group Driver
+// ============================================================================
+
+/// Simulated ADC reader for button group.
+/// JS sets the ADC value based on which virtual button is pressed.
+pub const AdcButtonDriver = struct {
+    const Self = @This();
+
+    pub fn init() !Self {
+        shared.addLog("WebSim: ADC buttons ready");
+        return .{};
+    }
+
+    pub fn deinit(_: *Self) void {}
+
+    /// Read simulated ADC value (0-4095).
+    /// 4095 = no button pressed. JS sets specific values per button.
+    pub fn readRaw(_: *Self) u16 {
+        return shared.readAdc();
+    }
+};
+
+// ============================================================================
+// Display Driver (240x240 RGB565)
+// ============================================================================
+
+pub const DisplayDriver = struct {
+    const Self = @This();
+
+    pub fn init() !Self {
+        shared.addLog("WebSim: Display 240x240 ready");
+        return .{};
+    }
+
+    pub fn deinit(_: *Self) void {}
+
+    /// Flush pixels to the shared framebuffer.
+    /// Called by hal.display / LVGL flush callback.
+    pub fn flush(_: *Self, area: @import("hal").display.Area, color_data: [*]const u8) void {
+        shared.displayFlush(area.x1, area.y1, area.x2, area.y2, color_data);
+    }
+
+    pub fn setBacklight(_: *Self, _: u8) void {
+        // No-op in simulator
+    }
 };
 
 // ============================================================================

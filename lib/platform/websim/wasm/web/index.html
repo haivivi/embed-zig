@@ -14,12 +14,12 @@
         </header>
 
         <div class="board">
-            <!-- Display area (for LVGL, hidden initially) -->
-            <div class="display-area" id="displayArea" style="display:none">
-                <canvas id="displayCanvas" width="320" height="240"></canvas>
+            <!-- Display area (240x240 screen) -->
+            <div class="display-area" id="displayArea">
+                <canvas id="displayCanvas" width="240" height="240"></canvas>
             </div>
 
-            <!-- LED indicators -->
+            <!-- LED indicator -->
             <div class="component-row">
                 <div class="component-label">LED</div>
                 <div class="leds" id="ledContainer">
@@ -27,13 +27,40 @@
                 </div>
             </div>
 
-            <!-- Button -->
+            <!-- ADC Button Group (7 buttons) -->
+            <div class="component-row button-grid">
+                <div class="component-label">Keys</div>
+                <div class="adc-buttons">
+                    <button class="hw-button adc-btn" data-adc="200" data-name="vol-">
+                        <span class="btn-inner">VOL-</span>
+                    </button>
+                    <button class="hw-button adc-btn" data-adc="500" data-name="vol+">
+                        <span class="btn-inner">VOL+</span>
+                    </button>
+                    <button class="hw-button adc-btn" data-adc="800" data-name="left">
+                        <span class="btn-inner">&larr;</span>
+                    </button>
+                    <button class="hw-button adc-btn" data-adc="1100" data-name="right">
+                        <span class="btn-inner">&rarr;</span>
+                    </button>
+                    <button class="hw-button adc-btn" data-adc="1400" data-name="back">
+                        <span class="btn-inner">BACK</span>
+                    </button>
+                    <button class="hw-button adc-btn" data-adc="1700" data-name="confirm">
+                        <span class="btn-inner">OK</span>
+                    </button>
+                    <button class="hw-button adc-btn rec-btn" data-adc="2000" data-name="rec">
+                        <span class="btn-inner">&#9679; REC</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Power button -->
             <div class="component-row">
-                <div class="component-label">BOOT</div>
-                <button class="hw-button" id="btnBoot">
-                    <span class="btn-inner">BOOT</span>
+                <div class="component-label">Power</div>
+                <button class="hw-button power-btn" id="btnPower">
+                    <span class="btn-inner">&#9211;</span>
                 </button>
-                <div class="hint">Click or press Space</div>
             </div>
         </div>
 
