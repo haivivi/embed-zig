@@ -15,7 +15,6 @@ pub fn create(parent: ui.Obj) ?ui.Obj {
         .flexCross(.center);
 
     // Time (left)
-    _ = ui.Label.create(bar) orelse return bar;
     _ = (ui.Label.create(bar).?).text("12:00").color(theme.white).font(theme.getFont16());
 
     // Spacer

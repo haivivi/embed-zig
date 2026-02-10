@@ -28,11 +28,11 @@ pub fn getFont24() *const ui.Font {
 }
 
 pub fn getFont20() *const ui.Font {
-    return font_20 orelse ui.font.montserrat(16);
+    return font_20 orelse ui.font.montserrat(20);
 }
 
 pub fn getFont16() *const ui.Font {
-    return font_16 orelse ui.font.montserrat(14);
+    return font_16 orelse ui.font.montserrat(16);
 }
 
 // ============================================================================
