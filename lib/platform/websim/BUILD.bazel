@@ -7,15 +7,15 @@ package(default_visibility = ["//visibility:public"])
 # in the websim_app rule which cross-compiles everything to WASM.
 zig_module(
     name = "websim",
-    main = "src/websim.zig",
-    srcs = glob(["src/**/*.zig"]),
+    main = "websim.zig",
+    srcs = glob(["**/*.zig"]),
     module_name = "websim",
     deps = ["//lib/hal"],
 )
 
 filegroup(
     name = "web_shell",
-    srcs = glob(["web/**"]),
+    srcs = glob(["wasm/web/**"]),
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

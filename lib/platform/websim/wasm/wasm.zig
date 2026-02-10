@@ -18,7 +18,7 @@
 //! ```
 
 const std = @import("std");
-const state_mod = @import("impl/state.zig");
+const state_mod = @import("../impl/state.zig");
 
 const shared = &state_mod.state;
 

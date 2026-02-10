@@ -32,7 +32,7 @@
 
 pub const drivers = @import("impl/drivers.zig");
 pub const state_mod = @import("impl/state.zig");
-pub const wasm = @import("wasm.zig");
+pub const wasm = @import("wasm/wasm.zig");
 
 // Re-export driver types for board definitions
 pub const RtcDriver = drivers.RtcDriver;
