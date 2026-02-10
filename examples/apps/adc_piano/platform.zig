@@ -6,10 +6,12 @@
 const hal = @import("hal");
 const build_options = @import("build_options");
 
-const hw = switch (build_options.board) {
+const BoardEnum = @TypeOf(build_options.board);
+
+const hw = if (@hasField(BoardEnum, "bk7258") and build_options.board == .bk7258)
+    @import("bk/bk7258.zig")
+else switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
-    .bk7258 => @import("bk/bk7258.zig"),
-    else => @compileError("unsupported board for adc_piano"),
 };
 
 pub const Hardware = hw.Hardware;

@@ -81,6 +81,31 @@ pub fn run(_: anytype) void {
 
     board.speaker.setVolume(200) catch {};
 
+    log.info("Playing startup melody: Do Re Mi...", .{});
+
+    // Play startup melody: Do Re Mi
+    var buffer: [160]i16 = undefined;
+    var phase: f32 = 0;
+    const startup_notes = [_]u32{ NOTE_DO, NOTE_RE, NOTE_MI };
+    for (startup_notes) |freq| {
+        phase = 0;
+        const duration_samples = platform.Hardware.sample_rate * 300 / 1000; // 300ms per note
+        var played: u32 = 0;
+        while (played < duration_samples) {
+            generateSineWave(&buffer, platform.Hardware.sample_rate, freq, &phase);
+            const written = board.speaker.write(&buffer) catch 0;
+            played += @intCast(written);
+        }
+        // Brief silence between notes
+        @memset(&buffer, 0);
+        var gap: u32 = 0;
+        const gap_samples = platform.Hardware.sample_rate * 50 / 1000; // 50ms gap
+        while (gap < gap_samples) {
+            const written = board.speaker.write(&buffer) catch 0;
+            gap += @intCast(written);
+        }
+    }
+
     log.info("Ready! Press buttons to play notes.", .{});
 
     // Discard initial ADC readings (settling time)
@@ -90,8 +115,7 @@ pub fn run(_: anytype) void {
         Board.time.sleepMs(10);
     }
 
-    var buffer: [160]i16 = undefined; // 10ms @ 16kHz (or 20ms @ 8kHz)
-    var phase: f32 = 0;
+    phase = 0;
     var current_freq: u32 = 0;
 
     while (Board.isRunning()) {
