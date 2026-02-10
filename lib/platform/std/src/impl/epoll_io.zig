@@ -84,12 +84,19 @@ fn rawEpollWait(epfd: i32, events: []linux.epoll_event, timeout: i32) usize {
     }
 }
 
-/// Helper: convert linux.EPOLL packed struct constants to u32.
-/// In Zig 0.14+, linux.EPOLL.IN/OUT etc. are packed struct(u32) values,
-/// not plain u32. This helper ensures consistent conversion. If the
-/// type is already u32 (future Zig versions), @bitCast is a no-op.
+/// Helper: convert linux.EPOLL constants to u32.
+///
+/// Depending on the Zig version / target, EPOLL constants may be:
+///   - comptime_int (e.g. CLOEXEC = 0x80000, CTL_ADD = 1)
+///   - u32 / other runtime int
+///   - packed struct(u32) (event flags like IN, OUT in some Zig versions)
+///
+/// This helper handles all three via comptime type dispatch.
 inline fn epollToU32(val: anytype) u32 {
-    return @bitCast(val);
+    return switch (@typeInfo(@TypeOf(val))) {
+        .comptime_int, .int => val,
+        else => @bitCast(val),
+    };
 }
 
 /// epoll-based I/O service implementing the IOService trait contract.
