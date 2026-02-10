@@ -6,6 +6,11 @@
  */
 
 #include <string.h>
+#include <components/log.h>
+#define TAG "zig_crypto"
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
+/* Force CURVE25519 before including mbedTLS headers */
+#define MBEDTLS_ECP_DP_CURVE25519_ENABLED
 #include <mbedtls/sha256.h>
 #include <mbedtls/sha512.h>
 #include <mbedtls/sha1.h>
@@ -672,7 +677,7 @@ int bk_zig_x25519_keypair(
     unsigned char sk_out[32],
     unsigned char pk_out[32])
 {
-#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+#if 1 /* Force enable — CURVE25519 is in the FULL config */
     mbedtls_ecp_group grp;
     mbedtls_mpi d;
     mbedtls_ecp_point Q;
@@ -681,6 +686,7 @@ int bk_zig_x25519_keypair(
     mbedtls_ecp_point_init(&Q);
 
     int ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    BK_LOGI(TAG, "x25519: group_load ret=%d\r\n", ret);
     if (ret != 0) goto x25519_kp_end;
 
     unsigned char clamped[32];
@@ -692,9 +698,11 @@ int bk_zig_x25519_keypair(
     unsigned char sk_be[32];
     for (int i = 0; i < 32; i++) sk_be[i] = clamped[31 - i];
     ret = mbedtls_mpi_read_binary(&d, sk_be, 32);
+    BK_LOGI(TAG, "x25519: mpi_read ret=%d\r\n", ret);
     if (ret != 0) goto x25519_kp_end;
 
     ret = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, bk_rng_callback, NULL);
+    BK_LOGI(TAG, "x25519: ecp_mul ret=%d (0x%x)\r\n", ret, -ret);
     if (ret != 0) goto x25519_kp_end;
 
     memcpy(sk_out, clamped, 32);
@@ -719,7 +727,7 @@ int bk_zig_x25519_scalarmult(
     const unsigned char pk[32],
     unsigned char out[32])
 {
-#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+#if 1 /* Force enable */
     mbedtls_ecp_group grp;
     mbedtls_mpi d, z;
     mbedtls_ecp_point Q;
