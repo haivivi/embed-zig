@@ -257,10 +257,15 @@ pub const EpollIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         self.mutex.lock();
-        const removed = self.registrations.fetchRemove(fd);
-        self.mutex.unlock();
+        defer self.mutex.unlock();
 
-        if (removed != null) {
+        if (self.registrations.fetchRemove(fd)) |_| {
+            // Hold lock through kernel call to prevent race with concurrent
+            // registerRead/registerWrite on the same fd: without the lock,
+            // a concurrent register could ADD the fd to epoll, then our
+            // stale DELETE would silently remove it — leaving the fd in the
+            // HashMap but not monitored by the kernel.
+            // epoll_ctl DELETE is non-blocking, so holding the lock is safe.
             rawEpollCtl(self.epfd, EPOLL_CTL_DEL, fd, null) catch |err| {
                 std.log.warn("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
@@ -320,6 +325,14 @@ pub const EpollIO = struct {
 
         // Invoke callbacks WITHOUT the lock — callbacks may safely call
         // registerRead/registerWrite/unregister on this EpollIO instance.
+        //
+        // Design note: unlike the pre-Mutex code, we do NOT re-lookup
+        // registrations between read and write callbacks for the same fd.
+        // If a read callback calls unregister(fd), the snapshotted write
+        // callback still fires. This is the standard pattern for thread-safe
+        // event loops (libuv, tokio): snapshot-then-fire. The alternative
+        // (re-lookup under lock per callback) adds overhead and still has
+        // TOCTOU races. Callbacks must handle closed/reused fds gracefully.
         for (pending[0..pending_count]) |p| {
             p.cb.call(p.fd);
         }

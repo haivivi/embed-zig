@@ -230,10 +230,15 @@ pub const KqueueIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         self.mutex.lock();
-        const removed = self.registrations.fetchRemove(fd);
-        self.mutex.unlock();
+        defer self.mutex.unlock();
 
-        if (removed) |entry| {
+        // Hold lock through kernel call to prevent race with concurrent
+        // registerRead/registerWrite on the same fd: without the lock,
+        // a concurrent register could ADD the fd to kqueue, then our
+        // stale DELETE would silently remove it — leaving the fd in the
+        // HashMap but not monitored by the kernel.
+        // kevent DELETE is non-blocking, so holding the lock is safe.
+        if (self.registrations.fetchRemove(fd)) |entry| {
             var changelist: [2]posix.system.Kevent = undefined;
             var count: usize = 0;
 
@@ -318,6 +323,14 @@ pub const KqueueIO = struct {
 
         // Invoke callbacks WITHOUT the lock — callbacks may safely call
         // registerRead/registerWrite/unregister on this KqueueIO instance.
+        //
+        // Design note: unlike the pre-Mutex code, we do NOT re-lookup
+        // registrations between read and write callbacks for the same fd.
+        // If a read callback calls unregister(fd), the snapshotted write
+        // callback still fires. This is the standard pattern for thread-safe
+        // event loops (libuv, tokio): snapshot-then-fire. The alternative
+        // (re-lookup under lock per callback) adds overhead and still has
+        // TOCTOU races. Callbacks must handle closed/reused fds gracefully.
         for (pending[0..pending_count]) |p| {
             p.cb.call(p.fd);
         }
