@@ -105,6 +105,8 @@ pub const motion = @import("motion.zig");
 pub const hci = @import("hci.zig");
 /// BLE Host module (hal.ble.from, hal.ble.is)
 pub const ble = @import("ble.zig");
+/// Display module (hal.display.from, hal.display.is)
+pub const display = @import("display.zig");
 
 // ============================================================================
 // Common Types
@@ -254,6 +256,15 @@ pub const BleAdvConfig = ble.AdvConfig;
 /// BLE role
 pub const BleRole = ble.Role;
 
+// ============================================================================
+// Display Types
+// ============================================================================
+
+/// Display color format
+pub const DisplayColorFormat = display.ColorFormat;
+/// Display area
+pub const DisplayArea = display.Area;
+
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
@@ -272,4 +283,5 @@ test {
     _ = @import("motion.zig");
     _ = @import("hci.zig");
     _ = @import("ble.zig");
+    _ = @import("display.zig");
 }
