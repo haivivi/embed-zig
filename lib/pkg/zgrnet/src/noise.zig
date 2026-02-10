@@ -21,8 +21,19 @@ const std = @import("std");
 // Core module (fully genericized over Crypto)
 pub const noise = @import("noise/mod.zig");
 
-// KCP reliable transport (C bindings)
+// KCP reliable transport
 pub const kcp = @import("kcp/kcp.zig");
+
+// KCP Stream/Mux (not available on freestanding — uses thread primitives in tests)
+// Import via kcp/mod.zig for the full API
+pub const kcp_stream = if (@import("builtin").os.tag != .freestanding)
+    @import("kcp/stream.zig")
+else
+    struct {};
+pub const kcp_mod = if (@import("builtin").os.tag != .freestanding)
+    @import("kcp/mod.zig")
+else
+    struct {};
 
 // Re-export noise non-generic types for convenience
 pub const Key = noise.Key;

@@ -1,15 +1,17 @@
-//! Noise + KCP Throughput Test — Mac initiator
+//! Noise + KCP Stream Throughput Test — Mac initiator
+//!
+//! Uses Mux/Stream (with timeout) over Noise/UDP.
 //!
 //! Usage:
-//!   noise_throughput <ip> [port] [kb] [rounds] [loss%] [loss_mode] [kcp_config]
+//!   noise_throughput <ip> [port] [kb] [rounds] [loss%] [loss_mode]
 //!     loss_mode: 0=recv-only (default), 1=bilateral
-//!     kcp_config: A=current, B=aggressive, C=max-resilience
 
 const std = @import("std");
 const posix = std.posix;
 const crypto_suite = @import("crypto");
 const zgrnet = @import("zgrnet");
-const kcp_mod = zgrnet.kcp;
+const kcp_raw = zgrnet.kcp;
+const kcp_stream_mod = zgrnet.kcp_stream;
 
 const DesktopCrypto = struct {
     pub const Blake2s256 = crypto_suite.Blake2s256;
@@ -20,47 +22,77 @@ const DesktopCrypto = struct {
     pub const Rng = crypto_suite.Rng;
 };
 
+/// Desktop Runtime for Mux/Stream
+const DesktopRt = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() Mutex { return .{}; }
+        pub fn deinit(_: *Mutex) void {}
+        pub fn lock(self: *Mutex) void { self.inner.lock(); }
+        pub fn unlock(self: *Mutex) void { self.inner.unlock(); }
+    };
+    pub const Condition = struct {
+        inner: std.Thread.Condition = .{},
+        pub const TimedWaitResult = enum { signaled, timed_out };
+        pub fn init() Condition { return .{}; }
+        pub fn deinit(_: *Condition) void {}
+        pub fn wait(self: *Condition, mutex: *Mutex) void { self.inner.wait(&mutex.inner); }
+        pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
+            self.inner.timedWait(&mutex.inner, timeout_ns) catch return .timed_out;
+            return .signaled;
+        }
+        pub fn signal(self: *Condition) void { self.inner.signal(); }
+        pub fn broadcast(self: *Condition) void { self.inner.broadcast(); }
+    };
+    pub fn nowMs() u64 {
+        return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
+    }
+};
+
 const Noise = zgrnet.noise.Protocol(DesktopCrypto);
 const Key = Noise.Key;
 const KP = Noise.KeyPair;
 const tag_size = zgrnet.tag_size;
-const Kcp = kcp_mod.Kcp;
+const Kcp = kcp_raw.Kcp;
+const MuxType = kcp_stream_mod.Mux(DesktopRt);
+const StreamType = kcp_stream_mod.Stream(DesktopRt);
 
 const default_port: u16 = 9999;
 const default_total_kb: usize = 64;
 const default_rounds: usize = 1;
 const max_pkt: usize = 2048;
 const chunk_size: usize = 1024;
+const stream_timeout_ns: u64 = 10 * std.time.ns_per_s; // 10s read timeout
 
 // Global state
 var g_sock: posix.socket_t = undefined;
 var g_dest_addr: *const posix.sockaddr = undefined;
 var g_dest_len: posix.socklen_t = undefined;
 var g_send_cs: *Noise.CipherState = undefined;
+var g_recv_cs: *Noise.CipherState = undefined;
 var g_mutex: std.Thread.Mutex = .{};
 var g_loss_pct: u8 = 0;
-var g_loss_bilateral: bool = false; // false = recv-only (default)
+var g_loss_bilateral: bool = false;
 var g_pkts_sent: u64 = 0;
 var g_pkts_dropped_send: u64 = 0;
 var g_pkts_dropped_recv: u64 = 0;
+var g_mux: *MuxType = undefined;
 
 fn shouldDrop() bool {
     if (g_loss_pct == 0) return false;
     if (g_loss_pct >= 100) return true;
     var rng_buf: [1]u8 = undefined;
     std.crypto.random.bytes(&rng_buf);
-    // threshold: 1% → 2, 50% → 128, 99% → 252 (fits in u8)
     const threshold: u8 = @intCast((@as(u16, g_loss_pct) * 255) / 100);
     return rng_buf[0] < threshold;
 }
 
-fn kcpOutput(data: []const u8, _: ?*anyopaque) void {
+/// Mux output: Noise encrypt + UDP send
+fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
     g_mutex.lock();
     defer g_mutex.unlock();
     var ct: [max_pkt]u8 = undefined;
-    // Always encrypt to keep Noise nonce in sync
     g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
-    // Simulate send loss AFTER encrypt (bilateral mode only)
     if (g_loss_bilateral and shouldDrop()) {
         g_pkts_dropped_send += 1;
         return;
@@ -68,6 +100,8 @@ fn kcpOutput(data: []const u8, _: ?*anyopaque) void {
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
     g_pkts_sent += 1;
 }
+
+fn onNewStream(_: *anyopaque, _: ?*anyopaque) void {}
 
 fn fillBlock(buf: []u8, block_num: u32) void {
     for (buf, 0..) |*b, i| b.* = @intCast((block_num ^ @as(u32, @intCast(i))) & 0xFF);
@@ -80,35 +114,31 @@ fn verifyBlock(buf: []const u8, block_num: u32) bool {
     return true;
 }
 
-const KcpConfig = enum { A, B, C };
+/// UDP recv thread: decrypt + feed to Mux
+fn recvThread() void {
+    while (true) {
+        var udp_buf: [max_pkt]u8 = undefined;
+        const udp_len = posix.recvfrom(g_sock, &udp_buf, 0, null, null) catch continue;
+        if (udp_len > tag_size) {
+            var pt: [max_pkt]u8 = undefined;
+            g_mutex.lock();
+            g_recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch {
+                g_mutex.unlock();
+                continue;
+            };
+            g_mutex.unlock();
+            // Loss simulation after decrypt
+            if (shouldDrop()) { g_pkts_dropped_recv += 1; continue; }
+            g_mux.input(pt[0 .. udp_len - tag_size]) catch continue;
+        }
+    }
+}
 
-fn applyKcpConfig(kcp_inst: *Kcp, config: KcpConfig) void {
-    switch (config) {
-        .A => {
-            // Set A: current defaults
-            kcp_inst.setNodelay(2, 1, 2, 1);
-            kcp_inst.setWndSize(4096, 4096);
-            kcp_inst.setMtu(1400);
-        },
-        .B => {
-            // Set B: aggressive retransmit
-            kcp_inst.setNodelay(2, 1, 1, 1); // fastresend=1
-            kcp_inst.setWndSize(4096, 4096);
-            kcp_inst.setMtu(1400);
-            // Set struct fields directly via C pointer
-            kcp_inst.kcp.*.fastlimit = 20; // FASTACK_LIMIT: 5→20
-            kcp_inst.kcp.*.dead_link = 100; // DEADLINK: 20→100
-        },
-        .C => {
-            // Set C: max resilience
-            kcp_inst.setNodelay(2, 1, 1, 1); // fastresend=1
-            kcp_inst.setWndSize(4096, 4096);
-            kcp_inst.setMtu(1400);
-            kcp_inst.kcp.*.fastlimit = 20;
-            kcp_inst.kcp.*.dead_link = 200;
-            kcp_inst.kcp.*.ssthresh = 8; // THRESH_INIT: 2→8
-            kcp_inst.kcp.*.rx_minrto = 5; // even lower min RTO
-        },
+/// Mux update thread
+fn updateThread() void {
+    while (true) {
+        g_mux.update();
+        std.Thread.sleep(1 * std.time.ns_per_ms);
     }
 }
 
@@ -121,9 +151,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: noise_throughput <ip> [port] [kb] [rounds] [loss%%] [loss_mode] [config]\n", .{});
-        std.debug.print("  loss_mode: 0=recv-only (default), 1=bilateral\n", .{});
-        std.debug.print("  config: A=current, B=aggressive, C=max-resilience\n", .{});
+        std.debug.print("Usage: noise_throughput <ip> [port] [kb] [rounds] [loss%%] [loss_mode]\n", .{});
         return;
     }
 
@@ -133,25 +161,13 @@ pub fn main() !void {
     const rounds = if (args.len > 4) std.fmt.parseInt(usize, args[4], 10) catch default_rounds else default_rounds;
     g_loss_pct = if (args.len > 5) std.fmt.parseInt(u8, args[5], 10) catch 0 else 0;
     g_loss_bilateral = if (args.len > 6) (std.fmt.parseInt(u8, args[6], 10) catch 0) == 1 else false;
-    const kcp_config: KcpConfig = if (args.len > 7) switch ((args[7])[0]) {
-        'B', 'b' => .B,
-        'C', 'c' => .C,
-        else => .A,
-    } else .A;
 
     const total_bytes = total_kb * 1024;
     const total_blocks = total_bytes / chunk_size;
-    const loss_mode_str = if (g_loss_bilateral) "bilateral" else "recv-only";
-    const config_str = switch (kcp_config) {
-        .A => "A (current)",
-        .B => "B (aggressive)",
-        .C => "C (max-resilience)",
-    };
 
-    std.debug.print("\n=== KCP Loss Test: {d}%% {s}, Config {s} ===\n", .{ g_loss_pct, loss_mode_str, config_str });
-    std.debug.print("{d}KB ({d} blocks) x {d} rounds\n\n", .{ total_kb, total_blocks, rounds });
+    std.debug.print("\n=== Noise+KCP Stream Test: {d}%% loss, {d}KB x {d} ===\n", .{ g_loss_pct, total_kb, rounds });
 
-    // Keypair + socket setup
+    // Keypair + socket
     var seed: [32]u8 = undefined;
     DesktopCrypto.Rng.fill(&seed);
     const local_kp = KP.fromSeed(seed);
@@ -172,11 +188,10 @@ pub fn main() !void {
     // Key exchange + handshake
     _ = try posix.sendto(sock, &local_kp.public.data, 0, dest_addr, dest_len);
     var peer_pk_buf: [32]u8 = undefined;
-    const pk_len = posix.recvfrom(sock, &peer_pk_buf, 0, null, null) catch {
+    _ = posix.recvfrom(sock, &peer_pk_buf, 0, null, null) catch {
         std.debug.print("ERROR: No response\n", .{});
         return;
     };
-    if (pk_len != 32) return;
 
     var hs = Noise.HandshakeState.init(.{
         .pattern = .IK,
@@ -193,29 +208,35 @@ pub fn main() !void {
     const msg2_len = posix.recvfrom(sock, &msg2_buf, 0, null, null) catch return;
     var p: [64]u8 = undefined;
     _ = hs.readMessage(msg2_buf[0..msg2_len], &p) catch return;
-
     if (!hs.isFinished()) return;
     var send_cs, var recv_cs = hs.split() catch return;
     std.debug.print("Handshake OK\n", .{});
 
-    // KCP setup with selected config
+    // Setup globals
     g_sock = sock;
     g_dest_addr = dest_addr;
     g_dest_len = dest_len;
     g_send_cs = &send_cs;
-    g_pkts_sent = 0;
-    g_pkts_dropped_send = 0;
-    g_pkts_dropped_recv = 0;
+    g_recv_cs = &recv_cs;
 
-    var kcp_inst = try Kcp.create(allocator, 1, kcpOutput, null);
-    defer {
-        kcp_inst.deinit();
-        allocator.destroy(kcp_inst);
-    }
-    applyKcpConfig(kcp_inst, kcp_config);
-
-    const short_timeout = posix.timeval{ .sec = 0, .usec = 1_000 };
+    // Set non-blocking recv for recv thread
+    const short_timeout = posix.timeval{ .sec = 0, .usec = 10_000 };
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&short_timeout));
+
+    // Create Mux (client side)
+    var mux = try MuxType.init(allocator, .{}, true, muxOutput, onNewStream, null);
+    defer mux.deinit();
+    g_mux = mux;
+
+    // Start background threads
+    _ = try std.Thread.spawn(.{}, recvThread, .{});
+    _ = try std.Thread.spawn(.{}, updateThread, .{});
+
+    // Open stream
+    var stream = try mux.openStream(0, &.{});
+    defer stream.close();
+
+    std.debug.print("Stream opened, testing...\n\n", .{});
 
     // Test loop
     var grand_verified: usize = 0;
@@ -228,58 +249,36 @@ pub fn main() !void {
         var blocks_corrupted: u32 = 0;
         var next_recv: u32 = 0;
         const start = std.time.milliTimestamp();
-        var last_update: i64 = start;
 
+        // Send all blocks
+        while (blocks_sent < total_blocks) {
+            var buf: [chunk_size]u8 = undefined;
+            fillBlock(&buf, blocks_sent);
+            _ = stream.write(&buf) catch break;
+            blocks_sent += 1;
+        }
+
+        // Receive echoes with timeout
         while (next_recv < total_blocks) {
-            const now = std.time.milliTimestamp();
-            if (now - last_update >= 1) {
-                kcp_inst.update(@intCast(@as(u64, @intCast(now)) & 0xFFFFFFFF));
-                last_update = now;
-            }
-
-            if (blocks_sent < total_blocks and kcp_inst.waitSnd() < 128) {
-                var buf: [chunk_size]u8 = undefined;
-                fillBlock(&buf, blocks_sent);
-                if (kcp_inst.send(&buf) >= 0) blocks_sent += 1;
-            }
-
-            while (true) {
-                var udp_buf: [max_pkt]u8 = undefined;
-                const udp_len = posix.recvfrom(sock, &udp_buf, 0, null, null) catch break;
-                if (udp_len > tag_size) {
-                    var pt: [max_pkt]u8 = undefined;
-                    // Always decrypt to keep Noise nonce in sync
-                    recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
-                    // Simulate loss AFTER decrypt, BEFORE KCP input
-                    // This tests KCP's resilience to transport loss without
-                    // breaking Noise nonce synchronization.
-                    if (shouldDrop()) { g_pkts_dropped_recv += 1; continue; }
-                    _ = kcp_inst.input(pt[0 .. udp_len - tag_size]);
+            var recv_buf: [chunk_size]u8 = undefined;
+            const n = stream.readBlocking(&recv_buf, stream_timeout_ns) catch |err| {
+                if (err == kcp_stream_mod.StreamError.Timeout) {
+                    std.debug.print("  Timeout at block {d}/{d}\n", .{ next_recv, total_blocks });
+                    break;
                 }
-            }
-
-            while (true) {
-                var recv_buf: [chunk_size]u8 = undefined;
-                const kcp_len = kcp_inst.recv(&recv_buf);
-                if (kcp_len <= 0) break;
-                if (kcp_len == chunk_size) {
-                    if (verifyBlock(recv_buf[0..chunk_size], next_recv)) {
-                        blocks_verified += 1;
-                    } else {
-                        blocks_corrupted += 1;
-                    }
-                } else {
-                    // Unexpected size — count as corrupted to avoid silent hang
-                    blocks_corrupted += 1;
-                    std.debug.print("  WARN: block {d} unexpected size {d}\n", .{ next_recv, kcp_len });
-                }
-                next_recv += 1;
-            }
-
-            if (now - start > 30000) {
-                std.debug.print("  TIMEOUT 30s\n", .{});
                 break;
+            };
+            if (n == 0) break; // EOF
+            if (n == chunk_size) {
+                if (verifyBlock(recv_buf[0..chunk_size], next_recv)) {
+                    blocks_verified += 1;
+                } else {
+                    blocks_corrupted += 1;
+                }
+            } else {
+                blocks_corrupted += 1;
             }
+            next_recv += 1;
         }
 
         const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start));
@@ -296,14 +295,12 @@ pub fn main() !void {
 
     const avg = if (rounds > 0) grand_throughput / rounds else 0;
     const total_dropped = g_pkts_dropped_send + g_pkts_dropped_recv;
-    std.debug.print("{d}/{d} verified, {d} corrupt, {d} KB/s, dropped: {d} (send:{d} recv:{d}), integrity: {s}\n", .{
+    std.debug.print("{d}/{d} verified, {d} corrupt, {d} KB/s, dropped: {d}, integrity: {s}\n", .{
         grand_verified,
         total_blocks * rounds,
         grand_corrupted,
         avg,
         total_dropped,
-        g_pkts_dropped_send,
-        g_pkts_dropped_recv,
         if (grand_corrupted == 0) "PASS" else "FAIL",
     });
 }
