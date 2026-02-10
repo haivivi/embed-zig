@@ -280,8 +280,10 @@ pub const EpollIO = struct {
                 // loop iteration (or the write callback below) may have
                 // modified registrations.
                 if (self.registrations.get(fd)) |entry| {
-                    entry.read_cb.call(fd);
-                    processed += 1;
+                    if (entry.events & EPOLL_IN != 0) {
+                        entry.read_cb.call(fd);
+                        processed += 1;
+                    }
                 }
             }
             if (is_write) {
@@ -289,8 +291,10 @@ pub const EpollIO = struct {
                 // different fd earlier in the loop) may have unregistered
                 // this fd or changed the write callback.
                 if (self.registrations.get(fd)) |entry| {
-                    entry.write_cb.call(fd);
-                    processed += 1;
+                    if (entry.events & EPOLL_OUT != 0) {
+                        entry.write_cb.call(fd);
+                        processed += 1;
+                    }
                 }
             }
         }
