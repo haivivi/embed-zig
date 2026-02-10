@@ -62,9 +62,10 @@ pub const ButtonDriver = struct {
 
     pub fn deinit(_: *Self) void {}
 
-    /// Returns true if button is pressed (consumes the press latch)
+    /// Returns true while button is physically held down.
+    /// HAL button module handles debouncing and edge detection.
     pub fn isPressed(_: *const Self) bool {
-        return shared.pollButtonState();
+        return shared.button_pressed;
     }
 };
 
@@ -112,8 +113,10 @@ pub const PowerButtonDriver = struct {
 
     pub fn deinit(_: *Self) void {}
 
+    /// Returns true while power button is physically held down.
+    /// HAL button module handles debouncing and edge detection.
     pub fn isPressed(_: *const Self) bool {
-        return shared.pollPowerState();
+        return shared.power_pressed;
     }
 };
 

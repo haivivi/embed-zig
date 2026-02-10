@@ -91,12 +91,15 @@ fn pollInput() void {
     // Power button: track held state for long-press
     const t = board.uptime();
     if (board.button.poll(t)) |evt| {
-        if (evt.action == .press) {
-            power_held = true;
-            power_hold_start = t;
-        }
-        if (evt.action == .release) {
-            power_held = false;
+        switch (evt.action) {
+            .press => {
+                power_held = true;
+                power_hold_start = t;
+            },
+            .release => {
+                power_held = false;
+            },
+            else => {},
         }
     }
 }
