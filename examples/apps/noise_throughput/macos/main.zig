@@ -41,13 +41,29 @@ var g_dest_addr: *const posix.sockaddr = undefined;
 var g_dest_len: posix.socklen_t = undefined;
 var g_send_cs: *Noise.CipherState = undefined;
 var g_mutex: std.Thread.Mutex = .{};
+var g_loss_pct: u8 = 0; // packet loss percentage (0-100)
+var g_pkts_sent: u64 = 0;
+var g_pkts_dropped: u64 = 0;
+
+fn shouldDrop() bool {
+    if (g_loss_pct == 0) return false;
+    var rng_buf: [1]u8 = undefined;
+    std.crypto.random.bytes(&rng_buf);
+    return rng_buf[0] < @as(u8, @intCast((@as(u16, g_loss_pct) * 256) / 100));
+}
 
 fn kcpOutput(data: []const u8, _: ?*anyopaque) void {
     g_mutex.lock();
     defer g_mutex.unlock();
+    // Simulate packet loss on send
+    if (shouldDrop()) {
+        g_pkts_dropped += 1;
+        return;
+    }
     var ct: [max_pkt]u8 = undefined;
     g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
+    g_pkts_sent += 1;
 }
 
 /// Fill a block with a verifiable pattern: byte[i] = (block_num ^ i) & 0xFF
@@ -75,7 +91,8 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: noise_throughput <peer_ip> [port] [total_kb] [rounds]\n", .{});
+        std.debug.print("Usage: noise_throughput <peer_ip> [port] [total_kb] [rounds] [loss_pct]\n", .{});
+        std.debug.print("  loss_pct: simulate packet loss 0-100%% (default: 0)\n", .{});
         return;
     }
 
@@ -83,11 +100,15 @@ pub fn main() !void {
     const port = if (args.len > 2) std.fmt.parseInt(u16, args[2], 10) catch default_port else default_port;
     const total_kb = if (args.len > 3) std.fmt.parseInt(usize, args[3], 10) catch default_total_kb else default_total_kb;
     const rounds = if (args.len > 4) std.fmt.parseInt(usize, args[4], 10) catch default_rounds else default_rounds;
+    g_loss_pct = if (args.len > 5) std.fmt.parseInt(u8, args[5], 10) catch 0 else 0;
     const total_bytes = total_kb * 1024;
     const total_blocks = total_bytes / chunk_size;
 
     std.debug.print("\n=== Noise + KCP Resilience Test (Initiator) ===\n", .{});
     std.debug.print("Peer: {s}:{d}, Data: {d}KB ({d} blocks) x {d} rounds\n", .{ peer_ip, port, total_kb, total_blocks, rounds });
+    if (g_loss_pct > 0) {
+        std.debug.print("Simulated packet loss: {d}%%\n", .{g_loss_pct});
+    }
     std.debug.print("Each block: {d}B with verifiable pattern\n\n", .{chunk_size});
 
     // Generate keypair
@@ -200,6 +221,8 @@ pub fn main() !void {
             while (true) {
                 var udp_buf: [max_pkt]u8 = undefined;
                 const udp_len = posix.recvfrom(sock, &udp_buf, 0, null, null) catch break;
+                // Simulate packet loss on recv
+                if (shouldDrop()) { g_pkts_dropped += 1; continue; }
                 if (udp_len > tag_size) {
                     var pt: [max_pkt]u8 = undefined;
                     recv_cs.decrypt(udp_buf[0..udp_len], "", pt[0 .. udp_len - tag_size]) catch continue;
@@ -258,6 +281,10 @@ pub fn main() !void {
     std.debug.print("Total verified: {d} blocks\n", .{grand_total_verified});
     std.debug.print("Total corrupt:  {d} blocks\n", .{grand_total_corrupted});
     std.debug.print("Avg throughput: {d} KB/s\n", .{grand_total_throughput / rounds});
+    if (g_loss_pct > 0) {
+        std.debug.print("Packets sent:   {d}\n", .{g_pkts_sent});
+        std.debug.print("Packets dropped:{d} ({d}%% configured)\n", .{ g_pkts_dropped, g_loss_pct });
+    }
     std.debug.print("Data integrity: {s}\n", .{if (grand_total_corrupted == 0) "PASS" else "FAIL"});
     std.debug.print("=== Done ===\n\n", .{});
 }

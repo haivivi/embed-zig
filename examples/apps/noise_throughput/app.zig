@@ -41,7 +41,7 @@ const max_pkt: usize = 2048;
 const allocator = esp_mod.idf.heap.psram;
 
 // WiFi chaos config
-const chaos_enabled = true;
+const chaos_enabled = false;
 const chaos_on_ms: u64 = 3000; // WiFi ON duration
 const chaos_off_ms: u64 = 2000; // WiFi OFF duration
 
