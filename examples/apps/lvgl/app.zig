@@ -46,14 +46,31 @@ var power_hold_start: u64 = 0;
 const POWER_HOLD_MS = 3000; // 3 seconds
 
 // LVGL screens
-var scr_menu: ?*c.lv_obj_t = null;
-var menu_labels: [3]?*c.lv_obj_t = .{ null, null, null };
+var scr_cards: [3]?*c.lv_obj_t = .{ null, null, null };
 var scr_about: ?*c.lv_obj_t = null;
 var scr_power: ?*c.lv_obj_t = null;
 var lbl_power: ?*c.lv_obj_t = null;
 var power_bar: ?*c.lv_obj_t = null;
 
-const menu_items = [_][]const u8{ "Snake", "LED Demo", "About" };
+// Ultraman chest light blue
+const LED_IDLE = hal.Color.rgb(0, 120, 255);
+
+// LVGL symbols (Font Awesome glyphs in Montserrat)
+const SYM_PLAY = "\xEF\x80\x9B"; // game/snake
+const SYM_EYE = "\xEF\x81\xAE"; // LED/visual
+const SYM_SETTINGS = "\xEF\x80\x93"; // about/info
+
+const MenuEntry = struct {
+    icon: [*:0]const u8,
+    title: [*:0]const u8,
+    subtitle: [*:0]const u8,
+};
+
+const menu_entries = [_]MenuEntry{
+    .{ .icon = SYM_PLAY, .title = "Snake", .subtitle = "Classic arcade game" },
+    .{ .icon = SYM_EYE, .title = "LED Demo", .subtitle = "Light animations" },
+    .{ .icon = SYM_SETTINGS, .title = "About", .subtitle = "Device info" },
+};
 
 // ============================================================================
 // Input
@@ -130,6 +147,12 @@ pub fn init() void {
 pub fn step() void {
     if (!hw_ready) return;
     pollInput();
+    tick_counter += 1;
+
+    // Unlock menu animation after duration
+    if (menu_animating and tick_counter >= anim_unlock_at) {
+        menu_animating = false;
+    }
 
     switch (power_state) {
         .off => stepOff(),
@@ -184,7 +207,10 @@ fn stepBooting() void {
         power_state = .on;
         power_held = false;
         log.info("Power ON", .{});
-        board.rgb_leds.clear();
+        // Ultraman chest light
+        for (0..9) |i| {
+            board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
+        }
         board.rgb_leds.refresh();
         menuInit();
     }
@@ -230,9 +256,13 @@ fn stepShuttingDown() void {
     if (!power_held) {
         // Released too early — back to on
         power_state = .on;
-        board.rgb_leds.clear();
+        // Restore Ultraman LEDs
+        for (0..9) |i| {
+            board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
+        }
         board.rgb_leds.refresh();
-        if (scr_menu) |scr| c.lv_screen_load(scr);
+        // Reload current screen
+        if (scr_cards[menu_selection]) |scr| c.lv_screen_load(scr);
         return;
     }
 
@@ -310,8 +340,13 @@ fn switchTo(app: AppId) void {
 
     switch (app) {
         .menu => {
-            if (scr_menu) |scr| c.lv_screen_load(scr);
-            updateMenuHighlight();
+            // Restore Ultraman LEDs
+            for (0..9) |i| {
+                board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
+            }
+            board.rgb_leds.refresh();
+            // Show current card
+            if (scr_cards[menu_selection]) |scr| c.lv_screen_load(scr);
         },
         .snake => snake.init(),
         .led_demo => led_demo.init(&board),
@@ -320,55 +355,82 @@ fn switchTo(app: AppId) void {
 }
 
 // ============================================================================
-// Menu
+// Menu — Horizontal card carousel with slide animation
 // ============================================================================
 
 fn menuInit() void {
-    scr_menu = c.lv_obj_create(null);
-    if (scr_menu == null) return;
-    c.lv_obj_set_style_bg_color(scr_menu.?, c.lv_color_hex(0x1a1a2e), 0);
-
-    const title = c.lv_label_create(scr_menu.?);
-    c.lv_label_set_text(title, "embed-zig");
-    c.lv_obj_set_style_text_color(title, c.lv_color_hex(0x6c8cff), 0);
-    c.lv_obj_align(title, c.LV_ALIGN_TOP_MID, 0, 20);
-
-    for (0..menu_items.len) |i| {
-        const lbl = c.lv_label_create(scr_menu.?);
-        c.lv_label_set_text(lbl, menu_items[i].ptr);
-        c.lv_obj_align(lbl, c.LV_ALIGN_TOP_MID, 0, @as(i32, @intCast(80 + i * 50)));
-        menu_labels[i] = lbl;
+    // Create a card screen for each menu entry
+    for (0..menu_entries.len) |i| {
+        scr_cards[i] = createCard(&menu_entries[i], i);
     }
-
-    updateMenuHighlight();
-    c.lv_screen_load(scr_menu.?);
+    menu_selection = 0;
+    if (scr_cards[0]) |scr| c.lv_screen_load(scr);
 }
 
-fn updateMenuHighlight() void {
-    for (0..menu_items.len) |i| {
-        if (menu_labels[i]) |lbl| {
-            if (i == menu_selection) {
-                c.lv_obj_set_style_text_color(lbl, c.lv_color_hex(0xffffff), 0);
-                c.lv_obj_set_style_text_font(lbl, &c.lv_font_montserrat_20, 0);
-            } else {
-                c.lv_obj_set_style_text_color(lbl, c.lv_color_hex(0x666688), 0);
-                c.lv_obj_set_style_text_font(lbl, &c.lv_font_montserrat_16, 0);
-            }
+fn createCard(entry: *const MenuEntry, idx: usize) ?*c.lv_obj_t {
+    const scr = c.lv_obj_create(null) orelse return null;
+    c.lv_obj_set_style_bg_color(scr, c.lv_color_hex(0x0f1020), 0);
+
+    // Icon (large, centered top)
+    const icon = c.lv_label_create(scr);
+    c.lv_label_set_text(icon, entry.icon);
+    c.lv_obj_set_style_text_font(icon, &c.lv_font_montserrat_20, 0);
+    c.lv_obj_set_style_text_color(icon, c.lv_color_hex(0x6c8cff), 0);
+    c.lv_obj_align(icon, c.LV_ALIGN_CENTER, 0, -50);
+
+    // Title
+    const title = c.lv_label_create(scr);
+    c.lv_label_set_text(title, entry.title);
+    c.lv_obj_set_style_text_font(title, &c.lv_font_montserrat_20, 0);
+    c.lv_obj_set_style_text_color(title, c.lv_color_hex(0xffffff), 0);
+    c.lv_obj_align(title, c.LV_ALIGN_CENTER, 0, -10);
+
+    // Subtitle
+    const sub = c.lv_label_create(scr);
+    c.lv_label_set_text(sub, entry.subtitle);
+    c.lv_obj_set_style_text_color(sub, c.lv_color_hex(0x666688), 0);
+    c.lv_obj_align(sub, c.LV_ALIGN_CENTER, 0, 20);
+
+    // Page indicator dots at bottom
+    const dots_y: i32 = -20;
+    const dot_spacing: i32 = 16;
+    const total_w: i32 = @as(i32, @intCast(menu_entries.len - 1)) * dot_spacing;
+    const start_x: i32 = -total_w / 2;
+
+    for (0..menu_entries.len) |d| {
+        const dot = c.lv_obj_create(scr);
+        c.lv_obj_set_size(dot, 8, 8);
+        c.lv_obj_set_style_radius(dot, 4, 0);
+        c.lv_obj_set_style_border_width(dot, 0, 0);
+        c.lv_obj_set_scrollbar_mode(dot, c.LV_SCROLLBAR_MODE_OFF);
+
+        if (d == idx) {
+            c.lv_obj_set_style_bg_color(dot, c.lv_color_hex(0x6c8cff), 0);
+        } else {
+            c.lv_obj_set_style_bg_color(dot, c.lv_color_hex(0x333355), 0);
         }
+
+        c.lv_obj_align(dot, c.LV_ALIGN_BOTTOM_MID, start_x + @as(i32, @intCast(d)) * dot_spacing, dots_y);
     }
+
+    // "OK to enter" hint
+    const hint = c.lv_label_create(scr);
+    c.lv_label_set_text(hint, "< OK >");
+    c.lv_obj_set_style_text_color(hint, c.lv_color_hex(0x444466), 0);
+    c.lv_obj_align(hint, c.LV_ALIGN_BOTTOM_MID, 0, -40);
+
+    return scr;
 }
+
+var menu_animating: bool = false;
 
 fn menuStep() void {
+    if (menu_animating) return; // ignore input during slide
+
     if (last_btn) |btn| {
         switch (btn) {
-            .vol_down, .right => {
-                if (menu_selection < menu_items.len - 1) menu_selection += 1;
-                updateMenuHighlight();
-            },
-            .vol_up, .left => {
-                if (menu_selection > 0) menu_selection -= 1;
-                updateMenuHighlight();
-            },
+            .right, .vol_down => slideMenu(1),
+            .left, .vol_up => slideMenu(-1),
             .confirm => {
                 switch (menu_selection) {
                     0 => switchTo(.snake),
@@ -381,6 +443,32 @@ fn menuStep() void {
         }
     }
 }
+
+fn slideMenu(delta: i32) void {
+    const new_sel: i32 = @as(i32, menu_selection) + delta;
+    if (new_sel < 0 or new_sel >= @as(i32, @intCast(menu_entries.len))) return;
+
+    const old_sel = menu_selection;
+    menu_selection = @intCast(new_sel);
+
+    const next_scr = scr_cards[menu_selection] orelse return;
+    _ = old_sel;
+
+    // Slide animation
+    const anim_type: c.lv_screen_load_anim_t = if (delta > 0)
+        c.LV_SCR_LOAD_ANIM_MOVE_LEFT
+    else
+        c.LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+
+    menu_animating = true;
+    c.lv_screen_load_anim(next_scr, anim_type, 250, 0, false);
+
+    // Reset animation lock after duration (approximate with tick counter)
+    anim_unlock_at = tick_counter + 16; // ~256ms at 60fps
+}
+
+var tick_counter: u32 = 0;
+var anim_unlock_at: u32 = 0;
 
 // ============================================================================
 // About
