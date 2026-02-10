@@ -710,6 +710,8 @@ def _zig_static_library_impl(ctx):
         # Cross-compilation: run zig directly (no cache_merge — fresh build, no host cache pollution)
         # Put -target and -O BEFORE C sources (zig may ignore flags after -cflags --)
         target_args = ["-target", ctx.attr.target]
+        if ctx.attr.cpu:
+            target_args.extend(["-mcpu", ctx.attr.cpu])
         if ctx.attr.optimize:
             target_args.extend(["-O", ctx.attr.optimize])
         for sysdir in ctx.attr.system_include_dirs:
@@ -769,6 +771,9 @@ zig_static_library = rule(
         ),
         "target": attr.string(
             doc = "Cross-compilation target (e.g., xtensa-freestanding-none)",
+        ),
+        "cpu": attr.string(
+            doc = "CPU model for cross-compilation (-mcpu). Required for xtensa targets to select correct ABI (e.g., esp32s3 for windowed calling convention).",
         ),
         "system_include_dirs": attr.string_list(
             default = [],
