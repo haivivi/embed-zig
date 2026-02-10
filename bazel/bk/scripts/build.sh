@@ -253,7 +253,13 @@ if [ ! -d "$BASE" ]; then
 fi
 echo "[bk_build] Base project: $BK_BASE_PROJECT"
 
-cp "$BASE/partitions/bk7258/auto_partitions.csv" "$PROJECT_DIR/partitions/bk7258/"
+# Use custom partition table if provided, otherwise copy from base project
+if [ -n "$BK_PARTITION_CSV" ] && [ -f "$E/$BK_PARTITION_CSV" ]; then
+    cp "$E/$BK_PARTITION_CSV" "$PROJECT_DIR/partitions/bk7258/auto_partitions.csv"
+    echo "[bk_build] Custom partition table from Bazel"
+else
+    cp "$BASE/partitions/bk7258/auto_partitions.csv" "$PROJECT_DIR/partitions/bk7258/"
+fi
 cp "$BASE/partitions/bk7258/ram_regions.csv" "$PROJECT_DIR/partitions/bk7258/"
 mkdir -p "$PROJECT_DIR/ap/config/bk7258_ap" "$PROJECT_DIR/cp/config/bk7258"
 cp "$BASE/ap/config/bk7258_ap/config" "$PROJECT_DIR/ap/config/bk7258_ap/"

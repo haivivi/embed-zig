@@ -164,6 +164,7 @@ export BK_MODULES="{modules}"
 export BK_APP_ZIG="{app_zig}"
 export BK_ENV_FILE="{env_file}"
 export ARMINO_PATH="{armino_path}"
+export BK_PARTITION_CSV="{partition_csv}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -184,6 +185,7 @@ exec bash "$E/{build_sh}"
         app_zig = app_zig.path if app_zig else "",
         env_file = ctx.file.env.path if ctx.file.env else "",
         armino_path = ctx.attr._armino_path[BuildSettingInfo].value if ctx.attr._armino_path and BuildSettingInfo in ctx.attr._armino_path else "",
+        partition_csv = ctx.file.partition_table.path if ctx.file.partition_table else "",
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -204,7 +206,8 @@ exec bash "$E/{build_sh}"
         kconfig_files.append(ctx.file.kconfig_cp)
 
     # All inputs
-    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + [wrapper]
+    partition_files = [ctx.file.partition_table] if ctx.file.partition_table else []
+    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + partition_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -273,6 +276,10 @@ bk_zig_app = rule(
         "env": attr.label(
             allow_single_file = True,
             doc = "Environment file with KEY=VALUE pairs (WIFI_SSID, WIFI_PASSWORD, etc.)",
+        ),
+        "partition_table": attr.label(
+            allow_single_file = True,
+            doc = "Partition table CSV (from bk_partition_table). If set, replaces auto_partitions.csv.",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
