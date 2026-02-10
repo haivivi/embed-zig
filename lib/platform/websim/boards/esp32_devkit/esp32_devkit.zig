@@ -1,22 +1,21 @@
-//! Basic Board — single button + single LED
+//! ESP32-S3 DevKit Board — 1 BOOT button + 1 RGB LED
 //!
-//! Minimal board for simple GPIO demos.
+//! Mimics the real ESP32-S3-DevKitC-1 layout.
 
 const hal = @import("hal");
-const drivers = @import("../impl/drivers.zig");
-const state = @import("../impl/state.zig");
+const drivers = @import("../../impl/drivers.zig");
+const state = @import("../../impl/state.zig");
 
-// ============================================================================
-// LED Driver (adapts hal.Color to websim.Color)
-// ============================================================================
+pub const led_count: u32 = 1;
 
 pub const LedDriver = struct {
     const Self = @This();
     count: u32,
 
     pub fn init() !Self {
-        state.state.addLog("WebSim: LED initialized");
-        return .{ .count = state.state.led_count };
+        state.state.led_count = led_count;
+        state.state.addLog("WebSim: RGB LED initialized");
+        return .{ .count = led_count };
     }
 
     pub fn deinit(_: *Self) void {}
@@ -35,7 +34,7 @@ pub const LedDriver = struct {
 };
 
 // ============================================================================
-// Specs
+// HAL Specs
 // ============================================================================
 
 pub const rtc_spec = struct {
@@ -50,7 +49,7 @@ pub const button_spec = struct {
 
 pub const led_spec = struct {
     pub const Driver = LedDriver;
-    pub const meta = .{ .id = "led.main" };
+    pub const meta = .{ .id = "led.rgb" };
 };
 
 pub const log = drivers.sal.log;

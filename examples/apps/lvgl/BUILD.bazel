@@ -13,6 +13,7 @@ websim_app(
     name = "sim",
     main = "wasm_main.zig",
     srcs = glob(["**/*.zig"]),
+    web_shell = "//lib/platform/websim:web_h106",
     deps = [
         "//lib/platform/websim",
         "//lib/hal",

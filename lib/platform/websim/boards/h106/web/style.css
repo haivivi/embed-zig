@@ -8,21 +8,16 @@
     --text: #e1e4ed;
     --text-dim: #7a7f96;
     --accent: #6c8cff;
-    --accent-glow: rgba(108, 140, 255, 0.3);
     --green: #4ade80;
     --red: #f87171;
     --yellow: #fbbf24;
-    --radius: 12px;
-    --radius-sm: 8px;
+    --radius: 16px;
+    --radius-sm: 10px;
     --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
 }
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
     background: var(--bg);
@@ -36,7 +31,7 @@ body {
 
 .sim-container {
     width: 100%;
-    max-width: 480px;
+    max-width: 440px;
 }
 
 /* Header */
@@ -55,9 +50,7 @@ body {
     color: var(--text-dim);
 }
 
-.sim-header .accent {
-    color: var(--accent);
-}
+.sim-header .accent { color: var(--accent); }
 
 .status {
     font-size: 12px;
@@ -79,60 +72,72 @@ body {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 24px;
+    padding: 24px 20px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    align-items: center;
+    gap: 16px;
     margin-bottom: 16px;
 }
 
-/* Component row */
-.component-row {
+/* LED strip — diamond layout: 1-2-3-2-1 */
+.led-strip {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 16px;
+    gap: 4px;
 }
 
-.component-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    width: 48px;
-    flex-shrink: 0;
-}
-
-/* LED indicators */
-.leds {
+.led-row {
     display: flex;
-    gap: 8px;
+    gap: 4px;
 }
 
 .led {
-    width: 20px;
-    height: 20px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     background: var(--surface-2);
-    border: 2px solid var(--border);
+    border: 1.5px solid var(--border);
     transition: all 0.1s ease;
 }
 
 .led.lit {
     border-color: transparent;
-    box-shadow: 0 0 12px var(--led-color, #4ade80),
-                0 0 4px var(--led-color, #4ade80);
+    box-shadow: 0 0 10px var(--led-color, #4ade80),
+                0 0 3px var(--led-color, #4ade80);
 }
 
-/* Display area (240x240 screen) */
+/* Screen row: vol- | display | vol+ */
+.screen-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    justify-content: center;
+}
+
+.side-btn {
+    width: 44px;
+    height: 80px;
+    flex-shrink: 0;
+}
+
+.side-btn .btn-inner {
+    writing-mode: vertical-lr;
+    text-orientation: mixed;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+}
+
+/* Display */
 .display-area {
     background: #000;
     border-radius: var(--radius-sm);
     overflow: hidden;
     border: 2px solid var(--border);
-    display: flex;
-    justify-content: center;
-    align-self: center;
+    flex-shrink: 0;
+    line-height: 0;
 }
 
 .display-area canvas {
@@ -141,7 +146,19 @@ body {
     height: 240px;
 }
 
-/* Hardware buttons (shared) */
+/* Key rows */
+.key-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.key-btn {
+    width: 80px;
+    height: 40px;
+}
+
+/* Shared button style */
 .hw-button {
     appearance: none;
     border: none;
@@ -150,8 +167,6 @@ body {
     padding: 0;
     cursor: pointer;
     position: relative;
-    height: 36px;
-    min-width: 52px;
     transition: transform 0.05s ease;
     user-select: none;
     -webkit-user-select: none;
@@ -168,7 +183,7 @@ body {
     justify-content: center;
     width: 100%;
     height: 100%;
-    padding: 0 12px;
+    padding: 0 10px;
     border-radius: var(--radius-sm);
     background: linear-gradient(180deg, #3a3f52 0%, #2d3245 100%);
     border: 1px solid var(--border);
@@ -177,7 +192,7 @@ body {
     font-size: 11px;
     font-weight: 600;
     color: var(--text);
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     transition: all 0.05s ease;
     white-space: nowrap;
 }
@@ -193,43 +208,25 @@ body {
     border-color: var(--accent);
 }
 
-/* ADC button grid */
-.button-grid {
-    align-items: flex-start;
-}
-
-.adc-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    flex: 1;
-}
-
-.adc-btn {
-    flex: 0 0 auto;
-}
-
-.rec-btn .btn-inner {
-    color: var(--red);
-}
-
-.rec-btn:active .btn-inner,
-.rec-btn.pressed .btn-inner {
-    color: #fff;
-    background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%);
-}
-
-/* Power button */
+/* Power button — round */
 .power-btn {
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
 }
 
 .power-btn .btn-inner {
     border-radius: 50%;
-    font-size: 16px;
+    font-size: 18px;
     padding: 0;
+}
+
+/* REC button — red accent */
+.rec-btn .btn-inner { color: var(--red); }
+.rec-btn:active .btn-inner,
+.rec-btn.pressed .btn-inner {
+    color: #fff;
+    background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%);
 }
 
 /* Log panel */
@@ -280,16 +277,11 @@ body {
     color: var(--text-dim);
 }
 
-.log-content .log-line {
-    white-space: pre;
-}
-
+.log-content .log-line { white-space: pre; }
 .log-content .log-line.info { color: var(--green); }
 .log-content .log-line.error { color: var(--red); }
 .log-content .log-line.warn { color: var(--yellow); }
 
-/* Scrollbar */
 .log-content::-webkit-scrollbar { width: 6px; }
 .log-content::-webkit-scrollbar-track { background: transparent; }
 .log-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-.log-content::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }

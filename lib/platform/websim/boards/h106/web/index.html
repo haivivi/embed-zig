@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim — embed-zig Board Simulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="sim-container">
+        <header class="sim-header">
+            <h1>embed-zig <span class="accent">WebSim</span></h1>
+            <span class="status" id="status">Loading...</span>
+        </header>
+
+        <div class="board">
+            <!-- LED strip -->
+            <div class="led-strip" id="ledContainer"></div>
+
+            <!-- Screen row: vol- | display | vol+ -->
+            <div class="screen-row">
+                <button class="hw-button side-btn adc-btn" data-adc="200" data-name="vol-">
+                    <span class="btn-inner">VOL-</span>
+                </button>
+                <div class="display-area" id="displayArea">
+                    <canvas id="displayCanvas" width="240" height="240"></canvas>
+                </div>
+                <button class="hw-button side-btn adc-btn" data-adc="500" data-name="vol+">
+                    <span class="btn-inner">VOL+</span>
+                </button>
+            </div>
+
+            <!-- Row 1: back | power | ok -->
+            <div class="key-row">
+                <button class="hw-button key-btn adc-btn" data-adc="1400" data-name="back">
+                    <span class="btn-inner">BACK</span>
+                </button>
+                <button class="hw-button key-btn power-btn" id="btnPower">
+                    <span class="btn-inner">&#9211;</span>
+                </button>
+                <button class="hw-button key-btn adc-btn" data-adc="1700" data-name="confirm">
+                    <span class="btn-inner">OK</span>
+                </button>
+            </div>
+
+            <!-- Row 2: left | rec | right -->
+            <div class="key-row">
+                <button class="hw-button key-btn adc-btn" data-adc="800" data-name="left">
+                    <span class="btn-inner">&larr;</span>
+                </button>
+                <button class="hw-button key-btn rec-btn adc-btn" data-adc="2000" data-name="rec">
+                    <span class="btn-inner">&#9679; REC</span>
+                </button>
+                <button class="hw-button key-btn adc-btn" data-adc="1100" data-name="right">
+                    <span class="btn-inner">&rarr;</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Log panel -->
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <button class="log-clear" id="logClear">Clear</button>
+            </div>
+            <div class="log-content" id="logContent"></div>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>

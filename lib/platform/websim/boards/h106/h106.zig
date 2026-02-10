@@ -1,15 +1,14 @@
-//! Standard Board — 240x240 screen + 7 ADC buttons + power button + LED strip
+//! H106 Board — 240x240 screen + 7 ADC buttons + power button + 9 LED strip
 //!
-//! Generic embedded board with:
 //! - 240x240 SPI LCD (RGB565)
 //! - 7 ADC buttons: vol+, vol-, left, right, back, confirm, rec
 //! - 1 power button (independent GPIO)
-//! - 9 LED strip (WS2812 style)
+//! - 9 LED strip (WS2812, diamond layout)
 //! - AEC audio system (speaker + mic) — TODO
 
 const hal = @import("hal");
-const drivers = @import("../impl/drivers.zig");
-const state = @import("../impl/state.zig");
+const drivers = @import("../../impl/drivers.zig");
+const state = @import("../../impl/state.zig");
 
 // ============================================================================
 // Button IDs

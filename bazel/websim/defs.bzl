@@ -162,21 +162,19 @@ def _websim_app_impl(ctx):
         progress_message = "Compiling WASM %s" % ctx.label,
     )
 
-    # Collect web shell files
-    web_files = ctx.attr._web_shell.files.to_list()
+    # Collect web files: board-specific shell + shared JS
+    board_web_files = ctx.attr.web_shell.files.to_list() if ctx.attr.web_shell else []
+    shared_web_files = ctx.attr._web_shared.files.to_list()
 
-    # Bundle: copy wasm + web shell into site directory
-    # Build a shell command that creates the site directory
+    # Bundle: copy wasm + board web shell + shared JS into site directory
     copy_cmds = ["mkdir -p " + site_dir.path]
     copy_cmds.append("cp {} {}/app.wasm".format(wasm_file.path, site_dir.path))
-    for f in web_files:
-        # Strip the lib/platform/websim/web/ prefix
-        basename = f.basename
-        copy_cmds.append("cp {} {}/{}".format(f.path, site_dir.path, basename))
+    for f in board_web_files + shared_web_files:
+        copy_cmds.append("cp {} {}/{}".format(f.path, site_dir.path, f.basename))
 
     ctx.actions.run_shell(
         command = " && ".join(copy_cmds),
-        inputs = [wasm_file] + web_files,
+        inputs = [wasm_file] + board_web_files + shared_web_files,
         outputs = [site_dir],
         mnemonic = "WebSimBundle",
         progress_message = "Bundling WebSim site %s" % ctx.label,
@@ -203,11 +201,14 @@ _websim_build = rule(
             providers = [ZigModuleInfo],
             doc = "zig_library / zig_module dependencies",
         ),
+        "web_shell": attr.label(
+            doc = "Board-specific web shell (index.html, style.css). Required.",
+        ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
-        "_web_shell": attr.label(
-            default = "//lib/platform/websim:web_shell",
+        "_web_shared": attr.label(
+            default = "//lib/platform/websim:web_shared",
         ),
     },
     doc = "Internal: compile Zig app to WASM + bundle web shell.",
@@ -272,23 +273,28 @@ _websim_serve = rule(
 # websim_app — High-level macro: build + serve
 # =============================================================================
 
-def websim_app(name, main, srcs, deps = [], visibility = None):
+def websim_app(name, main, srcs, web_shell, deps = [], visibility = None):
     """Build a WebSim WASM app and create a serve target.
 
     Creates two targets:
         {name}       — Build WASM + bundle web shell
         {name}_serve — Run local HTTP server (bazel run)
 
+    Args:
+        web_shell: Board-specific web shell label (e.g., "//lib/platform/websim:web_h106").
+                   Contains index.html + style.css for the board layout.
+
     Example:
         websim_app(
-            name = "gpio_button",
+            name = "sim",
             main = "wasm_main.zig",
-            srcs = ["wasm_main.zig", "platform.zig"],
+            srcs = glob(["**/*.zig"]),
+            web_shell = "//lib/platform/websim:web_h106",
             deps = ["//lib/platform/websim", "//lib/hal"],
         )
 
     Run:
-        bazel run //examples/websim/gpio_button:gpio_button_serve
+        bazel run //examples/apps/lvgl:sim_serve
     """
     _vis = visibility if visibility else ["//visibility:public"]
 
@@ -297,6 +303,7 @@ def websim_app(name, main, srcs, deps = [], visibility = None):
         main = main,
         srcs = srcs,
         deps = deps,
+        web_shell = web_shell,
         visibility = _vis,
     )
 

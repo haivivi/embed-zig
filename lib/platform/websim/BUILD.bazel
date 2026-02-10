@@ -2,9 +2,6 @@ load("//bazel/zig:defs.bzl", "zig_module")
 
 package(default_visibility = ["//visibility:public"])
 
-# websim is a zig_module (not zig_library) because it targets wasm32-freestanding
-# and cannot be compiled for the host platform. The actual compilation happens
-# in the websim_app rule which cross-compiles everything to WASM.
 zig_module(
     name = "websim",
     main = "websim.zig",
@@ -13,9 +10,21 @@ zig_module(
     deps = ["//lib/hal"],
 )
 
+# Shared JS logic (WASM loader, canvas rendering, log, input binding)
 filegroup(
-    name = "web_shell",
-    srcs = glob(["wasm/web/**"]),
+    name = "web_shared",
+    srcs = ["wasm/web/main.js"],
+)
+
+# Per-board web shells
+filegroup(
+    name = "web_h106",
+    srcs = glob(["boards/h106/web/**"]),
+)
+
+filegroup(
+    name = "web_esp32_devkit",
+    srcs = glob(["boards/esp32_devkit/web/**"]),
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

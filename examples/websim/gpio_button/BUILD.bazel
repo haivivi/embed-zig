@@ -9,6 +9,7 @@ websim_app(
         "wasm_main.zig",
         "platform.zig",
     ],
+    web_shell = "//lib/platform/websim:web_esp32_devkit",
     deps = [
         "//lib/platform/websim",
         "//lib/hal",

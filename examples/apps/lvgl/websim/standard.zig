@@ -1,12 +1,12 @@
-//! WebSim Standard Board wiring for LVGL app
+//! WebSim H106 Board wiring for LVGL app
 //!
-//! Imports shared board config from lib/platform/websim/boards/standard.zig
+//! Imports shared board config from lib/platform/websim/boards/h106/
 //! and re-exports specs for platform.zig.
 
 const websim = @import("websim");
-const board = websim.boards.standard;
+const board = websim.boards.h106;
 
-pub const name = "WebSim Standard";
+pub const name = "WebSim H106";
 pub const ButtonId = board.ButtonId;
 
 // HAL specs (from shared board config)
