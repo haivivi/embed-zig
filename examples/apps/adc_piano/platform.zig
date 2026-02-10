@@ -1,0 +1,47 @@
+//! Platform Configuration — ADC Piano
+//!
+//! ESP: Korvo-2 V3 (ADC buttons + ES8311 speaker)
+//! BK:  BK7258 (ADC buttons on SARADC ch4 + onboard DAC speaker)
+
+const hal = @import("hal");
+const build_options = @import("build_options");
+
+const hw = switch (build_options.board) {
+    .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
+    else => @compileError("unsupported board for adc_piano"),
+};
+
+pub const Hardware = hw.Hardware;
+
+/// 4 piano keys mapped to ADC buttons
+pub const ButtonId = enum(u8) {
+    do_ = 0,
+    re = 1,
+    mi = 2,
+    fa = 3,
+
+    pub fn name(self: @This()) []const u8 {
+        return switch (self) {
+            .do_ => "Do",
+            .re => "Re",
+            .mi => "Mi",
+            .fa => "Fa",
+        };
+    }
+};
+
+const OuterButtonId = ButtonId;
+
+const spec = struct {
+    pub const meta = .{ .id = hw.Hardware.name };
+    pub const ButtonId = OuterButtonId;
+    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
+    pub const log = hw.log;
+    pub const time = hw.time;
+    pub const buttons = hal.button_group.from(hw.button_group_spec, OuterButtonId);
+    pub const speaker = hal.mono_speaker.from(hw.speaker_spec);
+    pub const pa_switch = hal.switch_.from(hw.pa_switch_spec);
+};
+
+pub const Board = hal.Board(spec);

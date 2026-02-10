@@ -1,0 +1,43 @@
+# ADC Piano - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/adc_piano:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["korvo2_v3"],
+    requires = ["driver", "esp_adc", "esp_driver_i2s", "esp_driver_gpio", "esp_driver_i2c"],
+    force_link = [
+        "adc_oneshot_new_unit",
+        "adc_oneshot_config_channel",
+        "adc_oneshot_read",
+        "adc_oneshot_del_unit",
+        "${I2S_FORCE_LINK}",
+        "${I2C_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2s/i2s.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/i2c/i2c.cmake)",
+    ],
+    extra_c_sources = ["I2S_C_SOURCES", "I2C_C_SOURCES"],
+    deps = [":idf", ":esp",
+ "//lib/hal", "//lib/trait", "//lib/pkg/drivers", "//lib/pkg/motion", "//lib/pkg/math"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
