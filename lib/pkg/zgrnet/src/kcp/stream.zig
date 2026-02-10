@@ -432,6 +432,11 @@ pub fn Mux(comptime Rt: type) type {
         accept_queue: AcceptQueue,
         accept_cond: Rt.Condition,
 
+        // Output serialization — ensures CipherState nonce ordering
+        // (output_fn may be called from main thread via openStream/write
+        //  AND from updateLoop thread via kcp.update flush)
+        output_mutex: Rt.Mutex,
+
         // Auto mode: recv callback + stop flag
         recv_fn: ?RecvFn,
         recv_user_data: ?*anyopaque,
@@ -488,6 +493,7 @@ pub fn Mux(comptime Rt: type) type {
                 .ref_count = std.atomic.Value(u32).init(1),
                 .accept_queue = .{},
                 .accept_cond = Rt.Condition.init(),
+                .output_mutex = Rt.Mutex.init(),
                 .recv_fn = null,
                 .recv_user_data = null,
                 .stop_flag = std.atomic.Value(bool).init(false),
@@ -792,6 +798,12 @@ pub fn Mux(comptime Rt: type) type {
 
             const required_size = kcp.FrameHeaderSize + payload.len;
             var stack_buf: [1500]u8 = undefined;
+
+            // output_mutex serializes ALL output_fn calls across threads.
+            // This ensures CipherState nonce ordering: encrypt+sendto are atomic,
+            // so packet order on the wire matches nonce sequence.
+            self.output_mutex.lock();
+            defer self.output_mutex.unlock();
 
             if (required_size <= stack_buf.len) {
                 const encoded = try frame.encode(&stack_buf);
