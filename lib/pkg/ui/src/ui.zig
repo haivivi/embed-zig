@@ -34,17 +34,40 @@ const lvgl = @import("lvgl");
 const c = lvgl.c;
 const hal = @import("hal");
 
-// Widget types
+// Core types
 pub const Obj = @import("obj.zig");
+pub const color = @import("color.zig");
+pub const font = @import("font.zig");
+pub const anim = @import("anim.zig");
+pub const event = @import("event.zig");
+
+// Widgets
 pub const Label = @import("label.zig");
 pub const Image = @import("image.zig");
+pub const Button = @import("button.zig");
+pub const Bar = @import("bar.zig");
+pub const Slider = @import("slider.zig");
+pub const Canvas = @import("canvas.zig");
+pub const Arc = @import("arc.zig");
+pub const Checkbox = @import("checkbox.zig");
+pub const Dropdown = @import("dropdown.zig");
+pub const Led = @import("led.zig");
+pub const Line = @import("line.zig");
+pub const Roller = @import("roller.zig");
+pub const Switch = @import("switch_.zig");
+pub const Textarea = @import("textarea.zig");
+pub const Table = @import("table.zig");
+
+// Test utilities
 pub const MemDisplay = @import("mem_display.zig").MemDisplay;
 
-// Re-export common enums for convenience
+// Re-export common enums
 pub const Align = Obj.Align;
 pub const FlexFlow = Obj.FlexFlow;
 pub const FlexAlign = Obj.FlexAlign;
 pub const ScreenAnim = Obj.ScreenAnim;
+pub const Color = color.Color;
+pub const Font = font.Font;
 
 // ============================================================================
 // Display Context
@@ -132,14 +155,6 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) 
     };
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Get a hex color value
-pub fn color(hex: u32) c.lv_color_t {
-    return c.lv_color_hex(hex);
-}
 
 // ============================================================================
 // Tests
@@ -148,9 +163,6 @@ pub fn color(hex: u32) c.lv_color_t {
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
-    _ = Obj;
-    _ = Label;
-    _ = Image;
     _ = @import("mem_display.zig");
 }
 
