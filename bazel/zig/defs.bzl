@@ -730,7 +730,10 @@ def _zig_static_library_impl(ctx):
             target_args.extend(["-O", ctx.attr.optimize])
         for sysdir in ctx.attr.system_include_dirs:
             target_args.extend(["-isystem", sysdir])
-        zig_args = ["build-lib"] + target_args + c_build_args + global_pre + mods.main + root_c_args + mods.deps + dep_lib_a_args + ["-femit-bin=" + output.path]
+        # Include paths (-I) MUST come before C source files (-cflags ... -- file.c).
+        # This matches the host compilation order in zig_library (pre_args before src_args).
+        # Also include dep module -I paths before sources (extracted from mods.deps).
+        zig_args = ["build-lib"] + target_args + global_pre + root_c_args + mods.deps + c_build_args + mods.main + dep_lib_a_args + ["-femit-bin=" + output.path]
         zig_args.extend(["--cache-dir", cache_dir.path, "--global-cache-dir", cache_dir.path])
 
         ctx.actions.run(
