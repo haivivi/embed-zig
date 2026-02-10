@@ -176,6 +176,86 @@ lvgl_libs = module_extension(
 )
 
 # =============================================================================
+# FFmpeg WASM (for WebSim screen recording → mp4)
+# =============================================================================
+
+def _ffmpeg_wasm_repo_impl(ctx):
+    """Download FFmpeg WASM files for local bundling (UMD build)."""
+    # @ffmpeg/ffmpeg UMD bundle (self-contained, no ESM import chain)
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
+        output = "ffmpeg.js",
+    )
+    # Worker chunk loaded by the UMD bundle
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
+        output = "814.ffmpeg.js",
+    )
+    # @ffmpeg/core (WASM engine)
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
+        output = "ffmpeg-core.js",
+    )
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
+        output = "ffmpeg-core.wasm",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "ffmpeg_files",
+    srcs = [
+        "ffmpeg.js",
+        "814.ffmpeg.js",
+        "ffmpeg-core.js",
+        "ffmpeg-core.wasm",
+    ],
+)
+""")
+
+_ffmpeg_wasm_repo = repository_rule(
+    implementation = _ffmpeg_wasm_repo_impl,
+)
+
+def _ffmpeg_wasm_ext_impl(ctx):
+    _ffmpeg_wasm_repo(name = "ffmpeg_wasm")
+
+ffmpeg_wasm = module_extension(
+    implementation = _ffmpeg_wasm_ext_impl,
+)
+
+# =============================================================================
+# html2canvas (for WebSim DOM-to-canvas screen recording)
+# =============================================================================
+
+def _html2canvas_repo_impl(ctx):
+    """Download html2canvas UMD bundle."""
+    ctx.download(
+        url = "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
+        output = "html2canvas.min.js",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "html2canvas",
+    srcs = ["html2canvas.min.js"],
+)
+""")
+
+_html2canvas_repo = repository_rule(
+    implementation = _html2canvas_repo_impl,
+)
+
+def _html2canvas_ext_impl(ctx):
+    _html2canvas_repo(name = "html2canvas")
+
+html2canvas = module_extension(
+    implementation = _html2canvas_ext_impl,
+)
+
+# =============================================================================
 # Zig Toolchain (with Xtensa support)
 # =============================================================================
 

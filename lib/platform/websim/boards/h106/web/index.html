@@ -10,10 +10,13 @@
     <div class="sim-container">
         <header class="sim-header">
             <h1>embed-zig <span class="accent">WebSim</span></h1>
-            <span class="status" id="status">Loading...</span>
+            <div class="header-right">
+                <button class="rec-screen-btn" id="screenRecBtn" title="Record screen video">&#9679; Rec</button>
+                <span class="status" id="status">Loading...</span>
+            </div>
         </header>
 
-        <div class="device">
+        <div class="device" id="deviceFrame">
             <!-- Front face: LED glow under frosted REC dome -->
             <div class="face front">
                 <div class="face-label">Front</div>
@@ -73,14 +76,44 @@
             <div class="log-header">
                 <span>Console</span>
                 <div class="log-actions">
+                    <button class="log-btn" id="logAutoScroll" title="Auto-scroll">&#8615; Auto</button>
                     <button class="log-btn" id="logCopy">Copy</button>
                     <button class="log-btn" id="logClear">Clear</button>
                 </div>
             </div>
             <div class="log-content" id="logContent"></div>
         </div>
+
     </div>
 
+    <!-- Error panel (outside sim-container so it doesn't affect recording area) -->
+    <div class="error-wrap">
+        <div class="log-panel error-panel" id="errorPanel" style="display:none">
+            <div class="log-header">
+                <span>Errors</span>
+            </div>
+            <div class="log-content error-content" id="errorContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // Capture all JS errors and display them
+        window.addEventListener('error', function(e) {
+            const panel = document.getElementById('errorPanel');
+            const content = document.getElementById('errorContent');
+            panel.style.display = '';
+            content.innerHTML += '<div class="log-line error">' +
+                e.message + ' (' + e.filename + ':' + e.lineno + ')' +
+                '</div>';
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            const panel = document.getElementById('errorPanel');
+            const content = document.getElementById('errorContent');
+            panel.style.display = '';
+            content.innerHTML += '<div class="log-line error">' + e.reason + '</div>';
+        });
+    </script>
+    <script src="html2canvas.min.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

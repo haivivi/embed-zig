@@ -9,7 +9,9 @@ zig_library(
     c_srcs = [
         "@lvgl//:srcs",
         "@lvgl//:headers",
-        "lv_conf.h",  # must be in c_srcs for sandbox visibility
+        "lv_conf.h",
+        "img_helper.h",
+        "img_helper.c",
     ],
     c_includes = [""],  # -I third_party/lvgl/ for lv_conf.h
     c_flags = ["-DLV_CONF_INCLUDE_SIMPLE"],

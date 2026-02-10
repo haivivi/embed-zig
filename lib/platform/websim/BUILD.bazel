@@ -27,4 +27,14 @@ filegroup(
     srcs = glob(["boards/esp32_devkit/web/**"]),
 )
 
+filegroup(
+    name = "ffmpeg",
+    srcs = ["@ffmpeg_wasm//:ffmpeg_files"],
+)
+
+filegroup(
+    name = "html2canvas",
+    srcs = ["@html2canvas//:html2canvas"],
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))

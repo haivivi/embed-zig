@@ -30,7 +30,7 @@
  * (host, ESP via newlib, WASM via wasi-libc). */
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    #define LV_MEM_SIZE (48 * 1024U)    /* 48KB heap */
+    #define LV_MEM_SIZE (1024 * 1024U)  /* 1MB heap (PNG decode + TTF rendering) */
     #define LV_MEM_POOL_EXPAND_SIZE 0
     #define LV_MEM_ADR 0
 #endif
@@ -93,7 +93,7 @@
  * FEATURE CONFIGURATION
  *=======================*/
 
-/* Logging — disabled for production, enable for debug */
+/* Logging — disabled (causes WASM freeze with heavy output) */
 #define LV_USE_LOG 0
 
 /* Asserts */
@@ -270,17 +270,22 @@
  * 3RD PARTY LIBRARIES
  *====================*/
 
-/* All disabled — we don't bundle external libs */
-#define LV_FS_DEFAULT_DRIVE_LETTER '\0'
+/* Filesystem: memory-mapped for embedded assets */
+#define LV_FS_DEFAULT_DRIVE_LETTER 'M'
 #define LV_USE_FS_STDIO    0
 #define LV_USE_FS_POSIX    0
 #define LV_USE_FS_WIN32    0
 #define LV_USE_FS_FATFS    0
-#define LV_USE_FS_MEMFS    0
+#define LV_USE_FS_MEMFS    1
+#if LV_USE_FS_MEMFS
+    #define LV_FS_MEMFS_LETTER 'M'
+#endif
 #define LV_USE_FS_LITTLEFS 0
 #define LV_USE_FS_ARDUINO_ESP_LITTLEFS 0
 #define LV_USE_FS_ARDUINO_SD 0
-#define LV_USE_LODEPNG     0
+
+/* Image decoders */
+#define LV_USE_LODEPNG     1
 #define LV_USE_LIBPNG      0
 #define LV_USE_BMP         0
 #define LV_USE_TJPGD       0
@@ -291,7 +296,13 @@
 #define LV_USE_QRCODE      0
 #define LV_USE_BARCODE     0
 #define LV_USE_FREETYPE    0
-#define LV_USE_TINY_TTF    0
+
+/* TTF font rendering */
+#define LV_USE_TINY_TTF    1
+#if LV_USE_TINY_TTF
+    #define LV_TINY_TTF_FILE_SUPPORT 1
+    #define LV_TINY_TTF_CACHE_GLYPH_CNT 128
+#endif
 #define LV_USE_RLOTTIE     0
 #define LV_USE_VECTOR_GRAPHIC    0
 #define LV_USE_THORVG_INTERNAL   0

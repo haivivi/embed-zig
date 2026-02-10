@@ -162,19 +162,22 @@ def _websim_app_impl(ctx):
         progress_message = "Compiling WASM %s" % ctx.label,
     )
 
-    # Collect web files: board-specific shell + shared JS
+    # Collect web files: board-specific shell + shared JS + FFmpeg + html2canvas
     board_web_files = ctx.attr.web_shell.files.to_list() if ctx.attr.web_shell else []
     shared_web_files = ctx.attr._web_shared.files.to_list()
+    ffmpeg_files = ctx.attr._ffmpeg.files.to_list()
+    h2c_files = ctx.attr._html2canvas.files.to_list()
 
-    # Bundle: copy wasm + board web shell + shared JS into site directory
+    # Bundle: copy all into site directory
+    all_web = board_web_files + shared_web_files + ffmpeg_files + h2c_files
     copy_cmds = ["mkdir -p " + site_dir.path]
     copy_cmds.append("cp {} {}/app.wasm".format(wasm_file.path, site_dir.path))
-    for f in board_web_files + shared_web_files:
+    for f in all_web:
         copy_cmds.append("cp {} {}/{}".format(f.path, site_dir.path, f.basename))
 
     ctx.actions.run_shell(
         command = " && ".join(copy_cmds),
-        inputs = [wasm_file] + board_web_files + shared_web_files,
+        inputs = [wasm_file] + all_web,
         outputs = [site_dir],
         mnemonic = "WebSimBundle",
         progress_message = "Bundling WebSim site %s" % ctx.label,
@@ -188,9 +191,9 @@ _websim_build = rule(
     implementation = _websim_app_impl,
     attrs = {
         "srcs": attr.label_list(
-            allow_files = [".zig"],
+            allow_files = True,
             mandatory = True,
-            doc = "Zig source files for the WASM app",
+            doc = "Zig source files + embedded assets for the WASM app",
         ),
         "main": attr.label(
             allow_single_file = [".zig"],
@@ -209,6 +212,12 @@ _websim_build = rule(
         ),
         "_web_shared": attr.label(
             default = "//lib/platform/websim:web_shared",
+        ),
+        "_ffmpeg": attr.label(
+            default = "//lib/platform/websim:ffmpeg",
+        ),
+        "_html2canvas": attr.label(
+            default = "//lib/platform/websim:html2canvas",
         ),
     },
     doc = "Internal: compile Zig app to WASM + bundle web shell.",
