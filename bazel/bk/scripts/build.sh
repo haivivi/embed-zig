@@ -387,10 +387,25 @@ touch "$PROJECT_DIR/pj_config.mk"
 # Step 3: Build with Armino
 # =========================================================================
 
+# Debug: check if CONFIG_FULL_MBEDTLS is in the appended config
+echo "[bk_build] AP config FULL_MBEDTLS check:"
+grep "FULL_MBEDTLS" "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null && echo "[bk_build]   FOUND" || echo "[bk_build]   NOT FOUND"
+echo "[bk_build] AP config last 5 lines:"
+tail -5 "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null | while IFS= read -r line; do echo "[bk_build]   $line"; done
+
 echo "[bk_build] Running Armino make..."
 cd "$ARMINO_PATH"
 rm -rf "build/bk7258/$PROJECT"
 make bk7258 PROJECT="$PROJECT" PROJECT_DIR="$PROJECT_DIR" BUILD_DIR="$WORK/build" 2>&1
+
+# Debug: check generated sdkconfig.h
+SDKCONFIG_H="$WORK/build/bk7258/$PROJECT/bk7258_ap/config/sdkconfig.h"
+if [ -f "$SDKCONFIG_H" ]; then
+    echo "[bk_build] sdkconfig.h FULL_MBEDTLS:"
+    grep "FULL_MBEDTLS" "$SDKCONFIG_H" 2>/dev/null | while read line; do echo "[bk_build]   $line"; done
+    echo "[bk_build] sdkconfig.h CURVE25519:"
+    grep "CURVE25519" "$SDKCONFIG_H" 2>/dev/null | while read line; do echo "[bk_build]   $line"; done
+fi
 
 PACKAGE_DIR="$WORK/build/bk7258/$PROJECT/package"
 ALL_APP="$PACKAGE_DIR/all-app.bin"
