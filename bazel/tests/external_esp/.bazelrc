@@ -12,3 +12,6 @@ build --host_action_env=PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/us
 build --action_env=IDF_PATH
 build --action_env=ADF_PATH
 build --action_env=HOME
+
+# Load user local config (if exists)
+try-import %workspace%/.bazelrc.user

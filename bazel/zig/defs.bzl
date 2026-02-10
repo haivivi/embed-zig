@@ -658,6 +658,20 @@ zig_module = rule(
 def _zig_static_library_impl(ctx):
     """Compile a zig_library to a static library (.a) via zig build-lib."""
 
+    # Validate: xtensa targets MUST specify cpu to avoid ABI mismatch.
+    # Without -mcpu, zig's clang generates non-windowed calling convention
+    # (addi/ret) for C code, but ESP32 uses windowed ABI (entry/retw).
+    # When windowed Zig code calls a non-windowed C function, the ret
+    # instruction jumps to the raw windowed return address (e.g., 0x820xxxxx
+    # instead of 0x420xxxxx), causing InstrFetchProhibited at runtime.
+    if ctx.attr.target and ctx.attr.target.startswith("xtensa") and not ctx.attr.cpu:
+        fail(
+            "zig_static_library '{}': ".format(ctx.label.name) +
+            "'cpu' is required for xtensa targets to select the correct calling convention. " +
+            "Without -mcpu, C code uses non-windowed ABI which crashes at runtime with " +
+            "InstrFetchProhibited. Set cpu = \"esp32s3\" (or your target chip).",
+        )
+
     info = ctx.attr.lib[ZigModuleInfo]
     zig_files = ctx.attr._zig_toolchain.files.to_list()
     zig_bin = _get_zig_bin(zig_files)
