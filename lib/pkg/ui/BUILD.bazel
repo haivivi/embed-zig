@@ -1,0 +1,13 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_package(
+    name = "ui",
+    deps = [
+        "//third_party/lvgl",
+        "//lib/hal",
+    ],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
