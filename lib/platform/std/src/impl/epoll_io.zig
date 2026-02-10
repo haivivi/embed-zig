@@ -27,6 +27,63 @@ const posix = std.posix;
 const linux = std.os.linux;
 const Allocator = std.mem.Allocator;
 
+/// Raw epoll_ctl wrapper that handles ALL errnos properly.
+///
+/// Zig std's `posix.epoll_ctl` marks EBADF and EINVAL as `unreachable`,
+/// which causes a panic before any `catch` handler can execute. In concurrent
+/// scenarios (e.g., an fd closed by another thread during registration), the
+/// kernel legitimately returns EBADF. This wrapper calls the Linux syscall
+/// directly and converts every errno to a Zig error.
+fn rawEpollCtl(epfd: i32, op: u32, fd: i32, event: ?*linux.epoll_event) RawEpollCtlError!void {
+    const rc = linux.epoll_ctl(epfd, op, fd, event);
+    switch (posix.errno(rc)) {
+        .SUCCESS => return,
+        .BADF => return error.BadFileDescriptor,
+        .EXIST => return error.FileDescriptorAlreadyPresentInSet,
+        .INVAL => return error.InvalidArgument,
+        .LOOP => return error.OperationCausesCircularLoop,
+        .NOENT => return error.FileDescriptorNotRegistered,
+        .NOMEM => return error.SystemResources,
+        .NOSPC => return error.UserResourceLimitReached,
+        .PERM => return error.FileDescriptorIncompatibleWithEpoll,
+        else => |e| {
+            std.log.warn("EpollIO: unexpected epoll_ctl errno: {d}", .{@intFromEnum(e)});
+            return error.Unexpected;
+        },
+    }
+}
+
+const RawEpollCtlError = error{
+    BadFileDescriptor,
+    FileDescriptorAlreadyPresentInSet,
+    InvalidArgument,
+    OperationCausesCircularLoop,
+    FileDescriptorNotRegistered,
+    SystemResources,
+    UserResourceLimitReached,
+    FileDescriptorIncompatibleWithEpoll,
+    Unexpected,
+};
+
+/// Raw epoll_wait wrapper that handles ALL errnos properly.
+///
+/// Zig std's `posix.epoll_wait` marks EBADF and unknown errnos as
+/// `unreachable`. This wrapper handles them as proper errors.
+fn rawEpollWait(epfd: i32, events: []linux.epoll_event, timeout: i32) usize {
+    while (true) {
+        const rc = linux.epoll_wait(epfd, events.ptr, @intCast(events.len), timeout);
+        switch (posix.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .INTR => continue,
+            .BADF, .INVAL, .FAULT => return 0,
+            else => |e| {
+                std.log.warn("EpollIO: unexpected epoll_wait errno: {d}", .{@intFromEnum(e)});
+                return 0;
+            },
+        }
+    }
+}
+
 /// epoll-based I/O service implementing the IOService trait contract.
 pub const EpollIO = struct {
     const Self = @This();
@@ -80,7 +137,7 @@ pub const EpollIO = struct {
             .events = linux.EPOLL.IN,
             .data = .{ .fd = wake_fd },
         };
-        try posix.epoll_ctl(epfd, linux.EPOLL.CTL_ADD, wake_fd, &wake_event);
+        try rawEpollCtl(epfd, linux.EPOLL.CTL_ADD, wake_fd, &wake_event);
 
         return .{
             .epfd = epfd,
@@ -142,7 +199,7 @@ pub const EpollIO = struct {
                 .data = .{ .fd = fd },
             };
             const op: u32 = if (is_new) linux.EPOLL.CTL_ADD else linux.EPOLL.CTL_MOD;
-            posix.epoll_ctl(self.epfd, op, fd, &ev) catch |err| {
+            rawEpollCtl(self.epfd, op, fd, &ev) catch |err| {
                 std.log.warn("EpollIO: failed to register fd {d} with epoll: {s}", .{ fd, @errorName(err) });
                 if (is_new) {
                     _ = self.registrations.fetchRemove(fd);
@@ -157,7 +214,7 @@ pub const EpollIO = struct {
     /// Unregister a file descriptor from all events.
     pub fn unregister(self: *Self, fd: posix.fd_t) void {
         if (self.registrations.fetchRemove(fd)) |_| {
-            posix.epoll_ctl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
+            rawEpollCtl(self.epfd, linux.EPOLL.CTL_DEL, fd, null) catch |err| {
                 std.log.warn("EpollIO: failed to unregister fd {d}: {s}", .{ fd, @errorName(err) });
             };
         }
@@ -167,7 +224,7 @@ pub const EpollIO = struct {
     /// Pass -1 for timeout_ms to block indefinitely.
     /// Returns the number of events processed.
     pub fn poll(self: *Self, timeout_ms: i32) usize {
-        const n = posix.epoll_wait(self.epfd, &self.events, timeout_ms);
+        const n = rawEpollWait(self.epfd, &self.events, timeout_ms);
 
         var processed: usize = 0;
         for (self.events[0..n]) |event| {
