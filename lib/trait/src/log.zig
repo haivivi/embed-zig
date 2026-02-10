@@ -4,7 +4,7 @@
 //!
 //! Platform implementations:
 //! - ESP32: board provides log via idf or std.log
-//! - Simulator: raysim provides log
+//! - Simulator: websim provides log
 //! - Native: std.log
 //!
 //! Usage:

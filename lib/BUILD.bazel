@@ -34,7 +34,6 @@ filegroup(
         "//lib/pkg/motion:srcs",
         "//lib/pkg/ntp:srcs",
         "//lib/pkg/portaudio:srcs",
-        "//lib/platform/raysim",
         "//lib/platform/std:srcs",
         "//lib/pkg/tls:srcs",
         "//lib/pkg/tls/test:test_sources",

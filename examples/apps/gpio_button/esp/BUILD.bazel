@@ -17,7 +17,7 @@ esp_modules()
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp", "lichuang_gocool", "sim_raylib"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp", "lichuang_gocool"],
     requires = ["driver", "led_strip", "esp_driver_i2c"],
     force_link = [
         "led_strip_refresh",
