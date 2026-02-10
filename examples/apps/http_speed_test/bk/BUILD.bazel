@@ -1,5 +1,7 @@
 load("//bazel:env.bzl", "make_env_file")
-load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
+load("//bazel/bk/kconfig:lwip.bzl", "bk_lwip_fast")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -34,6 +36,9 @@ bk_partition_table(
                ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"],
 )
 
+bk_lwip_fast(name = "lwip_fast")
+bk_config(name = "kconfig", modules = [":lwip_fast"])
+
 bk_modules()
 
 bk_zig_app(
@@ -43,6 +48,7 @@ bk_zig_app(
     deps = [":bk", "//lib/hal", "//lib/trait"],
     partition_table = ":partitions",
     env = ":env",
+    kconfig_ap = ":kconfig",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",
@@ -51,3 +57,4 @@ bk_zig_app(
 )
 
 bk_flash(name = "flash", app = ":app")
+bk_monitor(name = "monitor")

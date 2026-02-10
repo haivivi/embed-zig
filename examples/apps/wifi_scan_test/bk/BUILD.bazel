@@ -1,4 +1,4 @@
-load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -41,3 +41,4 @@ bk_zig_app(
 )
 
 bk_flash(name = "flash", app = ":app")
+bk_monitor(name = "monitor")
