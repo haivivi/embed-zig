@@ -643,22 +643,122 @@ int bk_zig_ecdsa_p384_verify(
     mbedtls_mpi_init(&s_mpi);
 
     int ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP384R1);
-    if (ret != 0) goto cleanup;
+    if (ret != 0) goto p384v_cleanup;
 
     ret = mbedtls_ecp_point_read_binary(&grp, &Q, pk, 97);
-    if (ret != 0) goto cleanup;
+    if (ret != 0) goto p384v_cleanup;
 
     ret = mbedtls_mpi_read_binary(&r_mpi, r, 48);
-    if (ret != 0) goto cleanup;
+    if (ret != 0) goto p384v_cleanup;
     ret = mbedtls_mpi_read_binary(&s_mpi, s, 48);
-    if (ret != 0) goto cleanup;
+    if (ret != 0) goto p384v_cleanup;
 
     ret = mbedtls_ecdsa_verify(&grp, hash, 48, &Q, &r_mpi, &s_mpi);
 
-cleanup:
+p384v_cleanup:
     mbedtls_mpi_free(&s_mpi);
     mbedtls_mpi_free(&r_mpi);
     mbedtls_ecp_point_free(&Q);
     mbedtls_ecp_group_free(&grp);
     return ret;
+}
+
+/* ========================================================================
+ * X25519 (Curve25519 ECDH) — requires MBEDTLS_ECP_DP_CURVE25519_ENABLED
+ * ======================================================================== */
+
+int bk_zig_x25519_keypair(
+    const unsigned char seed[32],
+    unsigned char sk_out[32],
+    unsigned char pk_out[32])
+{
+#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d;
+    mbedtls_ecp_point Q;
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_ecp_point_init(&Q);
+
+    int ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) goto x25519_kp_end;
+
+    unsigned char clamped[32];
+    memcpy(clamped, seed, 32);
+    clamped[0] &= 248;
+    clamped[31] &= 127;
+    clamped[31] |= 64;
+
+    unsigned char sk_be[32];
+    for (int i = 0; i < 32; i++) sk_be[i] = clamped[31 - i];
+    ret = mbedtls_mpi_read_binary(&d, sk_be, 32);
+    if (ret != 0) goto x25519_kp_end;
+
+    ret = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, bk_rng_callback, NULL);
+    if (ret != 0) goto x25519_kp_end;
+
+    memcpy(sk_out, clamped, 32);
+    unsigned char pk_be[32];
+    ret = mbedtls_mpi_write_binary(&Q.MBEDTLS_PRIVATE(X), pk_be, 32);
+    if (ret != 0) goto x25519_kp_end;
+    for (int i = 0; i < 32; i++) pk_out[i] = pk_be[31 - i];
+
+x25519_kp_end:
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
+    return ret;
+#else
+    (void)seed; (void)sk_out; (void)pk_out;
+    return -1;
+#endif
+}
+
+int bk_zig_x25519_scalarmult(
+    const unsigned char sk[32],
+    const unsigned char pk[32],
+    unsigned char out[32])
+{
+#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d, z;
+    mbedtls_ecp_point Q;
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_mpi_init(&z);
+    mbedtls_ecp_point_init(&Q);
+
+    int ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) goto x25519_sm_end;
+
+    unsigned char sk_be[32];
+    for (int i = 0; i < 32; i++) sk_be[i] = sk[31 - i];
+    ret = mbedtls_mpi_read_binary(&d, sk_be, 32);
+    if (ret != 0) goto x25519_sm_end;
+
+    unsigned char pk_be[32];
+    for (int i = 0; i < 32; i++) pk_be[i] = pk[31 - i];
+    ret = mbedtls_mpi_read_binary(&Q.MBEDTLS_PRIVATE(X), pk_be, 32);
+    if (ret != 0) goto x25519_sm_end;
+    ret = mbedtls_mpi_lset(&Q.MBEDTLS_PRIVATE(Z), 1);
+    if (ret != 0) goto x25519_sm_end;
+
+    ret = mbedtls_ecdh_compute_shared(&grp, &z, &Q, &d, bk_rng_callback, NULL);
+    if (ret != 0) goto x25519_sm_end;
+
+    unsigned char z_be[32];
+    ret = mbedtls_mpi_write_binary(&z, z_be, 32);
+    if (ret != 0) goto x25519_sm_end;
+    for (int i = 0; i < 32; i++) out[i] = z_be[31 - i];
+
+x25519_sm_end:
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&z);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
+    return ret;
+#else
+    (void)sk; (void)pk; (void)out;
+    return -1;
+#endif
 }

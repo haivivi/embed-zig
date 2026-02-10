@@ -40,6 +40,8 @@ extern fn bk_zig_p384_keypair(seed: *const [48]u8, sk_out: *[48]u8, pk_out: *[97
 extern fn bk_zig_p384_ecdh(sk: *const [48]u8, pk: *const [97]u8, out: *[48]u8) c_int;
 extern fn bk_zig_ecdsa_p256_verify(hash: *const [32]u8, r: *const [32]u8, s: *const [32]u8, pk: *const [65]u8) c_int;
 extern fn bk_zig_ecdsa_p384_verify(hash: *const [48]u8, r: *const [48]u8, s: *const [48]u8, pk: *const [97]u8) c_int;
+extern fn bk_zig_x25519_keypair(seed: *const [32]u8, sk_out: *[32]u8, pk_out: *[32]u8) c_int;
+extern fn bk_zig_x25519_scalarmult(sk: *const [32]u8, pk: *const [32]u8, out: *[32]u8) c_int;
 
 // ============================================================================
 // Public Zig API
@@ -162,6 +164,19 @@ pub fn p384Keypair(seed: [48]u8) !struct { secret_key: [48]u8, public_key: [97]u
 pub fn p384Ecdh(sk: [48]u8, pk: [97]u8) ![48]u8 {
     var out: [48]u8 = undefined;
     if (bk_zig_p384_ecdh(&sk, &pk, &out) != 0) return error.CryptoError;
+    return out;
+}
+
+pub fn x25519Keypair(seed: [32]u8) !struct { secret_key: [32]u8, public_key: [32]u8 } {
+    var sk: [32]u8 = undefined;
+    var pk: [32]u8 = undefined;
+    if (bk_zig_x25519_keypair(&seed, &sk, &pk) != 0) return error.CryptoError;
+    return .{ .secret_key = sk, .public_key = pk };
+}
+
+pub fn x25519Scalarmult(sk: [32]u8, pk: [32]u8) ![32]u8 {
+    var out: [32]u8 = undefined;
+    if (bk_zig_x25519_scalarmult(&sk, &pk, &out) != 0) return error.CryptoError;
     return out;
 }
 

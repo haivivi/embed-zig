@@ -159,6 +159,42 @@ fn testP256() bool {
     return true;
 }
 
+fn testX25519() bool {
+    log.info("[X25519] Testing keypair generation...", .{});
+    var seed: [32]u8 = undefined;
+    Crypto.Rng.fill(&seed);
+
+    const kp = Crypto.X25519.KeyPair.generateDeterministic(seed) catch |err| {
+        log.err("[X25519] keypair FAIL: {}", .{err});
+        return false;
+    };
+    log.info("[X25519] keypair PASS", .{});
+
+    log.info("[X25519] Testing ECDH...", .{});
+    var seed2: [32]u8 = undefined;
+    Crypto.Rng.fill(&seed2);
+    const kp2 = Crypto.X25519.KeyPair.generateDeterministic(seed2) catch |err| {
+        log.err("[X25519] keypair2 FAIL: {}", .{err});
+        return false;
+    };
+
+    const shared1 = Crypto.X25519.scalarmult(kp.secret_key, kp2.public_key) catch |err| {
+        log.err("[X25519] scalarmult(1,2) FAIL: {}", .{err});
+        return false;
+    };
+    const shared2 = Crypto.X25519.scalarmult(kp2.secret_key, kp.public_key) catch |err| {
+        log.err("[X25519] scalarmult(2,1) FAIL: {}", .{err});
+        return false;
+    };
+
+    if (!@import("std").mem.eql(u8, &shared1, &shared2)) {
+        log.err("[X25519] FAIL: shared secrets don't match", .{});
+        return false;
+    }
+    log.info("[X25519] ECDH PASS", .{});
+    return true;
+}
+
 fn testHkdf() bool {
     log.info("[HKDF] Testing...", .{});
     // HKDF-SHA256 extract + expand
@@ -205,6 +241,8 @@ pub fn run(_: anytype) void {
     total += 1; if (testHkdf()) passed += 1;
     Board.time.sleepMs(100);
     total += 1; if (testP256()) passed += 1;
+    Board.time.sleepMs(100);
+    total += 1; if (testX25519()) passed += 1;
 
     log.info("", .{});
     log.info("==========================================", .{});

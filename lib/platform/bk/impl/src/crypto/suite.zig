@@ -242,13 +242,14 @@ pub const X25519 = struct {
         secret_key: [32]u8,
         public_key: [32]u8,
 
-        pub fn generateDeterministic(_: [32]u8) error{CryptoError}!KeyPair {
-            return error.CryptoError; // Not available on BK7258
+        pub fn generateDeterministic(seed: [32]u8) crypto.Error!KeyPair {
+            const kp = crypto.x25519Keypair(seed) catch return error.CryptoError;
+            return .{ .secret_key = kp.secret_key, .public_key = kp.public_key };
         }
     };
 
-    pub fn scalarmult(_: [32]u8, _: [32]u8) error{CryptoError}![32]u8 {
-        return error.CryptoError; // Not available on BK7258
+    pub fn scalarmult(sk: [32]u8, pk: [32]u8) crypto.Error![32]u8 {
+        return crypto.x25519Scalarmult(sk, pk);
     }
 };
 
