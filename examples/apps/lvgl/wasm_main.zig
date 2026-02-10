@@ -1,6 +1,4 @@
-//! WASM entry point for LVGL app on WebSim
-//!
-//! Thin glue: adapts app.init/step to WASM cooperative exports.
+//! WASM entry point for H106 UI prototype
 
 const websim = @import("websim");
 const app = @import("app.zig");

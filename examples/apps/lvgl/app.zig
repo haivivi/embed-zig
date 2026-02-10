@@ -1,13 +1,8 @@
-//! LVGL Demo App — Multi-app menu system
+//! H106 UI App — Screen router
 //!
-//! Platform-independent. Features:
-//! - Long press power button 3s to boot / shutdown
-//! - Main menu with app selection
-//! - Snake game (playable with ADC buttons)
-//! - LED strip animation demo
-//! - About screen
-//!
-//! Navigation: vol_up/vol_down = scroll, confirm = enter, back = return
+//! Navigation flow:
+//!   Desktop → (right) → Menu → (OK) → Settings / GameList / ...
+//!   Any sub-screen → (back) → Menu → (back) → Desktop
 
 const hal = @import("hal");
 const ui = @import("ui");
@@ -20,128 +15,45 @@ const HalDisplay = platform.Display;
 const ButtonId = platform.ButtonId;
 const log = Board.log;
 
-const pet = @import("pet.zig");
+const theme = @import("theme.zig");
+const desktop = @import("ui/desktop.zig");
+const menu = @import("ui/menu.zig");
+const settings = @import("ui/settings.zig");
+const game_list = @import("ui/game_list.zig");
 const breakout = @import("breakout.zig");
-const falldown = @import("falldown.zig");
-const tetris = @import("tetris.zig");
-const jump = @import("jump.zig");
-const led_demo = @import("led_demo.zig");
 
 // ============================================================================
 // State
 // ============================================================================
 
-const AppId = enum { menu, pet, breakout, falldown, tetris, jump, led_demo, about };
-const PowerState = enum { off, booting, on, shutting_down };
+const Screen = enum { desktop, menu, settings, game_list, breakout };
 
 var board: Board = undefined;
 var display_driver: HalDisplay.DriverType = undefined;
 var hal_display: HalDisplay = undefined;
 var ui_ctx: ui.Context(HalDisplay) = undefined;
-var hw_ready: bool = false;
+var ready: bool = false;
 
-var power_state: PowerState = .off;
-var current_app: AppId = .menu;
-var menu_selection: u8 = 0;
-
-// Power button tracking
-var power_held: bool = false;
-var power_hold_start: u64 = 0;
-const POWER_HOLD_MS = 3000; // 3 seconds
-
-// LVGL screens
-var scr_cards: [menu_entries.len]?*c.lv_obj_t = [_]?*c.lv_obj_t{null} ** menu_entries.len;
-var scr_about: ?*c.lv_obj_t = null;
-var scr_power: ?*c.lv_obj_t = null;
-var lbl_power: ?*c.lv_obj_t = null;
-var power_bar: ?*c.lv_obj_t = null;
-
-// Ultraman chest light blue
-const LED_IDLE = hal.Color.rgb(0, 120, 255);
-
-// LVGL symbols (Font Awesome glyphs in Montserrat)
-const SYM_HEART = "\xEF\x80\x84";
-const SYM_PLAY = "\xEF\x80\x9B";
-const SYM_DOWN = "\xEF\x81\xB8";
-const SYM_LIST = "\xEF\x80\x8B";
-const SYM_UP = "\xEF\x81\xB7";
-const SYM_EYE = "\xEF\x81\xAE";
-const SYM_SETTINGS = "\xEF\x80\x93";
-
-const MenuEntry = struct {
-    icon: [*:0]const u8,
-    title: [*:0]const u8,
-    subtitle: [*:0]const u8,
-};
-
-const menu_entries = [_]MenuEntry{
-    .{ .icon = SYM_HEART, .title = "Pet", .subtitle = "Virtual pet" },
-    .{ .icon = SYM_PLAY, .title = "Breakout", .subtitle = "Break the bricks" },
-    .{ .icon = SYM_DOWN, .title = "Fall Down", .subtitle = "100 floors" },
-    .{ .icon = SYM_LIST, .title = "Tetris", .subtitle = "Classic blocks" },
-    .{ .icon = SYM_UP, .title = "Jump", .subtitle = "Doodle jump" },
-    .{ .icon = SYM_EYE, .title = "LED Demo", .subtitle = "Light animations" },
-    .{ .icon = SYM_SETTINGS, .title = "About", .subtitle = "Device info" },
-};
-
-// ============================================================================
-// Input
-// ============================================================================
-
+var current_screen: Screen = .desktop;
 var last_btn: ?ButtonId = null;
 
-fn pollInput() void {
-    last_btn = null;
-
-    // Poll hardware (pushes events to Board queue via callbacks)
-    board.buttons.poll();
-    const t = board.uptime();
-    _ = board.button.poll(t);
-
-    // Drain the Board event queue (button_group events go here via callback)
-    while (board.nextEvent()) |event| {
-        switch (event) {
-            .button => |btn| {
-                if (btn.action == .press or btn.action == .click) {
-                    last_btn = btn.id;
-                }
-            },
-            else => {},
-        }
-    }
-
-    // Power button: track raw held state directly (not through Board queue)
-    const raw_power = board.button.driver.isPressed();
-    if (raw_power and !power_held) {
-        power_held = true;
-        power_hold_start = t;
-    } else if (!raw_power) {
-        power_held = false;
-    }
-}
-
-fn powerHeldMs() u64 {
-    if (!power_held) return 0;
-    const t = board.uptime();
-    if (t < power_hold_start) return 0;
-    return t - power_hold_start;
-}
-
 // ============================================================================
-// Init (hardware only — UI starts after power-on)
+// Init
 // ============================================================================
 
 pub fn init() void {
-    log.info("LVGL Demo App", .{});
+    log.info("H106 UI Prototype", .{});
 
     board.init() catch {
         log.err("Board init failed", .{});
         return;
     };
 
-    board.rgb_leds.clear();
+    // LED: ultraman blue
+    for (0..9) |i| board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 120, 255));
     board.rgb_leds.refresh();
 
+    // Display
     display_driver = HalDisplay.DriverType.init() catch {
         log.err("Display init failed", .{});
         return;
@@ -151,384 +63,147 @@ pub fn init() void {
         log.err("UI init failed", .{});
         return;
     };
-    hw_ready = true;
+    ready = true;
 
-    // Show power-off screen
-    powerScreenInit();
-    power_state = .off;
-    log.info("Hold POWER 3s to boot", .{});
+    // Init theme (loads assets + fonts)
+    theme.init();
+
+    // Only create desktop at startup (lazy-create others on navigate)
+    desktop.create();
+    desktop.show();
+    current_screen = .desktop;
+    log.info("Ready. RIGHT=menu", .{});
 }
 
 // ============================================================================
-// Step (called each frame ~60fps)
+// Step
 // ============================================================================
 
 pub fn step() void {
-    if (!hw_ready) return;
-    pollInput();
-    tick_counter += 1;
+    if (!ready) return;
 
-    // Unlock menu animation after duration
-    if (menu_animating and tick_counter >= anim_unlock_at) {
-        menu_animating = false;
+    // Poll input
+    last_btn = null;
+    board.buttons.poll();
+    while (board.nextEvent()) |event| {
+        switch (event) {
+            .button => |btn| {
+                if (btn.action == .click) {
+                    last_btn = btn.id;
+                }
+            },
+            else => {},
+        }
+    }
+    // Drain single button too
+    const t = board.uptime();
+    _ = board.button.poll(t);
+
+    // Route input to current screen
+    // Breakout runs its own step logic (physics each frame)
+    if (current_screen == .breakout) {
+        breakout.step(last_btn);
     }
 
-    switch (power_state) {
-        .off => stepOff(),
-        .booting => stepBooting(),
-        .on => stepOn(),
-        .shutting_down => stepShuttingDown(),
+    if (last_btn) |btn| {
+        switch (current_screen) {
+            .desktop => desktopInput(btn),
+            .menu => menuInput(btn),
+            .settings => settingsInput(btn),
+            .game_list => gameListInput(btn),
+            .breakout => {
+                if (btn == .back) {
+                    breakout.deinit();
+                    current_screen = .game_list;
+                    game_list.show();
+                }
+            },
+        }
     }
 
+    // LVGL tick
     ui_ctx.tick(16);
     _ = ui_ctx.handler();
 }
 
 // ============================================================================
-// Power States
+// Input handlers
 // ============================================================================
 
-fn stepOff() void {
-    // Wait for power button hold
-    if (power_held) {
-        power_state = .booting;
-        showPowerScreen("Booting...");
+fn desktopInput(btn: ButtonId) void {
+    if (btn == .right or btn == .confirm) {
+        if (menu.screen == null) menu.create();
+        current_screen = .menu;
+        menu.showAnim(false);
     }
 }
 
-fn stepBooting() void {
-    const held = powerHeldMs();
-    updatePowerBar(held);
-
-    // LED progress: fill LEDs proportionally
-    const progress = @min(held, POWER_HOLD_MS);
-    const lit: u32 = @intCast(progress * 9 / POWER_HOLD_MS);
-    for (0..9) |i| {
-        if (i < lit) {
-            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 100, 255));
-        } else {
-            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 0, 0));
-        }
-    }
-    board.rgb_leds.refresh();
-
-    if (!power_held) {
-        // Released too early — back to off
-        power_state = .off;
-        board.rgb_leds.clear();
-        board.rgb_leds.refresh();
-        showPowerScreen("Hold POWER 3s");
-        return;
-    }
-
-    if (held >= POWER_HOLD_MS) {
-        // Boot complete
-        power_state = .on;
-        power_held = false;
-        log.info("Power ON", .{});
-        // Ultraman chest light
-        for (0..9) |i| {
-            board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
-        }
-        board.rgb_leds.refresh();
-        menuInit();
-    }
-}
-
-fn stepOn() void {
-    // Normal operation
-    switch (current_app) {
-        .menu => menuStep(),
-        .pet => pet.step(last_btn),
-        .breakout => breakout.step(last_btn),
-        .falldown => falldown.step(last_btn),
-        .tetris => tetris.step(last_btn),
-        .jump => jump.step(last_btn),
-        .led_demo => led_demo.step(&board, last_btn),
-        .about => aboutStep(),
-    }
-
-    // Back to menu from any sub-app
-    if (current_app != .menu and last_btn != null and last_btn.? == .back) {
-        switchTo(.menu);
-    }
-
-    // Power button held → start shutdown
-    if (power_held and powerHeldMs() > 200) {
-        power_state = .shutting_down;
-        showPowerScreen("Shutting down...");
-    }
-}
-
-fn stepShuttingDown() void {
-    const held = powerHeldMs();
-    updatePowerBar(held);
-
-    // LED drain: LEDs turn off proportionally
-    const progress = @min(held, POWER_HOLD_MS);
-    const off_count: u32 = @intCast(progress * 9 / POWER_HOLD_MS);
-    for (0..9) |i| {
-        if (i < 9 - off_count) {
-            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(255, 50, 0));
-        } else {
-            board.rgb_leds.setPixel(@intCast(i), hal.Color.rgb(0, 0, 0));
-        }
-    }
-    board.rgb_leds.refresh();
-
-    if (!power_held) {
-        // Released too early — back to on
-        power_state = .on;
-        // Restore Ultraman LEDs
-        for (0..9) |i| {
-            board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
-        }
-        board.rgb_leds.refresh();
-        // Reload current screen
-        if (scr_cards[menu_selection]) |scr| c.lv_screen_load(scr);
-        return;
-    }
-
-    if (held >= POWER_HOLD_MS) {
-        // Shutdown complete
-        power_state = .off;
-        power_held = false;
-        log.info("Power OFF", .{});
-
-        // Deinit current app
-        switch (current_app) {
-            .pet => pet.deinit(),
-            .breakout => breakout.deinit(),
-            .falldown => falldown.deinit(),
-            .tetris => tetris.deinit(),
-            .jump => jump.deinit(),
-            .led_demo => led_demo.deinit(&board),
-            else => {},
-        }
-        current_app = .menu;
-        menu_selection = 0;
-
-        board.rgb_leds.clear();
-        board.rgb_leds.refresh();
-        showPowerScreen("Hold POWER 3s");
-    }
-}
-
-// ============================================================================
-// Power Screen (shown when off / booting / shutting down)
-// ============================================================================
-
-fn powerScreenInit() void {
-    scr_power = c.lv_obj_create(null);
-    if (scr_power == null) return;
-    c.lv_obj_set_style_bg_color(scr_power.?, c.lv_color_hex(0x000000), 0);
-
-    lbl_power = c.lv_label_create(scr_power.?);
-    c.lv_label_set_text(lbl_power, "Hold POWER 3s");
-    c.lv_obj_set_style_text_color(lbl_power, c.lv_color_hex(0x444466), 0);
-    c.lv_obj_align(lbl_power, c.LV_ALIGN_CENTER, 0, -20);
-
-    // Progress bar
-    power_bar = c.lv_bar_create(scr_power.?);
-    c.lv_obj_set_size(power_bar, 160, 8);
-    c.lv_bar_set_range(power_bar, 0, 100);
-    c.lv_bar_set_value(power_bar, 0, c.LV_ANIM_OFF);
-    c.lv_obj_align(power_bar, c.LV_ALIGN_CENTER, 0, 20);
-    c.lv_obj_set_style_bg_color(power_bar, c.lv_color_hex(0x111122), 0);
-    c.lv_obj_set_style_bg_color(power_bar, c.lv_color_hex(0x6c8cff), @intCast(c.LV_PART_INDICATOR));
-
-    c.lv_screen_load(scr_power.?);
-}
-
-fn showPowerScreen(text: [*:0]const u8) void {
-    if (lbl_power) |lbl| c.lv_label_set_text(lbl, text);
-    if (power_bar) |bar| c.lv_bar_set_value(bar, 0, c.LV_ANIM_OFF);
-    if (scr_power) |scr| c.lv_screen_load(scr);
-}
-
-fn updatePowerBar(held_ms: u64) void {
-    if (power_bar == null) return;
-    const pct: i32 = @intCast(@min(held_ms * 100 / POWER_HOLD_MS, 100));
-    c.lv_bar_set_value(power_bar, pct, c.LV_ANIM_OFF);
-}
-
-// ============================================================================
-// App switching
-// ============================================================================
-
-fn switchTo(app: AppId) void {
-    switch (current_app) {
-        .pet => pet.deinit(),
-        .breakout => breakout.deinit(),
-        .falldown => falldown.deinit(),
-        .tetris => tetris.deinit(),
-        .jump => jump.deinit(),
-        .led_demo => led_demo.deinit(&board),
+fn menuInput(btn: ButtonId) void {
+    switch (btn) {
+        .left => {
+            if (menu.index > 0) {
+                menu.scrollTo(menu.index - 1);
+            } else {
+                // At first item: go back to desktop
+                current_screen = .desktop;
+                desktop.show();
+            }
+        },
+        .right => {
+            if (menu.index < 4) {
+                menu.scrollTo(menu.index + 1);
+            }
+        },
+        .confirm => {
+            switch (menu.index) {
+                4 => {
+                    if (settings.screen == null) settings.create();
+                    current_screen = .settings;
+                    settings.show();
+                },
+                1 => {
+                    if (game_list.screen == null) game_list.create();
+                    current_screen = .game_list;
+                    game_list.show();
+                },
+                else => {},
+            }
+        },
+        .back => {
+            current_screen = .desktop;
+            desktop.show();
+        },
         else => {},
     }
+}
 
-    current_app = app;
-
-    switch (app) {
-        .menu => {
-            for (0..9) |i| board.rgb_leds.setPixel(@intCast(i), LED_IDLE);
-            board.rgb_leds.refresh();
-            if (scr_cards[menu_selection]) |scr| c.lv_screen_load(scr);
+fn settingsInput(btn: ButtonId) void {
+    switch (btn) {
+        .vol_up, .left => settings.scrollUp(),
+        .vol_down, .right => settings.scrollDown(),
+        .back => {
+            current_screen = .menu;
+            menu.show();
         },
-        .pet => pet.init(),
-        .breakout => breakout.init(),
-        .falldown => falldown.init(),
-        .tetris => tetris.init(),
-        .jump => jump.init(),
-        .led_demo => led_demo.init(&board),
-        .about => aboutInit(),
+        else => {},
     }
 }
 
-// ============================================================================
-// Menu — Horizontal card carousel with slide animation
-// ============================================================================
-
-fn menuInit() void {
-    // Create a card screen for each menu entry
-    for (0..menu_entries.len) |i| {
-        scr_cards[i] = createCard(&menu_entries[i], i);
-    }
-    menu_selection = 0;
-    if (scr_cards[0]) |scr| c.lv_screen_load(scr);
-}
-
-fn createCard(entry: *const MenuEntry, idx: usize) ?*c.lv_obj_t {
-    const scr = c.lv_obj_create(null) orelse return null;
-    c.lv_obj_set_style_bg_color(scr, c.lv_color_hex(0x0f1020), 0);
-
-    // Icon (large, centered top)
-    const icon = c.lv_label_create(scr);
-    c.lv_label_set_text(icon, entry.icon);
-    c.lv_obj_set_style_text_font(icon, &c.lv_font_montserrat_20, 0);
-    c.lv_obj_set_style_text_color(icon, c.lv_color_hex(0x6c8cff), 0);
-    c.lv_obj_align(icon, c.LV_ALIGN_CENTER, 0, -50);
-
-    // Title
-    const title = c.lv_label_create(scr);
-    c.lv_label_set_text(title, entry.title);
-    c.lv_obj_set_style_text_font(title, &c.lv_font_montserrat_20, 0);
-    c.lv_obj_set_style_text_color(title, c.lv_color_hex(0xffffff), 0);
-    c.lv_obj_align(title, c.LV_ALIGN_CENTER, 0, -10);
-
-    // Subtitle
-    const sub = c.lv_label_create(scr);
-    c.lv_label_set_text(sub, entry.subtitle);
-    c.lv_obj_set_style_text_color(sub, c.lv_color_hex(0x666688), 0);
-    c.lv_obj_align(sub, c.LV_ALIGN_CENTER, 0, 20);
-
-    // Page indicator dots at bottom
-    const dots_y: i32 = -20;
-    const dot_spacing: i32 = 16;
-    const total_w: i32 = @as(i32, @intCast(menu_entries.len - 1)) * dot_spacing;
-    const start_x: i32 = -total_w / 2;
-
-    for (0..menu_entries.len) |d| {
-        const dot = c.lv_obj_create(scr);
-        c.lv_obj_set_size(dot, 8, 8);
-        c.lv_obj_set_style_radius(dot, 4, 0);
-        c.lv_obj_set_style_border_width(dot, 0, 0);
-        c.lv_obj_set_scrollbar_mode(dot, c.LV_SCROLLBAR_MODE_OFF);
-
-        if (d == idx) {
-            c.lv_obj_set_style_bg_color(dot, c.lv_color_hex(0x6c8cff), 0);
-        } else {
-            c.lv_obj_set_style_bg_color(dot, c.lv_color_hex(0x333355), 0);
-        }
-
-        c.lv_obj_align(dot, c.LV_ALIGN_BOTTOM_MID, start_x + @as(i32, @intCast(d)) * dot_spacing, dots_y);
-    }
-
-    // "OK to enter" hint
-    const hint = c.lv_label_create(scr);
-    c.lv_label_set_text(hint, "< OK >");
-    c.lv_obj_set_style_text_color(hint, c.lv_color_hex(0x444466), 0);
-    c.lv_obj_align(hint, c.LV_ALIGN_BOTTOM_MID, 0, -40);
-
-    return scr;
-}
-
-var menu_animating: bool = false;
-
-fn menuStep() void {
-    if (menu_animating) return; // ignore input during slide
-
-    if (last_btn) |btn| {
-        switch (btn) {
-            .right, .vol_down => slideMenu(1),
-            .left, .vol_up => slideMenu(-1),
-            .confirm => {
-                const apps = [_]AppId{ .pet, .breakout, .falldown, .tetris, .jump, .led_demo, .about };
-                if (menu_selection < apps.len) switchTo(apps[menu_selection]);
-            },
-            else => {},
-        }
+fn gameListInput(btn: ButtonId) void {
+    switch (btn) {
+        .vol_up, .left => game_list.scrollUp(),
+        .vol_down, .right => game_list.scrollDown(),
+        .confirm => {
+            if (game_list.index == 0) {
+                // Launch breakout
+                breakout.init();
+                current_screen = .breakout;
+            }
+        },
+        .back => {
+            current_screen = .menu;
+            menu.show();
+        },
+        else => {},
     }
 }
-
-fn slideMenu(delta: i32) void {
-    const new_sel: i32 = @as(i32, menu_selection) + delta;
-    if (new_sel < 0 or new_sel >= @as(i32, @intCast(menu_entries.len))) return;
-
-    const old_sel = menu_selection;
-    menu_selection = @intCast(new_sel);
-
-    const next_scr = scr_cards[menu_selection] orelse return;
-    _ = old_sel;
-
-    // Slide animation
-    const anim_type: c.lv_screen_load_anim_t = if (delta > 0)
-        c.LV_SCR_LOAD_ANIM_MOVE_LEFT
-    else
-        c.LV_SCR_LOAD_ANIM_MOVE_RIGHT;
-
-    menu_animating = true;
-    c.lv_screen_load_anim(next_scr, anim_type, 250, 0, false);
-
-    // Reset animation lock after duration (approximate with tick counter)
-    anim_unlock_at = tick_counter + 16; // ~256ms at 60fps
-}
-
-var tick_counter: u32 = 0;
-var anim_unlock_at: u32 = 0;
-
-// ============================================================================
-// About
-// ============================================================================
-
-fn aboutInit() void {
-    scr_about = c.lv_obj_create(null);
-    if (scr_about == null) return;
-    c.lv_obj_set_style_bg_color(scr_about.?, c.lv_color_hex(0x1a1a2e), 0);
-
-    const title = c.lv_label_create(scr_about.?);
-    c.lv_label_set_text(title, "About");
-    c.lv_obj_set_style_text_color(title, c.lv_color_hex(0x6c8cff), 0);
-    c.lv_obj_align(title, c.LV_ALIGN_TOP_MID, 0, 30);
-
-    const info = c.lv_label_create(scr_about.?);
-    c.lv_label_set_text(info,
-        \\embed-zig WebSim
-        \\
-        \\LVGL 9.2 + Zig
-        \\-> WASM (wasi-musl)
-        \\
-        \\240x240 RGB565
-        \\7 ADC buttons
-        \\9 LED strip
-        \\
-        \\Press BACK to return
-    );
-    c.lv_obj_set_style_text_color(info, c.lv_color_hex(0xaaaacc), 0);
-    c.lv_obj_set_style_text_line_space(info, 4, 0);
-    c.lv_obj_align(info, c.LV_ALIGN_CENTER, 0, 10);
-
-    c.lv_screen_load(scr_about.?);
-}
-
-fn aboutStep() void {}

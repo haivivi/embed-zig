@@ -2,17 +2,10 @@ load("//bazel/websim:defs.bzl", "websim_app")
 
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "app_srcs",
-    srcs = glob(["**/*.zig"]),
-)
-
-# WebSim build: LVGL app -> WASM -> browser
-# Run: bazel run //examples/apps/lvgl:sim_serve
 websim_app(
     name = "sim",
     main = "wasm_main.zig",
-    srcs = glob(["**/*.zig"]),
+    srcs = glob(["**/*.zig"]) + glob(["assets/**"]),
     web_shell = "//lib/platform/websim:web_h106",
     deps = [
         "//lib/platform/websim",
