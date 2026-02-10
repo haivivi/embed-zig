@@ -47,7 +47,7 @@ bk_zig_app(
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns"],
     partition_table = ":partitions",
     env = ":env",
-    ap_stack_size = 65536,  # 64KB for TLS
+    ap_stack_size = 131072,  # 128KB for TLS (X25519 + SHA + HMAC deep stack)
     kconfig_ap = ":kconfig",
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",

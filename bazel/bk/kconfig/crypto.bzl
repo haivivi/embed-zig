@@ -5,6 +5,9 @@ def _bk_crypto_impl(ctx):
     lines = [
         "# Full mbedTLS crypto (required for TLS/HTTPS)",
         "CONFIG_FULL_MBEDTLS=y",
+        "# Task stack in PSRAM (needed for TLS — 128KB stack from 8MB PSRAM)",
+        "CONFIG_PSRAM_AS_SYS_MEMORY=y",
+        "CONFIG_TASK_STACK_IN_PSRAM=y",
     ]
     ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
     return [DefaultInfo(files = depset([out]))]
