@@ -56,30 +56,27 @@ int bk_zig_gpio_set_as_output(unsigned int id) {
     return bk_gpio_enable_output((gpio_id_t)id);
 }
 
-/* Full GPIO scan: unmap + read every GPIO, print only LOW ones */
-void bk_zig_gpio_full_scan(void) {
-    char buf[256];
+/* Read specific candidate button GPIOs with proper unmap */
+void bk_zig_gpio_read_pins(void) {
+    static const int pins[] = {6, 7, 8, 9, 12, 13, 22, 26};
+    static const int npin = sizeof(pins) / sizeof(pins[0]);
+    char buf[128];
     int pos = 0;
-    for (int i = 0; i < 56; i++) {
-        if (i == 10 || i == 11) continue; /* UART */
-        gpio_dev_unmap(i);
-        bk_gpio_disable_output((gpio_id_t)i);
-        bk_gpio_enable_input((gpio_id_t)i);
-        bk_gpio_enable_pull((gpio_id_t)i);
-        bk_gpio_pull_up((gpio_id_t)i);
+    for (int i = 0; i < npin; i++) {
+        int p = pins[i];
+        gpio_dev_unmap(p);
+        bk_gpio_disable_output((gpio_id_t)p);
+        bk_gpio_enable_input((gpio_id_t)p);
+        bk_gpio_enable_pull((gpio_id_t)p);
+        bk_gpio_pull_up((gpio_id_t)p);
     }
-    /* settle */
-    for (volatile int d = 0; d < 10000; d++) {}
-    for (int i = 0; i < 56; i++) {
-        if (i == 10 || i == 11) continue;
-        if (!bk_gpio_get_input((gpio_id_t)i)) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos, " %d", i);
-        }
+    for (volatile int d = 0; d < 5000; d++) {}
+    for (int i = 0; i < npin; i++) {
+        int p = pins[i];
+        int v = bk_gpio_get_input((gpio_id_t)p) ? 1 : 0;
+        pos += snprintf(buf + pos, sizeof(buf) - pos, " G%d=%d", p, v);
     }
-    if (pos > 0)
-        BK_LOGI(TAG, "LOW:%s\r\n", buf);
-    else
-        BK_LOGI(TAG, "LOW: (none)\r\n");
+    BK_LOGI(TAG, "pins:%s\r\n", buf);
 }
 
 int bk_zig_gpio_pull_down(unsigned int id) {

@@ -45,13 +45,7 @@ const spec = struct {
     pub const speaker = hal.mono_speaker.from(hw.speaker_spec);
     pub const pa_switch = hal.switch_.from(hw.pa_switch_spec);
 
-    // Button input: ADC group (ESP) or GPIO matrix (BK)
-    pub const buttons = if (@hasDecl(hw, "button_group_spec"))
-        hal.button_group.from(hw.button_group_spec, OuterButtonId)
-    else if (@hasDecl(hw, "button_matrix_spec"))
-        hal.button_matrix.from(hw.button_matrix_spec, OuterButtonId)
-    else
-        @compileError("no button spec found in hw");
+    pub const buttons = hal.button_group.from(hw.button_group_spec, OuterButtonId);
 };
 
 pub const Board = hal.Board(spec);

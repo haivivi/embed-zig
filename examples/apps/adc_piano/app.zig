@@ -107,18 +107,18 @@ pub fn run(_: anytype) void {
 
     board.speaker.setVolume(200) catch {};
 
-    log.info("Playing startup melody: Do Re Mi...", .{});
+    log.info("Playing startup melody: Do Re Mi Fa...", .{});
 
     var buffer: [160]i16 = undefined;
     var phase: f32 = 0;
 
-    // Startup melody: Do Re Mi (confirms speaker works)
-    playNote(&board, &buffer, NOTE_DO, 300, &phase);
-    flushSilence(&board, &buffer, 80);
-    playNote(&board, &buffer, NOTE_RE, 300, &phase);
-    flushSilence(&board, &buffer, 80);
-    playNote(&board, &buffer, NOTE_MI, 400, &phase);
-    flushSilence(&board, &buffer, 300); // longer flush to fully clear DMA
+    // Startup melody: Do Re Mi Fa
+    const melody = [_]u32{ NOTE_DO, NOTE_RE, NOTE_MI, NOTE_FA };
+    for (melody) |note| {
+        playNote(&board, &buffer, note, 250, &phase);
+        flushSilence(&board, &buffer, 60);
+    }
+    flushSilence(&board, &buffer, 300);
 
     log.info("Ready! Press buttons to play notes.", .{});
 
@@ -176,11 +176,12 @@ pub fn run(_: anytype) void {
             Board.time.sleepMs(5);
         }
 
-        // Debug: full GPIO scan every ~3 seconds
+        // Debug
         debug_counter += 1;
-        if (debug_counter >= 600) {
+        if (debug_counter >= 400) {
             debug_counter = 0;
-            platform.Hardware.debugScan();
+            const raw = board.buttons.getLastRaw();
+            log.info("[ADC] {}", .{raw});
         }
     }
 }

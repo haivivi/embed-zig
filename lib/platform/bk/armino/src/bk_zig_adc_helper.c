@@ -70,3 +70,33 @@ int bk_zig_adc_read(unsigned int channel, unsigned short *value_out) {
     *value_out = val;
     return 0;
 }
+
+/* Scan all ADC channels 0-15 */
+#include <stdio.h>
+void bk_zig_adc_scan_all(void) {
+    char buf[256];
+    int pos = 0;
+    for (int ch = 0; ch < 16; ch++) {
+        uint16_t val = 0;
+        if (bk_adc_acquire() != BK_OK) continue;
+        if (bk_adc_init((adc_chan_t)ch) != BK_OK) { bk_adc_release(); continue; }
+        adc_config_t cfg = {0};
+        cfg.chan = (adc_chan_t)ch;
+        cfg.adc_mode = ADC_CONTINUOUS_MODE;
+        cfg.src_clk = ADC_SCLK_XTAL_26M;
+        cfg.clk = 3203125;
+        cfg.saturate_mode = ADC_SATURATE_MODE_3;
+        cfg.steady_ctrl = 7;
+        bk_adc_set_config(&cfg);
+        bk_adc_enable_bypass_clalibration();
+        bk_adc_start();
+        bk_err_t r = bk_adc_read(&val, 100);
+        bk_adc_stop();
+        bk_adc_deinit((adc_chan_t)ch);
+        bk_adc_release();
+        if (r == BK_OK && val != 0) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, " %d:%u", ch, val);
+        }
+    }
+    BK_LOGI(TAG, "ADC:%s\r\n", buf);
+}

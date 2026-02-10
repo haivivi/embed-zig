@@ -1,5 +1,5 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_audio", "bk_config")
+load("//bazel/bk/kconfig:defs.bzl", "bk_audio", "bk_config", "bk_saradc")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -11,7 +11,8 @@ filegroup(
 )
 
 bk_audio(name = "audio")
-bk_config(name = "kconfig", modules = [":audio"])
+bk_saradc(name = "saradc")
+bk_config(name = "kconfig", modules = [":audio", ":saradc"])
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
@@ -42,7 +43,7 @@ bk_zig_app(
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_speaker",
-        "//lib/platform/bk/armino:c_helpers_gpio",
+        "//lib/platform/bk/armino:c_helpers_adc",
     ],
     requires = ["bk_audio"],
     base_project = "audio_player_example",
