@@ -120,6 +120,14 @@ pub fn run(_: anytype) void {
     }
     flushSilence(&board, &buffer, 300);
 
+    // Play it again louder to confirm speaker works
+    log.info("Playing again...", .{});
+    for (melody) |note| {
+        playNote(&board, &buffer, note, 400, &phase);
+        flushSilence(&board, &buffer, 100);
+    }
+    flushSilence(&board, &buffer, 500);
+
     log.info("Ready! Press buttons to play notes.", .{});
 
     // Discard initial ADC readings (settling time)
@@ -129,16 +137,20 @@ pub fn run(_: anytype) void {
         Board.time.sleepMs(10);
     }
 
-    // Debug counter
     var debug_counter: u32 = 0;
+    var poll_counter: u32 = 0;
 
     phase = 0;
     var current_freq: u32 = 0;
     var prev_freq: u32 = 0;
 
     while (Board.isRunning()) {
-        // Poll ADC buttons
-        board.buttons.poll();
+        // Poll ADC buttons every ~10 iterations (not every loop — ADC read is slow)
+        poll_counter += 1;
+        if (poll_counter >= 10) {
+            poll_counter = 0;
+            board.buttons.poll();
+        }
 
         // Process events
         while (board.nextEvent()) |event| {
@@ -149,7 +161,7 @@ pub fn run(_: anytype) void {
                             const freq = noteFreq(btn.id);
                             log.info("[PIANO] {s} ({} Hz)", .{ noteName(btn.id), freq });
                             current_freq = freq;
-                            phase = 0; // reset phase for clean attack
+                            phase = 0;
                         },
                         .release => {
                             current_freq = 0;
@@ -172,7 +184,7 @@ pub fn run(_: anytype) void {
             generateSineWave(&buffer, current_freq, &phase);
             _ = board.speaker.write(&buffer) catch {};
         } else {
-            // Idle — just poll buttons, don't write audio
+            // Idle — sleep briefly, ADC poll handles timing
             Board.time.sleepMs(5);
         }
 

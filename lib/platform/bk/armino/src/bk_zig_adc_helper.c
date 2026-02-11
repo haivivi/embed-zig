@@ -56,7 +56,7 @@ int bk_zig_adc_read(unsigned int channel, unsigned short *value_out) {
     }
 
     uint16_t val = 0;
-    ret = bk_adc_read(&val, 200);
+    ret = bk_adc_read(&val, 10); /* short timeout for real-time use */
 
     bk_adc_stop();
     bk_adc_deinit((adc_chan_t)channel);
