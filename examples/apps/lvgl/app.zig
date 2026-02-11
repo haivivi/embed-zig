@@ -56,7 +56,7 @@ pub fn init() void {
         return;
     };
     hal_display = HalDisplay.init(&display_driver);
-    ui_ctx = ui.init(HalDisplay, &hal_display, .{ .buf_lines = 20 }) catch {
+    ui_ctx = ui.init(HalDisplay, &hal_display) catch {
         log.err("UI init failed", .{});
         return;
     };

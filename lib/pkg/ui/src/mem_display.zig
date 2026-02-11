@@ -108,6 +108,7 @@ pub fn MemDisplay(
             pub const width: u16 = w;
             pub const height: u16 = h;
             pub const color_format = color_fmt;
+            pub const render_mode: hal_display.RenderMode = .full;
             pub const meta = .{ .id = "display.mem" };
         };
     };

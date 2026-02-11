@@ -69,13 +69,12 @@ pub const ScreenAnim = Obj.ScreenAnim;
 pub const Color = color.Color;
 pub const Font = font.Font;
 
+// Re-export RenderMode for convenience
+pub const RenderMode = hal.display.RenderMode;
+
 // ============================================================================
 // Display Context
 // ============================================================================
-
-pub const InitOptions = struct {
-    buf_lines: u16 = 10,
-};
 
 pub fn Context(comptime DisplayDriver: type) type {
     return struct {
@@ -104,7 +103,17 @@ pub fn Context(comptime DisplayDriver: type) type {
     };
 }
 
-pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) !Context(HalDisplay) {
+/// Initialize LVGL with the given HAL display.
+///
+/// Buffer strategy is determined by `HalDisplay.render_mode` (comptime):
+/// - `.partial`: static draw buffer of `width * bpp * buf_lines` bytes
+/// - `.full`: static draw buffer of full frame (`width * bpp * height`)
+/// - `.direct`: uses driver-provided framebuffer (`Driver.getFramebuffer()`)
+///
+/// All config comes from the display spec (via HAL) — no runtime options needed.
+pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay) {
+    const render_mode = HalDisplay.render_mode;
+
     const Adapter = struct {
         var hal_display: *HalDisplay = undefined;
 
@@ -124,7 +133,14 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) 
             if (lv_disp) |d| c.lv_display_flush_ready(d);
         }
 
-        var draw_buf: [@as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp) * 20]u8 = undefined;
+        // Static draw buffer — sized by render_mode + buf_lines (comptime).
+        // For .direct mode this is unused; the driver provides the buffer.
+        const draw_buf_size = if (render_mode == .direct)
+            0
+        else
+            @as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp) * @as(u32, HalDisplay.buf_lines);
+
+        var draw_buf: [draw_buf_size]u8 = undefined;
     };
     Adapter.hal_display = display;
 
@@ -135,17 +151,28 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay, opts: InitOptions) 
         @intCast(HalDisplay.height),
     ) orelse return error.DisplayCreateFailed;
 
-    const buf_lines = opts.buf_lines;
-    const line_bytes = @as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp);
-    const buf_size = line_bytes * @as(u32, buf_lines);
+    // Configure LVGL display buffers based on render mode
+    const lv_render_mode: c_uint = switch (render_mode) {
+        .partial => c.LV_DISPLAY_RENDER_MODE_PARTIAL,
+        .direct => c.LV_DISPLAY_RENDER_MODE_DIRECT,
+        .full => c.LV_DISPLAY_RENDER_MODE_FULL,
+    };
 
-    c.lv_display_set_buffers(
-        lv_disp,
-        &Adapter.draw_buf,
-        null,
-        @min(buf_size, Adapter.draw_buf.len),
-        c.LV_DISPLAY_RENDER_MODE_PARTIAL,
-    );
+    if (render_mode == .direct) {
+        // Direct mode: LVGL writes into driver's framebuffer
+        const fb = display.driver.getFramebuffer();
+        const fb_size = HalDisplay.framebufferSize();
+        c.lv_display_set_buffers(lv_disp, fb, null, fb_size, lv_render_mode);
+    } else {
+        // Partial/Full mode: use the static draw buffer
+        c.lv_display_set_buffers(
+            lv_disp,
+            &Adapter.draw_buf,
+            null,
+            Adapter.draw_buf_size,
+            lv_render_mode,
+        );
+    }
 
     c.lv_display_set_flush_cb(lv_disp, Adapter.flushCb);
 
@@ -173,7 +200,7 @@ test "LVGL init and deinit" {
     var driver = Disp.create();
     var display = HalDisp.init(&driver);
 
-    var ctx = try init(HalDisp, &display, .{});
+    var ctx = try init(HalDisp, &display);
     defer ctx.deinit();
 
     const scr = ctx.screen();
@@ -187,7 +214,7 @@ test "LVGL create label with chaining" {
     var driver = Disp.create();
     var display = HalDisp.init(&driver);
 
-    var ctx = try init(HalDisp, &display, .{});
+    var ctx = try init(HalDisp, &display);
     defer ctx.deinit();
 
     const lbl = Label.create(ctx.screen()).?

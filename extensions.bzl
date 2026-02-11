@@ -137,6 +137,10 @@ def _lvgl_repo_impl(ctx):
     )
     if not dl.success:
         ctx.execute(["curl", "-sL", "-o", archive, url], timeout = 300)
+        # Verify SHA256 after curl fallback
+        res = ctx.execute(["shasum", "-a", "256", archive])
+        if res.return_code != 0 or not res.stdout.startswith(sha256):
+            fail("SHA256 mismatch for LVGL archive (curl fallback). Expected: " + sha256)
     ctx.extract(archive, stripPrefix = "lvgl-{}".format(_LVGL_VERSION))
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
@@ -185,20 +189,24 @@ def _ffmpeg_wasm_repo_impl(ctx):
     ctx.download(
         url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
         output = "ffmpeg.js",
+        sha256 = "a4c09a1997ac582a735fc21e20f9913df4af6dde4ebb373f1d714a4b6e7616f1",
     )
     # Worker chunk loaded by the UMD bundle
     ctx.download(
         url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
         output = "814.ffmpeg.js",
+        sha256 = "c4702e2f749671b2f9cf07e4738abaf4511fc0d89525ad6a93bc3c2a8ad0822a",
     )
     # @ffmpeg/core (WASM engine)
     ctx.download(
         url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
         output = "ffmpeg-core.js",
+        sha256 = "a34873964b0f62aec516bac75e3aa9086ec3535d4d07f0269aa94ea748b6cb71",
     )
     ctx.download(
         url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
         output = "ffmpeg-core.wasm",
+        sha256 = "2390efa7fb66e7e42dbae15427571a5ffc96b829480904c30f471f0a78967f61",
     )
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
@@ -234,6 +242,7 @@ def _html2canvas_repo_impl(ctx):
     ctx.download(
         url = "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
         output = "html2canvas.min.js",
+        sha256 = "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb",
     )
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])

@@ -108,6 +108,8 @@ pub const display_spec = struct {
     pub const width: u16 = state.DISPLAY_WIDTH;
     pub const height: u16 = state.DISPLAY_HEIGHT;
     pub const color_format = hal.display.ColorFormat.rgb565;
+    pub const render_mode = hal.display.RenderMode.partial;
+    pub const buf_lines: u16 = 20;
     pub const meta = .{ .id = "display.main" };
 };
 

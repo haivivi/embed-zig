@@ -11,31 +11,69 @@
 //! ├─────────────────────────────────────────┤
 //! │ Display(spec)  ← HAL wrapper            │
 //! │   - resolution, color format            │
+//! │   - render mode + buffer config         │
 //! │   - flush callback for UI frameworks    │
 //! │   - backlight control                   │
 //! ├─────────────────────────────────────────┤
 //! │ Driver (spec.Driver)  ← platform impl   │
 //! │   - flush(area, color_data)             │
 //! │   - setBacklight(brightness)            │
+//! │   - getFramebuffer() [direct mode only] │
 //! └─────────────────────────────────────────┘
 //! ```
+//!
+//! ## Render Modes
+//!
+//! The display spec declares a `render_mode` that determines how the UI
+//! framework (LVGL) manages its draw buffer:
+//!
+//! - **partial** (default) — For SPI/I2C LCDs. LVGL renders in chunks of
+//!   `buf_lines` rows, calling flush() per chunk. Buffer: `width * bpp * buf_lines`.
+//!   Configure `buf_lines` based on available RAM and bus speed.
+//!
+//! - **direct** — For RGB parallel LCDs with memory-mapped framebuffers.
+//!   LVGL writes directly into the driver-provided framebuffer. flush() signals
+//!   "area updated". Driver must implement `getFramebuffer()`.
+//!
+//! - **full** — For simulators and displays with ample RAM.
+//!   LVGL renders the entire frame, then calls flush(). Buffer: full frame.
 //!
 //! ## Usage
 //!
 //! ```zig
-//! const display_spec = struct {
+//! // SPI LCD — partial mode (default)
+//! const spi_display_spec = struct {
 //!     pub const Driver = SpiLcdDriver;
-//!     pub const width = 320;
-//!     pub const height = 240;
+//!     pub const width: u16 = 320;
+//!     pub const height: u16 = 240;
 //!     pub const color_format = .rgb565;
+//!     pub const render_mode = .partial;
+//!     pub const buf_lines: u16 = 20;
 //!     pub const meta = .{ .id = "display.main" };
 //! };
 //!
-//! const MyDisplay = hal.display.from(display_spec);
-//! var display = MyDisplay.init(&driver_instance);
+//! // RGB LCD — direct mode
+//! const rgb_display_spec = struct {
+//!     pub const Driver = RgbLcdDriver; // must have getFramebuffer()
+//!     pub const width: u16 = 480;
+//!     pub const height: u16 = 272;
+//!     pub const color_format = .rgb565;
+//!     pub const render_mode = .direct;
+//!     pub const meta = .{ .id = "display.main" };
+//! };
 //!
-//! display.flush(area, color_data);
-//! display.setBacklight(200);
+//! // Simulator — full mode
+//! const sim_display_spec = struct {
+//!     pub const Driver = MemDisplayDriver;
+//!     pub const width: u16 = 240;
+//!     pub const height: u16 = 240;
+//!     pub const color_format = .rgb565;
+//!     pub const render_mode = .full;
+//!     pub const meta = .{ .id = "display.sim" };
+//! };
+//!
+//! const MyDisplay = hal.display.from(spi_display_spec);
+//! var display = MyDisplay.init(&driver_instance);
 //! ```
 
 const std = @import("std");
@@ -50,6 +88,26 @@ pub const ColorFormat = enum {
     rgb888, // 24-bit, 3 bytes per pixel
     xrgb8888, // 32-bit, 4 bytes per pixel (X channel ignored)
     argb8888, // 32-bit, 4 bytes per pixel with alpha
+};
+
+/// How the UI framework manages its draw buffer.
+///
+/// Determines buffer allocation strategy and LVGL render mode.
+/// Configured in the board's display_spec.
+pub const RenderMode = enum {
+    /// SPI/I2C LCD — render in chunks of `buf_lines` rows.
+    /// Buffer size: width * bpp * buf_lines.
+    /// Flush sends pixels over the bus.
+    partial,
+
+    /// RGB parallel LCD — LVGL writes directly into driver framebuffer.
+    /// Driver must implement `getFramebuffer() [*]u8`.
+    /// Flush signals "area updated" (may trigger DMA or no-op).
+    direct,
+
+    /// Simulator / ample-RAM — render entire frame then flush.
+    /// Buffer size: width * bpp * height (full frame).
+    full,
 };
 
 /// Rectangular area on the display
@@ -107,11 +165,16 @@ pub fn is(comptime T: type) bool {
 /// - `color_format`: ColorFormat — pixel format
 /// - `meta`: .{ .id = "..." }
 ///
+/// spec optional:
+/// - `render_mode`: RenderMode — default `.partial`
+/// - `buf_lines`: u16 — draw buffer height for partial mode (default 10)
+///
 /// Driver required methods:
 /// - `fn flush(self: *Driver, area: Area, color_data: [*]const u8) void`
 ///
 /// Driver optional methods:
 /// - `fn setBacklight(self: *Driver, brightness: u8) void`
+/// - `fn getFramebuffer(self: *Driver) [*]u8` — required for `.direct` mode
 ///
 pub fn from(comptime spec: type) type {
     comptime {
@@ -123,6 +186,23 @@ pub fn from(comptime spec: type) type {
         _ = @as(ColorFormat, spec.color_format);
         // Verify meta.id
         _ = @as([]const u8, spec.meta.id);
+    }
+
+    // Read render_mode (default: partial)
+    const mode: RenderMode = if (@hasDecl(spec, "render_mode")) spec.render_mode else .partial;
+
+    // Compute buf_lines based on render mode
+    const computed_buf_lines: u16 = switch (mode) {
+        .partial => if (@hasDecl(spec, "buf_lines")) spec.buf_lines else 10,
+        .full => spec.height,
+        .direct => 0, // not used — buffer comes from driver
+    };
+
+    // For direct mode, verify Driver has getFramebuffer
+    if (mode == .direct) {
+        comptime {
+            _ = @as(*const fn (*spec.Driver) [*]u8, &spec.Driver.getFramebuffer);
+        }
     }
 
     const Driver = spec.Driver;
@@ -151,6 +231,15 @@ pub fn from(comptime spec: type) type {
 
         /// Bytes per pixel
         pub const bpp: u8 = bytesPerPixel(spec.color_format);
+
+        /// Render mode — determines how UI framework manages draw buffers
+        pub const render_mode: RenderMode = mode;
+
+        /// Draw buffer height in lines (comptime).
+        /// - partial: configured via spec.buf_lines (default 10)
+        /// - full: equals height (full frame)
+        /// - direct: 0 (buffer from driver)
+        pub const buf_lines: u16 = computed_buf_lines;
 
         /// The underlying driver instance
         driver: *Driver,
@@ -198,7 +287,7 @@ pub fn from(comptime spec: type) type {
 // Tests
 // ============================================================================
 
-test "Display with mock driver" {
+test "Display with mock driver — default partial mode" {
     const MockDriver = struct {
         flush_count: u32 = 0,
         last_area: ?Area = null,
@@ -220,6 +309,7 @@ test "Display with mock driver" {
         pub const height: u16 = 240;
         pub const color_format: ColorFormat = .rgb565;
         pub const meta = .{ .id = "display.test" };
+        // No render_mode → defaults to .partial with buf_lines=10
     };
 
     const TestDisplay = from(display_spec);
@@ -236,6 +326,10 @@ test "Display with mock driver" {
     try std.testing.expectEqual(@as(u32, 320 * 240 * 2), TestDisplay.framebufferSize());
     try std.testing.expectEqualStrings("display.test", TestDisplay.meta.id);
 
+    // Verify render mode defaults
+    try std.testing.expectEqual(RenderMode.partial, TestDisplay.render_mode);
+    try std.testing.expectEqual(@as(u16, 10), TestDisplay.buf_lines);
+
     // Test flush
     const area = Area{ .x1 = 0, .y1 = 0, .x2 = 319, .y2 = 0 };
     var buf: [320 * 2]u8 = undefined;
@@ -247,6 +341,69 @@ test "Display with mock driver" {
     // Test backlight
     display.setBacklight(200);
     try std.testing.expectEqual(@as(u8, 200), driver.backlight);
+}
+
+test "Display partial mode with custom buf_lines" {
+    const MockDriver = struct {
+        pub fn flush(_: *@This(), _: Area, _: [*]const u8) void {}
+    };
+
+    const spec = struct {
+        pub const Driver = MockDriver;
+        pub const width: u16 = 240;
+        pub const height: u16 = 240;
+        pub const color_format: ColorFormat = .rgb565;
+        pub const render_mode: RenderMode = .partial;
+        pub const buf_lines: u16 = 20;
+        pub const meta = .{ .id = "display.spi" };
+    };
+
+    const Disp = from(spec);
+    try std.testing.expectEqual(RenderMode.partial, Disp.render_mode);
+    try std.testing.expectEqual(@as(u16, 20), Disp.buf_lines);
+}
+
+test "Display full mode — buf_lines equals height" {
+    const MockDriver = struct {
+        pub fn flush(_: *@This(), _: Area, _: [*]const u8) void {}
+    };
+
+    const spec = struct {
+        pub const Driver = MockDriver;
+        pub const width: u16 = 240;
+        pub const height: u16 = 240;
+        pub const color_format: ColorFormat = .rgb565;
+        pub const render_mode: RenderMode = .full;
+        pub const meta = .{ .id = "display.sim" };
+    };
+
+    const Disp = from(spec);
+    try std.testing.expectEqual(RenderMode.full, Disp.render_mode);
+    try std.testing.expectEqual(@as(u16, 240), Disp.buf_lines);
+}
+
+test "Display direct mode — requires getFramebuffer" {
+    const RgbDriver = struct {
+        var fb: [480 * 272 * 2]u8 = undefined;
+
+        pub fn flush(_: *@This(), _: Area, _: [*]const u8) void {}
+        pub fn getFramebuffer(_: *@This()) [*]u8 {
+            return &fb;
+        }
+    };
+
+    const spec = struct {
+        pub const Driver = RgbDriver;
+        pub const width: u16 = 480;
+        pub const height: u16 = 272;
+        pub const color_format: ColorFormat = .rgb565;
+        pub const render_mode: RenderMode = .direct;
+        pub const meta = .{ .id = "display.rgb" };
+    };
+
+    const Disp = from(spec);
+    try std.testing.expectEqual(RenderMode.direct, Disp.render_mode);
+    try std.testing.expectEqual(@as(u16, 0), Disp.buf_lines);
 }
 
 test "Area calculations" {
