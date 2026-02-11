@@ -77,12 +77,13 @@ pub const AdcReader = struct {
 pub const button_group_spec = struct {
     pub const Driver = AdcReader;
     /// Calibrated ranges on ADC14 (P12), BK7258 V3.2 EVB
-    /// Measured values: K3=1477, K4=2903, K5=4438, idle=7652
+    /// K3=WAKEUP (not ADC). K4/K5/K6 are ADC buttons.
+    /// Measured: K4=1477, K5=2903, K6=4438, idle=7652
     pub const ranges = &[_]@import("hal").button_group.Range{
-        .{ .id = 0, .min = 1200, .max = 1800 },  // K3 = Do  (~1477)
-        .{ .id = 1, .min = 2500, .max = 3300 },  // K4 = Re  (~2903)
-        .{ .id = 2, .min = 4000, .max = 4900 },  // K5 = Mi  (~4438)
-        .{ .id = 3, .min = 5500, .max = 6500 },  // K6 = Fa  (estimated ~6000)
+        .{ .id = 0, .min = 1200, .max = 2200 },  // K4 = Do  (~1477)
+        .{ .id = 1, .min = 2400, .max = 3500 },  // K5 = Re  (~2903)
+        .{ .id = 2, .min = 3800, .max = 5000 },  // K6 = Mi  (~4438)
+        .{ .id = 3, .min = 5500, .max = 6800 },  // (spare, if another key exists)
     };
     pub const ref_value: u16 = 7650;
     pub const ref_tolerance: u16 = 500;

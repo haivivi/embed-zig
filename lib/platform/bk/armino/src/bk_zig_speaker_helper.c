@@ -89,24 +89,8 @@ int bk_zig_speaker_init(unsigned int sample_rate, unsigned char channels,
 
     BK_LOGI(TAG, "speaker pipeline running\r\n");
 
-    /* Step 7: Quick C beep (500Hz square wave, 200ms) */
-    {
-        BK_LOGI(TAG, "C beep...\r\n");
-        short buf[160];
-        int half = sample_rate / 500 / 2; /* half period of 500Hz */
-        if (half < 1) half = 1;
-        int frames = sample_rate * 200 / 1000 / 160;
-        for (int f = 0; f < frames; f++) {
-            for (int i = 0; i < 160; i++) {
-                buf[i] = ((i / half) % 2) ? 12000 : -12000;
-            }
-            raw_stream_write(s_raw_write, (char *)buf, sizeof(buf));
-        }
-        memset(buf, 0, sizeof(buf));
-        for (int f = 0; f < 5; f++)
-            raw_stream_write(s_raw_write, (char *)buf, sizeof(buf));
-        BK_LOGI(TAG, "C beep done\r\n");
-    }
+    /* PA needs a moment to stabilize after pipeline start */
+    rtos_delay_milliseconds(100);
 
     return 0;
 }

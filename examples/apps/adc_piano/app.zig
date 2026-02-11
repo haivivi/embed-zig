@@ -23,23 +23,41 @@ const NOTE_FA: u32 = 349; // F4
 const SAMPLE_RATE = platform.Hardware.sample_rate;
 
 // Sine wave amplitude
-const SINE_AMPLITUDE: f32 = 12000.0;
+const AMPLITUDE: i16 = 12000;
 
-/// Generate a sine wave tone at specified frequency
-fn generateSineWave(buffer: []i16, frequency: u32, phase: *f32) void {
+// 256-entry sine lookup table (Q15 format: -32767 to +32767)
+const sine_table = blk: {
+    var table: [256]i16 = undefined;
+    for (0..256) |i| {
+        // Precompute at comptime (comptime @sin works fine)
+        const angle = @as(f64, @floatFromInt(i)) * 2.0 * std.math.pi / 256.0;
+        const val = @sin(angle);
+        table[i] = @intFromFloat(val * 32767.0);
+    }
+    break :blk table;
+};
+
+/// Fast sine using lookup table. phase is 0..65535 (maps to 0..2pi)
+fn fastSin(phase16: u16) i16 {
+    const idx: u8 = @truncate(phase16 >> 8); // top 8 bits = table index
+    return sine_table[idx];
+}
+
+/// Generate a sine wave tone using integer-only math (no @sin at runtime)
+fn generateSineWave(buffer: []i16, frequency: u32, phase: *u32) void {
     if (frequency == 0) {
         @memset(buffer, 0);
         return;
     }
 
-    const phase_increment = @as(f32, @floatFromInt(frequency)) * 2.0 * std.math.pi / @as(f32, @floatFromInt(SAMPLE_RATE));
+    // Phase increment in 16.16 fixed point: freq * 65536 / sample_rate
+    const phase_inc: u32 = frequency * 65536 / SAMPLE_RATE;
 
     for (buffer) |*sample| {
-        sample.* = @intFromFloat(@sin(phase.*) * SINE_AMPLITUDE);
-        phase.* += phase_increment;
-        if (phase.* >= 2.0 * std.math.pi) {
-            phase.* -= 2.0 * std.math.pi;
-        }
+        const sin_val = fastSin(@truncate(phase.* >> 0));
+        // Scale: sin_val is -32767..32767, scale to desired amplitude
+        sample.* = @intCast(@divTrunc(@as(i32, sin_val) * @as(i32, AMPLITUDE), 32767));
+        phase.* +%= phase_inc;
     }
 }
 
@@ -62,7 +80,7 @@ fn noteName(id: platform.ButtonId) []const u8 {
 }
 
 /// Play a fixed-duration note (blocking)
-fn playNote(board: *Board, buffer: []i16, freq: u32, duration_ms: u32, phase: *f32) void {
+fn playNote(board: *Board, buffer: []i16, freq: u32, duration_ms: u32, phase: *u32) void {
     phase.* = 0;
     const duration_samples = SAMPLE_RATE * duration_ms / 1000;
     var played: u32 = 0;
@@ -110,7 +128,7 @@ pub fn run(_: anytype) void {
     log.info("Playing startup melody: Do Re Mi Fa...", .{});
 
     var buffer: [160]i16 = undefined;
-    var phase: f32 = 0;
+    var phase: u32 = 0;
 
     // Startup melody: Do Re Mi Fa
     const melody = [_]u32{ NOTE_DO, NOTE_RE, NOTE_MI, NOTE_FA };
