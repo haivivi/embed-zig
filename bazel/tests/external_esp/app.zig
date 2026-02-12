@@ -17,7 +17,7 @@ const opus = @import("opus");
 // potentially the @cImport resolution order.
 const Channel = @import("async/channel").Channel;
 const WaitGroup = @import("async/waitgroup").WaitGroup;
-const CancellationToken = @import("async/cancellation").CancellationToken;
+const CancellationToken = @import("cancellation").CancellationToken;
 
 const heap = idf.heap;
 const log = std.log.scoped(.opus_test);

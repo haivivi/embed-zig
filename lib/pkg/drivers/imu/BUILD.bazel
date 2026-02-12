@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 # No test: qmi8658.zig has pre-existing API mismatch in test code
 zig_package(
     name = "imu",
+    module_name = "imu_drivers",
     deps = [
         "//lib/trait",
         "//lib/pkg/math",

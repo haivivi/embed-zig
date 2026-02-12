@@ -16,9 +16,9 @@ const std = @import("std");
 const esp = @import("esp");
 const bluetooth = @import("bluetooth");
 const x_proto = @import("x_proto");
-const channel = @import("async/channel");
-const cancellation = @import("async/cancellation");
-const waitgroup = @import("async/waitgroup");
+const channel = @import("channel");
+const cancellation = @import("cancellation");
+const waitgroup = @import("waitgroup");
 
 const idf = esp.idf;
 const heap = idf.heap;

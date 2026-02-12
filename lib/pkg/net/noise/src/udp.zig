@@ -35,8 +35,8 @@ const KcpMux = kcp_mod.KcpMux;
 const KcpStream = kcp_mod.KcpStream;
 
 // TODO: Import async primitives from lib/pkg/async
-const Channel = @import("async/channel").Channel;
-const Signal = @import("async/channel").Signal; // Signal is in channel package
+const Channel = @import("channel").Channel;
+const Signal = @import("channel").Signal; // Signal is in channel package
 const async_mod = struct {
     pub const KqueueIO = @import("trait").io.KqueueIO;
     pub const EpollIO = @import("trait").io.EpollIO;

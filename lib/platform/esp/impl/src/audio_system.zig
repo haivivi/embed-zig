@@ -33,7 +33,12 @@
 
 const std = @import("std");
 const idf = @import("idf");
-const drivers = @import("drivers");
+const audio_drivers = @import("audio_drivers");
+const drivers = struct {
+    pub const Es8311 = audio_drivers.es8311.Es8311;
+    pub const Es7210 = audio_drivers.es7210.Es7210;
+    pub const es7210 = audio_drivers.es7210;
+};
 
 const log = std.log.scoped(.audio_system);
 

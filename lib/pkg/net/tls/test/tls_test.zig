@@ -4,7 +4,7 @@
 //! Requires the Go test server to be running.
 
 const std = @import("std");
-const tls = @import("net/tls");
+const tls = @import("tls");
 const crypto = @import("crypto");
 
 // Standard library TCP socket wrapper

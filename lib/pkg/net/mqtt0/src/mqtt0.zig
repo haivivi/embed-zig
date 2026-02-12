@@ -7,7 +7,7 @@
 //! ## Client Example
 //!
 //! ```zig
-//! const mqtt0 = @import("net/mqtt0");
+//! const mqtt0 = @import("mqtt0");
 //!
 //! var mux = try mqtt0.Mux.init(allocator);
 //! defer mux.deinit();

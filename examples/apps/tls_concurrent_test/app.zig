@@ -17,8 +17,8 @@
 
 const std = @import("std");
 const trait = @import("trait");
-const tls = @import("net/tls");
-const dns = @import("net/dns");
+const tls = @import("tls");
+const dns = @import("dns");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

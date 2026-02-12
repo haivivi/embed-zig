@@ -213,7 +213,7 @@ pub fn main() !void {
 
     print("\n--- Test 3: TLS Library Test ---\n", .{});
     {
-        const tls = @import("net/tls");
+        const tls = @import("tls");
         const TlsClient = tls.Client(Socket, crypto_suite, std_impl.runtime);
         const allocator = std.heap.page_allocator;
 

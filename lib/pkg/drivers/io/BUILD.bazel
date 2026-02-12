@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "io",
+    module_name = "io_drivers",
     deps = [
         "//lib/trait",
     ],

@@ -3,7 +3,7 @@
 //! Supports UDP, TCP, and DNS over HTTPS (DoH, RFC 8484).
 //!
 //! Example:
-//!   const dns = @import("net/dns");
+//!   const dns = @import("dns");
 //!   const crypto = @import("crypto");
 //!
 //!   // Create resolver with platform socket (UDP/TCP only)
@@ -28,7 +28,7 @@
 const std = @import("std");
 
 const trait = @import("trait");
-const tls = @import("net/tls");
+const tls = @import("tls");
 
 pub const Ipv4Address = [4]u8;
 

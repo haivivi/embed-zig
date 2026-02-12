@@ -6,7 +6,7 @@
 //! For cross-language tests (Go ↔ Zig), use the shell test scripts.
 
 const std = @import("std");
-const mqtt0 = @import("net/mqtt0");
+const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
 /// Runtime for host tests — wraps std.Thread.Mutex for trait.sync compliance.

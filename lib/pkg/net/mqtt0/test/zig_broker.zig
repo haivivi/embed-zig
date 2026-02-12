@@ -7,7 +7,7 @@
 //!   zig build run-broker -- --port 18833
 
 const std = @import("std");
-const mqtt0 = @import("net/mqtt0");
+const mqtt0 = @import("mqtt0");
 const posix = std.posix;
 
 const TestRt = struct {

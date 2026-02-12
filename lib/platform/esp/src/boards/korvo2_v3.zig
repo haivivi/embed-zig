@@ -15,7 +15,13 @@
 const std = @import("std");
 const idf = @import("idf");
 const hal = @import("hal");
-const drivers = @import("drivers");
+const audio_drivers = @import("audio_drivers");
+const io_drivers = @import("io_drivers");
+const drivers = struct {
+    pub const Es8311 = audio_drivers.es8311.Es8311;
+    pub const Tca9554 = io_drivers.tca9554.Tca9554;
+    pub const Tca9554Pin = io_drivers.tca9554.Pin;
+};
 
 // ============================================================================
 // Thread-safe Queue (for HAL event queue)

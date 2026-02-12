@@ -19,8 +19,8 @@
 const std = @import("std");
 
 const trait = @import("trait");
-const tls = @import("net/tls");
-const dns = @import("net/dns");
+const tls = @import("tls");
+const dns = @import("dns");
 
 const stream_mod = @import("stream.zig");
 

@@ -9,7 +9,7 @@
 //! - High-entropy nonce support (use generateNonce with RNG)
 //!
 //! Example (basic):
-//!   const ntp = @import("net/ntp");
+//!   const ntp = @import("ntp");
 //!
 //!   const Client = ntp.Client(Socket);
 //!   var client = Client{ .server = .{ 162, 159, 200, 1 } }; // time.cloudflare.com

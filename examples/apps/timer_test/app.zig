@@ -6,7 +6,7 @@
 const std = @import("std");
 const hal = @import("hal");
 const esp = @import("esp");
-const timer_pkg = @import("async/timer");
+const timer_pkg = @import("timer");
 
 const idf = esp.idf;
 const EspRt = idf.runtime;

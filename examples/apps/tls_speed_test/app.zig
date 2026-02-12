@@ -17,7 +17,7 @@ const log = Board.log;
 
 const esp = @import("esp");
 const idf = esp.idf;
-const tls = @import("net/tls");
+const tls = @import("tls");
 
 /// PSRAM allocator for TLS client
 const allocator = idf.heap.psram;

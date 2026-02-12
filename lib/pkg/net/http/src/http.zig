@@ -5,7 +5,7 @@
 //! ## Full Featured (HTTP + HTTPS + DNS) - Recommended
 //!
 //! ```zig
-//! const http = @import("net/http");
+//! const http = @import("http");
 //! const crypto = @import("crypto");
 //! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!

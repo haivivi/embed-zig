@@ -4,7 +4,7 @@
 //! Run: cd examples/apps/timer_test/native && zig build run
 
 const std = @import("std");
-const timer_pkg = @import("async/timer");
+const timer_pkg = @import("timer");
 
 const StdRt = @import("runtime");
 const Timer = timer_pkg.TimerService(StdRt);

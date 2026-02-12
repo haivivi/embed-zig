@@ -10,8 +10,8 @@
 const std = @import("std");
 const esp = @import("esp");
 const bluetooth = @import("bluetooth");
-const cancellation = @import("async/cancellation");
-const waitgroup = @import("async/waitgroup");
+const cancellation = @import("cancellation");
+const waitgroup = @import("waitgroup");
 
 const idf = esp.idf;
 const heap = idf.heap;

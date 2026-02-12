@@ -38,6 +38,20 @@ pub const idf = @import("idf");
 /// trait + hal implementations
 pub const impl = @import("impl");
 
+/// Hardware drivers (audio codecs, IMU, IO expanders)
+pub const drivers = struct {
+    pub const audio = @import("audio_drivers");
+    pub const imu = @import("imu_drivers");
+    pub const io = @import("io_drivers");
+    
+    // Re-export common types for convenience
+    pub const Es7210 = audio.es7210.Es7210;
+    pub const Es8311 = audio.es8311.Es8311;
+    pub const Qmi8658 = imu.qmi8658.Qmi8658;
+    pub const Tca9554 = io.tca9554.Tca9554;
+    pub const Tca9554Pin = io.tca9554.Pin;
+};
+
 /// Board hardware definitions
 pub const boards = struct {
     pub const korvo2_v3 = @import("boards/korvo2_v3.zig");

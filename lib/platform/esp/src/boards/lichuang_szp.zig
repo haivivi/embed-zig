@@ -20,7 +20,14 @@ const std = @import("std");
 const idf = @import("idf");
 const impl = @import("impl");
 const hal = @import("hal");
-const drivers = @import("drivers");
+const audio_drivers = @import("audio_drivers");
+const io_drivers = @import("io_drivers");
+const imu_drivers = @import("imu_drivers");
+const drivers = struct {
+    pub const Es7210 = audio_drivers.es7210.Es7210;
+    pub const Es8311 = audio_drivers.es8311.Es8311;
+    pub const Qmi8658 = imu_drivers.qmi8658.Qmi8658;
+};
 
 // ============================================================================
 // Thread-safe Queue (for HAL event queue)

@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "audio",
+    module_name = "audio_drivers",
     deps = [
         "//lib/trait",
     ],

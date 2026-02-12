@@ -29,7 +29,7 @@
 //! ## Usage
 //!
 //! ```zig
-//! const tls = @import("net/tls");
+//! const tls = @import("tls");
 //! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!
 //! // With platform socket, crypto, and runtime

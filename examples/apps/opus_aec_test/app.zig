@@ -10,9 +10,9 @@
 const std = @import("std");
 const idf = @import("idf");
 const opus = @import("opus");
-const channel_mod = @import("async/channel");
-const waitgroup = @import("async/waitgroup");
-const cancellation = @import("async/cancellation");
+const channel_mod = @import("channel");
+const waitgroup = @import("waitgroup");
+const cancellation = @import("cancellation");
 
 const heap = idf.heap;
 const EspRt = idf.runtime;
