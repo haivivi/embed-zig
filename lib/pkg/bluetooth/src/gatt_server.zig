@@ -533,6 +533,7 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
                     return self.callHandlerSync(binding, conn_handle, attr_handle, op, data, buf);
                 };
 
+                const copy_len = @min(data.len, att.MAX_PDU_LEN);
                 ctx.* = .{
                     .server = self,
                     .binding = binding,
@@ -540,10 +541,10 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
                     .attr_handle = attr_handle,
                     .op = op,
                     .data_buf = undefined,
-                    .data_len = data.len,
+                    .data_len = copy_len,
                 };
-                if (data.len > 0) {
-                    @memcpy(ctx.data_buf[0..data.len], data);
+                if (copy_len > 0) {
+                    @memcpy(ctx.data_buf[0..copy_len], data[0..copy_len]);
                 }
 
                 self.wg.?.go("gatt-handler", handlerTaskEntry, @ptrCast(ctx), .{
@@ -668,6 +669,9 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
             // Free the task context
             allocator.destroy(ctx);
 
+            // write_command: no response per ATT spec (Core Spec Vol 3 Part F 3.4.5.3)
+            if (op == .write_command) return;
+
             // Send response back via callback
             if (writer.has_response and resp_len > 0) {
                 send_fn(send_ctx, conn_handle, resp_buf[0..resp_len]);
@@ -682,7 +686,7 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
                         const default_resp = att.encodeWriteResponse(&resp_buf);
                         send_fn(send_ctx, conn_handle, default_resp);
                     },
-                    .write_command => {}, // no response per spec
+                    .write_command => unreachable, // handled above
                 }
             }
         }
