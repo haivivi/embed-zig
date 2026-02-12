@@ -123,7 +123,7 @@ pub fn run(_: anytype) void {
     };
     defer board.pa_switch.off() catch {};
 
-    board.speaker.setVolume(200) catch {};
+    board.speaker.setVolume(0x3F) catch {}; // BK: 0x00-0x3F, ESP: 0-255
 
     log.info("Playing startup melody: Do Re Mi Fa...", .{});
 
