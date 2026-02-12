@@ -18,12 +18,12 @@ pub const Options = struct {
 ///
 /// Usage:
 /// ```zig
-/// const TlsStream = tls.Stream(Socket, Crypto, allocator);
+/// const TlsStream = tls.Stream(Socket, Crypto, Rt, allocator);
 /// const HttpClient = http.ClientWithTls(Socket, TlsStream);
 /// ```
-pub fn Stream(comptime Socket: type, comptime Crypto: type, comptime allocator: std.mem.Allocator) type {
+pub fn Stream(comptime Socket: type, comptime Crypto: type, comptime Rt: type, comptime allocator: std.mem.Allocator) type {
     return struct {
-        client: tls_client.Client(Socket, Crypto),
+        client: tls_client.Client(Socket, Crypto, Rt),
         socket: Socket,
         hostname: []const u8,
 
@@ -44,7 +44,7 @@ pub fn Stream(comptime Socket: type, comptime Crypto: type, comptime allocator: 
                 .timeout_ms = options.timeout_ms,
             };
 
-            self.client = try tls_client.Client(Socket, Crypto).init(&self.socket, config);
+            self.client = try tls_client.Client(Socket, Crypto, Rt).init(&self.socket, config);
             return self;
         }
 
@@ -77,9 +77,9 @@ pub fn Stream(comptime Socket: type, comptime Crypto: type, comptime allocator: 
 /// Create a TLS Stream with runtime allocator
 ///
 /// For embedded systems where allocator needs to be configurable at runtime.
-pub fn StreamWithAllocator(comptime Socket: type, comptime Crypto: type) type {
+pub fn StreamWithAllocator(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
     return struct {
-        client: ?tls_client.Client(Socket, Crypto),
+        client: ?tls_client.Client(Socket, Crypto, Rt),
         socket: *Socket,
         allocator: std.mem.Allocator,
         hostname: []const u8,
@@ -102,7 +102,7 @@ pub fn StreamWithAllocator(comptime Socket: type, comptime Crypto: type) type {
                 .timeout_ms = options.timeout_ms,
             };
 
-            self.client = try tls_client.Client(Socket, Crypto).init(socket, config);
+            self.client = try tls_client.Client(Socket, Crypto, Rt).init(socket, config);
             return self;
         }
 
