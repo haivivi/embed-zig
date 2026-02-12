@@ -122,6 +122,10 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
             lv_area: ?*const c.lv_area_t,
             px_map: ?*u8,
         ) callconv(.c) void {
+            // LVGL requires lv_display_flush_ready() on EVERY callback invocation.
+            // Missing it causes LVGL to stall in "flushing" state permanently.
+            defer if (lv_disp) |d| c.lv_display_flush_ready(d);
+
             if (lv_area == null or px_map == null) return;
             const area = lv_area.?;
             hal_display.flush(.{
@@ -130,7 +134,6 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
                 .x2 = @intCast(area.x2),
                 .y2 = @intCast(area.y2),
             }, @ptrCast(px_map.?));
-            if (lv_disp) |d| c.lv_display_flush_ready(d);
         }
 
         // Static draw buffer — sized by render_mode + buf_lines (comptime).
