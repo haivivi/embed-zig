@@ -7,13 +7,9 @@
 //! Usage examples:
 //!
 //!   // Full featured: HTTP + HTTPS + DNS (recommended)
-//!   const Client = http.HttpClient(Socket, Crypto);
+//!   const Client = http.HttpClient(Socket, Crypto, Rt);
 //!   var client = Client{ .allocator = allocator };
 //!   const resp = try client.get("https://example.com/api", &buffer);
-//!
-//!   // With default crypto (uses crypto.Suite)
-//!   const Client = http.DefaultHttpClient(Socket);
-//!   var client = Client{ .allocator = allocator };
 //!
 //!   // HTTP only (IP addresses only, no TLS, no DNS)
 //!   const Client = http.Client(Socket);
@@ -114,18 +110,14 @@ pub const ClientError = error{
 ///
 /// - Socket: Platform socket type (e.g., idf.net.socket.Socket)
 /// - Crypto: Crypto suite (must include Rng). Use crypto.Suite for pure Zig.
+/// - Rt: Runtime providing Mutex (for TLS thread safety). Use std_impl.runtime or esp.idf.runtime.
 ///
 /// Example:
-///   const Client = http.HttpClient(idf.net.socket.Socket, esp.impl.crypto.Suite);
+///   const Client = http.HttpClient(idf.net.socket.Socket, esp.impl.crypto.Suite, Rt);
 ///   var client = Client{ .allocator = idf.heap.psram };
 ///   const resp = try client.get("https://example.com/api", &buffer);
-pub fn HttpClient(comptime Socket: type, comptime Crypto: type) type {
-    return HttpClientImpl(trait.socket.from(Socket), Crypto);
-}
-
-/// HTTP Client with default pure Zig crypto (crypto.Suite)
-pub fn DefaultHttpClient(comptime Socket: type) type {
-    return HttpClientImpl(trait.socket.from(Socket), tls.DefaultCrypto);
+pub fn HttpClient(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
+    return HttpClientImpl(trait.socket.from(Socket), Crypto, Rt);
 }
 
 /// HTTP Client - HTTP only, no TLS, no DNS resolver
@@ -138,15 +130,15 @@ pub fn Client(comptime Socket: type) type {
 // HttpClient Implementation (Full-featured with built-in TLS and DNS)
 // =============================================================================
 
-fn HttpClientImpl(comptime Socket: type, comptime Crypto: type) type {
+fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
     // Built-in TLS and DNS types
-    const TlsClient = tls.Client(Socket, Crypto);
+    const TlsClient = tls.Client(Socket, Crypto, Rt);
     const DnsResolver = dns.Resolver(Socket);
     // Get CaStore from Crypto if available
     const CaStore = if (@hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
         Crypto.x509.CaStore
     else
-        tls.DefaultCrypto.x509.CaStore;
+        void;
 
     return struct {
         /// Memory allocator (required for TLS buffers)

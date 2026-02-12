@@ -7,9 +7,10 @@
 //! ```zig
 //! const http = @import("http");
 //! const crypto = @import("crypto");
+//! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!
 //! // Create full-featured client with built-in TLS and DNS
-//! const Client = http.HttpClient(Socket, crypto.Suite);
+//! const Client = http.HttpClient(Socket, crypto.Suite, Rt);
 //! var client = Client{
 //!     .allocator = allocator,
 //!     .dns_server = .{ 223, 5, 5, 5 },  // AliDNS
@@ -18,9 +19,6 @@
 //!
 //! var buffer: [8192]u8 = undefined;
 //! const resp = try client.get("https://example.com/api", &buffer);
-//!
-//! // Or use DefaultHttpClient with default crypto.Suite:
-//! const Client = http.DefaultHttpClient(Socket);
 //! ```
 //!
 //! ## HTTP Only (IP addresses only, no TLS, no DNS)
@@ -37,10 +35,8 @@ pub const client = @import("client.zig");
 ///
 /// - Socket: Platform socket type
 /// - Crypto: Crypto suite (must include Rng)
+/// - Rt: Runtime providing Mutex (for TLS thread safety)
 pub const HttpClient = client.HttpClient;
-
-/// HTTP Client with default crypto (crypto.Suite)
-pub const DefaultHttpClient = client.DefaultHttpClient;
 
 /// HTTP-only Client (no TLS, no DNS resolver)
 /// Use this for simple HTTP requests to IP addresses.
