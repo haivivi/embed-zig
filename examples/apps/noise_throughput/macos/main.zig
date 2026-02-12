@@ -82,8 +82,6 @@ var g_loss_bilateral: bool = false;
 var g_pkts_sent: u64 = 0;
 var g_pkts_dropped_send: u64 = 0;
 var g_pkts_dropped_recv: u64 = 0;
-var g_mux: *MuxType = undefined;
-var g_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 fn shouldDrop() bool {
     if (g_loss_pct == 0) return false;
@@ -229,7 +227,6 @@ pub fn main() !void {
     g_dest_len = dest_len;
     g_send_cs = &send_cs;
     g_recv_cs = &recv_cs;
-    g_stop.store(false, .release);
 
     // Short recv timeout for recvLoop
     const short_timeout = posix.timeval{ .sec = 0, .usec = 10_000 };
@@ -238,7 +235,6 @@ pub fn main() !void {
     // Create Mux with auto mode
     var mux = try MuxType.init(allocator, .{}, true, muxOutput, onNewStream, null);
     defer mux.deinit();
-    g_mux = mux;
 
     // Start auto mode
     try mux.start(muxRecv, null);

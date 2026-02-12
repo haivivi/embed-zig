@@ -437,10 +437,11 @@ pub fn Mux(comptime Rt: type) type {
         //  AND from updateLoop thread via kcp.update flush)
         output_mutex: Rt.Mutex,
 
-        // Auto mode: recv callback + stop flag
+        // Auto mode: recv callback + stop flag + thread tracking
         recv_fn: ?RecvFn,
         recv_user_data: ?*anyopaque,
         stop_flag: std.atomic.Value(bool),
+        threads_running: std.atomic.Value(u32),
 
         const AcceptQueue = struct {
             buf: [16]?*StreamType = [_]?*StreamType{null} ** 16,
@@ -497,6 +498,7 @@ pub fn Mux(comptime Rt: type) type {
                 .recv_fn = null,
                 .recv_user_data = null,
                 .stop_flag = std.atomic.Value(bool).init(false),
+                .threads_running = std.atomic.Value(u32).init(0),
             };
 
             return self;
@@ -513,15 +515,20 @@ pub fn Mux(comptime Rt: type) type {
             self.recv_fn = recv_fn;
             self.recv_user_data = recv_user_data;
             self.stop_flag.store(false, .release);
+            self.threads_running.store(2, .release);
             try Rt.spawn("mux_recv", Self.recvLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
             try Rt.spawn("mux_update", Self.updateLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
         }
 
-        /// Stop auto mode: signal threads to exit and wait for them to drain.
+        /// Stop auto mode: signal threads to exit and wait for them to finish.
         pub fn stop(self: *Self) void {
             self.stop_flag.store(true, .release);
-            // Give threads time to notice the stop flag and exit
-            Rt.sleepMs(50);
+            // Spin-wait for threads to exit (up to 2s)
+            var wait_ms: u32 = 0;
+            while (self.threads_running.load(.acquire) > 0 and wait_ms < 2000) {
+                Rt.sleepMs(1);
+                wait_ms += 1;
+            }
         }
 
         /// Entry point for recvLoop (matches Rt.spawn signature).
@@ -538,6 +545,7 @@ pub fn Mux(comptime Rt: type) type {
 
         /// Receive loop: recv from transport → input to Mux.
         fn recvLoop(self: *Self) void {
+            defer _ = self.threads_running.fetchSub(1, .release);
             const recv_fn = self.recv_fn orelse return;
             var buf: [2048]u8 = undefined;
 
@@ -551,6 +559,7 @@ pub fn Mux(comptime Rt: type) type {
 
         /// Update loop: periodically flush KCP.
         fn updateLoop(self: *Self) void {
+            defer _ = self.threads_running.fetchSub(1, .release);
             while (!self.stop_flag.load(.acquire)) {
                 self.update();
                 Rt.sleepMs(self.config.update_interval_ms);
