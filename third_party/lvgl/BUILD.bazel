@@ -1,0 +1,22 @@
+load("//bazel/zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "lvgl",
+    main = "lvgl.zig",
+    srcs = ["lvgl.zig"],
+    c_srcs = [
+        "@lvgl//:srcs",
+        "@lvgl//:headers",
+        "lv_conf.h",
+        "img_helper.h",
+        "img_helper.c",
+    ],
+    c_includes = [""],  # -I third_party/lvgl/ for lv_conf.h
+    c_flags = ["-DLV_CONF_INCLUDE_SIMPLE"],
+    link_libc = True,
+    module_name = "lvgl",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

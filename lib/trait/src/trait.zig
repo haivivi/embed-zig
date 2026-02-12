@@ -37,6 +37,7 @@
 // Interface contracts
 pub const socket = @import("socket.zig");
 pub const i2c = @import("i2c.zig");
+pub const spi = @import("spi.zig");
 pub const time = @import("time.zig");
 pub const log = @import("log.zig");
 pub const rng = @import("rng.zig");
@@ -61,6 +62,7 @@ pub const StdRng = rng.StdRng;
 test {
     _ = socket;
     _ = i2c;
+    _ = spi;
     _ = time;
     _ = log;
     _ = rng;

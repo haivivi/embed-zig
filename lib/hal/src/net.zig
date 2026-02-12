@@ -446,12 +446,14 @@ pub fn from(comptime spec: type) type {
             }
         }
 
-        /// Get list of DHCP leases (for AP mode)
-        pub fn getDhcpLeases(self: *const Self, interface: []const u8) []const ApStaAssignedData {
+        /// Get list of DHCP leases (for AP mode).
+        /// Returns `null` if the platform does not support lease queries.
+        /// Returns empty slice if supported but no leases currently exist.
+        pub fn getDhcpLeases(self: *const Self, interface: []const u8) ?[]const ApStaAssignedData {
             if (@hasDecl(Driver, "getDhcpLeases")) {
                 return self.driver.getDhcpLeases(interface);
             }
-            return &[_]ApStaAssignedData{};
+            return null;
         }
 
         // ================================================================

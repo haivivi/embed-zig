@@ -1,8 +1,0 @@
-# Raysim platform — file copying only (compiled via zig build, not Bazel-native zig)
-
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "raysim",
-    srcs = glob(["**/*"]),
-)

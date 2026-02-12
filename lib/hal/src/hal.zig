@@ -105,6 +105,8 @@ pub const motion = @import("motion.zig");
 pub const hci = @import("hci.zig");
 /// BLE Host module (hal.ble.from, hal.ble.is)
 pub const ble = @import("ble.zig");
+// Display has moved to lib/pkg/display (platform-free package).
+// Use: const display = @import("display"); // from lib/pkg/display
 
 // ============================================================================
 // Common Types
@@ -253,6 +255,10 @@ pub const BleConnectionInfo = ble.ConnectionInfo;
 pub const BleAdvConfig = ble.AdvConfig;
 /// BLE role
 pub const BleRole = ble.Role;
+
+// Display types are now in lib/pkg/display.
+// Use: const display = @import("display");
+// display.ColorFormat, display.Area, display.RenderMode
 
 test {
     const std = @import("std");

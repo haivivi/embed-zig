@@ -114,6 +114,158 @@ audio_libs = module_extension(
 )
 
 # =============================================================================
+# LVGL UI Library
+# =============================================================================
+
+_LVGL_VERSION = "9.2.2"
+
+def _lvgl_repo_impl(ctx):
+    """Download and setup LVGL source.
+
+    Uses curl fallback for large archive (68MB) — Bazel's built-in Java
+    HTTP client hits Premature EOF on large GitHub tarballs.
+    """
+    url = "https://github.com/lvgl/lvgl/archive/refs/tags/v{}.tar.gz".format(_LVGL_VERSION)
+    sha256 = "129b4e00e06639fa79d7e8a6cab3c1ecce2445b1a246652ccd34f22e7b17ad6f"
+    archive = "lvgl.tar.gz"
+
+    # Try Bazel native download first, fall back to curl for large files
+    dl = ctx.download(
+        url = url,
+        output = archive,
+        sha256 = sha256,
+        allow_fail = True,
+    )
+    if not dl.success:
+        ctx.execute(["curl", "-sL", "-o", archive, url], timeout = 300)
+        # Verify SHA256 after curl fallback
+        res = ctx.execute(["shasum", "-a", "256", archive])
+        if res.return_code != 0 or not res.stdout.startswith(sha256):
+            fail("SHA256 mismatch for LVGL archive (curl fallback). Expected: " + sha256)
+    ctx.extract(archive, stripPrefix = "lvgl-{}".format(_LVGL_VERSION))
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+# All C source files (excluding platform-specific drivers and GPU backends)
+filegroup(
+    name = "srcs",
+    srcs = glob(["src/**/*.c"], exclude = [
+        "src/drivers/**",
+        "src/draw/nxp/**",
+        "src/draw/renesas/**",
+        "src/draw/sdl/**",
+        "src/draw/vg_lite/**",
+    ]),
+)
+
+# All headers (for include path auto-detection).
+# Exclude thorvg/rapidjson/msinttypes — its stdint.h shadows system <stdint.h>.
+filegroup(
+    name = "headers",
+    srcs = glob(["src/**/*.h", "*.h"], exclude = [
+        "src/libs/thorvg/rapidjson/msinttypes/**",
+    ]),
+)
+""")
+
+_lvgl_repo = repository_rule(
+    implementation = _lvgl_repo_impl,
+)
+
+def _lvgl_libs_impl(ctx):
+    """Module extension for LVGL library."""
+    _lvgl_repo(name = "lvgl")
+
+lvgl_libs = module_extension(
+    implementation = _lvgl_libs_impl,
+)
+
+# =============================================================================
+# FFmpeg WASM (for WebSim screen recording → mp4)
+# =============================================================================
+
+def _ffmpeg_wasm_repo_impl(ctx):
+    """Download FFmpeg WASM files for local bundling (UMD build)."""
+    # @ffmpeg/ffmpeg UMD bundle (self-contained, no ESM import chain)
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
+        output = "ffmpeg.js",
+        sha256 = "a4c09a1997ac582a735fc21e20f9913df4af6dde4ebb373f1d714a4b6e7616f1",
+    )
+    # Worker chunk loaded by the UMD bundle
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
+        output = "814.ffmpeg.js",
+        sha256 = "c4702e2f749671b2f9cf07e4738abaf4511fc0d89525ad6a93bc3c2a8ad0822a",
+    )
+    # @ffmpeg/core (WASM engine)
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
+        output = "ffmpeg-core.js",
+        sha256 = "a34873964b0f62aec516bac75e3aa9086ec3535d4d07f0269aa94ea748b6cb71",
+    )
+    ctx.download(
+        url = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
+        output = "ffmpeg-core.wasm",
+        sha256 = "2390efa7fb66e7e42dbae15427571a5ffc96b829480904c30f471f0a78967f61",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "ffmpeg_files",
+    srcs = [
+        "ffmpeg.js",
+        "814.ffmpeg.js",
+        "ffmpeg-core.js",
+        "ffmpeg-core.wasm",
+    ],
+)
+""")
+
+_ffmpeg_wasm_repo = repository_rule(
+    implementation = _ffmpeg_wasm_repo_impl,
+)
+
+def _ffmpeg_wasm_ext_impl(ctx):
+    _ffmpeg_wasm_repo(name = "ffmpeg_wasm")
+
+ffmpeg_wasm = module_extension(
+    implementation = _ffmpeg_wasm_ext_impl,
+)
+
+# =============================================================================
+# html2canvas (for WebSim DOM-to-canvas screen recording)
+# =============================================================================
+
+def _html2canvas_repo_impl(ctx):
+    """Download html2canvas UMD bundle."""
+    ctx.download(
+        url = "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
+        output = "html2canvas.min.js",
+        sha256 = "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "html2canvas",
+    srcs = ["html2canvas.min.js"],
+)
+""")
+
+_html2canvas_repo = repository_rule(
+    implementation = _html2canvas_repo_impl,
+)
+
+def _html2canvas_ext_impl(ctx):
+    _html2canvas_repo(name = "html2canvas")
+
+html2canvas = module_extension(
+    implementation = _html2canvas_ext_impl,
+)
+
+# =============================================================================
 # Zig Toolchain (with Xtensa support)
 # =============================================================================
 

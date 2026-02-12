@@ -1,3 +1,0 @@
-"""Raylib simulator Bazel rules."""
-
-exports_files(["defs.bzl"])

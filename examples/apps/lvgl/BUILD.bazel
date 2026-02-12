@@ -1,0 +1,16 @@
+load("//bazel/websim:defs.bzl", "websim_app")
+
+package(default_visibility = ["//visibility:public"])
+
+websim_app(
+    name = "sim",
+    main = "wasm_main.zig",
+    srcs = glob(["**/*.zig"]) + glob(["assets/**"]),
+    web_shell = "//lib/platform/websim:web_h106",
+    deps = [
+        "//lib/platform/websim",
+        "//lib/hal",
+        "//lib/pkg/ui",
+        "//third_party/lvgl",
+    ],
+)

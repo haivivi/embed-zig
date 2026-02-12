@@ -22,7 +22,7 @@ esp_board_build(name = "aec_test_lichuang_gocool", target = "//examples/apps/aec
 # --- async_test: esp32s3_devkit ---
 esp_board_build(name = "async_test_esp32s3_devkit", target = "//examples/apps/async_test/esp:app", board = "esp32s3_devkit")
 
-# --- gpio_button: esp32s3_devkit, korvo2_v3, lichuang_szp, lichuang_gocool (skip sim_raylib) ---
+# --- gpio_button: esp32s3_devkit, korvo2_v3, lichuang_szp, lichuang_gocool ---
 esp_board_build(name = "gpio_button_esp32s3_devkit", target = "//examples/apps/gpio_button/esp:app", board = "esp32s3_devkit")
 # esp_board_build(name = "gpio_button_korvo2_v3", target = "//examples/apps/gpio_button/esp:app", board = "korvo2_v3")  # TODO: pre-existing board.zig error
 esp_board_build(name = "gpio_button_lichuang_szp", target = "//examples/apps/gpio_button/esp:app", board = "lichuang_szp")
