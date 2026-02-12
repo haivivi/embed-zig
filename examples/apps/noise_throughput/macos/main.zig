@@ -99,12 +99,13 @@ fn shouldDrop() bool {
 /// No lock needed — stream.write no longer flushes, so all KCP output
 /// goes through updateThread exclusively. Only SYN/FIN from main.
 fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
-    var ct: [max_pkt]u8 = undefined;
-    g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
+    // Drop BEFORE encrypt to keep nonce in sync with receiver
     if (g_loss_bilateral and shouldDrop()) {
         g_pkts_dropped_send += 1;
         return;
     }
+    var ct: [max_pkt]u8 = undefined;
+    g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
     g_pkts_sent += 1;
 }
