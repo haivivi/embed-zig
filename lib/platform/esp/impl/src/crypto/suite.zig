@@ -32,6 +32,7 @@ const mbed_p256 = idf.mbed_tls.p256_helper;
 const mbed_p384 = idf.mbed_tls.p384_helper;
 const mbed_aes_gcm = idf.mbed_tls.aes_gcm_helper;
 const mbed_hkdf = idf.mbed_tls.hkdf_helper;
+const mbed_rsa = idf.mbed_tls.rsa_helper;
 
 // ============================================================================
 // Hash Functions
@@ -801,9 +802,6 @@ pub const rsa = struct {
     };
 
     pub const PKCS1v1_5Signature = struct {
-        /// RSA PKCS1v1.5 signature verification.
-        /// Not yet implemented — requires mbedTLS RSA integration.
-        /// Returns error instead of silently accepting invalid signatures.
         pub fn verify(
             comptime modulus_len: usize,
             sig: [modulus_len]u8,
@@ -811,18 +809,36 @@ pub const rsa = struct {
             pk: PublicKey,
             comptime hash_type: HashType,
         ) !void {
-            _ = sig;
-            _ = msg;
-            _ = pk;
-            _ = hash_type;
-            return error.RsaNotSupported;
+            // Hash the message
+            const hash_id: mbed_rsa.HashId = switch (hash_type) {
+                .sha256 => .sha256,
+                .sha384 => .sha384,
+                .sha512 => .sha512,
+            };
+
+            var hash_buf: [64]u8 = undefined;
+            const hash = switch (hash_type) {
+                .sha256 => blk: {
+                    Sha256.hash(msg, hash_buf[0..32], .{});
+                    break :blk hash_buf[0..32];
+                },
+                .sha384 => blk: {
+                    Sha384.hash(msg, hash_buf[0..48], .{});
+                    break :blk hash_buf[0..48];
+                },
+                .sha512 => blk: {
+                    Sha512.hash(msg, &hash_buf, .{});
+                    break :blk hash_buf[0..64];
+                },
+            };
+
+            // Verify signature using mbedTLS helper
+            mbed_rsa.pkcs1v15Verify(pk.n, pk.e, hash, &sig, hash_id) catch
+                return error.SignatureVerificationFailed;
         }
     };
 
     pub const PSSSignature = struct {
-        /// RSA-PSS signature verification.
-        /// Not yet implemented — requires mbedTLS RSA integration.
-        /// Returns error instead of silently accepting invalid signatures.
         pub fn verify(
             comptime modulus_len: usize,
             sig: [modulus_len]u8,
@@ -830,11 +846,32 @@ pub const rsa = struct {
             pk: PublicKey,
             comptime hash_type: HashType,
         ) !void {
-            _ = sig;
-            _ = msg;
-            _ = pk;
-            _ = hash_type;
-            return error.RsaNotSupported;
+            // Hash the message
+            const hash_id: mbed_rsa.HashId = switch (hash_type) {
+                .sha256 => .sha256,
+                .sha384 => .sha384,
+                .sha512 => .sha512,
+            };
+
+            var hash_buf: [64]u8 = undefined;
+            const hash = switch (hash_type) {
+                .sha256 => blk: {
+                    Sha256.hash(msg, hash_buf[0..32], .{});
+                    break :blk hash_buf[0..32];
+                },
+                .sha384 => blk: {
+                    Sha384.hash(msg, hash_buf[0..48], .{});
+                    break :blk hash_buf[0..48];
+                },
+                .sha512 => blk: {
+                    Sha512.hash(msg, &hash_buf, .{});
+                    break :blk hash_buf[0..64];
+                },
+            };
+
+            // Verify signature using mbedTLS helper
+            mbed_rsa.pssVerify(pk.n, pk.e, hash, &sig, hash_id) catch
+                return error.SignatureVerificationFailed;
         }
     };
 
