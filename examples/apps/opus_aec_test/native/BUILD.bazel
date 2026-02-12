@@ -22,11 +22,19 @@ genrule(
     ],
     outs = ["opus_test"],
     cmd = """
-        ZIG=$$(find external -name zig -type f | head -1)
+        # Find zig binary from tools
+        ZIG=""
+        for tool in $(locations @zig_toolchain//:zig_files); do
+            if [ -x "$$tool" ] && [ "$$(basename $$tool)" = "zig" ]; then
+                ZIG="$$tool"
+                break
+            fi
+        done
         if [ -z "$$ZIG" ]; then
-            echo "Error: zig binary not found in external/"
+            echo "Error: zig binary not found in toolchain"
             exit 1
         fi
+        
         WORK=$$(mktemp -d)
         trap "rm -rf $$WORK" EXIT
         for f in $(SRCS); do
