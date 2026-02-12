@@ -48,9 +48,10 @@ const DesktopRt = struct {
         return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
     }
     pub fn spawn(_: [:0]const u8, func: *const fn (?*anyopaque) void, ctx: ?*anyopaque, _: anytype) !void {
-        _ = try std.Thread.spawn(.{}, struct {
+        const t = try std.Thread.spawn(.{}, struct {
             fn run(f: *const fn (?*anyopaque) void, c: ?*anyopaque) void { f(c); }
         }.run, .{ func, ctx });
+        t.detach();
     }
     pub fn sleepMs(ms: u32) void {
         std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
@@ -228,8 +229,8 @@ pub fn main() !void {
     g_send_cs = &send_cs;
     g_recv_cs = &recv_cs;
 
-    // Short recv timeout for recvLoop
-    const short_timeout = posix.timeval{ .sec = 0, .usec = 10_000 };
+    // Short recv timeout for runLoop (~1ms to match KCP update interval)
+    const short_timeout = posix.timeval{ .sec = 0, .usec = 1_000 };
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&short_timeout));
 
     // Create Mux with auto mode

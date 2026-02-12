@@ -13,7 +13,7 @@
 //! ### Auto mode (recommended):
 //! ```
 //! var mux = Mux.init(alloc, config, true, output_fn, on_new_stream, null);
-//! mux.start(recv_fn, null);   // spawns recvLoop + updateLoop
+//! mux.start(recv_fn, null);   // spawns single runLoop thread
 //! // Just use stream.write() / stream.readBlocking()
 //! mux.stop();
 //! ```
@@ -205,6 +205,9 @@ pub fn Stream(comptime Rt: type) type {
     }
 
     /// Write data to the stream.
+    /// Data is queued to KCP's send buffer. The runLoop thread flushes
+    /// it on the next mux.update() cycle (~1ms), keeping all encrypt
+    /// calls on a single thread.
     pub fn write(self: *Self, data: []const u8) StreamError!usize {
         const current_state = self.state.load(.seq_cst);
         if (current_state == .closed or current_state == .local_close) {
@@ -219,7 +222,6 @@ pub fn Stream(comptime Rt: type) type {
             if (ret < 0) {
                 return StreamError.KcpSendFailed;
             }
-            k.flush();
             return data.len;
         }
 
@@ -505,25 +507,23 @@ pub fn Mux(comptime Rt: type) type {
         }
 
         // ================================================================
-        // Auto mode: start/stop (spawns recvLoop + updateLoop)
+        // Auto mode: start/stop (single runLoop thread)
         // ================================================================
 
-        /// Start auto mode: spawn recvLoop + updateLoop background threads.
+        /// Start auto mode: spawn a single runLoop background thread.
+        /// The runLoop handles both recv and KCP update in one loop.
         /// After start(), just use stream.write() / stream.readBlocking().
-        /// Call stop() before deinit() to cleanly shut down.
         pub fn start(self: *Self, recv_fn: RecvFn, recv_user_data: ?*anyopaque) !void {
             self.recv_fn = recv_fn;
             self.recv_user_data = recv_user_data;
             self.stop_flag.store(false, .release);
-            self.threads_running.store(2, .release);
-            try Rt.spawn("mux_recv", Self.recvLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
-            try Rt.spawn("mux_update", Self.updateLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
+            self.threads_running.store(1, .release);
+            try Rt.spawn("mux_run", Self.runLoopEntry, self, .{ .stack_size = self.config.spawn_stack_size });
         }
 
-        /// Stop auto mode: signal threads to exit and wait for them to finish.
+        /// Stop auto mode: signal the runLoop to exit and wait for it.
         pub fn stop(self: *Self) void {
             self.stop_flag.store(true, .release);
-            // Spin-wait for threads to exit (up to 2s)
             var wait_ms: u32 = 0;
             while (self.threads_running.load(.acquire) > 0 and wait_ms < 2000) {
                 Rt.sleepMs(1);
@@ -531,38 +531,27 @@ pub fn Mux(comptime Rt: type) type {
             }
         }
 
-        /// Entry point for recvLoop (matches Rt.spawn signature).
-        fn recvLoopEntry(ctx: ?*anyopaque) void {
+        /// Entry point for runLoop (matches Rt.spawn signature).
+        fn runLoopEntry(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            self.recvLoop();
+            self.runLoop();
         }
 
-        /// Entry point for updateLoop (matches Rt.spawn signature).
-        fn updateLoopEntry(ctx: ?*anyopaque) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.updateLoop();
-        }
-
-        /// Receive loop: recv from transport → input to Mux.
-        fn recvLoop(self: *Self) void {
+        /// Combined recv + update loop (single thread).
+        /// recv_fn should have a short timeout (~1ms) so update runs frequently.
+        fn runLoop(self: *Self) void {
             defer _ = self.threads_running.fetchSub(1, .release);
             const recv_fn = self.recv_fn orelse return;
             var buf: [2048]u8 = undefined;
 
             while (!self.stop_flag.load(.acquire)) {
-                const n = recv_fn(&buf, self.recv_user_data) catch continue;
+                // Recv: non-blocking or short timeout
+                const n = recv_fn(&buf, self.recv_user_data) catch 0;
                 if (n > 0) {
                     self.input(buf[0..n]) catch {};
                 }
-            }
-        }
-
-        /// Update loop: periodically flush KCP.
-        fn updateLoop(self: *Self) void {
-            defer _ = self.threads_running.fetchSub(1, .release);
-            while (!self.stop_flag.load(.acquire)) {
+                // Update: flush KCP, process retransmits
                 self.update();
-                Rt.sleepMs(self.config.update_interval_ms);
             }
         }
 
@@ -873,9 +862,10 @@ const TestRuntime = if (@import("builtin").os.tag != .freestanding) struct {
         return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
     }
     pub fn spawn(_: [:0]const u8, func: *const fn (?*anyopaque) void, ctx: ?*anyopaque, _: anytype) !void {
-        _ = try std.Thread.spawn(.{}, struct {
+        const t = try std.Thread.spawn(.{}, struct {
             fn run(f: *const fn (?*anyopaque) void, c: ?*anyopaque) void { f(c); }
         }.run, .{ func, ctx });
+        t.detach();
     }
     pub fn sleepMs(ms: u32) void {
         std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
