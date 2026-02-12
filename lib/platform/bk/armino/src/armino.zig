@@ -27,3 +27,4 @@ pub const crypto = @import("crypto.zig");
 pub const kvs = @import("kvs.zig");
 pub const adc = @import("adc.zig");
 pub const heap = @import("heap.zig");
+pub const mic = @import("mic.zig");

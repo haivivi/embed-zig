@@ -40,10 +40,16 @@ filegroup(
     srcs = ["src/bk_zig_pwm_helper.c"],
 )
 
-# Speaker helper (AP-only, needs bk_audio)
+# Speaker helper (direct DAC+DMA, no pipeline)
 filegroup(
     name = "c_helpers_speaker",
     srcs = ["src/bk_zig_speaker_helper.c"],
+)
+
+# Mic helper (direct audio ADC+DMA)
+filegroup(
+    name = "c_helpers_mic",
+    srcs = ["src/bk_zig_mic_helper.c"],
 )
 
 # Crypto helper (mbedTLS: SHA, AES-GCM, HKDF, HMAC, P256, P384, RNG)

@@ -1,5 +1,5 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_audio", "bk_config", "bk_saradc")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_saradc")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -10,9 +10,8 @@ filegroup(
     srcs = ["//examples/apps/adc_piano:app_srcs"] + glob(["**/*.zig"]),
 )
 
-bk_audio(name = "audio")
 bk_saradc(name = "saradc")
-bk_config(name = "kconfig", modules = [":audio", ":saradc"])
+bk_config(name = "kconfig", modules = [":saradc"])
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
@@ -45,8 +44,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_speaker",
         "//lib/platform/bk/armino:c_helpers_adc",
     ],
-    requires = ["bk_audio"],
-    base_project = "audio_player_example",
+    # No more bk_audio / audio_player_example — direct DAC+DMA
 )
 
 bk_flash(name = "flash", app = ":app")

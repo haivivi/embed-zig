@@ -266,7 +266,7 @@ pub fn PwmLedDriver(comptime pwm_channel: u32, comptime period_us: u32) type {
 }
 
 // ============================================================================
-// Speaker Driver (onboard DAC via audio pipeline)
+// Speaker Driver (direct DAC + DMA, no pipeline)
 // ============================================================================
 
 pub const SpeakerDriver = struct {
@@ -298,12 +298,12 @@ pub const SpeakerDriver = struct {
         return self.speaker.write(buffer);
     }
 
-    pub fn setVolume(_: *Self, _: u8) !void {
-        // BK onboard DAC has fixed gain set at init time
+    pub fn setVolume(_: *Self, volume: u8) !void {
+        armino.speaker.setVolume(volume);
     }
 };
 
-/// Dummy PA switch for BK (onboard DAC, no external PA)
+/// PA switch — managed by speaker C helper (GPIO 0), no-op here
 pub const PaSwitchDriver = struct {
     const Self = @This();
 
@@ -318,6 +318,39 @@ pub const PaSwitchDriver = struct {
 };
 
 // ============================================================================
+// Microphone Driver (direct audio ADC + DMA)
+// ============================================================================
+
+pub const MicDriver = struct {
+    const Self = @This();
+
+    mic: armino.mic.Mic = .{},
+    initialized: bool = false,
+
+    pub fn init() !Self {
+        var self = Self{};
+        self.mic = armino.mic.Mic.init(
+            audio.sample_rate,
+            audio.channels,
+            audio.mic_gain,
+        ) catch return error.InitFailed;
+        self.initialized = true;
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.initialized) {
+            self.mic.deinit();
+            self.initialized = false;
+        }
+    }
+
+    pub fn read(self: *Self, buffer: []i16) !usize {
+        return self.mic.read(buffer) catch return error.ReadFailed;
+    }
+};
+
+// ============================================================================
 // Audio Configuration (BK7258 Onboard DAC)
 // ============================================================================
 
@@ -327,6 +360,7 @@ pub const audio = struct {
     pub const bits: u8 = 16;
     pub const dig_gain: u8 = 0x2d;
     pub const ana_gain: u8 = 0x0A;
+    pub const mic_gain: u8 = 0x2d;
 };
 
 // ============================================================================

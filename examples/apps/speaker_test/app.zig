@@ -28,8 +28,18 @@ const NOTE_REST: u32 = 0;
 const NOTE_DURATION_MS: u32 = 400;
 const REST_DURATION_MS: u32 = 50;
 
-// Sine wave amplitude (reduced from max i16 to avoid clipping)
-const SINE_AMPLITUDE: f32 = 12000.0;
+// Sine wave amplitude
+const AMPLITUDE: i16 = 12000;
+
+// 256-entry sine lookup table (comptime — @sin works at comptime, not runtime on freestanding)
+const sine_table = blk: {
+    var table: [256]i16 = undefined;
+    for (0..256) |i| {
+        const angle = @as(f64, @floatFromInt(i)) * 2.0 * std.math.pi / 256.0;
+        table[i] = @intFromFloat(@sin(angle) * 32767.0);
+    }
+    break :blk table;
+};
 
 // Twinkle Twinkle Little Star melody
 const melody = [_]u32{
@@ -59,26 +69,20 @@ fn printBoardInfo() void {
     log.info("==========================================", .{});
 }
 
-/// Generate a sine wave tone at specified frequency
-fn generateSineWave(buffer: []i16, sample_rate: u32, frequency: u32, phase: *f32) void {
+/// Generate sine wave using integer-only LUT (no runtime @sin — broken on freestanding ARM)
+fn generateSineWave(buffer: []i16, sample_rate: u32, frequency: u32, phase: *u32) void {
     if (frequency == 0) {
-        // Rest - silence
         @memset(buffer, 0);
         return;
     }
 
-    const phase_increment = @as(f32, @floatFromInt(frequency)) * 2.0 * std.math.pi / @as(f32, @floatFromInt(sample_rate));
+    const phase_inc: u32 = frequency * 65536 / sample_rate;
 
     for (buffer) |*sample| {
-        const sine_value = @sin(phase.*);
-        // Scale to i16 range with reduced amplitude
-        sample.* = @intFromFloat(sine_value * SINE_AMPLITUDE);
-
-        // Advance phase
-        phase.* += phase_increment;
-        if (phase.* >= 2.0 * std.math.pi) {
-            phase.* -= 2.0 * std.math.pi;
-        }
+        const idx: u8 = @truncate(phase.* >> 8);
+        const sin_val = sine_table[idx];
+        sample.* = @intCast(@divTrunc(@as(i32, sin_val) * @as(i32, AMPLITUDE), 32767));
+        phase.* +%= phase_inc;
     }
 }
 
@@ -103,16 +107,15 @@ pub fn run(_: anytype) void {
     defer board.pa_switch.off() catch {};
     log.info("PA enabled", .{});
 
-    // Set initial volume (0-255)
-    board.speaker.setVolume(200) catch |err| {
-        log.warn("Failed to set volume: {}", .{err});
-    };
+    // DAC gain range: 0x00-0x3F (-45dB to +18dB), 0x2D=0dB, 0x3F=+18dB
+    // (NOT 0-255 like ESP!)
+    board.speaker.setVolume(0x3F) catch {};
 
     log.info("Playing Twinkle Twinkle Little Star (loop)", .{});
 
     // Main playback loop
-    var buffer: [160]i16 = undefined; // 10ms @ 16kHz
-    var phase: f32 = 0;
+    var buffer: [160]i16 = undefined;
+    var phase: u32 = 0;
     var loop_count: u32 = 0;
 
     const samples_per_note = (Hardware.sample_rate * NOTE_DURATION_MS) / 1000;

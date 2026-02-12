@@ -1,9 +1,8 @@
-//! BK7258 Onboard Speaker via Armino Audio Pipeline
+//! BK7258 Speaker — Direct DAC + DMA (no pipeline)
 //!
-//! Uses: audio_pipeline → raw_stream → onboard_speaker_stream → DAC
-//! All complex C API calls go through bk_zig_speaker_helper.c
+//! Uses bk_zig_speaker_helper.c which directly drives:
+//!   DAC init → DMA ring buffer → DAC FIFO → analog out → PA → speaker
 
-// C helper functions (defined in bk_zig_speaker_helper.c)
 extern fn bk_zig_speaker_init(sample_rate: u32, channels: u8, bits: u8, dig_gain: u8) i32;
 extern fn bk_zig_speaker_deinit() void;
 extern fn bk_zig_speaker_write(data: [*]const i16, samples: u32) i32;
@@ -25,18 +24,15 @@ pub const Speaker = struct {
         }
     }
 
-    /// Write PCM samples to speaker. Returns number of samples written.
-    pub fn write(self: *Speaker, buffer: []const i16) !usize {
-        _ = self;
+    pub fn write(_: *Speaker, buffer: []const i16) !usize {
         const ret = bk_zig_speaker_write(buffer.ptr, @intCast(buffer.len));
         if (ret < 0) return error.SpeakerWriteFailed;
         return @intCast(ret);
     }
-
-    /// Set digital gain (0x00-0x3F, 0x2d = 0dB)
-    pub fn setVolume(self: *Speaker, gain: u8) !void {
-        _ = self;
-        const ret = bk_zig_speaker_set_volume(gain);
-        if (ret != 0) return error.SetVolumeFailed;
-    }
 };
+
+/// Set digital gain (module-level, no instance needed).
+/// Range: 0x00~0x3F (-45dB to +18dB), 0x2D = 0dB.
+pub fn setVolume(gain: u8) void {
+    _ = bk_zig_speaker_set_volume(gain);
+}
