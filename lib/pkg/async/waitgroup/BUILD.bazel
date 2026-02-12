@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "waitgroup",
+    module_name = "async/waitgroup",
     deps = ["//lib/trait"],
     test_deps = ["//lib/platform/std"],
     test = False,  # TODO: tests need runtime module

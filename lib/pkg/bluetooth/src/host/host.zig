@@ -1168,7 +1168,7 @@ fn MockHci() type {
 }
 
 test "Host start reads buffer size and initializes credits" {
-    const TestRt = @import("runtime");
+    const TestRt = @import("std_impl").runtime;
     const Mock = MockHci();
 
     var hci_driver = Mock{};
@@ -1199,7 +1199,7 @@ test "Host start reads buffer size and initializes credits" {
 }
 
 test "Host writeLoop respects ACL credits" {
-    const TestRt = @import("runtime");
+    const TestRt = @import("std_impl").runtime;
     const Mock = MockHci();
 
     var hci_driver = Mock{};
@@ -1230,7 +1230,7 @@ test "Host writeLoop respects ACL credits" {
 }
 
 test "Host NCP event releases credits" {
-    const TestRt = @import("runtime");
+    const TestRt = @import("std_impl").runtime;
     const Mock = MockHci();
 
     var hci_driver = Mock{};
