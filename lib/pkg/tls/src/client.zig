@@ -539,6 +539,9 @@ test "concurrent send from two threads" {
     std.posix.close(sockets[0].pipe_wr);
     sockets[0].pipe_wr = -1;
     drain_thread.join();
+    // Close remaining read fd
+    std.posix.close(sockets[0].pipe_rd);
+    sockets[0].pipe_rd = -1;
 }
 
 test "concurrent send and recv" {
