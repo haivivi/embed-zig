@@ -9,6 +9,11 @@
 //! - Both overlap: recv() is blocking while send() encrypts and writes
 //! - Each iteration: connect → concurrent send+recv → close → reconnect
 //! - N iterations with no crash = PASS
+//!
+//! Usage:
+//!   bazel run //examples/apps/tls_concurrent_test/esp:flash \
+//!     --//bazel:port=/dev/cu.usbmodem11101 \
+//!     --define WIFI_SSID=MyWiFi --define WIFI_PASSWORD=secret
 
 const std = @import("std");
 const trait = @import("trait");
@@ -36,7 +41,8 @@ const NUM_ITERATIONS: u32 = 10;
 /// HTTP request
 const HTTP_REQUEST = "GET / HTTP/1.1\r\nHost: " ++ TEST_HOST ++ "\r\nConnection: close\r\n\r\n";
 
-/// Shared state between sender and receiver tasks
+/// Shared state between sender and receiver tasks.
+/// All fields accessed from both tasks use @atomicLoad/@atomicStore.
 const SharedState = struct {
     tls_client: ?*TlsClient = null,
     /// Main → Sender: "send now"
@@ -45,8 +51,40 @@ const SharedState = struct {
     send_done: bool = false,
     /// Sender → Main: send result
     send_ok: bool = false,
-    /// Lifecycle
+    /// Lifecycle — set false to stop sender task
     running: bool = true,
+
+    /// Atomic helpers for cross-task access
+    fn setRunning(self: *SharedState, val: bool) void {
+        @atomicStore(bool, &self.running, val, .release);
+    }
+    fn isRunning(self: *SharedState) bool {
+        return @atomicLoad(bool, &self.running, .acquire);
+    }
+    fn setSendSignal(self: *SharedState, val: bool) void {
+        @atomicStore(bool, &self.send_signal, val, .release);
+    }
+    fn getSendSignal(self: *SharedState) bool {
+        return @atomicLoad(bool, &self.send_signal, .acquire);
+    }
+    fn setSendDone(self: *SharedState, val: bool) void {
+        @atomicStore(bool, &self.send_done, val, .release);
+    }
+    fn isSendDone(self: *SharedState) bool {
+        return @atomicLoad(bool, &self.send_done, .acquire);
+    }
+    fn setSendOk(self: *SharedState, val: bool) void {
+        @atomicStore(bool, &self.send_ok, val, .release);
+    }
+    fn getSendOk(self: *SharedState) bool {
+        return @atomicLoad(bool, &self.send_ok, .acquire);
+    }
+    fn setTlsClient(self: *SharedState, client: ?*TlsClient) void {
+        @atomicStore(?*TlsClient, &self.tls_client, client, .release);
+    }
+    fn getTlsClient(self: *SharedState) ?*TlsClient {
+        return @atomicLoad(?*TlsClient, &self.tls_client, .acquire);
+    }
 };
 
 /// Sender task: waits for signal, sends HTTP request, signals done
@@ -54,18 +92,18 @@ fn senderTask(ctx: ?*anyopaque) void {
     const state: *SharedState = @ptrCast(@alignCast(ctx));
     log.info("[SENDER] Task started", .{});
 
-    while (state.running) {
+    while (state.isRunning()) {
         // Wait for send signal
-        if (!state.send_signal) {
+        if (!state.getSendSignal()) {
             idf.time.sleepMs(1);
             continue;
         }
 
         // Do the send
-        const client = state.tls_client orelse {
-            state.send_ok = false;
-            state.send_done = true;
-            state.send_signal = false;
+        const client = state.getTlsClient() orelse {
+            state.setSendOk(false);
+            state.setSendDone(true);
+            state.setSendSignal(false);
             continue;
         };
 
@@ -74,22 +112,22 @@ fn senderTask(ctx: ?*anyopaque) void {
 
         const sent = client.send(HTTP_REQUEST) catch |err| {
             log.err("[SENDER] send failed: {}", .{err});
-            state.send_ok = false;
-            state.send_done = true;
-            state.send_signal = false;
+            state.setSendOk(false);
+            state.setSendDone(true);
+            state.setSendSignal(false);
             continue;
         };
 
         log.info("[SENDER] sent {} bytes", .{sent});
-        state.send_ok = true;
-        state.send_done = true;
-        state.send_signal = false;
+        state.setSendOk(true);
+        state.setSendDone(true);
+        state.setSendSignal(false);
     }
 
     log.info("[SENDER] Task exiting", .{});
 }
 
-pub fn run(_: anytype) void {
+pub fn run(env: anytype) void {
     log.info("==========================================", .{});
     log.info("  TLS Concurrent Send/Recv Test", .{});
     log.info("  {} iterations, reconnect each time", .{NUM_ITERATIONS});
@@ -103,9 +141,9 @@ pub fn run(_: anytype) void {
     };
     defer b.deinit();
 
-    // Connect WiFi
-    log.info("Connecting to WiFi...", .{});
-    b.wifi.connect("HAIVIVI-MFG", "!haivivi");
+    // Connect WiFi (credentials from --define WIFI_SSID / WIFI_PASSWORD)
+    log.info("Connecting to WiFi: {s}", .{env.wifi_ssid});
+    b.wifi.connect(env.wifi_ssid, env.wifi_password);
 
     var got_ip = false;
     while (Board.isRunning() and !got_ip) {
@@ -159,10 +197,14 @@ pub fn run(_: anytype) void {
         log.err("Spawn sender failed: {}", .{err});
         return;
     };
+    // From here, any early return must set state.running = false first
+    // to stop the sender task before the stack frame (containing state) is freed.
 
-    // Heap-allocate recv buffer (8KB) and socket to avoid stack overflow
+    // Heap-allocate recv buffer (8KB) to avoid stack overflow
     const recv_buf = allocator.alloc(u8, 8192) catch {
         log.err("Failed to alloc recv_buf", .{});
+        state.setRunning(false);
+        idf.time.sleepMs(100); // let sender observe running=false
         return;
     };
     defer allocator.free(recv_buf);
@@ -189,7 +231,8 @@ pub fn run(_: anytype) void {
         idf.time.sleepMs(1000);
     }
 
-    state.running = false;
+    state.setRunning(false);
+    idf.time.sleepMs(100); // let sender exit
 
     // Final report
     log.info("", .{});
@@ -265,14 +308,14 @@ fn runOneIteration(state: *SharedState, ip: [4]u8, recv_buf: []u8) bool {
     };
     log.info("TLS handshake OK", .{});
 
-    // Setup shared state for this iteration
-    state.tls_client = tls_ptr;
-    state.send_signal = false;
-    state.send_done = false;
-    state.send_ok = false;
+    // Setup shared state for this iteration (atomic writes)
+    state.setTlsClient(tls_ptr);
+    state.setSendSignal(false);
+    state.setSendDone(false);
+    state.setSendOk(false);
 
     // Signal sender to send (it will delay 100ms to let recv() start blocking)
-    state.send_signal = true;
+    state.setSendSignal(true);
 
     // Main thread: recv() — this blocks until the sender sends + server responds
     // This is the concurrent overlap point: recv() is blocking on socket.recv()
@@ -304,21 +347,23 @@ fn runOneIteration(state: *SharedState, ip: [4]u8, recv_buf: []u8) bool {
         }
     }
 
-    // Wait for sender to finish
+    // Wait for sender to finish (up to 20s — covers 15s socket timeout)
     var wait: u32 = 0;
-    while (!state.send_done and wait < 200) : (wait += 1) {
+    while (!state.isSendDone() and wait < 400) : (wait += 1) {
         idf.time.sleepMs(50);
     }
 
-    // Clear shared state
-    state.tls_client = null;
+    // Clear shared state before freeing resources
+    state.setTlsClient(null);
+    // Brief barrier: let sender observe null tls_client if it's between signal check and send
+    idf.time.sleepMs(10);
 
     // Clean up
     tls_ptr.deinit();
     sock_ptr.close();
 
     // Verify results
-    const send_ok = state.send_ok;
+    const send_ok = state.getSendOk();
     log.info("Send: {s}, Recv: {} bytes {s}", .{
         if (send_ok) "OK" else "FAIL",
         total_recv,

@@ -184,8 +184,10 @@ pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) t
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
 
-            if (!self.connected) return error.NotConnected;
-            if (self.received_close_notify) return error.ConnectionClosed;
+            // Atomic reads: connected is written by close() under write_mutex (same lock),
+            // but received_close_notify is written by recv() under read_mutex (different lock).
+            if (!@atomicLoad(bool, &self.connected, .acquire)) return error.NotConnected;
+            if (@atomicLoad(bool, &self.received_close_notify, .acquire)) return error.ConnectionClosed;
 
             // Send data in chunks if necessary
             var sent: usize = 0;
@@ -212,8 +214,10 @@ pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) t
             self.read_mutex.lock();
             defer self.read_mutex.unlock();
 
-            if (!self.connected) return error.NotConnected;
-            if (self.received_close_notify) return 0;
+            // Atomic reads: received_close_notify is written here under read_mutex (same lock),
+            // but connected is written by close() under write_mutex (different lock).
+            if (!@atomicLoad(bool, &self.connected, .acquire)) return error.NotConnected;
+            if (@atomicLoad(bool, &self.received_close_notify, .acquire)) return 0;
 
             // Return pending data from a previous partially-consumed record
             if (self.pending_len > 0) {
@@ -250,7 +254,7 @@ pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) t
                             // Safe conversion - unknown alert types just return error
                             if (std.meta.intToEnum(AlertDescription, plaintext[1])) |desc| {
                                 if (desc == .close_notify) {
-                                    self.received_close_notify = true;
+                                    @atomicStore(bool, &self.received_close_notify, true, .release);
                                     return 0;
                                 }
                             } else |_| {}
@@ -274,14 +278,15 @@ pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) t
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
 
-            if (self.connected and !self.received_close_notify) {
+            // Atomic reads: received_close_notify is written by recv() under read_mutex (different lock).
+            if (@atomicLoad(bool, &self.connected, .acquire) and !@atomicLoad(bool, &self.received_close_notify, .acquire)) {
                 try self.hs.records.sendAlert(
                     .warning,
                     .close_notify,
                     self.write_buffer,
                 );
             }
-            self.connected = false;
+            @atomicStore(bool, &self.connected, false, .release);
         }
 
         /// Get the negotiated protocol version
@@ -294,9 +299,10 @@ pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) t
             return self.hs.cipher_suite;
         }
 
-        /// Check if connection is established
+        /// Check if connection is established (safe to call from any thread)
         pub fn isConnected(self: *Self) bool {
-            return self.connected and !self.received_close_notify;
+            return @atomicLoad(bool, &self.connected, .acquire) and
+                !@atomicLoad(bool, &self.received_close_notify, .acquire);
         }
     };
 }

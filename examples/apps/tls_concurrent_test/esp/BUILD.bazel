@@ -1,5 +1,6 @@
 # TLS Concurrent Test - ESP Platform
 
+load("//bazel:env.bzl", "make_env_file")
 load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
 package(default_visibility = ["//visibility:public"])
@@ -9,6 +10,13 @@ filegroup(
     srcs = [
         "//examples/apps/tls_concurrent_test:app_srcs",
     ] + glob(["**/*"]),
+)
+
+# Environment from command line
+# Usage: bazel build ... --define WIFI_SSID=xxx --define WIFI_PASSWORD=xxx
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
 )
 
 esp_modules()
@@ -35,6 +43,7 @@ esp_zig_app(
         "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",
     app_config = "//examples/esp:app",
+    env = ":env",
 )
 
 esp_flash(
