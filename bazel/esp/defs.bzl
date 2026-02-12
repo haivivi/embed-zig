@@ -618,6 +618,7 @@ def _esp_zig_app_impl(ctx):
             encode_module(
                 info.module_name, info.root_source.path, info.direct_dep_names,
                 c_include_dirs = info.own_c_include_dirs, link_libc = info.own_link_libc,
+                c_build_args = info.own_c_build_args,
             )
             for info in dep_infos
         ],

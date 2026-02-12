@@ -83,15 +83,15 @@ def _get_zig_bin(zig_toolchain_files):
             return f
     fail("Could not find zig binary in toolchain")
 
-def _encode_module(name, root_path, dep_names, c_include_dirs = [], link_libc = False):
+def _encode_module(name, root_path, dep_names, c_include_dirs = [], link_libc = False, c_build_args = []):
     """Encode a module record as a tab-separated string for depset storage.
 
-    Format: "name\\troot_path\\tdeps\\tc_include_dirs\\tlink_libc"
+    Format: "name\\troot_path\\tdeps\\tc_include_dirs\\tlink_libc\\tc_build_args"
 
     c_include_dirs are per-module -I paths needed for @cImport resolution.
     In zig's multi-module CLI, -I is module-scoped (placed after the module's -M).
-    C source files are NOT included here because zig doesn't support C sources
-    for dep modules — linking is handled by passing the dep's .a library.
+    c_build_args are the C source compilation args (--c-source flags, -cflags, etc.)
+    needed for cross-compilation where host .a caches can't be reused.
     """
     return "\t".join([
         name,
@@ -99,6 +99,7 @@ def _encode_module(name, root_path, dep_names, c_include_dirs = [], link_libc = 
         ",".join(dep_names) if dep_names else "",
         ",".join(c_include_dirs) if c_include_dirs else "",
         "1" if link_libc else "",
+        "|".join(c_build_args) if c_build_args else "",
     ])
 
 def _decode_module(encoded):
@@ -110,6 +111,7 @@ def _decode_module(encoded):
         dep_names = parts[2].split(",") if len(parts) > 2 and parts[2] else [],
         c_include_dirs = parts[3].split(",") if len(parts) > 3 and parts[3] else [],
         link_libc = parts[4] == "1" if len(parts) > 4 else False,
+        c_build_args = parts[5].split("|") if len(parts) > 5 and parts[5] else [],
     )
 
 def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_module_strings):
@@ -294,7 +296,7 @@ def _collect_deps(own_srcs, deps):
         if info.cache_dir:
             dep_cache_dirs.append(info.cache_dir)
 
-    # Encode module records with per-module C include dirs (for -I in dep builds)
+    # Encode module records with per-module C include dirs and C build args
     direct_dep_strings = [
         _encode_module(
             info.module_name,
@@ -302,6 +304,7 @@ def _collect_deps(own_srcs, deps):
             info.direct_dep_names,
             c_include_dirs = info.own_c_include_dirs,
             link_libc = info.own_link_libc,
+            c_build_args = info.own_c_build_args,
         )
         for info in direct_dep_infos
     ]

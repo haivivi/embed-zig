@@ -35,6 +35,7 @@ def _decode_module(encoded):
         dep_names = parts[2].split(",") if len(parts) > 2 and parts[2] else [],
         c_include_dirs = parts[3].split(",") if len(parts) > 3 and parts[3] else [],
         link_libc = parts[4] == "1" if len(parts) > 4 else False,
+        c_build_args = parts[5].split("|") if len(parts) > 5 and parts[5] else [],
     )
 
 def _websim_app_impl(ctx):
@@ -84,16 +85,34 @@ def _websim_app_impl(ctx):
     # but still needs standard type headers (stdint.h etc.) at compile time.
     zig_args.append("-lc")
 
-    # Collect C include dirs from all deps (global -I, before C sources)
+    # Collect C include dirs and C build args from ALL deps (direct + transitive).
+    # When cross-compiling to WASM, we must recompile C sources from scratch
+    # (host .a caches are for the wrong target). We need:
+    #   - Global -I flags for C source compilation (before -M modules)
+    #   - C source args (-cflags/files) from every dep that has C code
+    # Direct deps provide these via ZigModuleInfo fields; transitive deps
+    # carry them in the encoded module strings. Dedup by module name to avoid
+    # duplicate symbols when diamond dependencies exist.
+    c_include_seen = {}
+    c_args_seen = {}
     for info in dep_infos:
         for inc_dir in info.own_c_include_dirs:
-            zig_args.extend(["-I", inc_dir])
-
-    # Collect C source args from deps that have C code.
-    # When cross-compiling, we must recompile C sources (can't use host .a cache).
-    for info in dep_infos:
-        if info.own_c_build_args:
+            if inc_dir not in c_include_seen:
+                c_include_seen[inc_dir] = True
+                zig_args.extend(["-I", inc_dir])
+        if info.own_c_build_args and info.module_name not in c_args_seen:
+            c_args_seen[info.module_name] = True
             zig_args.extend(info.own_c_build_args)
+        # Also collect from transitive deps encoded in module strings
+        for encoded in info.transitive_module_strings.to_list():
+            mod = _decode_module(encoded)
+            for inc_dir in mod.c_include_dirs:
+                if inc_dir not in c_include_seen:
+                    c_include_seen[inc_dir] = True
+                    zig_args.extend(["-I", inc_dir])
+            if mod.c_build_args and mod.name not in c_args_seen:
+                c_args_seen[mod.name] = True
+                zig_args.extend(mod.c_build_args)
 
     # Main module
     main_file = ctx.file.main
