@@ -372,11 +372,24 @@ int main(void) {
 APEOF
 echo "[bk_build] AP task stack: $AP_STACK bytes"
 
+PRELINK_CMAKE=""
+if [ -n "$BK_PRELINK_LIBS" ]; then
+    # Link prelink libs normally (NOT whole-archive).
+    # Combined with hiding conflicting v1 lib, linker picks v3 naturally.
+    PRELINK_PATHS=""
+    for lib in $BK_PRELINK_LIBS; do
+        PRELINK_PATHS="${PRELINK_PATHS} \$ENV{ARMINO_PATH}/${lib}"
+    done
+    PRELINK_CMAKE="target_link_libraries(\${COMPONENT_LIB} INTERFACE ${PRELINK_PATHS})"
+    echo "[bk_build] Prelink libs: $BK_PRELINK_LIBS"
+fi
+
 cat > "$PROJECT_DIR/ap/CMakeLists.txt" << APCMAKEOF
 set(incs .)
 set(srcs ap_main.c $C_HELPER_SRCS)
 set(priv_req driver lwip_intf_v2_1 psa_mbedtls $BK_AP_REQUIRES)
 armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
+$PRELINK_CMAKE
 target_link_libraries(\${COMPONENT_LIB} INTERFACE -Wl,--whole-archive \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a -Wl,--no-whole-archive)
 target_link_options(\${COMPONENT_LIB} INTERFACE $BK_FORCE_LINK)
 APCMAKEOF
@@ -392,6 +405,15 @@ echo "[bk_build] AP config FULL_MBEDTLS check:"
 grep "FULL_MBEDTLS" "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null && echo "[bk_build]   FOUND" || echo "[bk_build]   NOT FOUND"
 echo "[bk_build] AP config last 5 lines:"
 tail -5 "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null | while IFS= read -r line; do echo "[bk_build]   $line"; done
+
+# Temporarily hide libaec.a (v1) to prevent symbol conflict with v3
+LIBAEC_V1="$ARMINO_PATH/ap/components/bk_libs/bk7258_ap/libs/libaec.a"
+LIBAEC_V1_BAK=""
+if [ -f "$LIBAEC_V1" ] && echo "$BK_PRELINK_LIBS" | grep -q "libaec_v3"; then
+    LIBAEC_V1_BAK="${LIBAEC_V1}.bak_zig"
+    mv "$LIBAEC_V1" "$LIBAEC_V1_BAK"
+    echo "[bk_build] Temporarily hid libaec.a (v1) to avoid conflict with v3"
+fi
 
 echo "[bk_build] Running Armino make..."
 cd "$ARMINO_PATH"
@@ -441,6 +463,12 @@ else
     cp "$ALL_APP" "$BK_AP_BIN_OUT"
 fi
 cp "$PARTITION_DIR/partitions.csv" "$BK_PARTITIONS_OUT" 2>/dev/null || echo "Name,Offset" > "$BK_PARTITIONS_OUT"
+
+# Restore libaec.a if we hid it
+if [ -n "$LIBAEC_V1_BAK" ] && [ -f "$LIBAEC_V1_BAK" ]; then
+    mv "$LIBAEC_V1_BAK" "$LIBAEC_V1"
+    echo "[bk_build] Restored libaec.a (v1)"
+fi
 
 echo "[bk_build] Output: $BK_BIN_OUT ($(wc -c < "$BK_BIN_OUT") bytes)"
 echo "[bk_build] Done!"
