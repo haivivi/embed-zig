@@ -1,0 +1,43 @@
+# TLS Concurrent Test - ESP Platform
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//examples/apps/tls_concurrent_test:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip", "mbedtls"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
+        "${EVENT_FORCE_LINK}",
+        "verify_with_esp_bundle",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/mbed_tls/mbed_tls.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
+    deps = [":idf", ":esp",
+        "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns", "//lib/pkg/motion", "//lib/pkg/math"],
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
