@@ -134,6 +134,7 @@ def _lvgl_repo_impl(ctx):
         url = url,
         output = archive,
         sha256 = sha256,
+        allow_fail = True,
     )
     if not dl.success:
         ctx.execute(["curl", "-sL", "-o", archive, url], timeout = 300)

@@ -15,7 +15,9 @@ pub fn create(parent: ui.Obj) ?ui.Obj {
         .flexCross(.center);
 
     // Time (left)
-    _ = (ui.Label.create(bar).?).text("12:00").color(theme.white).font(theme.getFont16());
+    if (ui.Label.create(bar)) |time_lbl| {
+        _ = time_lbl.text("12:00").color(theme.white).font(theme.getFont16());
+    }
 
     // Spacer
     if (ui.Obj.create(bar.ptr)) |spacer| {

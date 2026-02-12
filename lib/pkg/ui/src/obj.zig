@@ -190,10 +190,17 @@ pub fn borderWidth(self: Self, w: i32) Self { c.lv_obj_set_style_border_width(se
 // Text style
 // ============================================================================
 
+pub const TextAlign = enum(c_uint) {
+    auto = c.LV_TEXT_ALIGN_AUTO,
+    left = c.LV_TEXT_ALIGN_LEFT,
+    center = c.LV_TEXT_ALIGN_CENTER,
+    right = c.LV_TEXT_ALIGN_RIGHT,
+};
+
 pub const TextOptions = struct {
     color: ?u32 = null,
     font: ?*const c.lv_font_t = null,
-    align_: ?u8 = null,
+    text_align: ?TextAlign = null,
     line_space: ?i32 = null,
     letter_space: ?i32 = null,
 };
@@ -201,6 +208,7 @@ pub const TextOptions = struct {
 pub fn textStyle(self: Self, opts: TextOptions) Self {
     if (opts.color) |hex| c.lv_obj_set_style_text_color(self.ptr, c.lv_color_hex(hex), 0);
     if (opts.font) |f| c.lv_obj_set_style_text_font(self.ptr, f, 0);
+    if (opts.text_align) |a| c.lv_obj_set_style_text_align(self.ptr, @intFromEnum(a), 0);
     if (opts.line_space) |v| c.lv_obj_set_style_text_line_space(self.ptr, v, 0);
     if (opts.letter_space) |v| c.lv_obj_set_style_text_letter_space(self.ptr, v, 0);
     return self;
