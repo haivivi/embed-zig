@@ -332,7 +332,8 @@ pub const MicDriver = struct {
         self.mic = armino.mic.Mic.init(
             audio.sample_rate,
             audio.channels,
-            audio.mic_gain,
+            audio.mic_dig_gain,
+            audio.mic_ana_gain,
         ) catch return error.InitFailed;
         self.initialized = true;
         return self;
@@ -359,8 +360,9 @@ pub const audio = struct {
     pub const channels: u8 = 1;
     pub const bits: u8 = 16;
     pub const dig_gain: u8 = 0x2d;
-    pub const ana_gain: u8 = 0x0A;
-    pub const mic_gain: u8 = 0x2d;
+    pub const ana_gain: u8 = 0x07; // match official voice service
+    pub const mic_dig_gain: u8 = 0x2d;
+    pub const mic_ana_gain: u8 = 0x08;
 };
 
 // ============================================================================

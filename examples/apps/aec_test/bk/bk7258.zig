@@ -1,4 +1,4 @@
-//! BK7258 Board Configuration for AEC Test
+//! BK7258 Board Configuration for Mic Auto Test
 
 const bk = @import("bk");
 const hal = @import("hal");

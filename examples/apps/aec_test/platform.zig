@@ -1,4 +1,4 @@
-//! Platform Configuration — AEC Test
+//! Platform Configuration — Mic Auto Test
 
 const hal = @import("hal");
 const build_options = @import("build_options");
@@ -8,10 +8,9 @@ const BoardEnum = @TypeOf(build_options.board);
 const hw = if (@hasField(BoardEnum, "bk7258") and build_options.board == .bk7258)
     @import("bk/bk7258.zig")
 else
-    @compileError("aec_test only supports bk7258 for now");
+    @compileError("aec_test only supports bk7258");
 
 pub const Hardware = hw.Hardware;
-pub const AudioSystem = hw.AudioSystem;
 
 const spec = struct {
     pub const meta = .{ .id = hw.Hardware.name };

@@ -42,15 +42,15 @@ int bk_zig_speaker_init(unsigned int sample_rate, unsigned char channels,
     aud_dac_config_t dac_cfg = DEFAULT_AUD_DAC_CONFIG();
     dac_cfg.dac_chl = (channels == 2) ? AUD_DAC_CHL_LR : AUD_DAC_CHL_L;
     dac_cfg.samp_rate = sample_rate;
-    dac_cfg.dac_gain = 0x3F; /* MAX gain */
-    dac_cfg.clk_src = 1; /* AUD_CLK_APLL — must match ADC for simultaneous use */
+    dac_cfg.dac_gain = 0x2D; /* 0dB (match official) */
+    dac_cfg.clk_src = 0; /* AUD_CLK_XTAL — match ADC, per official voice service */
 
     ret = bk_aud_dac_init(&dac_cfg);
     BK_LOGI(TAG, "dac_init: %d\r\n", ret);
     if (ret != BK_OK) return (int)ret;
 
-    /* Set analog gain to max */
-    ret = bk_aud_dac_set_ana_gain(0x3F);
+    /* Set analog gain (0x07 = official voice service default) */
+    ret = bk_aud_dac_set_ana_gain(0x07);
     BK_LOGI(TAG, "ana_gain: %d\r\n", ret);
 
     ret = bk_aud_dac_start();

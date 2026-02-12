@@ -1,14 +1,15 @@
 //! BK7258 Microphone Binding — Direct audio ADC FIFO polling
 
-extern fn bk_zig_mic_init(sample_rate: c_uint, channels: u8, gain: u8) c_int;
+extern fn bk_zig_mic_init(sample_rate: c_uint, channels: u8, dig_gain: u8, ana_gain: u8) c_int;
 extern fn bk_zig_mic_deinit() void;
 extern fn bk_zig_mic_read(buffer: [*]i16, max_samples: c_uint) c_int;
 
 pub const Mic = struct {
     initialized: bool = false,
 
-    pub fn init(sample_rate: u32, channels: u8, gain: u8) !Mic {
-        if (bk_zig_mic_init(@intCast(sample_rate), channels, gain) != 0)
+    /// Init mic with digital gain (0x00-0x3F, 0x2d=0dB) and analog gain (0x00-0x3F, 0x08 recommended)
+    pub fn init(sample_rate: u32, channels: u8, dig_gain: u8, ana_gain: u8) !Mic {
+        if (bk_zig_mic_init(@intCast(sample_rate), channels, dig_gain, ana_gain) != 0)
             return error.MicInitFailed;
         return .{ .initialized = true };
     }

@@ -76,6 +76,12 @@ filegroup(
     srcs = ["src/bk_zig_heap_helper.c"],
 )
 
+# AEC helper (wraps libaec.a calls in C for safe ABI)
+filegroup(
+    name = "c_helpers_aec",
+    srcs = ["src/bk_zig_aec_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

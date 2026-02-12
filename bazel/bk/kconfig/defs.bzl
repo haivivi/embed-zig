@@ -103,6 +103,21 @@ bk_ble = rule(
     doc = "Enable BLE stack on AP core",
 )
 
+def _bk_aec_impl(ctx):
+    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
+    lines = [
+        "# AEC algorithm override",
+        "CONFIG_ADK_AEC_ALGORITHM=y",
+    ]
+    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
+    return [DefaultInfo(files = depset([out]))]
+
+bk_aec = rule(
+    implementation = _bk_aec_impl,
+    attrs = {},
+    doc = "Enable AEC (Acoustic Echo Cancellation) algorithm",
+)
+
 def _bk_custom_impl(ctx):
     """Escape hatch: raw Kconfig lines."""
     out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
