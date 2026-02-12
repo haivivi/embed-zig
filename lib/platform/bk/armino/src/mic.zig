@@ -1,4 +1,4 @@
-//! BK7258 Microphone Binding — Direct audio ADC + DMA
+//! BK7258 Microphone Binding — Direct audio ADC FIFO polling
 
 extern fn bk_zig_mic_init(sample_rate: c_uint, channels: u8, gain: u8) c_int;
 extern fn bk_zig_mic_deinit() void;
@@ -21,7 +21,6 @@ pub const Mic = struct {
     }
 
     /// Read PCM samples from microphone. Blocks until data available.
-    /// Returns slice of samples read.
     pub fn read(self: *Mic, buffer: []i16) !usize {
         if (!self.initialized) return error.NotInitialized;
         const ret = bk_zig_mic_read(buffer.ptr, @intCast(buffer.len));

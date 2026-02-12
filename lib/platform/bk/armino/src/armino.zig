@@ -28,3 +28,4 @@ pub const kvs = @import("kvs.zig");
 pub const adc = @import("adc.zig");
 pub const heap = @import("heap.zig");
 pub const mic = @import("mic.zig");
+pub const aec = @import("aec.zig");

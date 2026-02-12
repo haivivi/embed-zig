@@ -28,3 +28,5 @@ pub const NetDriver = net.NetDriver;
 
 pub const kvs = @import("kvs.zig");
 pub const KvsDriver = kvs.KvsDriver;
+
+pub const audio_system = @import("audio_system.zig");
