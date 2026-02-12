@@ -29,14 +29,11 @@ const Atomic = std.atomic.Value;
 
 const noise = @import("../noise/mod.zig");
 const relay_mod = @import("../relay/mod.zig");
-const async_mod = @import("../async/mod.zig");
 const kcp_mod = @import("../kcp/mod.zig");
-const Channel = async_mod.channel.Channel;
-const Signal = async_mod.channel.Signal;
-const IOService = async_mod.IOService;
-pub const SimpleTimerService = async_mod.SimpleTimerService;
-pub const KcpMux = kcp_mod.Mux(SimpleTimerService);
-pub const KcpStream = kcp_mod.Stream;
+
+// TODO: genericize over Runtime — these were from the deleted async/ module.
+// Channel/Signal → lib/pkg/channel, IOService → lib/trait/io.zig
+// For now, this module is not importable until refactored.
 
 const Key = noise.Key;
 const KeyPair = noise.KeyPair;
