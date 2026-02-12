@@ -12,7 +12,7 @@
 #   include(${_ESP_LIB}/esp/src/idf/mbed_tls/mbed_tls.cmake)
 #   Then add MBED_TLS_C_SOURCES to your SRCS in idf_component_register()
 
-# C helper sources (X25519, P256, P384, AES-GCM, HKDF, Cert wrappers)
+# C helper sources (X25519, P256, P384, AES-GCM, HKDF, RSA, Cert wrappers)
 # Use explicit paths instead of GLOB for reliability
 set(MBED_TLS_C_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/x25519_helper.c"
@@ -20,6 +20,7 @@ set(MBED_TLS_C_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/p384_helper.c"
     "${CMAKE_CURRENT_LIST_DIR}/aes_gcm_helper.c"
     "${CMAKE_CURRENT_LIST_DIR}/hkdf_helper.c"
+    "${CMAKE_CURRENT_LIST_DIR}/rsa_helper.c"
     "${CMAKE_CURRENT_LIST_DIR}/cert_helper.c"
 )
 
