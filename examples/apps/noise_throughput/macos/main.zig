@@ -289,7 +289,8 @@ pub fn main() !void {
             next_recv += 1;
         }
 
-        const elapsed = @as(u64, @intCast(std.time.milliTimestamp() - start));
+        const elapsed_raw = std.time.milliTimestamp() - start;
+        const elapsed: u64 = if (elapsed_raw >= 0) @intCast(elapsed_raw) else 0;
         const throughput = if (elapsed > 0) (@as(u64, blocks_verified) * chunk_size * 2 * 1000) / elapsed / 1024 else 0;
 
         if (rounds > 1) {
