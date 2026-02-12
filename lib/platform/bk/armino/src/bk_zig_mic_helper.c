@@ -33,6 +33,7 @@ int bk_zig_mic_init(unsigned int sample_rate, unsigned char channels, unsigned c
     BK_LOGI(TAG, "adc_init: %d\r\n", ret);
     if (ret != BK_OK) return (int)ret;
 
+    BK_LOGI(TAG, "calling adc_start...\r\n");
     ret = bk_aud_adc_start();
     BK_LOGI(TAG, "adc_start: %d\r\n", ret);
     if (ret != BK_OK) {

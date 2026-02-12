@@ -1,97 +1,91 @@
-//! AEC Test Example
+//! AEC Test — AudioSystem loopback test
 //!
-//! Tests AEC (Acoustic Echo Cancellation) with mic -> speaker loopback.
-//! Speak into the microphone and hear your voice through the speaker.
-//! AEC cancels the speaker feedback from the microphone input.
-//!
-//! Hardware: ESP32-S3-Korvo-2 V3 with ES7210 ADC + ES8311 DAC
+//! 1. Plays a startup beep (confirms speaker works)
+//! 2. Then does mic → AEC → speaker loopback (speak into mic, hear yourself)
 
 const std = @import("std");
-
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const Hardware = platform.Hardware;
 const log = Board.log;
 
-// Audio parameters
-const SAMPLE_RATE: u32 = Hardware.sample_rate;
-const BUFFER_SIZE: usize = 256;
-const MIC_GAIN: i32 = 16;
+const SAMPLE_RATE = 8000;
+const AMPLITUDE: i16 = 12000;
 
-/// Application entry point
+// Comptime sine table
+const sine_table = blk: {
+    var table: [256]i16 = undefined;
+    for (0..256) |i| {
+        const angle = @as(f64, @floatFromInt(i)) * 2.0 * std.math.pi / 256.0;
+        table[i] = @intFromFloat(@sin(angle) * 32767.0);
+    }
+    break :blk table;
+};
+
+fn generateTone(buffer: []i16, frequency: u32, phase: *u32) void {
+    const phase_inc: u32 = frequency * 65536 / SAMPLE_RATE;
+    for (buffer) |*sample| {
+        const idx: u8 = @truncate(phase.* >> 8);
+        const sin_val = sine_table[idx];
+        sample.* = @intCast(@divTrunc(@as(i32, sin_val) * @as(i32, AMPLITUDE), 32767));
+        phase.* +%= phase_inc;
+    }
+}
+
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
-    log.info("AEC (Echo Cancellation) Test", .{});
-    log.info("==========================================", .{});
-    log.info("Board:       {s}", .{Hardware.name});
-    log.info("Sample Rate: {}Hz", .{SAMPLE_RATE});
-    log.info("Buffer Size: {} samples", .{BUFFER_SIZE});
-    log.info("Mic Gain:    {}x", .{MIC_GAIN});
+    log.info("  AEC Test — Mic Loopback", .{});
+    log.info("  Board: {s}", .{Board.meta.id});
     log.info("==========================================", .{});
 
-    // Initialize board
-    var board: Board = undefined;
-    board.init() catch |err| {
-        log.err("Failed to initialize board: {}", .{err});
+    // Init AudioSystem (speaker + mic + AEC)
+    var audio = platform.AudioSystem.init() catch |err| {
+        log.err("AudioSystem init failed: {}", .{err});
         return;
     };
-    defer board.deinit();
+    defer audio.deinit();
 
-    // Enable PA (Power Amplifier)
-    board.pa_switch.on() catch |err| {
-        log.err("Failed to enable PA: {}", .{err});
-        return;
-    };
-    defer board.pa_switch.off() catch {};
+    log.info("AudioSystem ready, frame_size={}", .{audio.getFrameSize()});
 
-    // Set speaker volume
-    board.audio.setVolume(150);
+    // Play startup beep (500Hz, 300ms)
+    log.info("Playing startup beep...", .{});
+    {
+        var buffer: [160]i16 = undefined;
+        var phase: u32 = 0;
+        const beep_frames = SAMPLE_RATE * 300 / 1000 / 160;
+        for (0..beep_frames) |_| {
+            generateTone(&buffer, 500, &phase);
+            _ = audio.writeSpeaker(&buffer) catch {};
+        }
+        // Silence flush
+        @memset(&buffer, 0);
+        for (0..5) |_| {
+            _ = audio.writeSpeaker(&buffer) catch {};
+        }
+    }
 
-    log.info("Board initialized. Starting loopback...", .{});
-    log.info("Speak into the mic - AEC cancels speaker feedback.", .{});
+    log.info("Mic loopback started — speak into the mic!", .{});
+    log.info("(Press reset to stop)", .{});
 
-    // Audio buffers
-    var input_buffer: [BUFFER_SIZE]i16 = undefined;
-    var output_buffer: [BUFFER_SIZE]i16 = undefined;
-
-    var total_samples: u64 = 0;
-    var error_count: u32 = 0;
+    // Mic → AEC → Speaker loopback
+    var mic_buffer: [160]i16 = undefined;
+    var frame_count: u32 = 0;
 
     while (true) {
-        // Read from microphone (AEC-processed)
-        const samples_read = board.audio.readMic(&input_buffer) catch |err| {
-            error_count += 1;
-            if (error_count <= 5 or error_count % 100 == 0) {
-                log.err("Mic read error #{}: {}", .{ error_count, err });
-            }
-            platform.time.sleepMs(10);
+        // Read from mic (with AEC echo cancellation)
+        const samples_read = audio.readMic(&mic_buffer) catch |err| {
+            log.err("readMic error: {}", .{err});
+            Board.time.sleepMs(10);
             continue;
         };
 
-        if (samples_read == 0) {
-            platform.time.sleepMs(1);
-            continue;
+        if (samples_read > 0) {
+            // Write to speaker (also feeds AEC reference)
+            _ = audio.writeSpeaker(mic_buffer[0..samples_read]) catch {};
         }
 
-        // Apply gain
-        for (0..samples_read) |i| {
-            const amplified: i32 = @as(i32, input_buffer[i]) * MIC_GAIN;
-            output_buffer[i] = @intCast(std.math.clamp(amplified, std.math.minInt(i16), std.math.maxInt(i16)));
-        }
-
-        // Play through speaker
-        _ = board.audio.writeSpeaker(output_buffer[0..samples_read]) catch |err| {
-            log.err("Speaker write error: {}", .{err});
-            platform.time.sleepMs(10);
-            continue;
-        };
-
-        total_samples += samples_read;
-
-        // Log every 10 seconds
-        if (total_samples > 0 and total_samples % (SAMPLE_RATE * 10) < BUFFER_SIZE) {
-            const seconds = total_samples / SAMPLE_RATE;
-            log.info("Running {}s, {} samples, {} errors", .{ seconds, total_samples, error_count });
+        frame_count += 1;
+        if (frame_count % 500 == 0) {
+            log.info("[AEC] {} frames processed", .{frame_count});
         }
     }
 }
