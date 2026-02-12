@@ -859,7 +859,7 @@ const TestRuntime = if (@import("builtin").os.tag != .freestanding) struct {
         pub fn broadcast(self: *Condition) void { self.inner.broadcast(); }
     };
     pub fn nowMs() u64 {
-        return @intCast(@as(u64, @intCast(std.time.milliTimestamp())));
+        return @intCast(std.time.milliTimestamp());
     }
     pub fn spawn(_: [:0]const u8, func: *const fn (?*anyopaque) void, ctx: ?*anyopaque, _: anytype) !void {
         const t = try std.Thread.spawn(.{}, struct {
