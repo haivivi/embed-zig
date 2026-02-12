@@ -73,13 +73,20 @@ pub fn Config(comptime Crypto: type) type {
 
 /// TLS Client - provides secure communication over a socket
 ///
+/// Thread-safe: send() and recv() can be called concurrently from different
+/// threads (e.g., mqtt0 readLoop + ping). Multiple concurrent send() calls
+/// are serialized, as are multiple concurrent recv() calls.
+///
 /// Generic over Socket type to support different platforms (ESP32, std, etc.)
 /// Crypto parameter allows custom cryptographic implementations (e.g., hardware acceleration).
+/// Rt (Runtime) parameter provides synchronization primitives (Mutex) for thread safety.
 ///
 /// Type parameters:
 /// - Socket: Platform socket type (must implement trait.socket interface)
 /// - Crypto: Cryptographic primitives (must include Rng, default: crypto.Suite for pure Zig)
-pub fn Client(comptime Socket: type, comptime Crypto: type) type {
+/// - Rt: Runtime providing Mutex (validated via trait.sync). Use std_impl.runtime for
+///   desktop/server, esp.idf.runtime for ESP32.
+pub fn Client(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
     // Validate Crypto implementation at compile time
     comptime {
         _ = trait.crypto.from(Crypto, .{
@@ -92,12 +99,20 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
         });
     }
 
+    // Validate Runtime provides Mutex
+    const Mutex = trait.sync.Mutex(Rt.Mutex);
+
     return struct {
         config: Config(Crypto),
         socket: *Socket,
         hs: handshake.ClientHandshake(Socket, Crypto),
         connected: bool,
         received_close_notify: bool,
+
+        // Concurrency: write_mutex protects write_buffer + writeRecord (write_cipher, write_seq)
+        write_mutex: Mutex,
+        // Concurrency: read_mutex protects read_buffer + readRecord (read_cipher, read_seq) + pending_*
+        read_mutex: Mutex,
 
         // Buffers
         read_buffer: []u8,
@@ -124,7 +139,7 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
             // Pass ca_store to handshake if Crypto supports x509
             const Hs = handshake.ClientHandshake(Socket, Crypto);
-            const hs_ca_store: if (Hs.CaStoreType != void) ?Hs.CaStoreType else void = 
+            const hs_ca_store: if (Hs.CaStoreType != void) ?Hs.CaStoreType else void =
                 if (Hs.CaStoreType != void) config.ca_store else {};
 
             return Self{
@@ -138,6 +153,8 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
                 ),
                 .connected = false,
                 .received_close_notify = false,
+                .write_mutex = Mutex.init(),
+                .read_mutex = Mutex.init(),
                 .read_buffer = read_buffer,
                 .write_buffer = write_buffer,
             };
@@ -145,18 +162,28 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
 
         /// Clean up resources
         pub fn deinit(self: *Self) void {
+            self.read_mutex.deinit();
+            self.write_mutex.deinit();
             self.config.allocator.free(self.read_buffer);
             self.config.allocator.free(self.write_buffer);
         }
 
         /// Perform TLS handshake
+        /// Must be called before any concurrent send/recv.
+        /// NOT thread-safe — call from a single thread before spawning readers/writers.
         pub fn connect(self: *Self) !void {
             try self.hs.handshake(self.write_buffer);
             self.connected = true;
         }
 
-        /// Send encrypted data
+        /// Send encrypted data (thread-safe)
+        ///
+        /// Multiple concurrent send() calls are serialized via write_mutex.
+        /// Can be called concurrently with recv().
         pub fn send(self: *Self, data: []const u8) !usize {
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             if (!self.connected) return error.NotConnected;
             if (self.received_close_notify) return error.ConnectionClosed;
 
@@ -174,10 +201,17 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
             return sent;
         }
 
-        /// Receive and decrypt data.
+        /// Receive and decrypt data (thread-safe)
+        ///
+        /// Multiple concurrent recv() calls are serialized via read_mutex.
+        /// Can be called concurrently with send().
+        ///
         /// If the caller's buffer is smaller than the decrypted TLS record,
         /// remaining data is buffered internally and returned on subsequent calls.
         pub fn recv(self: *Self, buffer: []u8) !usize {
+            self.read_mutex.lock();
+            defer self.read_mutex.unlock();
+
             if (!self.connected) return error.NotConnected;
             if (self.received_close_notify) return 0;
 
@@ -233,8 +267,13 @@ pub fn Client(comptime Socket: type, comptime Crypto: type) type {
             }
         }
 
-        /// Send close_notify alert and close connection
+        /// Send close_notify alert and close connection (thread-safe)
+        ///
+        /// Acquires write_mutex to send the alert.
         pub fn close(self: *Self) !void {
+            self.write_mutex.lock();
+            defer self.write_mutex.unlock();
+
             if (self.connected and !self.received_close_notify) {
                 try self.hs.records.sendAlert(
                     .warning,
@@ -297,11 +336,12 @@ pub const Error = error{
 pub fn connect(
     comptime Socket: type,
     comptime Crypto: type,
+    comptime Rt: type,
     socket: *Socket,
     hostname: []const u8,
     allocator: std.mem.Allocator,
-) !Client(Socket, Crypto) {
-    var tls_client = try Client(Socket, Crypto).init(socket, .{
+) !Client(Socket, Crypto, Rt) {
+    var tls_client = try Client(Socket, Crypto, Rt).init(socket, .{
         .allocator = allocator,
         .hostname = hostname,
     });
