@@ -194,9 +194,10 @@ pub const EventLoop = struct {
     ///
     /// Returns the number of tasks executed.
     pub fn tick(self: *Self) usize {
-        // Update current time
+        // Update current time (saturate to 0 if wall clock went backward)
         const now = std.time.milliTimestamp();
-        self.current_time_ms = @intCast(@as(u64, @intCast(now - self.start_time)));
+        const elapsed = now - self.start_time;
+        self.current_time_ms = if (elapsed >= 0) @intCast(elapsed) else 0;
 
         var count: usize = 0;
 

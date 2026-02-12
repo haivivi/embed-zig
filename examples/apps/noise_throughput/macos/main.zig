@@ -79,9 +79,9 @@ var g_send_cs: *Noise.CipherState = undefined;
 var g_recv_cs: *Noise.CipherState = undefined;
 var g_loss_pct: u8 = 0;
 var g_loss_bilateral: bool = false;
-var g_pkts_sent: u64 = 0;
-var g_pkts_dropped_send: u64 = 0;
-var g_pkts_dropped_recv: u64 = 0;
+var g_pkts_sent: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+var g_pkts_dropped_send: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+var g_pkts_dropped_recv: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
 fn shouldDrop() bool {
     if (g_loss_pct == 0) return false;
@@ -99,13 +99,13 @@ fn shouldDrop() bool {
 fn muxOutput(data: []const u8, _: ?*anyopaque) anyerror!void {
     // Drop BEFORE encrypt to keep nonce in sync with receiver
     if (g_loss_bilateral and shouldDrop()) {
-        g_pkts_dropped_send += 1;
+        _ = g_pkts_dropped_send.fetchAdd(1, .monotonic);
         return;
     }
     var ct: [max_pkt]u8 = undefined;
     g_send_cs.encrypt(data, "", ct[0 .. data.len + tag_size]);
     _ = posix.sendto(g_sock, ct[0 .. data.len + tag_size], 0, g_dest_addr, g_dest_len) catch {};
-    g_pkts_sent += 1;
+    _ = g_pkts_sent.fetchAdd(1, .monotonic);
 }
 
 /// Mux recv: UDP recv + decrypt.
@@ -116,7 +116,7 @@ fn muxRecv(buf: []u8, _: ?*anyopaque) anyerror!usize {
     if (udp_len <= tag_size) return error.Timeout;
     const pt_len = udp_len - tag_size;
     g_recv_cs.decrypt(udp_buf[0..udp_len], "", buf[0..pt_len]) catch return error.Timeout;
-    if (shouldDrop()) { g_pkts_dropped_recv += 1; return error.Timeout; }
+    if (shouldDrop()) { _ = g_pkts_dropped_recv.fetchAdd(1, .monotonic); return error.Timeout; }
     return pt_len;
 }
 
@@ -302,7 +302,7 @@ pub fn main() !void {
     }
 
     const avg = if (rounds > 0) grand_throughput / rounds else 0;
-    const total_dropped = g_pkts_dropped_send + g_pkts_dropped_recv;
+    const total_dropped = g_pkts_dropped_send.load(.monotonic) + g_pkts_dropped_recv.load(.monotonic);
     std.debug.print("{d}/{d} verified, {d} corrupt, {d} KB/s, dropped: {d}, integrity: {s}\n", .{
         grand_verified,
         total_blocks * rounds,
