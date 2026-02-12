@@ -5,13 +5,7 @@
 
 const std = @import("std");
 const tls = @import("tls");
-
-// Use std.crypto.random for RNG
-const StdRng = struct {
-    pub fn fill(buf: []u8) void {
-        std.crypto.random.bytes(buf);
-    }
-};
+const crypto = @import("crypto");
 
 // Standard library TCP socket wrapper
 const StdSocket = struct {
@@ -93,7 +87,24 @@ const StdSocket = struct {
     }
 };
 
-const TestClient = tls.DefaultClient(StdSocket, StdRng);
+/// Runtime with std.Thread.Mutex for thread safety
+const StdRuntime = struct {
+    pub const Mutex = struct {
+        inner: std.Thread.Mutex = .{},
+        pub fn init() Mutex {
+            return .{};
+        }
+        pub fn deinit(_: *Mutex) void {}
+        pub fn lock(self: *Mutex) void {
+            self.inner.lock();
+        }
+        pub fn unlock(self: *Mutex) void {
+            self.inner.unlock();
+        }
+    };
+};
+
+const TestClient = tls.Client(StdSocket, crypto, StdRuntime);
 
 /// Test configuration
 const TestConfig = struct {

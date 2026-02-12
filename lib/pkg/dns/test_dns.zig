@@ -5,21 +5,15 @@
 const std = @import("std");
 const dns = @import("src/dns.zig");
 const std_impl = @import("std_impl");
+const crypto_suite = @import("crypto");
 
 const print = std.debug.print;
 
 /// Use std_impl socket (implements trait.socket interface)
 const Socket = std_impl.socket.Socket;
 
-/// Standard RNG wrapper
-const StdRng = struct {
-    pub fn fill(buf: []u8) void {
-        std.crypto.random.bytes(buf);
-    }
-};
-
 const Resolver = dns.Resolver(Socket);
-const ResolverWithTls = dns.ResolverWithTls(Socket, StdRng);
+const ResolverWithTls = dns.ResolverWithTls(Socket, crypto_suite, std_impl.runtime);
 
 /// Build a minimal TLS 1.3 ClientHello
 fn buildMinimalClientHello(buf: []u8, hostname: []const u8) usize {
@@ -220,7 +214,7 @@ pub fn main() !void {
     print("\n--- Test 3: TLS Library Test ---\n", .{});
     {
         const tls = @import("tls");
-        const TlsClient = tls.DefaultClient(Socket, StdRng);
+        const TlsClient = tls.Client(Socket, crypto_suite, std_impl.runtime);
         const allocator = std.heap.page_allocator;
 
         // Test HTTPS with example.com (TLS 1.3)
