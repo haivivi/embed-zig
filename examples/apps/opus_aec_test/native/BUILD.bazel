@@ -22,7 +22,11 @@ genrule(
     ],
     outs = ["opus_test"],
     cmd = """
-        ZIG=$$(ls external/+zig_toolchain+zig_toolchain/zig)
+        ZIG=$$(find external -name zig -type f | head -1)
+        if [ -z "$$ZIG" ]; then
+            echo "Error: zig binary not found in external/"
+            exit 1
+        fi
         WORK=$$(mktemp -d)
         trap "rm -rf $$WORK" EXIT
         for f in $(SRCS); do
@@ -30,7 +34,7 @@ genrule(
             cp "$$f" "$$WORK/$$f"
         done
         cd "$$WORK/examples/apps/opus_aec_test/native"
-        HOME="$$WORK" "$$WORK/$$ZIG" build -Doptimize=ReleaseFast \
+        HOME="$$WORK" "$$ZIG" build -Doptimize=ReleaseFast \
             --cache-dir "$$WORK/.zig-cache" --global-cache-dir "$$WORK/.zig-global" \
             --prefix "$$WORK/out" 2>&1
         cp "$$WORK/out/bin/opus_test" "$@"

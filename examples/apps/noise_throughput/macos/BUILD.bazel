@@ -1,7 +1,0 @@
-load("//bazel/macos:defs.bzl", "macos_run")
-
-macos_run(
-    name = "run",
-    srcs = glob(["**"]),
-    project_dir = "examples/apps/noise_throughput/macos",
-)

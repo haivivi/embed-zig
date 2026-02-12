@@ -39,7 +39,6 @@ filegroup(
         "//lib/pkg/net/tls/test:test_sources",
         "//lib/pkg/net/tls/test:server_sources",
         "//lib/pkg/async/waitgroup:srcs",
-        "//lib/pkg/net/noise:srcs",
         "//lib/trait:srcs",
     ],
 )
