@@ -25,7 +25,8 @@ pub const Address = union(enum) {
     ipv4: Ipv4Address,
     ipv6: Ipv6Address,
 
-    /// Format address as string
+    /// Format address as string.
+    /// IPv4: "192.168.1.1", IPv6: "2001:db8:0:0:0:0:0:1"
     pub fn format(self: Address, buf: []u8) []const u8 {
         return switch (self) {
             .ipv4 => |addr| std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{
@@ -34,8 +35,21 @@ pub const Address = union(enum) {
                 addr[2],
                 addr[3],
             }) catch "?.?.?.?",
-            .ipv6 => "ipv6", // TODO: proper formatting
+            .ipv6 => |addr| formatIpv6(buf, addr),
         };
+    }
+
+    /// Format IPv6 address as colon-hex groups (e.g. "2001:db8:0:0:0:0:0:1").
+    fn formatIpv6(buf: []u8, addr: Ipv6Address) []const u8 {
+        // 8 groups of 16-bit values, colon separated
+        var groups: [8]u16 = undefined;
+        for (0..8) |i| {
+            groups[i] = @as(u16, addr[i * 2]) << 8 | @as(u16, addr[i * 2 + 1]);
+        }
+        return std.fmt.bufPrint(buf, "{x}:{x}:{x}:{x}:{x}:{x}:{x}:{x}", .{
+            groups[0], groups[1], groups[2], groups[3],
+            groups[4], groups[5], groups[6], groups[7],
+        }) catch "?::?";
     }
 
     /// Parse IPv4 address string

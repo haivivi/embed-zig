@@ -801,6 +801,9 @@ pub const rsa = struct {
     };
 
     pub const PKCS1v1_5Signature = struct {
+        /// RSA PKCS1v1.5 signature verification.
+        /// Not yet implemented — requires mbedTLS RSA integration.
+        /// Returns error instead of silently accepting invalid signatures.
         pub fn verify(
             comptime modulus_len: usize,
             sig: [modulus_len]u8,
@@ -812,12 +815,14 @@ pub const rsa = struct {
             _ = msg;
             _ = pk;
             _ = hash_type;
-            // TODO: Implement RSA PKCS1v1.5 verification via mbedTLS
-            // For now, skip (certificate chain verification handles this)
+            return error.RsaNotSupported;
         }
     };
 
     pub const PSSSignature = struct {
+        /// RSA-PSS signature verification.
+        /// Not yet implemented — requires mbedTLS RSA integration.
+        /// Returns error instead of silently accepting invalid signatures.
         pub fn verify(
             comptime modulus_len: usize,
             sig: [modulus_len]u8,
@@ -829,7 +834,7 @@ pub const rsa = struct {
             _ = msg;
             _ = pk;
             _ = hash_type;
-            // TODO: Implement RSA-PSS verification via mbedTLS
+            return error.RsaNotSupported;
         }
     };
 

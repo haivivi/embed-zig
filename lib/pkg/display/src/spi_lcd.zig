@@ -86,6 +86,12 @@ pub fn SpiLcd(comptime Spi: type, comptime DcPin: type, comptime config: Config)
         spi: *Spi,
         dc: *DcPin,
 
+        /// SPI error counter — incremented on each failed SPI write.
+        /// Upper layers can inspect this for diagnostics (e.g. after flush).
+        /// The flush signature must remain `void` (LVGL C callback constraint),
+        /// so errors are tracked here instead of propagated.
+        spi_errors: u32 = 0,
+
         /// Display dimensions (compile-time constants for display surface spec)
         pub const width: u16 = config.width;
         pub const height: u16 = config.height;
@@ -94,7 +100,7 @@ pub fn SpiLcd(comptime Spi: type, comptime DcPin: type, comptime config: Config)
         pub const buf_lines: u16 = config.buf_lines;
 
         pub fn init(spi: *Spi, dc: *DcPin) Self {
-            return .{ .spi = spi, .dc = dc };
+            return .{ .spi = spi, .dc = dc, .spi_errors = 0 };
         }
 
         // ================================================================
@@ -139,13 +145,17 @@ pub fn SpiLcd(comptime Spi: type, comptime DcPin: type, comptime config: Config)
         /// Send a command byte (DC low)
         fn writeCmd(self: *Self, cmd: u8) void {
             self.dc.setLow();
-            self.spi.write(&.{cmd}) catch {};
+            self.spi.write(&.{cmd}) catch {
+                self.spi_errors += 1;
+            };
         }
 
         /// Send data bytes (DC high)
         fn writeData(self: *Self, data: []const u8) void {
             self.dc.setHigh();
-            self.spi.write(data) catch {};
+            self.spi.write(data) catch {
+                self.spi_errors += 1;
+            };
         }
     };
 }

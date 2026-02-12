@@ -378,10 +378,10 @@ pub const NetDriver = struct {
         netif.stopDhcpServer(interface);
     }
 
-    /// Get DHCP leases (placeholder - returns empty for now)
-    pub fn getDhcpLeases(_: *const Self, _: []const u8) []const ApStaAssignedData {
-        // TODO: Implement when IDF support is available
-        return &[_]ApStaAssignedData{};
+    /// Get DHCP leases.
+    /// ESP-IDF does not expose DHCP lease query APIs — returns null (unknown).
+    pub fn getDhcpLeases(_: *const Self, _: []const u8) ?[]const ApStaAssignedData {
+        return null;
     }
 };
 

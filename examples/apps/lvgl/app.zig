@@ -177,9 +177,7 @@ fn gameListInput(btn: ButtonId) void {
     switch (btn) {
         .vol_up, .left => game_list.scrollUp(),
         .vol_down, .right => game_list.scrollDown(),
-        .confirm => {
-            // Games not implemented yet — TODO: redesign UI state rendering
-        },
+        .confirm => game_list.showComingSoon(),
         .back => {
             current_screen = .menu;
             menu.show();

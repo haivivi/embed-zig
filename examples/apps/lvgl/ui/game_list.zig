@@ -71,3 +71,37 @@ pub fn scrollDown() void {
 pub fn show() void {
     if (screen) |scr| scr.loadAnim(.move_left, 200);
 }
+
+// ============================================================================
+// "Coming Soon" toast — shown on confirm since games are not yet playable
+// ============================================================================
+
+var toast_label: ?ui.Label = null;
+
+pub fn showComingSoon() void {
+    const scr = screen orelse return;
+
+    // Create toast label on first use
+    if (toast_label == null) {
+        toast_label = ui.Label.create(scr);
+        if (toast_label) |lbl| {
+            _ = lbl.text("敬请期待")
+                .color(theme.white)
+                .font(theme.getFont24())
+                .setAlign(.center, 0, 0);
+        }
+    }
+
+    // Show the toast
+    if (toast_label) |lbl| {
+        _ = lbl.show();
+        // Auto-hide after 1.5 seconds via LVGL timer
+        _ = c.lv_timer_create(hideToastCb, 1500, null);
+    }
+}
+
+fn hideToastCb(timer: ?*c.lv_timer_t) callconv(.c) void {
+    if (toast_label) |lbl| _ = lbl.hide();
+    // One-shot: delete the timer
+    if (timer) |t| c.lv_timer_delete(t);
+}

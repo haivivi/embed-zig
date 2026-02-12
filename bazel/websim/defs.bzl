@@ -105,7 +105,9 @@ def _websim_app_impl(ctx):
     zig_args.append("-M{}={}".format(module_name, main_file.path))
 
     # Add all transitive module definitions (same as zig_static_library cross-compile)
-    # Modules without C includes first, modules with C includes last (Zig compiler bug workaround)
+    # Zig compiler constraint: modules with C includes must come after modules without.
+    # Passing them in the wrong order causes compilation failures (zig cc module resolution bug).
+    # Remove this ordering workaround when fixed upstream in ziglang/zig.
     seen = {module_name: True}
     mods_no_inc = []
     mods_with_inc = []
