@@ -7,7 +7,10 @@ zig_module(
     main = "websim.zig",
     srcs = glob(["**/*.zig"]),
     module_name = "websim",
-    deps = ["//lib/hal"],
+    deps = [
+        "//lib/hal",
+        "//lib/pkg/display",
+    ],
 )
 
 # Shared JS (websim.js SDK + main.js entry point)

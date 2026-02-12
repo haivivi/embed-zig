@@ -1,6 +1,6 @@
 //! Memory-backed display driver for testing
 //!
-//! Implements the hal.display driver interface with an in-memory
+//! Implements the display surface driver interface with an in-memory
 //! framebuffer. Used for headless testing of LVGL integration —
 //! no hardware or graphics system needed.
 //!
@@ -9,8 +9,11 @@
 //! - `framebuffer`: raw pixel data to verify rendering
 //! - `getPixel()`: read individual pixel values
 
-const hal_display = @import("hal").display;
-const Area = hal_display.Area;
+const types = @import("types.zig");
+const Area = types.Area;
+const ColorFormat = types.ColorFormat;
+const RenderMode = types.RenderMode;
+const bytesPerPixel = types.bytesPerPixel;
 
 /// Memory-backed display driver.
 ///
@@ -18,9 +21,9 @@ const Area = hal_display.Area;
 pub fn MemDisplay(
     comptime w: u16,
     comptime h: u16,
-    comptime color_fmt: hal_display.ColorFormat,
+    comptime color_fmt: ColorFormat,
 ) type {
-    const bpp = hal_display.bytesPerPixel(color_fmt);
+    const bpp = bytesPerPixel(color_fmt);
     const fb_size = @as(u32, w) * @as(u32, h) * @as(u32, bpp);
 
     return struct {
@@ -45,7 +48,7 @@ pub fn MemDisplay(
         }
 
         /// Flush callback — copies pixel data to the in-memory framebuffer.
-        /// This is the method required by hal.display.from(spec).
+        /// This is the method required by display.from(spec).
         pub fn flush(self: *Self, area: Area, color_data: [*]const u8) void {
             self.flush_count += 1;
             self.last_area = area;
@@ -101,14 +104,14 @@ pub fn MemDisplay(
             return false;
         }
 
-        // -- HAL display spec --
+        // -- Display surface spec --
 
         pub const spec = struct {
             pub const Driver = Self;
             pub const width: u16 = w;
             pub const height: u16 = h;
             pub const color_format = color_fmt;
-            pub const render_mode: hal_display.RenderMode = .full;
+            pub const render_mode: RenderMode = .full;
             pub const meta = .{ .id = "display.mem" };
         };
     };
@@ -119,16 +122,15 @@ pub fn MemDisplay(
 // ============================================================================
 
 const std = @import("std");
+const surface = @import("surface.zig");
 
 test "MemDisplay basic" {
     const Disp = MemDisplay(320, 240, .rgb565);
     var disp = Disp.create();
 
-    // Initially empty
     try std.testing.expect(!disp.hasAnyContent());
     try std.testing.expectEqual(@as(u32, 0), disp.flush_count);
 
-    // Simulate a flush of one line
     var line_data: [320 * 2]u8 = undefined;
     @memset(&line_data, 0xFF);
     disp.flush(.{ .x1 = 0, .y1 = 0, .x2 = 319, .y2 = 0 }, &line_data);
@@ -138,25 +140,22 @@ test "MemDisplay basic" {
     try std.testing.expect(disp.hasContent(.{ .x1 = 0, .y1 = 0, .x2 = 319, .y2 = 0 }));
     try std.testing.expect(!disp.hasContent(.{ .x1 = 0, .y1 = 1, .x2 = 319, .y2 = 1 }));
 
-    // Check pixel value
     const pixel = disp.getPixelBytes(0, 0);
     try std.testing.expectEqual(@as(u8, 0xFF), pixel[0]);
     try std.testing.expectEqual(@as(u8, 0xFF), pixel[1]);
 }
 
-test "MemDisplay as HAL display" {
+test "MemDisplay as display surface" {
     const Disp = MemDisplay(128, 64, .rgb565);
-    const HalDisp = hal_display.from(Disp.spec);
+    const Display = surface.from(Disp.spec);
 
     var driver = Disp.create();
-    var display = HalDisp.init(&driver);
+    var display = Display.init(&driver);
 
-    // Verify properties
-    try std.testing.expectEqual(@as(u16, 128), HalDisp.width);
-    try std.testing.expectEqual(@as(u16, 64), HalDisp.height);
-    try std.testing.expectEqual(hal_display.ColorFormat.rgb565, HalDisp.color_format);
+    try std.testing.expectEqual(@as(u16, 128), Display.width);
+    try std.testing.expectEqual(@as(u16, 64), Display.height);
+    try std.testing.expectEqual(ColorFormat.rgb565, Display.color_format);
 
-    // Flush through HAL
     var data: [128 * 2]u8 = undefined;
     @memset(&data, 0xAB);
     display.flush(.{ .x1 = 0, .y1 = 0, .x2 = 127, .y2 = 0 }, &data);

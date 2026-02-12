@@ -32,6 +32,7 @@
 
 pub const drivers = @import("impl/drivers.zig");
 pub const state_mod = @import("impl/state.zig");
+pub const spi_sim = @import("impl/spi.zig");
 pub const wasm = @import("wasm/wasm.zig");
 pub const boards = @import("boards/boards.zig");
 
@@ -41,8 +42,11 @@ pub const ButtonDriver = drivers.ButtonDriver;
 pub const PowerButtonDriver = drivers.PowerButtonDriver;
 pub const AdcButtonDriver = drivers.AdcButtonDriver;
 pub const LedDriver = drivers.LedDriver;
-pub const DisplayDriver = drivers.DisplayDriver;
 pub const sal = drivers.sal;
+
+// Re-export simulated SPI types (for display)
+pub const SimSpi = spi_sim.SimSpi;
+pub const SimDcPin = spi_sim.SimDcPin;
 
 // Re-export state types
 pub const SharedState = state_mod.SharedState;

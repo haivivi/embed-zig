@@ -7,7 +7,9 @@
 //! - AEC audio system (speaker + mic) — TODO
 
 const hal = @import("hal");
+const display = @import("display");
 const drivers = @import("../../impl/drivers.zig");
+const spi_sim = @import("../../impl/spi.zig");
 const state = @import("../../impl/state.zig");
 
 // ============================================================================
@@ -103,12 +105,21 @@ pub const led_spec = struct {
     pub const meta = .{ .id = "led.status" };
 };
 
+/// SPI LCD driver: SpiLcd(SimSpi, SimDcPin) — goes through simulated SPI bus
+pub const SpiLcdDriver = display.SpiLcd(spi_sim.SimSpi, spi_sim.SimDcPin, .{
+    .width = state.DISPLAY_WIDTH,
+    .height = state.DISPLAY_HEIGHT,
+    .color_format = .rgb565,
+    .render_mode = .partial,
+    .buf_lines = 20,
+});
+
 pub const display_spec = struct {
-    pub const Driver = drivers.DisplayDriver;
+    pub const Driver = SpiLcdDriver;
     pub const width: u16 = state.DISPLAY_WIDTH;
     pub const height: u16 = state.DISPLAY_HEIGHT;
-    pub const color_format = hal.display.ColorFormat.rgb565;
-    pub const render_mode = hal.display.RenderMode.partial;
+    pub const color_format = display.ColorFormat.rgb565;
+    pub const render_mode = display.RenderMode.partial;
     pub const buf_lines: u16 = 20;
     pub const meta = .{ .id = "display.main" };
 };

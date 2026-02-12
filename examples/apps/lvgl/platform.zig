@@ -1,6 +1,7 @@
 //! Board Configuration for H106 UI Prototype
 
 const hal = @import("hal");
+const display = @import("display");
 const websim = @import("websim");
 const hw = @import("websim/standard.zig");
 
@@ -27,4 +28,4 @@ const spec = struct {
 };
 
 pub const Board = hal.Board(spec);
-pub const Display = hal.display.from(hw.display_spec);
+pub const Display = display.from(hw.display_spec);

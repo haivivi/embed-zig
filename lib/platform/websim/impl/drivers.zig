@@ -143,30 +143,10 @@ pub const AdcButtonDriver = struct {
     }
 };
 
-// ============================================================================
-// Display Driver (240x240 RGB565)
-// ============================================================================
-
-pub const DisplayDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        shared.addLog("WebSim: Display 240x240 ready");
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    /// Flush pixels to the shared framebuffer.
-    /// Called by hal.display / LVGL flush callback.
-    pub fn flush(_: *Self, area: @import("hal").display.Area, color_data: [*]const u8) void {
-        shared.displayFlush(area.x1, area.y1, area.x2, area.y2, color_data);
-    }
-
-    pub fn setBacklight(_: *Self, _: u8) void {
-        // No-op in simulator
-    }
-};
+// Display driver has moved to SPI-based architecture.
+// See lib/platform/websim/impl/spi.zig (SimSpi + SimDcPin)
+// and lib/pkg/display/src/spi_lcd.zig (SpiLcd generic driver).
+// Board definitions create: display.SpiLcd(SimSpi, SimDcPin, config)
 
 // ============================================================================
 // SAL (System Abstraction Layer)

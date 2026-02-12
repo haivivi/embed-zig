@@ -32,7 +32,7 @@
 
 const lvgl = @import("lvgl");
 const c = lvgl.c;
-const hal = @import("hal");
+const display_pkg = @import("display");
 
 // Core types
 pub const Obj = @import("obj.zig");
@@ -59,7 +59,7 @@ pub const Textarea = @import("textarea.zig");
 pub const Table = @import("table.zig");
 
 // Test utilities
-pub const MemDisplay = @import("mem_display.zig").MemDisplay;
+pub const MemDisplay = display_pkg.MemDisplay;
 
 // Re-export common enums
 pub const Align = Obj.Align;
@@ -69,8 +69,10 @@ pub const ScreenAnim = Obj.ScreenAnim;
 pub const Color = color.Color;
 pub const Font = font.Font;
 
-// Re-export RenderMode for convenience
-pub const RenderMode = hal.display.RenderMode;
+// Re-export display types for convenience
+pub const RenderMode = display_pkg.RenderMode;
+pub const Area = display_pkg.Area;
+pub const ColorFormat = display_pkg.ColorFormat;
 
 // ============================================================================
 // Display Context
@@ -193,17 +195,16 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
-    _ = @import("mem_display.zig");
 }
 
 test "LVGL init and deinit" {
     const Disp = MemDisplay(320, 240, .rgb565);
-    const HalDisp = hal.display.from(Disp.spec);
+    const Display = display_pkg.from(Disp.spec);
 
     var driver = Disp.create();
-    var display = HalDisp.init(&driver);
+    var display = Display.init(&driver);
 
-    var ctx = try init(HalDisp, &display);
+    var ctx = try init(Display, &display);
     defer ctx.deinit();
 
     const scr = ctx.screen();
@@ -212,12 +213,12 @@ test "LVGL init and deinit" {
 
 test "LVGL create label with chaining" {
     const Disp = MemDisplay(320, 240, .rgb565);
-    const HalDisp = hal.display.from(Disp.spec);
+    const Display = display_pkg.from(Disp.spec);
 
     var driver = Disp.create();
-    var display = HalDisp.init(&driver);
+    var display = Display.init(&driver);
 
-    var ctx = try init(HalDisp, &display);
+    var ctx = try init(Display, &display);
     defer ctx.deinit();
 
     const lbl = Label.create(ctx.screen()).?
