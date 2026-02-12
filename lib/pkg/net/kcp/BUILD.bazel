@@ -1,0 +1,18 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+# KCP - A Fast and Reliable ARQ Protocol.
+zig_package(
+    name = "kcp",
+    main = "src/mod.zig",
+    deps = [
+        "//lib/trait",
+    ],
+    c_srcs = ["@kcp//:srcs"],
+    c_includes = ["src"],
+    c_flags = ["-O3", "-DNDEBUG", "-fno-sanitize=undefined"],
+    link_libc = True,
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const trait = @import("trait");
-const mqtt0 = @import("mqtt0");
+const mqtt0 = @import("net/mqtt0");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

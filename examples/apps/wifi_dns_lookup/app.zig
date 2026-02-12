@@ -3,7 +3,7 @@
 //! Tests UDP, TCP, and DoH (DNS over HTTPS) resolution on ESP32.
 
 const std = @import("std");
-const dns = @import("dns");
+const dns = @import("net/dns");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

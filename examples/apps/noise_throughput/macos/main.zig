@@ -10,7 +10,7 @@
 const std = @import("std");
 const posix = std.posix;
 const crypto_suite = @import("crypto");
-const zgrnet = @import("zgrnet");
+const zgrnet = @import("net/noise");
 const kcp_raw = zgrnet.kcp;
 const kcp_stream_mod = zgrnet.kcp_stream;
 

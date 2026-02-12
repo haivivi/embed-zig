@@ -15,7 +15,7 @@
 const std = @import("std");
 const std_impl = @import("std_impl");
 const crypto = @import("crypto");
-const tls = @import("tls");
+const tls = @import("net/tls");
 
 const Socket = std_impl.Socket;
 const Crypto = crypto; // Use lib/crypto's std.crypto-based suite

@@ -7,8 +7,8 @@
 
 const std = @import("std");
 const esp = @import("esp");
-const cancellation = @import("cancellation");
-const waitgroup = @import("waitgroup");
+const cancellation = @import("async/cancellation");
+const waitgroup = @import("async/waitgroup");
 
 const idf = esp.idf;
 const heap = idf.heap;

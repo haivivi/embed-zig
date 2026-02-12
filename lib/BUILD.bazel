@@ -4,7 +4,7 @@
 # See individual lib/*/BUILD.bazel for specific dependencies.
 #
 # Usage in esp_zig_app:
-#   deps = ["//lib/hal", "//lib/pkg/drivers", ...]
+#   deps = ["//lib/hal", "//lib/pkg/drivers/audio", ...]
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,28 +18,28 @@ filegroup(
     name = "all_sources",
     srcs = glob(["*"]) + [
         "//lib/pkg/audio:srcs",
-        "//lib/pkg/cancellation:srcs",
-        "//lib/pkg/channel:srcs",
+        "//lib/pkg/async/cancellation:srcs",
+        "//lib/pkg/async/channel:srcs",
         "//lib/pkg/crypto:srcs",
         "//lib/pkg/crypto/certs:root_cas",
-        "//lib/pkg/dns:srcs",
-        "//lib/pkg/drivers:srcs",
+        "//lib/pkg/net/dns:srcs",
+        "//lib/pkg/drivers/audio:srcs",
         "//lib/platform/esp",
         "//lib/platform/esp/idf",
         "//lib/platform/esp/impl",
         "//lib/hal:srcs",
-        "//lib/pkg/http:srcs",
+        "//lib/pkg/net/http:srcs",
         "//lib/pkg/input:srcs",
         "//lib/pkg/math:srcs",
         "//lib/pkg/motion:srcs",
-        "//lib/pkg/ntp:srcs",
+        "//lib/pkg/net/ntp:srcs",
         "//lib/pkg/portaudio:srcs",
         "//lib/platform/std:srcs",
-        "//lib/pkg/tls:srcs",
-        "//lib/pkg/tls/test:test_sources",
-        "//lib/pkg/tls/test:server_sources",
-        "//lib/pkg/waitgroup:srcs",
-        "//lib/pkg/zgrnet:srcs",
+        "//lib/pkg/net/tls:srcs",
+        "//lib/pkg/net/tls/test:test_sources",
+        "//lib/pkg/net/tls/test:server_sources",
+        "//lib/pkg/async/waitgroup:srcs",
+        "//lib/pkg/net/noise:srcs",
         "//lib/trait:srcs",
     ],
 )

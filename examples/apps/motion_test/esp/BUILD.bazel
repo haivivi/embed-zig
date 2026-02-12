@@ -36,7 +36,7 @@ esp_zig_app(
 
         "//lib/hal",
         "//lib/trait",
-        "//lib/pkg/drivers",
+        "//lib/pkg/drivers/audio",
         "//lib/pkg/motion",
         "//lib/pkg/math",
     ],

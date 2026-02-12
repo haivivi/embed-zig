@@ -22,7 +22,7 @@
 const std = @import("std");
 const esp = @import("esp");
 const bluetooth = @import("bluetooth");
-const cancellation = @import("cancellation");
+const cancellation = @import("async/cancellation");
 
 const idf = esp.idf;
 const heap = idf.heap;

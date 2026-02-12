@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Get dependencies
-    const dns_dep = b.dependency("dns", .{
+    const dns_dep = b.dependency("net/dns", .{
         .target = target,
         .optimize = optimize,
     });
@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "dns", .module = dns_dep.module("dns") },
+            .{ .name = "net/dns", .module = dns_dep.module("net/dns") },
             .{ .name = "drivers", .module = drivers_dep.module("drivers") },
             .{ .name = "idf", .module = idf_dep.module("idf") },
             .{ .name = "impl", .module = impl_dep.module("impl") },

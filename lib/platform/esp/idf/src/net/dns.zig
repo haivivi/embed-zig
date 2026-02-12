@@ -15,7 +15,7 @@
 
 const std = @import("std");
 
-const dns_lib = @import("dns");
+const dns_lib = @import("net/dns");
 /// DNS Protocol
 pub const Protocol = dns_lib.Protocol;
 /// DNS Errors

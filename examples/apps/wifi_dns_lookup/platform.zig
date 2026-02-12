@@ -1,7 +1,7 @@
 //! Board Configuration - WiFi DNS Lookup (Event-Driven)
 
 const hal = @import("hal");
-const dns = @import("dns");
+const dns = @import("net/dns");
 const build_options = @import("build_options");
 
 /// Hardware implementation (exported for access to crypto types like CaStore)

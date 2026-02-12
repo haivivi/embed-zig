@@ -10,7 +10,7 @@ const Board = platform.Board;
 const log = Board.log;
 
 const crypto_suite = @import("crypto");
-const zgrnet = @import("zgrnet");
+const zgrnet = @import("net/noise");
 const kcp_stream_mod = zgrnet.kcp_stream;
 
 const esp_mod = @import("esp");

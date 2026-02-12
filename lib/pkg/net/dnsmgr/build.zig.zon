@@ -1,0 +1,8 @@
+.{
+    .name = "dnsmgr",
+    .version = "0.0.0",
+    .dependencies = .{
+        .trait = .{ .path = "../../../trait" },
+    },
+    .paths = .{""},
+}

@@ -15,9 +15,9 @@ const opus = @import("opus");
 // Import extra deps to match giztoy chatgear's module set.
 // Even if unused, they affect the build.zig module graph and
 // potentially the @cImport resolution order.
-const Channel = @import("channel").Channel;
-const WaitGroup = @import("waitgroup").WaitGroup;
-const CancellationToken = @import("cancellation").CancellationToken;
+const Channel = @import("async/channel").Channel;
+const WaitGroup = @import("async/waitgroup").WaitGroup;
+const CancellationToken = @import("async/cancellation").CancellationToken;
 
 const heap = idf.heap;
 const log = std.log.scoped(.opus_test);

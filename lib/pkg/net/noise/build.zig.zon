@@ -1,0 +1,11 @@
+.{
+    .name = "noise",
+    .version = "0.0.0",
+    .dependencies = .{
+        .trait = .{ .path = "../../../trait" },
+        .crypto = .{ .path = "../../crypto" },
+        .kcp = .{ .path = "../kcp" },
+        .channel = .{ .path = "../../async/channel" },
+    },
+    .paths = .{""},
+}

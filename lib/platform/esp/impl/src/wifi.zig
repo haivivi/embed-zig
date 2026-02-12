@@ -34,7 +34,7 @@
 const std = @import("std");
 const idf = @import("idf");
 const hal = @import("hal");
-const waitgroup = @import("waitgroup");
+const waitgroup = @import("async/waitgroup");
 
 const log = std.log.scoped(.wifi_impl);
 const heap = idf.heap;

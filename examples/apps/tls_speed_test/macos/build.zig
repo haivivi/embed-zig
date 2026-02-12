@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const tls_dep = b.dependency("tls", .{
+    const tls_dep = b.dependency("net/tls", .{
         .target = target,
         .optimize = optimize,
     });
@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
-    exe.root_module.addImport("tls", tls_dep.module("tls"));
+    exe.root_module.addImport("net/tls", tls_dep.module("net/tls"));
     exe.root_module.addImport("crypto", crypto_dep.module("crypto"));
 
     b.installArtifact(exe);

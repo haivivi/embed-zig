@@ -4,9 +4,9 @@
     .fingerprint = 0xd11711c2510fa2f6,
     .dependencies = .{
         .trait = .{ .path = "../../trait" },
-        .channel = .{ .path = "../channel" },
-        .waitgroup = .{ .path = "../waitgroup" },
-        .cancellation = .{ .path = "../cancellation" },
+        .channel = .{ .path = "../async/channel" },
+        .waitgroup = .{ .path = "../async/waitgroup" },
+        .cancellation = .{ .path = "../async/cancellation" },
         .std_impl = .{ .path = "../../platform/std" },
     },
     .paths = .{

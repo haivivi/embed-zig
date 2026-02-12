@@ -39,7 +39,7 @@ esp_zig_app(
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
     deps = [":idf", ":esp",
- "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns", "//lib/pkg/http", "//lib/pkg/motion", "//lib/pkg/math"],
+ "//lib/hal", "//lib/trait", "//lib/pkg/net/tls", "//lib/pkg/net/dns", "//lib/pkg/net/http", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",
     app_config = "//examples/esp:app",
     env = ":env",

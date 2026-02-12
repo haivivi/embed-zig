@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const trait_dep = b.dependency("trait", .{ .target = target, .optimize = optimize });
     const hal_dep = b.dependency("hal", .{ .target = target, .optimize = optimize });
     const std_impl_dep = b.dependency("std_impl", .{ .target = target, .optimize = optimize });
-    const timer_dep = b.dependency("timer", .{ .target = target, .optimize = optimize });
+    const timer_dep = b.dependency("async/timer", .{ .target = target, .optimize = optimize });
 
     const exe = b.addExecutable(.{
         .name = "timer_test",
@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("trait", trait_dep.module("trait"));
     exe.root_module.addImport("hal", hal_dep.module("hal"));
-    exe.root_module.addImport("timer", timer_dep.module("timer"));
+    exe.root_module.addImport("async/timer", timer_dep.module("async/timer"));
     // Import runtime directly (avoids opus dependency via full std_impl)
     exe.root_module.addImport("runtime", b.createModule(.{
         .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),

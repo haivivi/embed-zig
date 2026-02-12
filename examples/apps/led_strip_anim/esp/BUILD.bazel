@@ -30,7 +30,7 @@ esp_zig_app(
     extra_c_sources = ["I2C_C_SOURCES"],
     deps = [":idf", ":esp",
 
- "//lib/hal", "//lib/trait", "//lib/pkg/drivers", "//lib/pkg/motion", "//lib/pkg/math"],
+ "//lib/hal", "//lib/trait", "//lib/pkg/drivers/audio", "//lib/pkg/motion", "//lib/pkg/math"],
     idf_deps = ["espressif/led_strip:^3.0.0"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",

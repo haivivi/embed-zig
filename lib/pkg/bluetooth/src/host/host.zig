@@ -50,9 +50,9 @@
 
 const std = @import("std");
 const trait = @import("trait");
-const channel = @import("channel");
-const waitgroup = @import("waitgroup");
-const cancellation = @import("cancellation");
+const channel = @import("async/channel");
+const waitgroup = @import("async/waitgroup");
+const cancellation = @import("async/cancellation");
 
 const hci_mod = @import("hci/hci.zig");
 const acl_mod = @import("hci/acl.zig");

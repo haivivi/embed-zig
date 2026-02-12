@@ -12,8 +12,8 @@ const log = Board.log;
 
 const esp = @import("esp");
 const idf = esp.idf;
-const tls = @import("tls");
-const dns = @import("dns");
+const tls = @import("net/tls");
+const dns = @import("net/dns");
 const allocator = idf.heap.psram;
 
 const BUILD_TAG = "https_speed_test_v2_esp_bundle";

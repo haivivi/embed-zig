@@ -8,14 +8,14 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const zgrnet_dep = b.dependency("zgrnet", .{
+    const zgrnet_dep = b.dependency("net/noise", .{
         .target = target,
         .optimize = optimize,
     });
     const kcp_dep = b.dependency("kcp", .{});
 
     // zgrnet module with KCP C source compiled in
-    const zgrnet_mod = zgrnet_dep.module("zgrnet");
+    const zgrnet_mod = zgrnet_dep.module("net/noise");
     zgrnet_mod.addIncludePath(zgrnet_dep.path("src/kcp"));
     zgrnet_mod.addCSourceFile(.{
         .file = kcp_dep.path("ikcp.c"),
@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("crypto", crypto_dep.module("crypto"));
-    exe.root_module.addImport("zgrnet", zgrnet_mod);
+    exe.root_module.addImport("net/noise", zgrnet_mod);
 
     b.installArtifact(exe);
 

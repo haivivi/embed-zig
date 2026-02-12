@@ -1,0 +1,9 @@
+.{
+    .name = "imu",
+    .version = "0.0.0",
+    .dependencies = .{
+        .trait = .{ .path = "../../../trait" },
+        .math = .{ .path = "../../math" },
+    },
+    .paths = .{""},
+}

@@ -1,0 +1,14 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+# DNS manager - Cross-platform DNS configuration.
+zig_package(
+    name = "dnsmgr",
+    main = "src/mod.zig",
+    deps = [
+        "//lib/trait",
+    ],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -4,7 +4,7 @@
 //! Connects to WiFi, queries NTP server, and displays synchronized time.
 
 const std = @import("std");
-const ntp = @import("ntp");
+const ntp = @import("net/ntp");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;

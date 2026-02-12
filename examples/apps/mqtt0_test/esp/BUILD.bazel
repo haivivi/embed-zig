@@ -41,7 +41,7 @@ esp_zig_app(
         ":esp",
         "//lib/hal",
         "//lib/trait",
-        "//lib/pkg/mqtt0",
+        "//lib/pkg/net/mqtt0",
         "//lib/pkg/math",
         "//lib/pkg/motion",
     ],

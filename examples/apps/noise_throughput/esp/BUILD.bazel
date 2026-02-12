@@ -38,7 +38,7 @@ esp_zig_app(
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS", "KCP_C_SOURCES"],
     deps = [":idf", ":esp",
- "//lib/hal", "//lib/trait", "//lib/pkg/crypto", "//lib/pkg/zgrnet",
+ "//lib/hal", "//lib/trait", "//lib/pkg/crypto", "//lib/pkg/net/noise",
  "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip_fast",
     app_config = "//examples/esp:app",

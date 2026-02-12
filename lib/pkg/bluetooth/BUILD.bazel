@@ -6,9 +6,9 @@ zig_package(
     name = "bluetooth",
     deps = [
         "//lib/trait",
-        "//lib/pkg/channel",
-        "//lib/pkg/waitgroup",
-        "//lib/pkg/cancellation",
+        "//lib/pkg/async/channel",
+        "//lib/pkg/async/waitgroup",
+        "//lib/pkg/async/cancellation",
         "//lib/platform/std",
     ],
 )

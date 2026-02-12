@@ -58,9 +58,9 @@ esp_zig_app(
         "@embed_zig//lib/trait",
         # Include the same deps as giztoy chatgear to reproduce module-count
         # sensitive issues (e.g., @cImport resolution with many modules)
-        "@embed_zig//lib/pkg/channel",
-        "@embed_zig//lib/pkg/waitgroup",
-        "@embed_zig//lib/pkg/cancellation",
+        "@embed_zig//lib/pkg/async/channel",
+        "@embed_zig//lib/pkg/async/waitgroup",
+        "@embed_zig//lib/pkg/async/cancellation",
         "@embed_zig//third_party/opus:opus_fixed",
     ],
     static_libs = [

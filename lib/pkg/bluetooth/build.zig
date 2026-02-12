@@ -9,15 +9,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const channel_dep = b.dependency("channel", .{
+    const channel_dep = b.dependency("async/channel", .{
         .target = target,
         .optimize = optimize,
     });
-    const waitgroup_dep = b.dependency("waitgroup", .{
+    const waitgroup_dep = b.dependency("async/waitgroup", .{
         .target = target,
         .optimize = optimize,
     });
-    const cancellation_dep = b.dependency("cancellation", .{
+    const cancellation_dep = b.dependency("async/cancellation", .{
         .target = target,
         .optimize = optimize,
     });
@@ -33,9 +33,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bluetooth_mod.addImport("trait", trait_dep.module("trait"));
-    bluetooth_mod.addImport("channel", channel_dep.module("channel"));
-    bluetooth_mod.addImport("waitgroup", waitgroup_dep.module("waitgroup"));
-    bluetooth_mod.addImport("cancellation", cancellation_dep.module("cancellation"));
+    bluetooth_mod.addImport("async/channel", channel_dep.module("async/channel"));
+    bluetooth_mod.addImport("async/waitgroup", waitgroup_dep.module("async/waitgroup"));
+    bluetooth_mod.addImport("async/cancellation", cancellation_dep.module("async/cancellation"));
 
     // Unit tests (also needs runtime for test Rt)
     const tests = b.addTest(.{
@@ -46,9 +46,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     tests.root_module.addImport("trait", trait_dep.module("trait"));
-    tests.root_module.addImport("channel", channel_dep.module("channel"));
-    tests.root_module.addImport("waitgroup", waitgroup_dep.module("waitgroup"));
-    tests.root_module.addImport("cancellation", cancellation_dep.module("cancellation"));
+    tests.root_module.addImport("async/channel", channel_dep.module("async/channel"));
+    tests.root_module.addImport("async/waitgroup", waitgroup_dep.module("async/waitgroup"));
+    tests.root_module.addImport("async/cancellation", cancellation_dep.module("async/cancellation"));
     tests.root_module.addImport("runtime", b.createModule(.{
         .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),
         .target = target,

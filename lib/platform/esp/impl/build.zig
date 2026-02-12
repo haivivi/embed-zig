@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const waitgroup_dep = b.dependency("waitgroup", .{
+    const waitgroup_dep = b.dependency("async/waitgroup", .{
         .target = target,
         .optimize = optimize,
     });
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "trait", .module = trait_dep.module("trait") },
             .{ .name = "hal", .module = hal_dep.module("hal") },
             .{ .name = "drivers", .module = drivers_dep.module("drivers") },
-            .{ .name = "waitgroup", .module = waitgroup_dep.module("waitgroup") },
+            .{ .name = "async/waitgroup", .module = waitgroup_dep.module("async/waitgroup") },
         },
     });
 }

@@ -40,7 +40,7 @@ esp_zig_app(
     extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "NET_C_SOURCES"],
     deps = [":idf", ":esp",
 
- "//lib/hal", "//lib/trait", "//lib/pkg/ntp", "//lib/pkg/motion", "//lib/pkg/math"],
+ "//lib/hal", "//lib/trait", "//lib/pkg/net/ntp", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
     env = ":env",

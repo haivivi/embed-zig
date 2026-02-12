@@ -9,7 +9,7 @@
 #       main = "//lib/platform/esp:src/esp.zig",
 #       srcs = ["//lib/platform/esp:all_zig_srcs"],
 #       c_srcs = ["//lib/platform/esp/idf:c_srcs", ":config"],
-#       deps = ["//lib/trait", "//lib/hal", "//lib/pkg/drivers"],
+#       deps = ["//lib/trait", "//lib/hal", "//lib/pkg/drivers/audio"],
 #       link_libc = True,
 #   )
 
