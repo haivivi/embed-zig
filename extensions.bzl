@@ -266,6 +266,44 @@ html2canvas = module_extension(
 )
 
 # =============================================================================
+# KCP (A Fast and Reliable ARQ Protocol)
+# =============================================================================
+
+_KCP_VERSION = "1.7"
+
+def _kcp_repo_impl(ctx):
+    """Download and setup KCP C library source."""
+    ctx.download_and_extract(
+        url = "https://github.com/skywind3000/kcp/archive/refs/tags/{}.tar.gz".format(_KCP_VERSION),
+        strip_prefix = "kcp-{}".format(_KCP_VERSION),
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = ["ikcp.c", "ikcp.h"],
+)
+
+filegroup(
+    name = "headers",
+    srcs = ["ikcp.h"],
+)
+""")
+
+_kcp_repo = repository_rule(
+    implementation = _kcp_repo_impl,
+)
+
+def _kcp_ext_impl(ctx):
+    """Module extension for KCP library."""
+    _kcp_repo(name = "kcp")
+
+kcp_lib = module_extension(
+    implementation = _kcp_ext_impl,
+)
+
+# =============================================================================
 # Zig Toolchain (with Xtensa support)
 # =============================================================================
 

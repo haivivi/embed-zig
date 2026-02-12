@@ -1,0 +1,11 @@
+# Noise Throughput Test - Noise Protocol UDP throughput measurement
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)

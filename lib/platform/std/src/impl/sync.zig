@@ -54,6 +54,42 @@ pub const Mutex = struct {
 };
 
 // ============================================================================
+// Condition - Condition Variable
+// ============================================================================
+
+/// Condition variable using std.Thread.Condition
+pub const Condition = struct {
+    inner: std.Thread.Condition,
+
+    pub const TimedWaitResult = enum { signaled, timed_out };
+
+    pub fn init() Condition {
+        return .{ .inner = .{} };
+    }
+
+    pub fn deinit(self: *Condition) void {
+        _ = self;
+    }
+
+    pub fn wait(self: *Condition, mutex: *Mutex) void {
+        self.inner.wait(&mutex.inner);
+    }
+
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
+        const result = self.inner.timedWait(&mutex.inner, timeout_ns);
+        return if (result == .timed_out) .timed_out else .signaled;
+    }
+
+    pub fn signal(self: *Condition) void {
+        self.inner.signal();
+    }
+
+    pub fn broadcast(self: *Condition) void {
+        self.inner.broadcast();
+    }
+};
+
+// ============================================================================
 // Semaphore - Counting Semaphore
 // ============================================================================
 

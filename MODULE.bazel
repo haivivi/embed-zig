@@ -44,6 +44,13 @@ html2canvas = use_extension("//:extensions.bzl", "html2canvas")
 use_repo(html2canvas, "html2canvas")
 
 # =============================================================================
+# KCP library (Fast ARQ Protocol, used by zgrnet)
+# =============================================================================
+
+kcp_lib = use_extension("//:extensions.bzl", "kcp_lib")
+use_repo(kcp_lib, "kcp")
+
+# =============================================================================
 # Zig toolchain extension (with Xtensa support)
 # =============================================================================
 

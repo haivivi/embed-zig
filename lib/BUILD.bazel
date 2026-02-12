@@ -39,6 +39,7 @@ filegroup(
         "//lib/pkg/tls/test:test_sources",
         "//lib/pkg/tls/test:server_sources",
         "//lib/pkg/waitgroup:srcs",
+        "//lib/pkg/zgrnet:srcs",
         "//lib/trait:srcs",
     ],
 )

@@ -67,6 +67,10 @@ pub fn Mutex(comptime Impl: type) type {
 /// - `wait(*Condition, *Mutex) -> void`
 /// - `signal(*Condition) -> void`
 /// - `broadcast(*Condition) -> void`
+///
+/// Optional (for timeout support):
+/// - `timedWait(*Condition, *Mutex, timeout_ns: u64) -> TimedWaitResult`
+///   where TimedWaitResult is an enum with `.timed_out` variant.
 pub fn Condition(comptime Impl: type, comptime MutexImpl: type) type {
     comptime {
         _ = @as(*const fn () Impl, &Impl.init);
