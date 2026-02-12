@@ -75,7 +75,7 @@ fn runLocalTest(server_ip: [4]u8, port: u16, path: []const u8, test_name: []cons
     // TLS handshake (using ESP32 crypto suite with hardware acceleration)
     // Crypto includes Rng, so only 2 type parameters needed
     const Crypto = Board.crypto;
-    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto);
+    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto, idf.runtime);
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = allocator,
@@ -229,7 +229,7 @@ fn runPublicTest(host: []const u8, path: []const u8, test_name: []const u8, skip
 
     // TLS handshake with ESP Bundle certificate verification
     const Crypto = Board.crypto;
-    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto);
+    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto, idf.runtime);
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = allocator,
@@ -382,7 +382,7 @@ fn runPublicTestWithHost(dns_host: []const u8, tls_host: []const u8, path: []con
 
     // TLS handshake with tls_host for SNI
     const Crypto = Board.crypto;
-    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto);
+    const TlsClient = tls.Client(idf.net.socket.Socket, Crypto, idf.runtime);
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = allocator,

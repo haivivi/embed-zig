@@ -13,14 +13,15 @@
 const std = @import("std");
 const http = @import("src/http.zig");
 const std_impl = @import("std_impl");
+const crypto = @import("crypto");
 
 const print = std.debug.print;
 
 /// Use std_impl socket (implements trait.socket interface)
 const Socket = std_impl.socket.Socket;
 
-/// Full-featured HTTP client with built-in TLS and DNS (uses default crypto.Suite)
-const HttpClient = http.DefaultHttpClient(Socket);
+/// Full-featured HTTP client with built-in TLS, DNS, and thread safety
+const HttpClient = http.HttpClient(Socket, crypto, std_impl.runtime);
 
 pub fn main() !void {
     print("\n=== HTTP Integration Test ===\n\n", .{});

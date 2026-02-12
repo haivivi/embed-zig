@@ -61,11 +61,12 @@ pub fn Resolver(comptime Socket: type) type {
 /// Uses pure Zig TLS library internally.
 /// - `Socket`: platform socket type (must implement socket trait)
 /// - `Crypto`: crypto suite (must include Rng, e.g., crypto.Suite or esp.impl.crypto.Suite)
+/// - `Rt`: Runtime providing Mutex (for TLS thread safety)
 ///
 /// If Crypto has x509.CaStore, the resolver will support certificate verification
 /// via the ca_store field.
-pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type) type {
-    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto), Crypto);
+pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
+    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto);
 }
 
 /// Internal resolver implementation (with optional Crypto type for CaStore)

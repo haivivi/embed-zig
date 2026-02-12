@@ -25,8 +25,11 @@ const allocator = idf.heap.psram;
 /// Crypto suite from board (mbedTLS with hardware acceleration)
 const Crypto = Board.crypto;
 
+/// Runtime for TLS thread safety
+const Rt = idf.runtime;
+
 /// TLS Client type using pure Zig TLS implementation
-const TlsClient = tls.Client(idf.net.socket.Socket, Crypto);
+const TlsClient = tls.Client(idf.net.socket.Socket, Crypto, Rt);
 
 /// Test configuration
 const TestConfig = struct {

@@ -599,7 +599,7 @@ test "CipherState initialization" {
     const key_128: [16]u8 = [_]u8{0} ** 16;
     const iv: [12]u8 = [_]u8{0} ** 12;
 
-    const state = try CipherState(default_crypto.Suite).init(.TLS_AES_128_GCM_SHA256, &key_128, &iv);
+    const state = try CipherState(default_crypto).init(.TLS_AES_128_GCM_SHA256, &key_128, &iv);
     try std.testing.expect(state == .aes_128_gcm);
 }
 
@@ -609,7 +609,7 @@ test "AES-128-GCM encrypt/decrypt round trip" {
     const plaintext = "Hello, TLS Record Layer!";
     const ad = "additional data";
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     // Encrypt
     var ciphertext: [plaintext.len]u8 = undefined;
@@ -629,7 +629,7 @@ test "AES-256-GCM encrypt/decrypt round trip" {
     const plaintext = "Testing AES-256-GCM in record layer";
     const ad = "aad for test";
 
-    var state = try AesGcmState(default_crypto.Suite, 32).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 32).init(&key, &iv);
 
     // Encrypt
     var ciphertext: [plaintext.len]u8 = undefined;
@@ -649,7 +649,7 @@ test "ChaCha20-Poly1305 encrypt/decrypt round trip" {
     const plaintext = "ChaCha20-Poly1305 record test";
     const ad = "associated data";
 
-    var state = try ChaChaState(default_crypto.Suite).init(&key, &iv);
+    var state = try ChaChaState(default_crypto).init(&key, &iv);
 
     // Encrypt
     var ciphertext: [plaintext.len]u8 = undefined;
@@ -673,7 +673,7 @@ test "Nonce computation with sequence number" {
     const plaintext = "Test";
     const ad = "";
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     // Encrypt with sequence 0
     var ct0: [4]u8 = undefined;
@@ -696,7 +696,7 @@ test "Decryption with wrong sequence number fails" {
     const plaintext = "Sequence number test";
     const ad = "aad";
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     // Encrypt with sequence 5
     var ciphertext: [plaintext.len]u8 = undefined;
@@ -719,7 +719,7 @@ test "CipherState unsupported cipher suite" {
 
     // Use an unknown cipher suite value (0xFFFF is not a valid cipher suite)
     const unknown_suite: CipherSuite = @enumFromInt(0xFFFF);
-    const result = CipherState(default_crypto.Suite).init(unknown_suite, &key, &iv);
+    const result = CipherState(default_crypto).init(unknown_suite, &key, &iv);
     try std.testing.expectError(error.UnsupportedCipherSuite, result);
 }
 
@@ -730,11 +730,11 @@ test "AesGcmState invalid key/iv length" {
     const valid_iv: [12]u8 = [_]u8{0} ** 12;
 
     // Invalid key length
-    const result1 = AesGcmState(default_crypto.Suite, 16).init(&short_key, &valid_iv);
+    const result1 = AesGcmState(default_crypto, 16).init(&short_key, &valid_iv);
     try std.testing.expectError(error.InvalidKeyLength, result1);
 
     // Invalid IV length
-    const result2 = AesGcmState(default_crypto.Suite, 16).init(&valid_key, &short_iv);
+    const result2 = AesGcmState(default_crypto, 16).init(&valid_key, &short_iv);
     try std.testing.expectError(error.InvalidIvLength, result2);
 }
 
@@ -755,7 +755,7 @@ test "TLS 1.2 AES-128-GCM encrypt/decrypt round trip" {
     iv[2] = 0xCC;
     iv[3] = 0xDD;
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     const plaintext = "TLS 1.2 GCM test message";
 
@@ -791,7 +791,7 @@ test "TLS 1.2 AES-256-GCM encrypt/decrypt round trip" {
     iv[2] = 0x33;
     iv[3] = 0x44;
 
-    var state = try AesGcmState(default_crypto.Suite, 32).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 32).init(&key, &iv);
 
     const plaintext = "TLS 1.2 AES-256-GCM test";
 
@@ -824,7 +824,7 @@ test "TLS 1.2 GCM nonce construction" {
     iv[3] = 0xDD;
     @memset(iv[4..12], 0); // Rest doesn't matter for TLS 1.2
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     const plaintext = "Test";
     var ad: [13]u8 = [_]u8{0} ** 13;
@@ -856,7 +856,7 @@ test "TLS 1.2 GCM wrong AD fails" {
     iv[2] = 0x77;
     iv[3] = 0x88;
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     const plaintext = "Test AD verification";
     var explicit_nonce: [8]u8 = [_]u8{0} ** 8;
@@ -888,7 +888,7 @@ test "TLS 1.2 ChaCha20-Poly1305 encrypt/decrypt round trip" {
     const key: [32]u8 = [_]u8{0x04} ** 32;
     const iv: [12]u8 = [_]u8{0x05} ** 12;
 
-    var state = try ChaChaState(default_crypto.Suite).init(&key, &iv);
+    var state = try ChaChaState(default_crypto).init(&key, &iv);
 
     const plaintext = "TLS 1.2 ChaCha20 test";
 
@@ -920,7 +920,7 @@ test "TLS 1.2 Finished message encryption/decryption" {
     iv[2] = 0x56;
     iv[3] = 0x78;
 
-    var state = try AesGcmState(default_crypto.Suite, 16).init(&key, &iv);
+    var state = try AesGcmState(default_crypto, 16).init(&key, &iv);
 
     // Finished message: handshake type (1) + length (3) + verify_data (12) = 16 bytes
     const finished_msg = [_]u8{0x14} ++ // Finished type

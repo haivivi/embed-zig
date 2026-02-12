@@ -19,10 +19,11 @@ const tls = @import("tls");
 
 const Socket = std_impl.Socket;
 const Crypto = crypto; // Use lib/crypto's std.crypto-based suite
+const Rt = std_impl.runtime;
 const impl_time = std_impl.time;
 
 /// TLS Client type using pure Zig TLS implementation with std.crypto
-const TlsClient = tls.Client(Socket, Crypto);
+const TlsClient = tls.Client(Socket, Crypto, Rt);
 
 /// Test configuration
 const TestConfig = struct {

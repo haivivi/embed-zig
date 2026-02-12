@@ -2,6 +2,7 @@
 //!
 //! Platform-independent TLS 1.2/1.3 implementation.
 //! Designed for embedded systems with configurable memory allocation.
+//! Thread-safe: send() and recv() can be called concurrently.
 //!
 //! ## Features
 //!
@@ -10,6 +11,7 @@
 //! - Configurable allocator (supports PSRAM, Flash, etc.)
 //! - Fully generic over crypto implementation (via trait.crypto interface)
 //! - Crypto type includes Rng (Crypto.Rng.fill) - no separate Rng parameter
+//! - Thread-safe via Rt (Runtime) parameter providing Mutex (trait.sync compatible)
 //!
 //! ## Supported Cipher Suites
 //!
@@ -28,15 +30,16 @@
 //!
 //! ```zig
 //! const tls = @import("tls");
+//! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!
-//! // With platform socket and crypto (Crypto includes Rng)
+//! // With platform socket, crypto, and runtime
 //! const Socket = MyPlatformSocket;
 //! const Crypto = Board.crypto; // platform-specific crypto (trait.crypto compatible)
 //!
 //! var socket = try Socket.tcp();
 //! try socket.connect(ip, 443);
 //!
-//! var client = try tls.Client(Socket, Crypto).init(&socket, .{
+//! var client = try tls.Client(Socket, Crypto, Rt).init(&socket, .{
 //!     .allocator = allocator,
 //!     .hostname = "example.com",
 //! });
@@ -44,6 +47,7 @@
 //!
 //! try client.connect();
 //!
+//! // Thread-safe: send() and recv() can be called from different threads
 //! _ = try client.send("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
 //!
 //! var buf: [4096]u8 = undefined;

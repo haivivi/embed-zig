@@ -2,7 +2,8 @@ load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-# No test: record.zig references crypto.Suite which doesn't exist (crypto module IS the suite)
+# test = False: kdf.zig's std HKDF wrapper has module resolution issues under Bazel test.
+# Tests run fine with `zig test` directly (see concurrent test in client.zig).
 zig_package(
     name = "tls",
     deps = [
