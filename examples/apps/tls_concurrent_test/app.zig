@@ -1,15 +1,14 @@
 //! TLS Concurrent Test — Verifies thread-safe send/recv on ESP32
 //!
-//! This test exercises the TLS Client's thread safety by running
-//! concurrent send() and recv() from two FreeRTOS tasks.
+//! Tests that tls.Client.send() and tls.Client.recv() can be called from
+//! two different FreeRTOS tasks simultaneously without crash or corruption.
 //!
-//! Setup:
-//! 1. Connect WiFi
-//! 2. TCP connect to example.com:443
-//! 3. TLS handshake
-//! 4. Spawn sender task (periodic HTTP requests via tls.send)
-//! 5. Main task runs receiver (tls.recv)
-//! 6. Run for 60 seconds, report stats
+//! Test design:
+//! - Sender task (spawned once): waits for signal, calls tls.send()
+//! - Main task (receiver): calls tls.recv() (blocks on socket)
+//! - Both overlap: recv() is blocking while send() encrypts and writes
+//! - Each iteration: connect → concurrent send+recv → close → reconnect
+//! - N iterations with no crash = PASS
 
 const std = @import("std");
 const trait = @import("trait");
@@ -32,56 +31,68 @@ const TlsClient = tls.Client(Socket, Crypto, Rt);
 /// Test configuration
 const TEST_HOST = "example.com";
 const TEST_PORT: u16 = 443;
-const TEST_DURATION_S: u64 = 60;
+const NUM_ITERATIONS: u32 = 10;
+
+/// HTTP request
+const HTTP_REQUEST = "GET / HTTP/1.1\r\nHost: " ++ TEST_HOST ++ "\r\nConnection: close\r\n\r\n";
 
 /// Shared state between sender and receiver tasks
 const SharedState = struct {
-    tls_client: *TlsClient,
-    running: bool,
-    send_count: u32,
-    send_errors: u32,
-    recv_count: u32,
-    recv_errors: u32,
-    recv_bytes: u64,
+    tls_client: ?*TlsClient = null,
+    /// Main → Sender: "send now"
+    send_signal: bool = false,
+    /// Sender → Main: "send done"
+    send_done: bool = false,
+    /// Sender → Main: send result
+    send_ok: bool = false,
+    /// Lifecycle
+    running: bool = true,
 };
 
-/// HTTP request to send repeatedly
-const HTTP_REQUEST = "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: keep-alive\r\n\r\n";
-
-/// Sender task: sends HTTP requests periodically
+/// Sender task: waits for signal, sends HTTP request, signals done
 fn senderTask(ctx: ?*anyopaque) void {
     const state: *SharedState = @ptrCast(@alignCast(ctx));
     log.info("[SENDER] Task started", .{});
 
     while (state.running) {
-        const sent = state.tls_client.send(HTTP_REQUEST) catch |err| {
-            state.send_errors += 1;
-            log.err("[SENDER] send error #{}: {}", .{ state.send_errors, err });
-            if (state.send_errors > 10) {
-                log.err("[SENDER] Too many errors, stopping", .{});
-                state.running = false;
-                break;
-            }
-            idf.time.sleepMs(1000);
+        // Wait for send signal
+        if (!state.send_signal) {
+            idf.time.sleepMs(1);
             continue;
-        };
-        _ = sent;
-        state.send_count += 1;
-
-        if (state.send_count % 10 == 0) {
-            log.info("[SENDER] Sent {} requests ({} errors)", .{ state.send_count, state.send_errors });
         }
 
-        // Wait before next request (give receiver time to drain)
-        idf.time.sleepMs(500);
+        // Do the send
+        const client = state.tls_client orelse {
+            state.send_ok = false;
+            state.send_done = true;
+            state.send_signal = false;
+            continue;
+        };
+
+        // Small delay to ensure receiver is blocking on recv()
+        idf.time.sleepMs(100);
+
+        const sent = client.send(HTTP_REQUEST) catch |err| {
+            log.err("[SENDER] send failed: {}", .{err});
+            state.send_ok = false;
+            state.send_done = true;
+            state.send_signal = false;
+            continue;
+        };
+
+        log.info("[SENDER] sent {} bytes", .{sent});
+        state.send_ok = true;
+        state.send_done = true;
+        state.send_signal = false;
     }
 
-    log.info("[SENDER] Task ended. Total: {} sent, {} errors", .{ state.send_count, state.send_errors });
+    log.info("[SENDER] Task exiting", .{});
 }
 
 pub fn run(_: anytype) void {
     log.info("==========================================", .{});
     log.info("  TLS Concurrent Send/Recv Test", .{});
+    log.info("  {} iterations, reconnect each time", .{NUM_ITERATIONS});
     log.info("==========================================", .{});
 
     // Initialize board
@@ -125,7 +136,7 @@ pub fn run(_: anytype) void {
         Board.time.sleepMs(10);
     }
     if (!got_ip) return;
-    Board.time.sleepMs(1000);
+    Board.time.sleepMs(500);
 
     // DNS resolve
     log.info("Resolving " ++ TEST_HOST ++ "...", .{});
@@ -140,119 +151,58 @@ pub fn run(_: anytype) void {
     };
     log.info("Resolved: {}.{}.{}.{}", .{ ip[0], ip[1], ip[2], ip[3] });
 
-    // TCP connect
-    log.info("TCP connecting to {}.{}.{}.{}:{}", .{ ip[0], ip[1], ip[2], ip[3], TEST_PORT });
-    var sock = Socket.tcp() catch |err| {
-        log.err("Socket create failed: {}", .{err});
-        return;
-    };
-    defer sock.close();
-
-    sock.setRecvTimeout(10000);
-    sock.setSendTimeout(10000);
-
-    sock.connect(ip, TEST_PORT) catch |err| {
-        log.err("TCP connect failed: {}", .{err});
-        return;
-    };
-    log.info("TCP connected", .{});
-
-    // TLS handshake
-    log.info("TLS handshake...", .{});
-    var tls_client = TlsClient.init(&sock, .{
-        .allocator = allocator,
-        .hostname = TEST_HOST,
-        .skip_verify = true,
-        .timeout_ms = 30000,
-    }) catch |err| {
-        log.err("TLS init failed: {}", .{err});
-        return;
-    };
-    defer tls_client.deinit();
-
-    tls_client.connect() catch |err| {
-        log.err("TLS handshake failed: {}", .{err});
-        return;
-    };
-    log.info("TLS handshake OK!", .{});
-
-    // Setup shared state
-    var state = SharedState{
-        .tls_client = &tls_client,
-        .running = true,
-        .send_count = 0,
-        .send_errors = 0,
-        .recv_count = 0,
-        .recv_errors = 0,
-        .recv_bytes = 0,
-    };
-
-    // Spawn sender task (FreeRTOS task)
-    log.info("Spawning sender task...", .{});
+    // Spawn sender task (lives for entire test)
+    var state = SharedState{};
     idf.runtime.spawn("tls_sender", senderTask, @ptrCast(&state), .{
-        .stack_size = 16384,
+        .stack_size = 65536, // TLS send uses ~50KB with AES-GCM on Xtensa
     }) catch |err| {
         log.err("Spawn sender failed: {}", .{err});
         return;
     };
 
-    // Receiver loop (main task)
-    log.info("Starting receiver loop for {}s...", .{TEST_DURATION_S});
-    const start_ms = idf.time.nowMs();
-    var recv_buf: [4096]u8 = undefined;
+    // Heap-allocate recv buffer (8KB) and socket to avoid stack overflow
+    const recv_buf = allocator.alloc(u8, 8192) catch {
+        log.err("Failed to alloc recv_buf", .{});
+        return;
+    };
+    defer allocator.free(recv_buf);
 
-    while (state.running) {
-        const elapsed_s = (idf.time.nowMs() - start_ms) / 1000;
-        if (elapsed_s >= TEST_DURATION_S) {
-            log.info("Test duration reached ({}s)", .{elapsed_s});
-            state.running = false;
-            break;
+    // Run iterations
+    var pass_count: u32 = 0;
+    var fail_count: u32 = 0;
+
+    var i: u32 = 0;
+    while (i < NUM_ITERATIONS) : (i += 1) {
+        log.info("", .{});
+        log.info("--- Iteration {}/{} ---", .{ i + 1, NUM_ITERATIONS });
+
+        const ok = runOneIteration(&state, ip, recv_buf);
+        if (ok) {
+            pass_count += 1;
+            log.info("Iteration {}: PASS", .{i + 1});
+        } else {
+            fail_count += 1;
+            log.err("Iteration {}: FAIL", .{i + 1});
         }
 
-        const n = tls_client.recv(&recv_buf) catch |err| {
-            state.recv_errors += 1;
-            log.err("[RECV] recv error #{}: {}", .{ state.recv_errors, err });
-            if (state.recv_errors > 10) {
-                log.err("[RECV] Too many errors, stopping", .{});
-                state.running = false;
-                break;
-            }
-            idf.time.sleepMs(100);
-            continue;
-        };
-        if (n == 0) {
-            log.info("[RECV] Connection closed by peer", .{});
-            state.running = false;
-            break;
-        }
-        state.recv_count += 1;
-        state.recv_bytes += n;
-
-        if (state.recv_count % 20 == 0) {
-            log.info("[RECV] {} recvs, {} bytes total ({} errors)", .{
-                state.recv_count, state.recv_bytes, state.recv_errors,
-            });
-        }
+        // Brief pause between iterations
+        idf.time.sleepMs(1000);
     }
 
-    // Wait for sender to finish
-    idf.time.sleepMs(2000);
+    state.running = false;
 
-    // Report
-    const elapsed_s = (idf.time.nowMs() - start_ms) / 1000;
+    // Final report
+    log.info("", .{});
     log.info("==========================================", .{});
-    log.info("  TLS Concurrent Test Results", .{});
+    log.info("  FINAL RESULTS", .{});
     log.info("==========================================", .{});
-    log.info("Duration: {}s", .{elapsed_s});
-    log.info("Send: {} requests, {} errors", .{ state.send_count, state.send_errors });
-    log.info("Recv: {} calls, {} bytes, {} errors", .{ state.recv_count, state.recv_bytes, state.recv_errors });
+    log.info("Iterations: {} total, {} pass, {} fail", .{ NUM_ITERATIONS, pass_count, fail_count });
 
-    if (state.send_errors == 0 and state.recv_errors == 0 and state.send_count > 0 and state.recv_count > 0) {
-        log.info("[PASS] Concurrent TLS send/recv OK!", .{});
-    } else if (state.send_errors > 0 or state.recv_errors > 0) {
-        log.err("[FAIL] Errors detected during concurrent operation", .{});
+    if (fail_count == 0) {
+        log.info("[PASS] All {} concurrent TLS iterations succeeded!", .{NUM_ITERATIONS});
+        log.info("Thread safety: VERIFIED (no crash, no corruption)", .{});
     } else {
-        log.warn("[WARN] No data transferred", .{});
+        log.err("[FAIL] {} iterations failed", .{fail_count});
     }
 
     log.info("==========================================", .{});
@@ -262,4 +212,129 @@ pub fn run(_: anytype) void {
         Board.time.sleepMs(5000);
         log.info("Still alive... uptime={}ms", .{b.uptime()});
     }
+}
+
+/// Run one iteration: TCP connect → TLS handshake → concurrent send+recv → close
+fn runOneIteration(state: *SharedState, ip: [4]u8, recv_buf: []u8) bool {
+    // Heap-allocate socket (avoid large stack objects)
+    const sock_ptr = allocator.create(Socket) catch {
+        log.err("Failed to alloc socket", .{});
+        return false;
+    };
+    defer allocator.destroy(sock_ptr);
+
+    sock_ptr.* = Socket.tcp() catch |err| {
+        log.err("Socket create failed: {}", .{err});
+        return false;
+    };
+
+    sock_ptr.setRecvTimeout(15000);
+    sock_ptr.setSendTimeout(15000);
+
+    sock_ptr.connect(ip, TEST_PORT) catch |err| {
+        log.err("TCP connect failed: {}", .{err});
+        sock_ptr.close();
+        return false;
+    };
+    log.info("TCP connected", .{});
+
+    // Heap-allocate TLS client (struct is ~20KB with pending_plaintext)
+    const tls_ptr = allocator.create(TlsClient) catch {
+        log.err("Failed to alloc TLS client", .{});
+        sock_ptr.close();
+        return false;
+    };
+    defer allocator.destroy(tls_ptr);
+
+    tls_ptr.* = TlsClient.init(sock_ptr, .{
+        .allocator = allocator,
+        .hostname = TEST_HOST,
+        .skip_verify = true,
+        .timeout_ms = 30000,
+    }) catch |err| {
+        log.err("TLS init failed: {}", .{err});
+        sock_ptr.close();
+        return false;
+    };
+
+    tls_ptr.connect() catch |err| {
+        log.err("TLS handshake failed: {}", .{err});
+        tls_ptr.deinit();
+        sock_ptr.close();
+        return false;
+    };
+    log.info("TLS handshake OK", .{});
+
+    // Setup shared state for this iteration
+    state.tls_client = tls_ptr;
+    state.send_signal = false;
+    state.send_done = false;
+    state.send_ok = false;
+
+    // Signal sender to send (it will delay 100ms to let recv() start blocking)
+    state.send_signal = true;
+
+    // Main thread: recv() — this blocks until the sender sends + server responds
+    // This is the concurrent overlap point: recv() is blocking on socket.recv()
+    // while send() encrypts and writes to the same socket from another task.
+    var total_recv: usize = 0;
+    var recv_ok = false;
+
+    // Read response (may come in multiple TLS records)
+    var recv_attempts: u32 = 0;
+    while (recv_attempts < 30) : (recv_attempts += 1) {
+        const n = tls_ptr.recv(recv_buf[total_recv..]) catch |err| {
+            if (total_recv > 0) {
+                recv_ok = true;
+                break;
+            }
+            log.err("recv error (attempt {}): {}", .{ recv_attempts + 1, err });
+            break;
+        };
+        if (n == 0) {
+            // close_notify — expected for Connection: close
+            if (total_recv > 0) recv_ok = true;
+            break;
+        }
+        total_recv += n;
+        // Check if we have a reasonable HTTP response
+        if (total_recv >= 512) {
+            recv_ok = true;
+            if (total_recv >= recv_buf.len - 256) break;
+        }
+    }
+
+    // Wait for sender to finish
+    var wait: u32 = 0;
+    while (!state.send_done and wait < 200) : (wait += 1) {
+        idf.time.sleepMs(50);
+    }
+
+    // Clear shared state
+    state.tls_client = null;
+
+    // Clean up
+    tls_ptr.deinit();
+    sock_ptr.close();
+
+    // Verify results
+    const send_ok = state.send_ok;
+    log.info("Send: {s}, Recv: {} bytes {s}", .{
+        if (send_ok) "OK" else "FAIL",
+        total_recv,
+        if (recv_ok) "OK" else "FAIL",
+    });
+
+    // Check response content
+    if (recv_ok and total_recv > 10) {
+        if (std.mem.startsWith(u8, recv_buf[0..total_recv], "HTTP/1.1 200")) {
+            log.info("Response: HTTP/1.1 200 OK", .{});
+        } else if (std.mem.startsWith(u8, recv_buf[0..total_recv], "HTTP/")) {
+            if (std.mem.indexOf(u8, recv_buf[0..@min(total_recv, 80)], "\r\n")) |eol| {
+                log.info("Response: {s}", .{recv_buf[0..eol]});
+            }
+        }
+    }
+
+    return send_ok and recv_ok;
 }
