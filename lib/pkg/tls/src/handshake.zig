@@ -1426,7 +1426,7 @@ test "HandshakeHeader parse and serialize" {
 const default_crypto = @import("crypto");
 
 test "TranscriptHash" {
-    var hash = TranscriptHash(default_crypto.Suite).init();
+    var hash = TranscriptHash(default_crypto).init();
     hash.update("hello");
     hash.update("world");
 
@@ -1449,16 +1449,16 @@ test "TLS 1.2 PRF basic" {
     const seed = "seed";
 
     var out: [32]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out, secret, label, seed);
+    Tls12Prf(default_crypto).prf(&out, secret, label, seed);
 
     // Verify output is deterministic
     var out2: [32]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out2, secret, label, seed);
+    Tls12Prf(default_crypto).prf(&out2, secret, label, seed);
     try std.testing.expectEqualSlices(u8, &out, &out2);
 
     // Verify different inputs produce different outputs
     var out3: [32]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out3, "different", label, seed);
+    Tls12Prf(default_crypto).prf(&out3, "different", label, seed);
     try std.testing.expect(!std.mem.eql(u8, &out, &out3));
 }
 
@@ -1469,16 +1469,16 @@ test "TLS 1.2 PRF output length" {
 
     // Test various output lengths
     var out12: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out12, secret, label, seed);
+    Tls12Prf(default_crypto).prf(&out12, secret, label, seed);
 
     var out48: [48]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out48, secret, label, seed);
+    Tls12Prf(default_crypto).prf(&out48, secret, label, seed);
 
     // First 12 bytes should match
     try std.testing.expectEqualSlices(u8, &out12, out48[0..12]);
 
     var out72: [72]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&out72, secret, label, seed);
+    Tls12Prf(default_crypto).prf(&out72, secret, label, seed);
 
     // First 48 bytes should match
     try std.testing.expectEqualSlices(u8, &out48, out72[0..48]);
@@ -1498,11 +1498,11 @@ test "TLS 1.2 PRF master secret derivation" {
     @memcpy(seed[32..64], &server_random);
 
     var master_secret: [48]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&master_secret, &pre_master_secret, "master secret", &seed);
+    Tls12Prf(default_crypto).prf(&master_secret, &pre_master_secret, "master secret", &seed);
 
     // Verify it's deterministic
     var master_secret2: [48]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&master_secret2, &pre_master_secret, "master secret", &seed);
+    Tls12Prf(default_crypto).prf(&master_secret2, &pre_master_secret, "master secret", &seed);
     try std.testing.expectEqualSlices(u8, &master_secret, &master_secret2);
 
     // Verify master_secret is not all zeros (sanity check)
@@ -1532,7 +1532,7 @@ test "TLS 1.2 PRF key expansion" {
 
     // For AES-128-GCM: need 2*16 (keys) + 2*4 (IVs) = 40 bytes
     var key_block: [40]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&key_block, &master_secret, "key expansion", &seed);
+    Tls12Prf(default_crypto).prf(&key_block, &master_secret, "key expansion", &seed);
 
     const client_write_key = key_block[0..16];
     const server_write_key = key_block[16..32];
@@ -1560,7 +1560,7 @@ test "TLS 1.2 full key derivation flow" {
     @memcpy(ms_seed[32..64], &server_random);
 
     var master_secret: [48]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&master_secret, &pre_master_secret, "master secret", &ms_seed);
+    Tls12Prf(default_crypto).prf(&master_secret, &pre_master_secret, "master secret", &ms_seed);
 
     // Step 2: Derive key_block
     // key_block = PRF(master_secret, "key expansion", server_random + client_random)
@@ -1571,7 +1571,7 @@ test "TLS 1.2 full key derivation flow" {
     // For AES-128-GCM with SHA-256:
     // No MAC keys (AEAD), 2x16 keys, 2x4 IVs = 40 bytes
     var key_block: [40]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&key_block, &master_secret, "key expansion", &kb_seed);
+    Tls12Prf(default_crypto).prf(&key_block, &master_secret, "key expansion", &kb_seed);
 
     // Verify structure
     const client_write_key = key_block[0..16];
@@ -1586,13 +1586,13 @@ test "TLS 1.2 full key derivation flow" {
     // Step 3: Verify finished calculation
     // verify_data = PRF(master_secret, finished_label, Hash(handshake_messages))[0..11]
     var transcript_hash: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("test handshake messages", &transcript_hash, .{});
+    default_crypto.Sha256.hash("test handshake messages", &transcript_hash, .{});
 
     var client_verify_data: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&client_verify_data, &master_secret, "client finished", &transcript_hash);
+    Tls12Prf(default_crypto).prf(&client_verify_data, &master_secret, "client finished", &transcript_hash);
 
     var server_verify_data: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&server_verify_data, &master_secret, "server finished", &transcript_hash);
+    Tls12Prf(default_crypto).prf(&server_verify_data, &master_secret, "server finished", &transcript_hash);
 
     // Client and server verify_data should be different
     try std.testing.expect(!std.mem.eql(u8, &client_verify_data, &server_verify_data));
@@ -1610,7 +1610,7 @@ test "TLS 1.2 key derivation for AES-256-GCM" {
 
     // For AES-256-GCM: 2*32 (keys) + 2*4 (IVs) = 72 bytes
     var key_block: [72]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&key_block, &master_secret, "key expansion", &seed);
+    Tls12Prf(default_crypto).prf(&key_block, &master_secret, "key expansion", &seed);
 
     const client_write_key = key_block[0..32];
     const server_write_key = key_block[32..64];
@@ -1634,22 +1634,22 @@ test "TLS 1.2 verify_data calculation" {
 
     // Simulate transcript hash (SHA-256 of all handshake messages)
     var transcript_hash: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("ClientHello|ServerHello|Certificate|ServerKeyExchange|ServerHelloDone|ClientKeyExchange", &transcript_hash, .{});
+    default_crypto.Sha256.hash("ClientHello|ServerHello|Certificate|ServerKeyExchange|ServerHelloDone|ClientKeyExchange", &transcript_hash, .{});
 
     // Calculate client verify_data
     var client_verify_data: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&client_verify_data, &master_secret, "client finished", &transcript_hash);
+    Tls12Prf(default_crypto).prf(&client_verify_data, &master_secret, "client finished", &transcript_hash);
 
     // Calculate server verify_data
     var server_verify_data: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&server_verify_data, &master_secret, "server finished", &transcript_hash);
+    Tls12Prf(default_crypto).prf(&server_verify_data, &master_secret, "server finished", &transcript_hash);
 
     // Client and server verify_data must be different
     try std.testing.expect(!std.mem.eql(u8, &client_verify_data, &server_verify_data));
 
     // Both should be deterministic
     var client_verify_data2: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&client_verify_data2, &master_secret, "client finished", &transcript_hash);
+    Tls12Prf(default_crypto).prf(&client_verify_data2, &master_secret, "client finished", &transcript_hash);
     try std.testing.expectEqualSlices(u8, &client_verify_data, &client_verify_data2);
 }
 
@@ -1658,16 +1658,16 @@ test "TLS 1.2 verify_data depends on transcript" {
 
     // Two different transcripts
     var transcript1: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("transcript1", &transcript1, .{});
+    default_crypto.Sha256.hash("transcript1", &transcript1, .{});
 
     var transcript2: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("transcript2", &transcript2, .{});
+    default_crypto.Sha256.hash("transcript2", &transcript2, .{});
 
     var verify1: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&verify1, &master_secret, "client finished", &transcript1);
+    Tls12Prf(default_crypto).prf(&verify1, &master_secret, "client finished", &transcript1);
 
     var verify2: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&verify2, &master_secret, "client finished", &transcript2);
+    Tls12Prf(default_crypto).prf(&verify2, &master_secret, "client finished", &transcript2);
 
     // Different transcripts should produce different verify_data
     try std.testing.expect(!std.mem.eql(u8, &verify1, &verify2));
@@ -1675,16 +1675,16 @@ test "TLS 1.2 verify_data depends on transcript" {
 
 test "TLS 1.2 verify_data depends on master_secret" {
     var transcript: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("same transcript", &transcript, .{});
+    default_crypto.Sha256.hash("same transcript", &transcript, .{});
 
     const master_secret1 = [_]u8{0xEE} ** 48;
     const master_secret2 = [_]u8{0xFF} ** 48;
 
     var verify1: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&verify1, &master_secret1, "client finished", &transcript);
+    Tls12Prf(default_crypto).prf(&verify1, &master_secret1, "client finished", &transcript);
 
     var verify2: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&verify2, &master_secret2, "client finished", &transcript);
+    Tls12Prf(default_crypto).prf(&verify2, &master_secret2, "client finished", &transcript);
 
     // Different master secrets should produce different verify_data
     try std.testing.expect(!std.mem.eql(u8, &verify1, &verify2));
@@ -1695,10 +1695,10 @@ test "TLS 1.2 Finished message structure" {
     const master_secret = [_]u8{0x11} ** 48;
 
     var transcript: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("handshake messages", &transcript, .{});
+    default_crypto.Sha256.hash("handshake messages", &transcript, .{});
 
     var verify_data: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&verify_data, &master_secret, "client finished", &transcript);
+    Tls12Prf(default_crypto).prf(&verify_data, &master_secret, "client finished", &transcript);
 
     // Build Finished message
     var finished_msg: [16]u8 = undefined;
@@ -1730,7 +1730,7 @@ test "TLS 1.2 full handshake simulation" {
     @memcpy(ms_seed[32..64], &server_random);
 
     var master_secret: [48]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&master_secret, &pre_master_secret, "master secret", &ms_seed);
+    Tls12Prf(default_crypto).prf(&master_secret, &pre_master_secret, "master secret", &ms_seed);
 
     // 4. Derive key_block
     var kb_seed: [64]u8 = undefined;
@@ -1738,18 +1738,18 @@ test "TLS 1.2 full handshake simulation" {
     @memcpy(kb_seed[32..64], &client_random);
 
     var key_block: [40]u8 = undefined; // AES-128-GCM
-    Tls12Prf(default_crypto.Suite).prf(&key_block, &master_secret, "key expansion", &kb_seed);
+    Tls12Prf(default_crypto).prf(&key_block, &master_secret, "key expansion", &kb_seed);
 
     // 5. Simulate transcript hash (after ClientKeyExchange)
     var transcript_after_cke: [32]u8 = undefined;
-    default_crypto.Suite.Sha256.hash("ClientHello|ServerHello|Certificate|ServerKeyExchange|ServerHelloDone|ClientKeyExchange", &transcript_after_cke, .{});
+    default_crypto.Sha256.hash("ClientHello|ServerHello|Certificate|ServerKeyExchange|ServerHelloDone|ClientKeyExchange", &transcript_after_cke, .{});
 
     // 6. Client computes verify_data
     var client_verify: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&client_verify, &master_secret, "client finished", &transcript_after_cke);
+    Tls12Prf(default_crypto).prf(&client_verify, &master_secret, "client finished", &transcript_after_cke);
 
     // 7. Simulate transcript hash (after Client Finished)
-    var full_transcript = TranscriptHash(default_crypto.Suite).init();
+    var full_transcript = TranscriptHash(default_crypto).init();
     full_transcript.update("ClientHello|ServerHello|Certificate|ServerKeyExchange|ServerHelloDone|ClientKeyExchange");
     // Add Client Finished to transcript
     var client_finished_msg: [16]u8 = undefined;
@@ -1761,7 +1761,7 @@ test "TLS 1.2 full handshake simulation" {
 
     // 8. Server computes verify_data (using transcript that includes Client Finished)
     var server_verify: [12]u8 = undefined;
-    Tls12Prf(default_crypto.Suite).prf(&server_verify, &master_secret, "server finished", &transcript_after_client_finished);
+    Tls12Prf(default_crypto).prf(&server_verify, &master_secret, "server finished", &transcript_after_client_finished);
 
     // 9. Verify client and server finished are different
     try std.testing.expect(!std.mem.eql(u8, &client_verify, &server_verify));
@@ -1788,11 +1788,11 @@ test "ClientHandshake.CaStoreType is correct" {
     };
 
     // With default_crypto (has x509), CaStoreType should not be void
-    const Hs = ClientHandshake(MockSocket, default_crypto.Suite);
+    const Hs = ClientHandshake(MockSocket, default_crypto);
     try std.testing.expect(Hs.CaStoreType != void);
 
     // CaStoreType should be the same as Crypto.x509.CaStore
-    try std.testing.expect(Hs.CaStoreType == default_crypto.Suite.x509.CaStore);
+    try std.testing.expect(Hs.CaStoreType == default_crypto.x509.CaStore);
 }
 
 test "ClientHandshake init with null ca_store" {
@@ -1803,7 +1803,7 @@ test "ClientHandshake init with null ca_store" {
     };
 
     var socket = MockSocket{};
-    const Hs = ClientHandshake(MockSocket, default_crypto.Suite);
+    const Hs = ClientHandshake(MockSocket, default_crypto);
 
     // Initialize with null ca_store - should not perform verification
     const hs = Hs.init(&socket, "example.com", std.testing.allocator, null);
@@ -1820,10 +1820,10 @@ test "ClientHandshake init with ca_store" {
     };
 
     var socket = MockSocket{};
-    const Hs = ClientHandshake(MockSocket, default_crypto.Suite);
+    const Hs = ClientHandshake(MockSocket, default_crypto);
 
     // Initialize with insecure ca_store
-    const ca_store = default_crypto.Suite.x509.CaStore{ .insecure = {} };
+    const ca_store = default_crypto.x509.CaStore{ .insecure = {} };
     const hs = Hs.init(&socket, "example.com", std.testing.allocator, ca_store);
 
     try std.testing.expect(hs.ca_store != null);
