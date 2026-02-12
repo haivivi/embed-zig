@@ -10,7 +10,7 @@ const websim = @import("websim");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const HalDisplay = platform.Display;
+const Display = platform.Display;
 const ButtonId = platform.ButtonId;
 const log = Board.log;
 
@@ -29,9 +29,8 @@ const Screen = enum { desktop, menu, settings, game_list };
 var board: Board = undefined;
 var sim_dc: websim.SimDcPin = .{};
 var sim_spi: websim.SimSpi = undefined;
-var display_driver: HalDisplay.DriverType = undefined;
-var hal_display: HalDisplay = undefined;
-var ui_ctx: ui.Context(HalDisplay) = undefined;
+var display: Display = undefined;
+var ui_ctx: ui.Context(Display) = undefined;
 var ready: bool = false;
 
 var current_screen: Screen = .desktop;
@@ -55,9 +54,8 @@ pub fn init() void {
 
     // Display — SPI LCD via simulated SPI bus
     sim_spi = websim.SimSpi.init(&sim_dc);
-    display_driver = HalDisplay.DriverType.init(&sim_spi, &sim_dc);
-    hal_display = HalDisplay.init(&display_driver);
-    ui_ctx = ui.init(HalDisplay, &hal_display) catch {
+    display = Display.init(&sim_spi, &sim_dc);
+    ui_ctx = ui.init(Display, &display) catch {
         log.err("UI init failed", .{});
         return;
     };

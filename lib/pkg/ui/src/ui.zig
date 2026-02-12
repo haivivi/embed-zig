@@ -105,19 +105,36 @@ pub fn Context(comptime DisplayDriver: type) type {
     };
 }
 
-/// Initialize LVGL with the given HAL display.
+/// Initialize LVGL with a display driver.
 ///
-/// Buffer strategy is determined by `HalDisplay.render_mode` (comptime):
-/// - `.partial`: static draw buffer of `width * bpp * buf_lines` bytes
-/// - `.full`: static draw buffer of full frame (`width * bpp * height`)
-/// - `.direct`: uses driver-provided framebuffer (`Driver.getFramebuffer()`)
+/// `Driver` is any type that provides:
+/// - `width: u16`, `height: u16` — resolution (comptime)
+/// - `color_format: ColorFormat` — pixel format (comptime)
+/// - `render_mode: RenderMode` — buffer strategy (comptime)
+/// - `buf_lines: u16` — draw buffer height for partial mode (comptime)
+/// - `fn flush(self: *Driver, area: Area, color_data: [*]const u8) void`
 ///
-/// All config comes from the display spec (via HAL) — no runtime options needed.
-pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay) {
-    const render_mode = HalDisplay.render_mode;
+/// For `.direct` mode, Driver must also have:
+/// - `fn getFramebuffer(self: *Driver) [*]u8`
+///
+/// Examples: `display.SpiLcd(Spi, DcPin, config)`, `display.MemDisplay(w, h, fmt)`
+pub fn init(comptime Driver: type, driver: *Driver) !Context(Driver) {
+    // Comptime validation
+    comptime {
+        _ = @as(u16, Driver.width);
+        _ = @as(u16, Driver.height);
+        _ = @as(display_pkg.ColorFormat, Driver.color_format);
+        _ = @as(display_pkg.RenderMode, Driver.render_mode);
+        _ = @as(u16, Driver.buf_lines);
+        _ = @as(*const fn (*Driver, display_pkg.Area, [*]const u8) void, &Driver.flush);
+    }
+
+    const render_mode = Driver.render_mode;
 
     const Adapter = struct {
-        var hal_display: *HalDisplay = undefined;
+        const bpp: u32 = display_pkg.bytesPerPixel(Driver.color_format);
+
+        var lcd: *Driver = undefined;
 
         fn flushCb(
             lv_disp: ?*c.lv_display_t,
@@ -130,7 +147,7 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
 
             if (lv_area == null or px_map == null) return;
             const area = lv_area.?;
-            hal_display.flush(.{
+            lcd.flush(.{
                 .x1 = @intCast(area.x1),
                 .y1 = @intCast(area.y1),
                 .x2 = @intCast(area.x2),
@@ -143,17 +160,17 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
         const draw_buf_size = if (render_mode == .direct)
             0
         else
-            @as(u32, HalDisplay.width) * @as(u32, HalDisplay.bpp) * @as(u32, HalDisplay.buf_lines);
+            @as(u32, Driver.width) * bpp * @as(u32, Driver.buf_lines);
 
         var draw_buf: [draw_buf_size]u8 = undefined;
     };
-    Adapter.hal_display = display;
+    Adapter.lcd = driver;
 
     c.lv_init();
 
     const lv_disp = c.lv_display_create(
-        @intCast(HalDisplay.width),
-        @intCast(HalDisplay.height),
+        @intCast(Driver.width),
+        @intCast(Driver.height),
     ) orelse return error.DisplayCreateFailed;
 
     // Configure LVGL display buffers based on render mode
@@ -165,8 +182,8 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
 
     if (render_mode == .direct) {
         // Direct mode: LVGL writes into driver's framebuffer
-        const fb = display.driver.getFramebuffer();
-        const fb_size = HalDisplay.framebufferSize();
+        const fb = driver.getFramebuffer();
+        const fb_size = @as(u32, Driver.width) * @as(u32, Driver.height) * Adapter.bpp;
         c.lv_display_set_buffers(lv_disp, fb, null, fb_size, lv_render_mode);
     } else {
         // Partial/Full mode: use the static draw buffer
@@ -182,7 +199,7 @@ pub fn init(comptime HalDisplay: type, display: *HalDisplay) !Context(HalDisplay
     c.lv_display_set_flush_cb(lv_disp, Adapter.flushCb);
 
     return .{
-        .display = display,
+        .display = driver,
         .lv_display = lv_disp,
     };
 }
@@ -198,11 +215,9 @@ test {
 }
 
 test "LVGL init and deinit" {
-    const Disp = MemDisplay(320, 240, .rgb565);
-    const Display = display_pkg.from(Disp.spec);
+    const Display = MemDisplay(320, 240, .rgb565);
 
-    var driver = Disp.create();
-    var display = Display.init(&driver);
+    var display = Display.create();
 
     var ctx = try init(Display, &display);
     defer ctx.deinit();
@@ -212,11 +227,9 @@ test "LVGL init and deinit" {
 }
 
 test "LVGL create label with chaining" {
-    const Disp = MemDisplay(320, 240, .rgb565);
-    const Display = display_pkg.from(Disp.spec);
+    const Display = MemDisplay(320, 240, .rgb565);
 
-    var driver = Disp.create();
-    var display = Display.init(&driver);
+    var display = Display.create();
 
     var ctx = try init(Display, &display);
     defer ctx.deinit();
@@ -234,5 +247,5 @@ test "LVGL create label with chaining" {
         _ = ctx.handler();
     }
 
-    try @import("std").testing.expect(driver.flush_count > 0);
+    try @import("std").testing.expect(display.flush_count > 0);
 }

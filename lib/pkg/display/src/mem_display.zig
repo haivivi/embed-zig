@@ -29,6 +29,13 @@ pub fn MemDisplay(
     return struct {
         const Self = @This();
 
+        // -- Display driver comptime interface --
+        pub const width: u16 = w;
+        pub const height: u16 = h;
+        pub const color_format: ColorFormat = color_fmt;
+        pub const render_mode: RenderMode = .full;
+        pub const buf_lines: u16 = h; // full-frame for testing
+
         /// Raw framebuffer in memory
         framebuffer: [fb_size]u8,
 
@@ -48,7 +55,6 @@ pub fn MemDisplay(
         }
 
         /// Flush callback — copies pixel data to the in-memory framebuffer.
-        /// This is the method required by display.from(spec).
         pub fn flush(self: *Self, area: Area, color_data: [*]const u8) void {
             self.flush_count += 1;
             self.last_area = area;
@@ -103,17 +109,6 @@ pub fn MemDisplay(
             }
             return false;
         }
-
-        // -- Display surface spec --
-
-        pub const spec = struct {
-            pub const Driver = Self;
-            pub const width: u16 = w;
-            pub const height: u16 = h;
-            pub const color_format = color_fmt;
-            pub const render_mode: RenderMode = .full;
-            pub const meta = .{ .id = "display.mem" };
-        };
     };
 }
 
@@ -122,7 +117,6 @@ pub fn MemDisplay(
 // ============================================================================
 
 const std = @import("std");
-const surface = @import("surface.zig");
 
 test "MemDisplay basic" {
     const Disp = MemDisplay(320, 240, .rgb565);
@@ -145,21 +139,21 @@ test "MemDisplay basic" {
     try std.testing.expectEqual(@as(u8, 0xFF), pixel[1]);
 }
 
-test "MemDisplay as display surface" {
+test "MemDisplay comptime interface" {
     const Disp = MemDisplay(128, 64, .rgb565);
-    const Display = surface.from(Disp.spec);
 
-    var driver = Disp.create();
-    var display = Display.init(&driver);
+    // Verify comptime constants match what ui.init() expects
+    try std.testing.expectEqual(@as(u16, 128), Disp.width);
+    try std.testing.expectEqual(@as(u16, 64), Disp.height);
+    try std.testing.expectEqual(ColorFormat.rgb565, Disp.color_format);
+    try std.testing.expectEqual(RenderMode.full, Disp.render_mode);
+    try std.testing.expectEqual(@as(u16, 64), Disp.buf_lines);
 
-    try std.testing.expectEqual(@as(u16, 128), Display.width);
-    try std.testing.expectEqual(@as(u16, 64), Display.height);
-    try std.testing.expectEqual(ColorFormat.rgb565, Display.color_format);
-
+    var disp = Disp.create();
     var data: [128 * 2]u8 = undefined;
     @memset(&data, 0xAB);
-    display.flush(.{ .x1 = 0, .y1 = 0, .x2 = 127, .y2 = 0 }, &data);
+    disp.flush(.{ .x1 = 0, .y1 = 0, .x2 = 127, .y2 = 0 }, &data);
 
-    try std.testing.expectEqual(@as(u32, 1), driver.flush_count);
-    try std.testing.expect(driver.hasContent(.{ .x1 = 0, .y1 = 0, .x2 = 127, .y2 = 0 }));
+    try std.testing.expectEqual(@as(u32, 1), disp.flush_count);
+    try std.testing.expect(disp.hasContent(.{ .x1 = 0, .y1 = 0, .x2 = 127, .y2 = 0 }));
 }

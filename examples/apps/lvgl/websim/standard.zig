@@ -14,7 +14,7 @@ pub const rtc_spec = board.rtc_spec;
 pub const power_button_spec = board.power_button_spec;
 pub const adc_button_spec = board.adc_button_spec;
 pub const led_spec = board.led_spec;
-pub const display_spec = board.display_spec;
+pub const Display = board.Display;
 
 // Platform primitives
 pub const log = board.log;
