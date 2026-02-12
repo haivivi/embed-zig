@@ -5,68 +5,13 @@ Provides:
 - Zig toolchain with Xtensa support
 """
 
+load("//third_party/opus:repository.bzl", _opus_repository = "opus_repository")
+
 # =============================================================================
 # Audio Libraries
 # =============================================================================
 
-_OPUS_VERSION = "1.5.2"
 _OGG_VERSION = "1.3.6"
-
-def _opus_repo_impl(ctx):
-    """Download and setup opus source."""
-    ctx.download_and_extract(
-        url = "https://downloads.xiph.org/releases/opus/opus-{}.tar.gz".format(_OPUS_VERSION),
-        strip_prefix = "opus-{}".format(_OPUS_VERSION),
-    )
-    ctx.file("BUILD.bazel", """
-package(default_visibility = ["//visibility:public"])
-
-# Public headers (include/opus.h etc.)
-filegroup(
-    name = "headers",
-    srcs = glob(["include/*.h", "src/*.h", "celt/*.h", "silk/*.h"]),
-)
-
-# Core C sources (shared by fixed and float builds)
-filegroup(
-    name = "core_srcs",
-    srcs = glob([
-        "src/*.c",
-        "celt/*.c",
-        "silk/*.c",
-    ], exclude = [
-        "src/opus_demo.c",
-        "src/opus_compare.c",
-        "src/repacketizer_demo.c",
-        "celt/opus_custom_demo.c",
-        "celt/arm/*.c",
-        "celt/x86/*.c",
-        "silk/arm/*.c",
-        "silk/x86/*.c",
-    ]),
-)
-
-# SILK fixed-point sources (for embedded / Xtensa)
-filegroup(
-    name = "fixed_srcs",
-    srcs = glob(["silk/fixed/*.c", "silk/fixed/*.h"], exclude = [
-        "silk/fixed/arm/*.c",
-        "silk/fixed/x86/*.c",
-    ]),
-)
-
-# SILK float sources (for desktop / server)
-filegroup(
-    name = "float_srcs",
-    srcs = glob(["silk/float/*.c", "silk/float/*.h"], exclude = [
-        "silk/float/x86/*.c",
-    ]),
-)
-""")
-
-_opus_repo = repository_rule(
-    implementation = _opus_repo_impl,
-)
 
 def _ogg_repo_impl(ctx):
     """Download and setup libogg source."""
@@ -106,7 +51,7 @@ _ogg_repo = repository_rule(
 
 def _audio_libs_impl(ctx):
     """Module extension for audio libraries."""
-    _opus_repo(name = "opus")
+    _opus_repository(name = "opus")
     _ogg_repo(name = "ogg")
 
 audio_libs = module_extension(

@@ -1,0 +1,9 @@
+# Test that external projects can use //third_party/opus
+load("//bazel/zig:defs.bzl", "zig_binary")
+
+zig_binary(
+    name = "test",
+    main = "main.zig",
+    srcs = ["main.zig"],
+    deps = ["//third_party/opus:opus_fixed"],
+)

@@ -1,3 +1,22 @@
+"""Zig bindings for libopus.
+
+External projects must setup the @opus repository in their MODULE.bazel:
+
+    bazel_dep(name = "embed_zig", version = "...")
+    
+    opus_ext = use_extension("@embed_zig//third_party/opus:repository.bzl", "opus_repository")
+    use_repo(opus_ext, "opus")
+
+Or in WORKSPACE:
+
+    load("@embed_zig//third_party/opus:repository.bzl", "opus_repository")
+    opus_repository(name = "opus")
+
+Then depend on:
+- //third_party/opus:opus_fixed (for embedded/Xtensa, FIXED_POINT)
+- //third_party/opus:opus_float (for desktop/server, better quality)
+"""
+
 load("//bazel/zig:defs.bzl", "zig_library")
 
 package(default_visibility = ["//visibility:public"])
