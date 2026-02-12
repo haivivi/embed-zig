@@ -22,5 +22,7 @@ filegroup(
         "//examples/apps/tls_concurrent_test:app_srcs",
         "//examples/apps/tls_speed_test:app_srcs",
         "//examples/apps/wifi_dns_lookup:app_srcs",
+        # Native examples - run on macOS/Linux
+        "//examples/apps/opus_aec_test/native:test",
     ],
 )

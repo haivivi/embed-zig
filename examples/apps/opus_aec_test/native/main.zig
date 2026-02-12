@@ -1,8 +1,7 @@
 //! Opus Native Test — encode/decode verification on macOS
 
 const std = @import("std");
-const audio = @import("audio");
-const opus = audio.opus;
+const opus = @import("opus");
 
 const log = std.log.scoped(.opus_test);
 

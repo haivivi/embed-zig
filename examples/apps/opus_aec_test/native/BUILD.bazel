@@ -1,54 +1,19 @@
 # Opus Native Test — run on macOS to verify encode/decode
 #
-# Uses zig build directly (not zig_binary) because the Espressif zig fork
-# doesn't support C source files with -M module syntax.
-#
 # Build: bazel build //examples/apps/opus_aec_test/native:test
 # Run:   bazel run //examples/apps/opus_aec_test/native:test
 
+load("//bazel/zig:defs.bzl", "zig_binary")
+
 package(default_visibility = ["//visibility:public"])
 
-# Build using zig build (handles C source compilation via addCSourceFiles)
-genrule(
-    name = "build_test",
-    srcs = [
-        "main.zig",
-        "build.zig",
-        "build.zig.zon",
-        "//lib/pkg/audio:srcs",
-        "@opus//:core_srcs",
-        "@opus//:float_srcs",
-        "@opus//:headers",
+zig_binary(
+    name = "test",
+    main = "main.zig",
+    srcs = ["main.zig"],
+    deps = [
+        "//lib/pkg/audio",
+        "//third_party/opus:opus_fixed",
     ],
-    outs = ["opus_test"],
-    cmd = """
-        # Find zig binary from tools
-        ZIG=""
-        for tool in $(locations @zig_toolchain//:zig_files); do
-            if [ -x "$$tool" ] && [ "$$(basename $$tool)" = "zig" ]; then
-                ZIG="$$tool"
-                break
-            fi
-        done
-        if [ -z "$$ZIG" ]; then
-            echo "Error: zig binary not found in toolchain"
-            exit 1
-        fi
-        
-        WORK=$$(mktemp -d)
-        trap "rm -rf $$WORK" EXIT
-        for f in $(SRCS); do
-            mkdir -p "$$WORK/$$(dirname $$f)"
-            cp "$$f" "$$WORK/$$f"
-        done
-        cd "$$WORK/examples/apps/opus_aec_test/native"
-        HOME="$$WORK" "$$ZIG" build -Doptimize=ReleaseFast \
-            --cache-dir "$$WORK/.zig-cache" --global-cache-dir "$$WORK/.zig-global" \
-            --prefix "$$WORK/out" 2>&1
-        cp "$$WORK/out/bin/opus_test" "$@"
-        chmod +x "$@"
-    """,
-    tools = ["@zig_toolchain//:zig_files"],
-    local = True,
-    executable = True,
+    optimize = "ReleaseFast",
 )
