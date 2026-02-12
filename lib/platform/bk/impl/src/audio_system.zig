@@ -41,17 +41,18 @@ pub const AudioSystem = struct {
         const gain = board.audio.dig_gain;
         const mic_gain = board.audio.mic_gain;
 
-        // Init speaker (DAC)
-        self.speaker = armino.speaker.Speaker.init(
-            sample_rate, 1, 16, gain,
-        ) catch return error.SpeakerInitFailed;
-
-        // Init mic (ADC)
+        // Init mic FIRST (uses APLL clock), then speaker (will share same clock)
+        // Both must use same clock source to avoid crash.
         self.mic = armino.mic.Mic.init(
             sample_rate, 1, mic_gain,
+        ) catch return error.MicInitFailed;
+
+        // Init speaker (DAC) — audio common driver already initialized by mic
+        self.speaker = armino.speaker.Speaker.init(
+            sample_rate, 1, 16, gain,
         ) catch {
-            self.speaker.deinit();
-            return error.MicInitFailed;
+            self.mic.deinit();
+            return error.SpeakerInitFailed;
         };
 
         // Init AEC

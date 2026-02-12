@@ -37,55 +37,58 @@ pub fn run(_: anytype) void {
     log.info("  Board: {s}", .{Board.meta.id});
     log.info("==========================================", .{});
 
-    // Init AudioSystem (speaker + mic + AEC)
-    var audio = platform.AudioSystem.init() catch |err| {
-        log.err("AudioSystem init failed: {}", .{err});
+    // Init speaker + mic separately (no AEC for now — test basic loopback)
+    const armino = @import("bk").armino;
+
+    log.info("Init mic...", .{});
+    var mic = armino.mic.Mic.init(SAMPLE_RATE, 1, 0x2d) catch |err| {
+        log.err("Mic init failed: {}", .{err});
         return;
     };
-    defer audio.deinit();
+    defer mic.deinit();
 
-    log.info("AudioSystem ready, frame_size={}", .{audio.getFrameSize()});
+    log.info("Init speaker...", .{});
+    var speaker = armino.speaker.Speaker.init(SAMPLE_RATE, 1, 16, 0x3F) catch |err| {
+        log.err("Speaker init failed: {}", .{err});
+        return;
+    };
+    defer speaker.deinit();
 
-    // Play startup beep (500Hz, 300ms)
-    log.info("Playing startup beep...", .{});
+    // Play startup beep
+    log.info("Playing beep...", .{});
     {
         var buffer: [160]i16 = undefined;
         var phase: u32 = 0;
         const beep_frames = SAMPLE_RATE * 300 / 1000 / 160;
         for (0..beep_frames) |_| {
             generateTone(&buffer, 500, &phase);
-            _ = audio.writeSpeaker(&buffer) catch {};
+            _ = speaker.write(&buffer) catch {};
         }
-        // Silence flush
         @memset(&buffer, 0);
         for (0..5) |_| {
-            _ = audio.writeSpeaker(&buffer) catch {};
+            _ = speaker.write(&buffer) catch {};
         }
     }
 
     log.info("Mic loopback started — speak into the mic!", .{});
-    log.info("(Press reset to stop)", .{});
 
-    // Mic → AEC → Speaker loopback
+    // Simple mic → speaker loopback (no AEC)
     var mic_buffer: [160]i16 = undefined;
     var frame_count: u32 = 0;
 
     while (true) {
-        // Read from mic (with AEC echo cancellation)
-        const samples_read = audio.readMic(&mic_buffer) catch |err| {
-            log.err("readMic error: {}", .{err});
+        const samples_read = mic.read(&mic_buffer) catch {
             Board.time.sleepMs(10);
             continue;
         };
 
         if (samples_read > 0) {
-            // Write to speaker (also feeds AEC reference)
-            _ = audio.writeSpeaker(mic_buffer[0..samples_read]) catch {};
+            _ = speaker.write(mic_buffer[0..samples_read]) catch {};
         }
 
         frame_count += 1;
         if (frame_count % 500 == 0) {
-            log.info("[AEC] {} frames processed", .{frame_count});
+            log.info("[MIC] {} frames", .{frame_count});
         }
     }
 }

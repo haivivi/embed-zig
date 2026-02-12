@@ -38,11 +38,12 @@ int bk_zig_speaker_init(unsigned int sample_rate, unsigned char channels,
 
     if (s_initialized) return 0;
 
-    /* Init DAC */
+    /* Init DAC — use APLL clock (same as ADC) to avoid clock conflict */
     aud_dac_config_t dac_cfg = DEFAULT_AUD_DAC_CONFIG();
     dac_cfg.dac_chl = (channels == 2) ? AUD_DAC_CHL_LR : AUD_DAC_CHL_L;
     dac_cfg.samp_rate = sample_rate;
-    dac_cfg.dac_gain = 0x3F; /* MAX gain for testing */
+    dac_cfg.dac_gain = 0x3F; /* MAX gain */
+    dac_cfg.clk_src = 1; /* AUD_CLK_APLL — must match ADC for simultaneous use */
 
     ret = bk_aud_dac_init(&dac_cfg);
     BK_LOGI(TAG, "dac_init: %d\r\n", ret);
