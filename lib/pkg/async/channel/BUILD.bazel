@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "channel",
-    module_name = "async/channel",
+
     deps = ["//lib/trait"],
     test_deps = ["//lib/platform/std"],
     test = False,  # TODO: tests need runtime module

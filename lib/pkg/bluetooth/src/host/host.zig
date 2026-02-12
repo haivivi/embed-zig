@@ -187,7 +187,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
     const Credits = AclCredits(Rt);
     const WG = waitgroup.WaitGroup(Rt);
 
-    const GattServerType = gatt_server.GattServer(service_table);
+    const GattServerType = gatt_server.GattServer(Rt, service_table);
 
     return struct {
         const Self = @This();
@@ -236,7 +236,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // ================================================================
 
         gap: gap_mod.Gap = gap_mod.Gap.init(),
-        gatt: gatt_server.GattServer(service_table) = gatt_server.GattServer(service_table).init(),
+        gatt: GattServerType = GattServerType.init(),
 
         // ================================================================
         // Connection state map: conn_handle → ConnectionState
@@ -360,7 +360,13 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             self.acl_credits = Credits.init(self.acl_max_slots);
             self.cmd_credits = Credits.init(1); // reset to 1 for writeLoop
 
-            // --- 7. Spawn loops ---
+            // --- 7. Enable async GATT handler dispatch ---
+            // Must happen after self is at its final memory location.
+            // Handler tasks are spawned via wg.go() and send responses through
+            // sendAttResponse callback → tx_queue → writeLoop → HCI.
+            self.gatt.enableAsync(&self.wg, self.allocator, sendAttResponse, @ptrCast(self));
+
+            // --- 8. Spawn loops ---
             self.cancel.reset();
             try self.wg.go("ble-read", readLoopEntry, self, opts);
             try self.wg.go("ble-write", writeLoopEntry, self, opts);
@@ -890,15 +896,6 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             }
         }
 
-        /// ATT PDU context for async handler dispatch.
-        /// Heap-allocated, freed by the handler task after completion.
-        const AttTaskCtx = struct {
-            host: *Self,
-            conn_handle: u16,
-            pdu_data: [att_mod.MAX_PDU_LEN]u8,
-            pdu_len: usize,
-        };
-
         /// Check if an ATT opcode is a Response (routed to GATT Client).
         fn isAttResponse(opcode: u8) bool {
             return switch (@as(att_mod.Opcode, @enumFromInt(opcode))) {
@@ -962,87 +959,42 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
 
             if (sdu.data.len > att_mod.MAX_PDU_LEN) return;
 
-            // ATT Requests → GATT server handler (async dispatch)
-            const ctx_alloc = self.wg.allocator.create(AttTaskCtx) catch {
-                // Fallback: handle synchronously if allocation fails
-                self.handleAttPduSync(sdu);
-                return;
-            };
-
-            ctx_alloc.* = .{
-                .host = self,
-                .conn_handle = sdu.conn_handle,
-                .pdu_data = undefined,
-                .pdu_len = sdu.data.len,
-            };
-            @memcpy(ctx_alloc.pdu_data[0..sdu.data.len], sdu.data);
-
-            // Spawn handler task (fire-and-forget, no WaitGroup tracking)
-            Rt.spawn("att-handler", attHandlerTask, @ptrCast(ctx_alloc), .{
-                .stack_size = 4096,
-                .priority = 15,
-            }) catch {
-                // Fallback: handle synchronously
-                self.wg.allocator.destroy(ctx_alloc);
-                self.handleAttPduSync(sdu);
-            };
-        }
-
-        fn attHandlerTask(raw_ctx: ?*anyopaque) void {
-            const ctx: *AttTaskCtx = @ptrCast(@alignCast(raw_ctx));
-            const host = ctx.host;
-            const conn_handle = ctx.conn_handle;
-            const pdu_data = ctx.pdu_data[0..ctx.pdu_len];
-
-            // Each handler task gets its own response buffer (on task stack)
-            var resp_buf: [att_mod.MAX_PDU_LEN]u8 = undefined;
-
-            const response = host.gatt.handlePdu(
-                conn_handle,
-                pdu_data,
-                &resp_buf,
-            );
-
-            // Free the context (PDU data copy)
-            host.wg.allocator.destroy(ctx);
-
-            // Send response if any
-            if (response) |resp| {
-                var frag_buf: [acl_mod.LE_MAX_DATA_LEN + l2cap_mod.HEADER_LEN]u8 = undefined;
-                var iter = l2cap_mod.fragmentIterator(
-                    &frag_buf,
-                    resp,
-                    l2cap_mod.CID_ATT,
-                    conn_handle,
-                    host.acl_max_len,
-                );
-
-                while (iter.next()) |frag| {
-                    host.tx_queue.trySend(TxPacket.fromSlice(frag)) catch {};
-                }
-            }
-        }
-
-        /// Synchronous fallback for when async spawn fails.
-        fn handleAttPduSync(self: *Self, sdu: l2cap_mod.Sdu) void {
+            // ATT Requests → GATT server dispatch.
+            // Protocol ops (MTU, discovery) return response directly.
+            // User handler ops are dispatched async via WaitGroup.go() inside
+            // gatt_server — response sent through sendAttResponse callback.
             const response = self.gatt.handlePdu(
                 sdu.conn_handle,
                 sdu.data,
                 &self.att_resp_buf,
-            ) orelse return;
+            ) orelse return; // null = async handler dispatched, or no response needed
 
+            self.sendAttResponseData(sdu.conn_handle, response);
+        }
+
+        /// Send ATT response data via L2CAP fragmentation → tx_queue.
+        /// Called from readLoop for sync protocol responses, and from
+        /// async handler tasks via the ResponseFn callback.
+        fn sendAttResponseData(self: *Self, conn_handle: u16, data: []const u8) void {
             var frag_buf: [acl_mod.LE_MAX_DATA_LEN + l2cap_mod.HEADER_LEN]u8 = undefined;
             var iter = l2cap_mod.fragmentIterator(
                 &frag_buf,
-                response,
+                data,
                 l2cap_mod.CID_ATT,
-                sdu.conn_handle,
+                conn_handle,
                 self.acl_max_len,
             );
 
             while (iter.next()) |frag| {
                 self.tx_queue.trySend(TxPacket.fromSlice(frag)) catch {};
             }
+        }
+
+        /// ResponseFn callback for GATT server async handler dispatch.
+        /// Invoked from handler task context (thread-safe via Channel).
+        fn sendAttResponse(ctx: ?*anyopaque, conn_handle: u16, data: []const u8) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.sendAttResponseData(conn_handle, data);
         }
 
         // ================================================================

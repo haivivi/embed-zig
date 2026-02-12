@@ -46,6 +46,8 @@
 //! ```
 
 const std = @import("std");
+const trait = @import("trait");
+const waitgroup = @import("waitgroup");
 const att = @import("host/att/att.zig");
 
 // ============================================================================
@@ -153,7 +155,19 @@ pub const ResponseWriter = struct {
 ///
 /// The service table is fixed at compile time (UUIDs + properties).
 /// Handlers are bound at runtime via `handle()`.
-pub fn GattServer(comptime services: []const ServiceDef) type {
+///
+/// `Rt` is the Runtime type providing Mutex, Condition, and spawn (see lib/trait).
+/// When `enableAsync()` is called with a WaitGroup, handler invocations are
+/// dispatched to independent tasks via `WaitGroup.go()`, keeping the readLoop
+/// unblocked. Without `enableAsync()`, handlers run synchronously (useful for tests).
+pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type {
+    comptime {
+        _ = trait.sync.Mutex(Rt.Mutex);
+        _ = trait.sync.Condition(Rt.Condition, Rt.Mutex);
+        trait.spawner.from(Rt);
+    }
+
+    const WG = waitgroup.WaitGroup(Rt);
     // Compute totals at comptime
     const total_chars = comptime blk: {
         var n: usize = 0;
@@ -305,6 +319,23 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
         /// Negotiated MTU
         mtu: u16 = att.DEFAULT_MTU,
 
+        // ================================================================
+        // Async dispatch (optional — null = sync mode)
+        // ================================================================
+
+        /// WaitGroup for spawning handler tasks (lifecycle-tracked).
+        wg: ?*WG = null,
+        /// Allocator for handler task context (heap-allocated per request).
+        async_allocator: ?std.mem.Allocator = null,
+        /// Callback to send ATT response from handler task back to transport.
+        response_fn: ?ResponseFn = null,
+        /// Opaque context passed to response_fn (typically *Host).
+        response_ctx: ?*anyopaque = null,
+
+        /// Callback signature for sending an ATT response from an async handler task.
+        /// The implementation should fragment via L2CAP and enqueue to tx_queue.
+        pub const ResponseFn = *const fn (ctx: ?*anyopaque, conn_handle: u16, data: []const u8) void;
+
         const HandlerBinding = struct {
             func: HandlerFn,
             ctx: ?*anyopaque,
@@ -312,6 +343,21 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
 
         pub fn init() Self {
             return .{};
+        }
+
+        pub fn deinit(self: *Self) void {
+            _ = self;
+        }
+
+        /// Enable async handler dispatch.
+        /// After this call, user handlers are spawned via `wg.go()` in independent tasks.
+        /// Responses are sent through `resp_fn` instead of being returned from `handlePdu`.
+        /// Must be called after the server is at its final memory location (e.g., in Host.start()).
+        pub fn enableAsync(self: *Self, wg: *WG, allocator: std.mem.Allocator, resp_fn: ResponseFn, resp_ctx: ?*anyopaque) void {
+            self.wg = wg;
+            self.async_allocator = allocator;
+            self.response_fn = resp_fn;
+            self.response_ctx = resp_ctx;
         }
 
         // ================================================================
@@ -405,7 +451,7 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
         // Internal: dispatch to handlers
         // ================================================================
 
-        fn dispatchRead(self: *Self, conn_handle: u16, attr_handle: u16, buf: *[att.MAX_PDU_LEN]u8) []const u8 {
+        fn dispatchRead(self: *Self, conn_handle: u16, attr_handle: u16, buf: *[att.MAX_PDU_LEN]u8) ?[]const u8 {
             // Find attr by handle
             inline for (db) |a| {
                 if (a.handle == attr_handle) {
@@ -468,7 +514,57 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
             return null;
         }
 
+        /// Dispatch handler: async (via WaitGroup.go) if enabled, sync otherwise.
+        /// Returns response slice in sync mode, null in async mode (response
+        /// sent via response_fn callback from the spawned task).
         fn callHandler(
+            self: *Self,
+            binding: HandlerBinding,
+            conn_handle: u16,
+            attr_handle: u16,
+            op: Operation,
+            data: []const u8,
+            buf: *[att.MAX_PDU_LEN]u8,
+        ) ?[]const u8 {
+            // Async path: spawn handler in independent task via WaitGroup.go()
+            if (self.wg != null and self.async_allocator != null and self.response_fn != null) {
+                const ctx = self.async_allocator.?.create(HandlerTaskCtx) catch {
+                    // Allocation failed — fall back to sync
+                    return self.callHandlerSync(binding, conn_handle, attr_handle, op, data, buf);
+                };
+
+                ctx.* = .{
+                    .server = self,
+                    .binding = binding,
+                    .conn_handle = conn_handle,
+                    .attr_handle = attr_handle,
+                    .op = op,
+                    .data_buf = undefined,
+                    .data_len = data.len,
+                };
+                if (data.len > 0) {
+                    @memcpy(ctx.data_buf[0..data.len], data);
+                }
+
+                self.wg.?.go("gatt-handler", handlerTaskEntry, @ptrCast(ctx), .{
+                    .stack_size = 4096,
+                    .priority = 15,
+                }) catch {
+                    // Spawn failed — free context and fall back to sync
+                    self.async_allocator.?.destroy(ctx);
+                    return self.callHandlerSync(binding, conn_handle, attr_handle, op, data, buf);
+                };
+
+                return null; // Response will be sent via response_fn from the task
+            }
+
+            // Sync path: call handler directly (tests / no async configured)
+            return self.callHandlerSync(binding, conn_handle, attr_handle, op, data, buf);
+        }
+
+        /// Synchronous handler invocation. Used directly in sync mode and as
+        /// fallback when async spawn fails.
+        fn callHandlerSync(
             self: *Self,
             binding: HandlerBinding,
             conn_handle: u16,
@@ -479,18 +575,13 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
         ) []const u8 {
             _ = self;
 
-            // UUIDs are not easily resolved from runtime attr_handle to comptime table.
-            // The handler identifies itself via user_ctx, so zero UUIDs are acceptable.
-            const svc_uuid_val = att.UUID.from16(0);
-            const chr_uuid_val = att.UUID.from16(0);
-
             var response_len: usize = 0;
             var req = Request{
                 .op = op,
                 .conn_handle = conn_handle,
                 .attr_handle = attr_handle,
-                .service_uuid = svc_uuid_val,
-                .char_uuid = chr_uuid_val,
+                .service_uuid = att.UUID.from16(0),
+                .char_uuid = att.UUID.from16(0),
                 .data = data,
                 .user_ctx = binding.ctx,
             };
@@ -506,19 +597,94 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
                 .attr_handle = attr_handle,
             };
 
-            // Call handler (currently synchronous — async TODO)
             binding.func(&req, &writer);
 
             if (writer.has_response and response_len > 0) {
                 return buf[0..response_len];
             }
 
-            // Default response if handler didn't write one
             return switch (op) {
                 .read => att.encodeReadResponse(buf, &.{}),
                 .write => att.encodeWriteResponse(buf),
-                .write_command => &.{}, // no response
+                .write_command => &.{},
             };
+        }
+
+        // ================================================================
+        // Async handler task
+        // ================================================================
+
+        /// Heap-allocated context for an async handler task.
+        /// Freed by the task after completion.
+        const HandlerTaskCtx = struct {
+            server: *Self,
+            binding: HandlerBinding,
+            conn_handle: u16,
+            attr_handle: u16,
+            op: Operation,
+            data_buf: [att.MAX_PDU_LEN]u8,
+            data_len: usize,
+        };
+
+        fn handlerTaskEntry(raw_ctx: ?*anyopaque) void {
+            const ctx: *HandlerTaskCtx = @ptrCast(@alignCast(raw_ctx));
+            const server = ctx.server;
+            const allocator = server.async_allocator.?;
+
+            // Build request from captured context
+            var resp_buf: [att.MAX_PDU_LEN]u8 = undefined;
+            var resp_len: usize = 0;
+
+            var req = Request{
+                .op = ctx.op,
+                .conn_handle = ctx.conn_handle,
+                .attr_handle = ctx.attr_handle,
+                .service_uuid = att.UUID.from16(0),
+                .char_uuid = att.UUID.from16(0),
+                .data = ctx.data_buf[0..ctx.data_len],
+                .user_ctx = ctx.binding.ctx,
+            };
+
+            var writer = ResponseWriter{
+                .buf = &resp_buf,
+                .len = &resp_len,
+                .req_opcode = switch (ctx.op) {
+                    .read => .read_request,
+                    .write => .write_request,
+                    .write_command => .write_command,
+                },
+                .attr_handle = ctx.attr_handle,
+            };
+
+            // Call user handler (may block, allocate, do I/O)
+            ctx.binding.func(&req, &writer);
+
+            // Capture values before freeing ctx
+            const conn_handle = ctx.conn_handle;
+            const op = ctx.op;
+            const send_fn = server.response_fn.?;
+            const send_ctx = server.response_ctx;
+
+            // Free the task context
+            allocator.destroy(ctx);
+
+            // Send response back via callback
+            if (writer.has_response and resp_len > 0) {
+                send_fn(send_ctx, conn_handle, resp_buf[0..resp_len]);
+            } else {
+                // Default response if handler didn't write one
+                switch (op) {
+                    .read => {
+                        const default_resp = att.encodeReadResponse(&resp_buf, &.{});
+                        send_fn(send_ctx, conn_handle, default_resp);
+                    },
+                    .write => {
+                        const default_resp = att.encodeWriteResponse(&resp_buf);
+                        send_fn(send_ctx, conn_handle, default_resp);
+                    },
+                    .write_command => {}, // no response per spec
+                }
+            }
         }
 
         // ================================================================
@@ -679,8 +845,11 @@ pub fn GattServer(comptime services: []const ServiceDef) type {
 // Tests
 // ============================================================================
 
+const TestRt = @import("std_impl").runtime;
+const WaitGroupT = waitgroup.WaitGroup(TestRt);
+
 test "GattServer comptime service table" {
-    const MyServer = GattServer(&.{
+    const MyServer = GattServer(TestRt, &.{
         Service(0x180D, &.{
             Char(0x2A37, .{ .read = true, .notify = true }),
             Char(0x2A38, .{ .read = true }),
@@ -696,7 +865,7 @@ test "GattServer comptime service table" {
 }
 
 test "GattServer handle registration and read dispatch" {
-    const MyServer = GattServer(&.{
+    const MyServer = GattServer(TestRt, &.{
         Service(0x180D, &.{
             Char(0x2A37, .{ .read = true }),
         }),
@@ -729,7 +898,7 @@ test "GattServer handle registration and read dispatch" {
 }
 
 test "GattServer write dispatch with handler" {
-    const MyServer = GattServer(&.{
+    const MyServer = GattServer(TestRt, &.{
         Service(0xFFE0, &.{
             Char(0xFFE1, .{ .write = true }),
         }),
@@ -760,7 +929,7 @@ test "GattServer write dispatch with handler" {
 }
 
 test "GattServer MTU exchange" {
-    const MyServer = GattServer(&.{
+    const MyServer = GattServer(TestRt, &.{
         Service(0x180D, &.{
             Char(0x2A37, .{ .read = true }),
         }),
@@ -780,7 +949,7 @@ test "GattServer MTU exchange" {
 }
 
 test "GattServer service discovery" {
-    const MyServer = GattServer(&.{
+    const MyServer = GattServer(TestRt, &.{
         Service(0x180D, &.{
             Char(0x2A37, .{ .read = true }),
         }),
@@ -804,4 +973,179 @@ test "GattServer service discovery" {
     try std.testing.expectEqual(@as(u8, @intFromEnum(att.Opcode.read_by_group_type_response)), resp[0]);
     try std.testing.expectEqual(@as(u8, 6), resp[1]); // entry len: 2+2+2=6
     try std.testing.expect(resp.len >= 8); // at least one entry
+}
+
+test "GattServer async handler dispatch - concurrent requests" {
+    // Verify that handler tasks run concurrently and don't block each other.
+    // Uses a handler that sleeps briefly to simulate I/O, and checks that
+    // multiple requests are dispatched without waiting for each to finish.
+
+    const MyServer = GattServer(TestRt, &.{
+        Service(0xFFE0, &.{
+            Char(0xFFE1, .{ .read = true, .write = true }),
+        }),
+    });
+
+    var server = MyServer.init();
+
+    // Shared counter: each handler increments it atomically
+    const Counter = struct {
+        value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    };
+
+    var counter = Counter{};
+
+    // Handler: sleep 10ms then increment counter
+    server.handle(0xFFE0, 0xFFE1, struct {
+        pub fn serve(req: *Request, w: *ResponseWriter) void {
+            const ctr: *Counter = @ptrCast(@alignCast(req.user_ctx));
+
+            // Simulate blocking I/O (10ms)
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+
+            _ = ctr.value.fetchAdd(1, .monotonic);
+            w.write(&[_]u8{0x42});
+        }
+    }.serve, @ptrCast(&counter));
+
+    // Track responses received via the callback
+    const ResponseTracker = struct {
+        count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+    };
+    var tracker = ResponseTracker{};
+
+    const trackingResponseFn = struct {
+        fn send(ctx: ?*anyopaque, conn_handle: u16, data: []const u8) void {
+            _ = conn_handle;
+            _ = data;
+            const t: *ResponseTracker = @ptrCast(@alignCast(ctx));
+            _ = t.count.fetchAdd(1, .monotonic);
+            t.mutex.lock();
+            defer t.mutex.unlock();
+            t.cond.signal();
+        }
+    }.send;
+
+    // Enable async dispatch
+    var wg = WaitGroupT.init(std.testing.allocator);
+    defer wg.deinit();
+
+    server.enableAsync(&wg, std.testing.allocator, trackingResponseFn, @ptrCast(&tracker));
+
+    const value_handle = MyServer.getValueHandle(0xFFE0, 0xFFE1);
+
+    // Fire N concurrent read requests
+    const N = 4;
+    for (0..N) |_| {
+        var req_buf: [3]u8 = undefined;
+        req_buf[0] = @intFromEnum(att.Opcode.read_request);
+        std.mem.writeInt(u16, req_buf[1..3], value_handle, .little);
+
+        var resp_buf: [att.MAX_PDU_LEN]u8 = undefined;
+        const result = server.handlePdu(0x0040, &req_buf, &resp_buf);
+
+        // Async dispatch: handlePdu returns null (response via callback)
+        try std.testing.expectEqual(@as(?[]const u8, null), result);
+    }
+
+    // Wait for all handler tasks to complete
+    wg.wait();
+
+    // All handlers should have run
+    try std.testing.expectEqual(@as(u32, N), counter.value.load(.monotonic));
+
+    // All responses should have been sent via callback
+    try std.testing.expectEqual(@as(u32, N), tracker.count.load(.monotonic));
+}
+
+test "GattServer async handler fallback on sync mode" {
+    // Without enableAsync(), callHandler should return data synchronously.
+    const MyServer = GattServer(TestRt, &.{
+        Service(0xFFE0, &.{
+            Char(0xFFE1, .{ .read = true }),
+        }),
+    });
+
+    var server = MyServer.init();
+
+    server.handle(0xFFE0, 0xFFE1, struct {
+        pub fn serve(req: *Request, w: *ResponseWriter) void {
+            _ = req;
+            w.write(&[_]u8{ 0xDE, 0xAD });
+        }
+    }.serve, null);
+
+    const value_handle = MyServer.getValueHandle(0xFFE0, 0xFFE1);
+
+    var req_buf: [3]u8 = undefined;
+    req_buf[0] = @intFromEnum(att.Opcode.read_request);
+    std.mem.writeInt(u16, req_buf[1..3], value_handle, .little);
+
+    var resp_buf: [att.MAX_PDU_LEN]u8 = undefined;
+    const result = server.handlePdu(0x0040, &req_buf, &resp_buf);
+
+    // Sync mode: should return response directly
+    try std.testing.expect(result != null);
+    const resp = result.?;
+    try std.testing.expectEqual(@as(u8, @intFromEnum(att.Opcode.read_response)), resp[0]);
+    try std.testing.expectEqual(@as(u8, 0xDE), resp[1]);
+    try std.testing.expectEqual(@as(u8, 0xAD), resp[2]);
+}
+
+test "GattServer async write handler receives data" {
+    // Verify that write data is correctly copied to the async task context.
+    const MyServer = GattServer(TestRt, &.{
+        Service(0xFFE0, &.{
+            Char(0xFFE1, .{ .write = true }),
+        }),
+    });
+
+    var server = MyServer.init();
+
+    // Capture written data via user_ctx
+    const Capture = struct {
+        data: [4]u8 = undefined,
+        len: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    };
+    var capture = Capture{};
+
+    server.handle(0xFFE0, 0xFFE1, struct {
+        pub fn serve(req: *Request, w: *ResponseWriter) void {
+            const cap: *Capture = @ptrCast(@alignCast(req.user_ctx));
+            @memcpy(cap.data[0..req.data.len], req.data);
+            _ = cap.len.fetchAdd(@intCast(req.data.len), .monotonic);
+            w.ok();
+        }
+    }.serve, @ptrCast(&capture));
+
+    const ResponseSink = struct {
+        fn send(_: ?*anyopaque, _: u16, _: []const u8) void {}
+    };
+
+    var wg = WaitGroupT.init(std.testing.allocator);
+    defer wg.deinit();
+
+    server.enableAsync(&wg, std.testing.allocator, ResponseSink.send, null);
+
+    const value_handle = MyServer.getValueHandle(0xFFE0, 0xFFE1);
+
+    // Send write request with payload [0xCA, 0xFE]
+    var req_buf: [5]u8 = undefined;
+    req_buf[0] = @intFromEnum(att.Opcode.write_request);
+    std.mem.writeInt(u16, req_buf[1..3], value_handle, .little);
+    req_buf[3] = 0xCA;
+    req_buf[4] = 0xFE;
+
+    var resp_buf: [att.MAX_PDU_LEN]u8 = undefined;
+    const result = server.handlePdu(0x0040, &req_buf, &resp_buf);
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+
+    wg.wait();
+
+    // Verify the handler received the correct data
+    try std.testing.expectEqual(@as(u32, 2), capture.len.load(.monotonic));
+    try std.testing.expectEqual(@as(u8, 0xCA), capture.data[0]);
+    try std.testing.expectEqual(@as(u8, 0xFE), capture.data[1]);
 }
