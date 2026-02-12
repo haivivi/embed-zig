@@ -39,16 +39,16 @@ jobs:
           bazel build --config=ci \
             //lib/trait \
             //lib/hal \
-            //lib/pkg/channel \
-            //lib/pkg/waitgroup \
-            //lib/pkg/cancellation \
+            //lib/pkg/async/channel \
+            //lib/pkg/async/waitgroup \
+            //lib/pkg/async/cancellation \
             //lib/platform/std
 
       - name: Test cross-platform libraries
         run: |
           bazel test --config=ci \
             //lib/trait:trait_test \
-            //lib/pkg/cancellation:cancellation_test \
+            //lib/pkg/async/cancellation:cancellation_test \
             //lib/platform/std:std_test
 
       - name: Verify examples compile
