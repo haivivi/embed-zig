@@ -6,7 +6,7 @@ zig_package(
     name = "waitgroup",
     deps = ["//lib/trait"],
     test_deps = ["//lib/platform/std"],
-    test = False,  # TODO: tests need runtime module
+    test = True,
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))
