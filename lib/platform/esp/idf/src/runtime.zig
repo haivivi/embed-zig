@@ -263,6 +263,7 @@ pub const Thread = struct {
     const ThreadCtx = struct {
         func_ptr: *const anyopaque,
         args_ptr: *const anyopaque,
+        cleanup_fn: *const fn (?*anyopaque, std.mem.Allocator) void,
         done_sem: c.SemaphoreHandle_t,
         allocator: std.mem.Allocator,
     };
@@ -276,6 +277,7 @@ pub const Thread = struct {
         // Extract function pointer and args
         const func_ptr = thread_ctx.func_ptr;
         const args_ptr = thread_ctx.args_ptr;
+        const cleanup_fn = thread_ctx.cleanup_fn;
         
         // Free context
         allocator.destroy(thread_ctx);
@@ -286,7 +288,10 @@ pub const Thread = struct {
         const func: FnType = @ptrCast(func_ptr);
         func(args_ptr);
         
-        // Signal completion
+        // Free args (Fix #3: args_copy memory leak)
+        cleanup_fn(@constCast(args_ptr), allocator);
+        
+        // Signal completion (always safe - see detach() for semaphore lifecycle)
         _ = c.xSemaphoreGive(done_sem);
         
         // Delete self (stack freed by FreeRTOS)
@@ -322,11 +327,17 @@ pub const Thread = struct {
                 const typed_args: *const ArgsType = @ptrCast(@alignCast(args_ptr));
                 @call(.auto, func, typed_args.*);
             }
+            
+            fn cleanup(args_ptr: ?*anyopaque, alloc: std.mem.Allocator) void {
+                const typed: *ArgsType = @ptrCast(@alignCast(args_ptr));
+                alloc.destroy(typed);
+            }
         };
         
         thread_ctx.* = .{
             .func_ptr = @ptrCast(&Wrapper.call),
             .args_ptr = @ptrCast(args_copy),
+            .cleanup_fn = &Wrapper.cleanup,
             .done_sem = done_sem,
             .allocator = allocator,
         };
@@ -365,8 +376,18 @@ pub const Thread = struct {
     }
 
     /// Detach thread (release resources without waiting)
+    ///
+    /// Fix #2: Leak semaphore intentionally - it's owned by the running thread.
+    /// When threadWrapper completes, it will Give the semaphore (which becomes a no-op
+    /// since nobody is waiting). The semaphore leaks (~80 bytes), but this is the
+    /// safest approach without atomic coordination.
+    ///
+    /// Alternative considered: atomic flag in ThreadCtx, but adds complexity and
+    /// memory overhead to ALL threads. Leaking on detach (rare operation) is acceptable.
     pub fn detach(self: Thread) void {
-        c.vSemaphoreDelete(self.done_sem);
+        // Intentional leak: semaphore will be signaled by threadWrapper but never freed.
+        // This is safe and preferable to use-after-free or complex atomic coordination.
+        _ = self;
     }
 };
 

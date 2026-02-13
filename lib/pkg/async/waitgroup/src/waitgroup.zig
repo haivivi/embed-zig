@@ -54,12 +54,14 @@ pub fn WaitGroup(comptime Rt: type) type {
         /// Spawn a tracked task
         pub fn go(self: *Self, comptime func: anytype, args: anytype) !void {
             const thread = try Rt.Thread.spawn(.{}, func, args);
+            errdefer thread.detach(); // Fix #1: cleanup if append fails
             try self.threads.append(self.allocator, thread);
         }
 
         /// Spawn a tracked task with custom config
         pub fn goWithConfig(self: *Self, config: Rt.Thread.SpawnConfig, comptime func: anytype, args: anytype) !void {
             const thread = try Rt.Thread.spawn(config, func, args);
+            errdefer thread.detach(); // Fix #1: cleanup if append fails
             try self.threads.append(self.allocator, thread);
         }
 
