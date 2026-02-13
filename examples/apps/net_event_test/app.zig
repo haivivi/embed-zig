@@ -224,7 +224,7 @@ pub fn run(env: anytype) void {
             }
         }
 
-        const now = Board.time.getTimeMs();
+        const now = Board.time.nowMs();
 
         // State machine
         switch (phase) {

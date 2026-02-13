@@ -61,7 +61,7 @@ pub fn run(_: anytype) void {
     const SCAN_INTERVAL_MS: u64 = 5_000;
 
     while (Board.isRunning()) {
-        const now = Board.time.getTimeMs();
+        const now = Board.time.nowMs();
 
         while (b.nextEvent()) |event| {
             switch (event) {

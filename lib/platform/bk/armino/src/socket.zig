@@ -4,6 +4,7 @@
 //! code (lib/pkg/dns, lib/pkg/http, etc.) works unchanged.
 
 const std = @import("std");
+const trait_socket = @import("trait").socket;
 
 // C helper functions (bk_zig_socket_helper.c)
 extern fn bk_zig_socket_tcp() c_int;
@@ -167,7 +168,7 @@ pub const Socket = struct {
         return @intCast(result);
     }
 
-    pub fn recvFromAddr(self: *Self, buf: []u8) SocketError!struct { len: usize, addr: Address, port: u16 } {
+    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!trait_socket.RecvFromResult {
         var ip_be: u32 = 0;
         var port: u16 = 0;
         const result = bk_zig_socket_recvfrom(self.fd, buf.ptr, @intCast(buf.len), &ip_be, &port);
@@ -175,15 +176,20 @@ pub const Socket = struct {
         if (result == 0) return error.Closed;
         return .{
             .len = @intCast(result),
-            .addr = .{ .ipv4 = beToIpv4(ip_be) },
-            .port = port,
+            .src_addr = beToIpv4(ip_be),
+            .src_port = port,
         };
     }
 
     // === Server ===
 
-    pub fn bind(self: *Self, port: u16) SocketError!void {
+    pub fn bind(self: *Self, _: Ipv4Address, port: u16) SocketError!void {
         if (bk_zig_socket_bind(self.fd, port) < 0) return error.BindFailed;
+    }
+
+    pub fn getBoundPort(self: *Self) SocketError!u16 {
+        _ = self;
+        return error.BindFailed; // TODO: implement via getsockname
     }
 
     pub fn listen(self: *Self, backlog: u32) SocketError!void {
@@ -224,6 +230,12 @@ pub const Socket = struct {
 
     pub fn setTcpNoDelay(self: *Self, enable: bool) void {
         _ = bk_zig_socket_set_nodelay(self.fd, if (enable) 1 else 0);
+    }
+
+    pub fn setNonBlocking(self: *Self, non_blocking: bool) SocketError!void {
+        _ = self;
+        _ = non_blocking;
+        // TODO: implement via fcntl F_SETFL O_NONBLOCK
     }
 
     pub fn getFd(self: *Self) c_int {

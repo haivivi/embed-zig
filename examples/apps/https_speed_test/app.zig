@@ -32,7 +32,7 @@ fn runPublicTest(
     log.info("--- {s} ---", .{test_name});
     log.info("Host: {s}, Path: {s}", .{ host, path });
 
-    const start_ms = Board.time.getTimeMs();
+    const start_ms = Board.time.nowMs();
 
     // DNS resolve
     log.info("DNS resolving via {}.{}.{}.{}...", .{ dns_server[0], dns_server[1], dns_server[2], dns_server[3] });
@@ -81,14 +81,14 @@ fn runPublicTest(
         return;
     };
 
-    const handshake_start = Board.time.getTimeMs();
+    const handshake_start = Board.time.nowMs();
     log.info("TLS handshake ({s})...", .{if (skip_verify) "no verify" else "cert verify"});
     tls_client.connect() catch |err| {
         log.err("TLS handshake failed: {}", .{err});
         tls_client.deinit();
         return;
     };
-    const handshake_ms = Board.time.getTimeMs() - handshake_start;
+    const handshake_ms = Board.time.nowMs() - handshake_start;
     log.info("TLS handshake: {} ms", .{handshake_ms});
 
     // HTTP request
@@ -120,7 +120,7 @@ fn runPublicTest(
         };
         if (n == 0) break;
 
-        if (body_start_ms == 0) body_start_ms = Board.time.getTimeMs();
+        if (body_start_ms == 0) body_start_ms = Board.time.nowMs();
 
         if (!header_done) {
             if (std.mem.indexOf(u8, recv_buf[0..n], "\r\n\r\n")) |pos| {
@@ -132,7 +132,7 @@ fn runPublicTest(
         }
 
         if (total_bytes - last_print >= 100 * 1024) {
-            const elapsed_ms = Board.time.getTimeMs() - body_start_ms;
+            const elapsed_ms = Board.time.nowMs() - body_start_ms;
             const speed = if (elapsed_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / elapsed_ms)) else 0;
             log.info("Progress: {} KB ({} KB/s)", .{ total_bytes / 1024, speed });
             last_print = total_bytes;
@@ -141,7 +141,7 @@ fn runPublicTest(
 
     tls_client.deinit();
 
-    const end_ms = Board.time.getTimeMs();
+    const end_ms = Board.time.nowMs();
     const body_ms = if (body_start_ms > 0) end_ms - body_start_ms else end_ms - start_ms;
     const speed = if (body_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / body_ms)) else 0;
 

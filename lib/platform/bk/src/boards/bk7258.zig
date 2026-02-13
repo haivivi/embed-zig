@@ -28,8 +28,8 @@ pub const time = struct {
     pub fn sleepMs(ms: u32) void {
         impl.Time.sleepMs(ms);
     }
-    pub fn getTimeMs() u64 {
-        return impl.Time.getTimeMs();
+    pub fn nowMs() u64 {
+        return impl.Time.nowMs();
     }
 };
 

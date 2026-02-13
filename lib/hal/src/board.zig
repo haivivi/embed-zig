@@ -7,7 +7,7 @@
 //! Every board spec MUST have:
 //! - `rtc` (RtcReader) - time source
 //! - `log` - logging type (info/err/warn/debug methods)
-//! - `time` - time type (sleepMs/getTimeMs methods)
+//! - `time` - time type (sleepMs/nowMs methods)
 //! - `isRunning` - run check function: fn() bool
 //!
 //! ## Optional Traits
@@ -1144,7 +1144,7 @@ test "SpecAnalysis with rtc only" {
 
     const MockTime = struct {
         pub fn sleepMs(_: u32) void {}
-        pub fn getTimeMs() u64 {
+        pub fn nowMs() u64 {
             return 0;
         }
     };

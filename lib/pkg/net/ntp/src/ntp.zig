@@ -14,9 +14,9 @@
 //!   const Client = ntp.Client(Socket);
 //!   var client = Client{ .server = .{ 162, 159, 200, 1 } }; // time.cloudflare.com
 //!
-//!   const t1 = Board.time.getTimeMs();
+//!   const t1 = Board.time.nowMs();
 //!   const resp = try client.query(@intCast(t1));
-//!   const t4 = Board.time.getTimeMs();
+//!   const t4 = Board.time.nowMs();
 //!
 //!   // Calculate offset: ((T2 - T1) + (T3 - T4)) / 2
 //!   const offset = @divFloor((resp.receive_time_ms - @as(i64, @intCast(t1))) +

@@ -1,7 +1,9 @@
-//! BK7258 Speaker — Direct DAC + DMA (no pipeline)
+//! BK7258 Speaker — DMA-based DAC output
 //!
-//! Uses bk_zig_speaker_helper.c which directly drives:
-//!   DAC init → DMA ring buffer → DAC FIFO → analog out → PA → speaker
+//! Uses DAC DMA to play audio from ring buffer at precise hardware timing.
+//! Supports PA control via GPIO 0. Pre-fills 1 frame silence at init.
+//!
+//! Flow: write() → Ring Buffer → DMA → DAC FIFO → Analog Out → PA → Speaker
 
 extern fn bk_zig_speaker_init(sample_rate: u32, channels: u8, bits: u8, dig_gain: u8) i32;
 extern fn bk_zig_speaker_deinit() void;
@@ -24,6 +26,7 @@ pub const Speaker = struct {
         }
     }
 
+    /// Write PCM samples to speaker. DMA handles playback timing.
     pub fn write(_: *Speaker, buffer: []const i16) !usize {
         const ret = bk_zig_speaker_write(buffer.ptr, @intCast(buffer.len));
         if (ret < 0) return error.SpeakerWriteFailed;

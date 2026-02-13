@@ -42,9 +42,9 @@ fn testDhcpDns(dhcp_dns: [4]u8) void {
     };
 
     for (test_domains) |domain| {
-        const start = Board.time.getTimeMs();
+        const start = Board.time.nowMs();
         if (resolver.resolve(domain)) |ip| {
-            const duration = Board.time.getTimeMs() - start;
+            const duration = Board.time.nowMs() - start;
             var buf: [16]u8 = undefined;
             log.info("[DHCP_DNS] {s} => {s} ({d}ms)", .{ domain, dns.formatIpv4(ip, &buf), duration });
         } else |err| {
@@ -65,9 +65,9 @@ fn testUdpDns() void {
     };
 
     for (test_domains) |domain| {
-        const start = Board.time.getTimeMs();
+        const start = Board.time.nowMs();
         if (resolver.resolve(domain)) |ip| {
-            const duration = Board.time.getTimeMs() - start;
+            const duration = Board.time.nowMs() - start;
             var buf: [16]u8 = undefined;
             log.info("{s} => {s} ({d}ms)", .{ domain, dns.formatIpv4(ip, &buf), duration });
         } else |err| {
@@ -88,9 +88,9 @@ fn testTcpDns() void {
     };
 
     for (test_domains) |domain| {
-        const start = Board.time.getTimeMs();
+        const start = Board.time.nowMs();
         if (resolver.resolve(domain)) |ip| {
-            const duration = Board.time.getTimeMs() - start;
+            const duration = Board.time.nowMs() - start;
             var buf: [16]u8 = undefined;
             log.info("{s} => {s} ({d}ms)", .{ domain, dns.formatIpv4(ip, &buf), duration });
         } else |err| {

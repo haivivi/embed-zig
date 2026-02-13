@@ -114,7 +114,7 @@ fn runHttpTest(host: []const u8, port: u16, path: []const u8, test_name: []const
     log.info("", .{});
     log.info("--- {s} ---", .{test_name});
 
-    const start_ms = Board.time.getTimeMs();
+    const start_ms = Board.time.nowMs();
 
     // Parse IP address
     const addr = trait.socket.parseIpv4(host) orelse {
@@ -181,14 +181,14 @@ fn runHttpTest(host: []const u8, port: u16, path: []const u8, test_name: []const
 
         // Progress every 1MB
         if (total_bytes - last_print >= 1024 * 1024) {
-            const elapsed_ms = Board.time.getTimeMs() - start_ms;
+            const elapsed_ms = Board.time.nowMs() - start_ms;
             const speed = if (elapsed_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / elapsed_ms)) else 0;
             log.info("Progress: {} bytes ({} KB/s)", .{ total_bytes, speed });
             last_print = total_bytes;
         }
     }
 
-    const end_ms = Board.time.getTimeMs();
+    const end_ms = Board.time.nowMs();
     const duration_ms = end_ms - start_ms;
     const speed = if (duration_ms > 0) @as(u32, @intCast(total_bytes / 1024 * 1000 / duration_ms)) else 0;
 

@@ -14,7 +14,7 @@ const Socket = std_impl.socket.Socket;
 const Client = ntp.Client(Socket);
 
 /// Get current monotonic time in milliseconds
-fn getTimeMs() u64 {
+fn nowMs() u64 {
     return @intCast(@divFloor(std.time.nanoTimestamp(), 1_000_000));
 }
 
@@ -45,12 +45,12 @@ pub fn main() !void {
         };
 
         // Record T1 (local time before query)
-        const t1 = getTimeMs();
+        const t1 = nowMs();
         const t1_signed: i64 = @intCast(t1);
 
         if (client.query(t1_signed)) |resp| {
             // Record T4 (local time after query)
-            const t4 = getTimeMs();
+            const t4 = nowMs();
             const t4_signed: i64 = @intCast(t4);
 
             // Calculate offset: ((T2 - T1) + (T3 - T4)) / 2
@@ -90,7 +90,7 @@ pub fn main() !void {
             .timeout_ms = 5000,
         };
 
-        const local_time: i64 = @intCast(getTimeMs());
+        const local_time: i64 = @intCast(nowMs());
         if (client.getTime(local_time)) |time_ms| {
             var time_buf: [32]u8 = undefined;
             const formatted = ntp.formatTime(time_ms, &time_buf);

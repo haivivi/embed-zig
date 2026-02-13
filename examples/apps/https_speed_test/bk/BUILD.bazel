@@ -46,7 +46,7 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/tls", "//lib/pkg/dns"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/tls", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
     ap_stack_size = 131072,  # 128KB for TLS (X25519 + SHA + HMAC deep stack)

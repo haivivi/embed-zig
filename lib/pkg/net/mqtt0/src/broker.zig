@@ -949,7 +949,7 @@ pub fn Broker(comptime Transport: type, comptime Rt: type) type {
             const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/connected", .{safe_id}) catch return;
 
             var json_buf: [1024]u8 = undefined;
-            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.getTimeMs(), 1000) else 0;
+            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.nowMs(), 1000) else 0;
             const json = std.fmt.bufPrint(&json_buf,
                 \\{{"clientid":"{s}","username":"{s}","ipaddress":"","proto_ver":{d},"keepalive":{d},"connected_at":{d}}}
             , .{ client_id, username, proto_ver, keep_alive, timestamp }) catch return;
@@ -969,7 +969,7 @@ pub fn Broker(comptime Transport: type, comptime Rt: type) type {
             const topic = std.fmt.bufPrint(&full_topic, "$SYS/brokers/{s}/disconnected", .{safe_id}) catch return;
 
             var json_buf: [512]u8 = undefined;
-            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.getTimeMs(), 1000) else 0;
+            const timestamp: u64 = if (@hasDecl(Rt, "Time")) @divTrunc(Rt.Time.nowMs(), 1000) else 0;
             const json = std.fmt.bufPrint(&json_buf,
                 \\{{"clientid":"{s}","username":"{s}","reason":"normal","disconnected_at":{d}}}
             , .{ client_id, username, timestamp }) catch return;

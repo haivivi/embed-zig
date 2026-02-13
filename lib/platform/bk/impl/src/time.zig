@@ -6,7 +6,7 @@ pub const Time = struct {
     pub fn sleepMs(ms: u32) void {
         armino.time.sleepMs(ms);
     }
-    pub fn getTimeMs() u64 {
+    pub fn nowMs() u64 {
         return armino.time.nowMs();
     }
 };

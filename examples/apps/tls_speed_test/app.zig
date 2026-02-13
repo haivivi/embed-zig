@@ -64,7 +64,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     log.info("TCP connected", .{});
 
     log.info("TLS handshake...", .{});
-    const hs_start = Board.time.getTimeMs();
+    const hs_start = Board.time.nowMs();
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = platform.allocator,
@@ -83,7 +83,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         return null;
     };
 
-    const hs_ms = Board.time.getTimeMs() - hs_start;
+    const hs_ms = Board.time.nowMs() - hs_start;
     log.info("TLS handshake: {} ms", .{hs_ms});
 
     var send_buf: [8 * 1024]u8 = undefined;
@@ -92,7 +92,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     var recv_buf: [8 * 1024]u8 = undefined;
     var total_sent: usize = 0;
     var total_recv: usize = 0;
-    const start_ms = Board.time.getTimeMs();
+    const start_ms = Board.time.nowMs();
 
     while (total_sent < config.total_bytes) {
         const to_send = @min(config.chunk_size, config.total_bytes - total_sent);
@@ -119,13 +119,13 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         }
 
         if (total_sent % (128 * 1024) == 0) {
-            const elapsed = Board.time.getTimeMs() - start_ms;
+            const elapsed = Board.time.nowMs() - start_ms;
             const speed = if (elapsed > 0) @as(u32, @intCast(@as(u64, total_sent + total_recv) * 1000 / elapsed / 1024)) else 0;
             log.info("Progress: {} KB sent, {} KB recv ({} KB/s)", .{ total_sent / 1024, total_recv / 1024, speed });
         }
     }
 
-    const elapsed_ms = Board.time.getTimeMs() - start_ms;
+    const elapsed_ms = Board.time.nowMs() - start_ms;
     tls_client.deinit();
 
     const total_bytes = total_sent + total_recv;

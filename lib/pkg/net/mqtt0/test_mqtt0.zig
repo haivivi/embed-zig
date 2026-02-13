@@ -26,7 +26,7 @@ const TestRt = struct {
     };
     pub const Time = struct {
         pub fn sleepMs(_: u32) void {}
-        pub fn getTimeMs() u64 {
+        pub fn nowMs() u64 {
             return @intCast(std.time.milliTimestamp());
         }
     };

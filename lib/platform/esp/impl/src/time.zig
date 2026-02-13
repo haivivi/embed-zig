@@ -17,7 +17,7 @@ pub const Time = struct {
     }
 
     /// Get current time in milliseconds (since boot)
-    pub fn getTimeMs() u64 {
+    pub fn nowMs() u64 {
         return idf.time.nowMs();
     }
 };

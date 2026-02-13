@@ -39,7 +39,7 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/dns"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
     c_helpers = [

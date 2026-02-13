@@ -46,7 +46,7 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/tls"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/tls"],
     env = ":env",
     partition_table = ":partitions",
     kconfig_ap = ":kconfig",
