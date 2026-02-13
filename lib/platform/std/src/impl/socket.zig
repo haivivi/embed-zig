@@ -131,8 +131,9 @@ pub const Socket = struct {
     pub fn recvFromWithAddr(self: *Self, buf: []u8) Error!trait.socket.RecvFromResult {
         var src_addr: posix.sockaddr.in = undefined;
         var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-        const n = posix.recvfrom(self.fd, buf, 0, @ptrCast(&src_addr), &addr_len) catch {
-            return error.RecvFailed;
+        const n = posix.recvfrom(self.fd, buf, 0, @ptrCast(&src_addr), &addr_len) catch |err| {
+            // Fix #10: map EAGAIN/EWOULDBLOCK to Timeout for non-blocking sockets
+            return if (err == error.WouldBlock) error.Timeout else error.RecvFailed;
         };
         if (n == 0) return error.Closed;
         

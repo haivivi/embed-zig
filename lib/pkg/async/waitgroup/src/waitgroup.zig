@@ -78,6 +78,7 @@ pub fn WaitGroup(comptime Rt: type) type {
         /// Spawn a tracked task
         pub fn go(self: *Self, comptime func: anytype, args: anytype) !void {
             self.add(1);
+            errdefer self.done(); // Fix #9: rollback counter if spawn fails
             
             const ArgsType = @TypeOf(args);
             const Wrapper = struct {
@@ -94,6 +95,7 @@ pub fn WaitGroup(comptime Rt: type) type {
         /// Spawn a tracked task with custom config
         pub fn goWithConfig(self: *Self, config: Rt.Thread.SpawnConfig, comptime func: anytype, args: anytype) !void {
             self.add(1);
+            errdefer self.done(); // Fix #9: rollback counter if spawn fails
             
             const ArgsType = @TypeOf(args);
             const Wrapper = struct {
