@@ -1,12 +1,11 @@
 package main
 
 import (
+	"embed-zig/bazel/esp/tools/common"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -131,7 +130,7 @@ func main() {
 		"write_flash", "-z"}
 	args = append(args, flashArgs...)
 
-	if err := runCommand(idfPython, args...); err != nil {
+	if err := common.RunCommand(idfPython, args...); err != nil {
 		fmt.Fprintf(os.Stderr, "[esp_flash] Error: Flash failed: %v\n", err)
 		os.Exit(1)
 	}

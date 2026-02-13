@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"embed-zig/bazel/esp/tools/common"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -84,10 +86,8 @@ project(esp_configure)
 
 	// Generate idf_component.yml if needed
 	if idfComponentYml != "" {
-		// Unescape the content: \n -> newline, \" -> ", \\ -> \
+		// Unescape only \n -> newline (bash already handles \" and \\)
 		unescaped := strings.ReplaceAll(idfComponentYml, "\\n", "\n")
-		unescaped = strings.ReplaceAll(unescaped, "\\\"", "\"")
-		unescaped = strings.ReplaceAll(unescaped, "\\\\", "\\")
 		
 		ymlContent := fmt.Sprintf("dependencies:\n%s", unescaped)
 		if err := os.WriteFile(filepath.Join(mainDir, "idf_component.yml"), []byte(ymlContent), 0644); err != nil {

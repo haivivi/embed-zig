@@ -112,7 +112,7 @@ func build(cfg *Config) error {
 	}
 
 	// Extract chip type from sdkconfig.defaults
-	chip, err := extractChipFromSdkconfig(filepath.Join(projectDir, "sdkconfig.defaults"))
+	chip, err := common.ExtractChipFromSdkconfig(filepath.Join(projectDir, "sdkconfig.defaults"))
 	if err != nil {
 		return err
 	}
