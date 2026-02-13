@@ -1180,9 +1180,6 @@ def _esp_flash_impl(ctx):
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "460800"
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
-    
     # Collect data partition bins and NVS info if partition_table is provided
     data_flash_args = ""
     data_files = []
@@ -1200,7 +1197,11 @@ def _esp_flash_impl(ctx):
                 nvs_size = "0x%X" % pinfo["size"]
                 break
     
-    # Create wrapper script
+    # Get the flasher Go binary
+    flasher_files = ctx.attr._flasher.files.to_list()
+    flasher_bin = flasher_files[0]  # go_binary produces single executable
+    
+    # Create wrapper script that sets env vars and calls Go binary
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
     
     # Determine if we have full flash files
@@ -1209,10 +1210,8 @@ def _esp_flash_impl(ctx):
     script_content = """#!/bin/bash
 set -e
 
-# Mark as Bazel-invoked
+# Configuration (passed to Go binary via environment)
 export ESP_BAZEL_RUN=1
-
-# Configuration
 export ESP_BOARD="{board}"
 export ESP_BAUD="{baud}"
 export ESP_BIN="{bin_path}"
@@ -1224,107 +1223,8 @@ export ESP_DATA_FLASH_ARGS="{data_flash_args}"
 export ESP_NVS_OFFSET="{nvs_offset}"
 export ESP_NVS_SIZE="{nvs_size}"
 
-# Parse command line arguments
-APP_ONLY=0
-ERASE_NVS=0
-for arg in "$@"; do
-    case $arg in
-        --app-only)
-            APP_ONLY=1
-            ;;
-        --erase-nvs)
-            ERASE_NVS=1
-            ;;
-    esac
-done
-
-# Source common functions
-source "{common_sh}"
-
-# Run flash
-setup_home
-find_idf_python
-
-if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_flash"; then
-    exit 1
-fi
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[esp_flash] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-echo "[esp_flash] Board: $ESP_BOARD"
-echo "[esp_flash] Flashing to $PORT at $ESP_BAUD baud..."
-echo "[esp_flash] Binary: $ESP_BIN"
-
-# Detect reset mode based on port type
-# USB-JTAG ports (usbmodem) need usb_reset for entering bootloader
-# USB-JTAG DTR/RTS are CDC virtual signals - use watchdog reset instead
-if [[ "$PORT" == *"usbmodem"* ]]; then
-    BEFORE_RESET="usb_reset"
-    AFTER_RESET="no_reset"
-    USB_JTAG_MODE=1
-    echo "[esp_flash] Using USB-JTAG mode (watchdog reset after flash)"
-else
-    BEFORE_RESET="default_reset"
-    AFTER_RESET="hard_reset"
-    USB_JTAG_MODE=0
-fi
-
-# Erase NVS if requested
-if [[ "$ERASE_NVS" == "1" ]]; then
-    if [[ -n "$ESP_NVS_OFFSET" && -n "$ESP_NVS_SIZE" ]]; then
-        echo "[esp_flash] Erasing NVS partition at $ESP_NVS_OFFSET (size: $ESP_NVS_SIZE)..."
-        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-            --before "$BEFORE_RESET" --after "no_reset" \\
-            erase_region $ESP_NVS_OFFSET $ESP_NVS_SIZE
-    else
-        # Fallback to default offset for backward compatibility
-        echo "[esp_flash] Warning: NVS partition info not available, using default (0x9000, 0x6000)"
-        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-            --before "$BEFORE_RESET" --after "no_reset" \\
-            erase_region 0x9000 0x6000
-    fi
-fi
-
-# Build flash arguments
-FLASH_ARGS=""
-
-if [[ "$APP_ONLY" == "1" ]]; then
-    echo "[esp_flash] App-only mode"
-    FLASH_ARGS="0x10000 $ESP_BIN"
-elif [[ "$ESP_FULL_FLASH" == "1" ]]; then
-    echo "[esp_flash] Full flash mode (bootloader + partition + app)"
-    FLASH_ARGS="0x0 $ESP_BOOTLOADER 0x8000 $ESP_PARTITION 0x10000 $ESP_BIN"
-    # Add data partitions if any
-    if [[ -n "$ESP_DATA_FLASH_ARGS" ]]; then
-        FLASH_ARGS="$FLASH_ARGS$ESP_DATA_FLASH_ARGS"
-        echo "[esp_flash] Including data partitions"
-    fi
-else
-    FLASH_ARGS="0x10000 $ESP_BIN"
-fi
-
-# esptool auto-detects chip type
-"$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-    --before "$BEFORE_RESET" --after "$AFTER_RESET" \\
-    write_flash -z $FLASH_ARGS
-
-# For USB-JTAG, use watchdog reset (DTR/RTS don't work)
-if [[ "$USB_JTAG_MODE" == "1" ]]; then
-    echo "[esp_flash] Executing watchdog reset..."
-    "$IDF_PYTHON" -c "
-import esptool
-esp = esptool.detect_chip('$PORT', 115200, 'usb_reset', False, 3)
-esp = esp.run_stub()
-esp.watchdog_reset()
-" 2>/dev/null || echo "[esp_flash] Watchdog reset failed, manual RST may be needed"
-fi
-
-echo "[esp_flash] Flash complete!"
+# Execute Go flasher with arguments
+exec "{flasher}" "$@"
 """.format(
         board = board,
         baud = baud,
@@ -1336,7 +1236,7 @@ echo "[esp_flash] Flash complete!"
         data_flash_args = data_flash_args,
         nvs_offset = nvs_offset,
         nvs_size = nvs_size,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        flasher = flasher_bin.short_path,
     )
     
     ctx.actions.write(
@@ -1355,7 +1255,7 @@ echo "[esp_flash] Flash complete!"
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = flash_files + script_files),
+            runfiles = ctx.runfiles(files = flash_files + flasher_files),
         ),
     ]
 
@@ -1380,8 +1280,10 @@ esp_flash = rule(
         "_baud": attr.label(
             default = Label("//bazel:baud"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_flasher": attr.label(
+            default = Label("//bazel/esp/tools/flasher"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Flash an ESP-IDF binary to a device",
@@ -1398,72 +1300,28 @@ def _esp_monitor_impl(ctx):
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
+    # Get the monitor Go binary
+    monitor_files = ctx.attr._monitor.files.to_list()
+    monitor_bin = monitor_files[0]  # go_binary produces single executable
     
-    # Create wrapper script
+    # Create wrapper script that sets env vars and calls Go binary
     monitor_script = ctx.actions.declare_file("{}_monitor.sh".format(ctx.label.name))
     
     script_content = """#!/bin/bash
 set -e
 
-# Mark as Bazel-invoked
+# Configuration (passed to Go binary via environment)
 export ESP_BAZEL_RUN=1
-
-# Configuration
 export ESP_BOARD="{board}"
 export ESP_MONITOR_BAUD="115200"
 export ESP_PORT_CONFIG="{port}"
 
-# Source common functions
-source "{common_sh}"
-
-# Run monitor
-setup_home
-find_idf_python
-
-if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_monitor"; then
-    exit 1
-fi
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[esp_monitor] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-echo "[esp_monitor] Board: $ESP_BOARD"
-echo "[esp_monitor] Monitoring $PORT at $ESP_MONITOR_BAUD baud..."
-echo "[esp_monitor] Press Ctrl+C to exit"
-
-"$IDF_PYTHON" -c "
-import serial
-import sys
-
-try:
-    ser = serial.Serial('$PORT', $ESP_MONITOR_BAUD, timeout=0.5)
-    ser.setDTR(False)  # Don't trigger reset
-    ser.setRTS(False)
-    print('Connected to $PORT at $ESP_MONITOR_BAUD baud')
-    print('Waiting for data... (press RST on device if needed)')
-    print('---')
-    while True:
-        data = ser.read(ser.in_waiting or 1)
-        if data:
-            text = data.decode('utf-8', errors='replace')
-            sys.stdout.write(text)
-            sys.stdout.flush()
-except KeyboardInterrupt:
-    print('\\n--- Monitor stopped ---')
-except Exception as e:
-    print(f'Error: {{e}}')
-    sys.exit(1)
-"
+# Execute Go monitor
+exec "{monitor}" "$@"
 """.format(
         board = board,
         port = port,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        monitor = monitor_bin.short_path,
     )
     
     ctx.actions.write(
@@ -1475,7 +1333,7 @@ except Exception as e:
     return [
         DefaultInfo(
             executable = monitor_script,
-            runfiles = ctx.runfiles(files = script_files),
+            runfiles = ctx.runfiles(files = monitor_files),
         ),
     ]
 
@@ -1489,8 +1347,10 @@ esp_monitor = rule(
         "_port": attr.label(
             default = Label("//bazel:port"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_monitor": attr.label(
+            default = Label("//bazel/esp/tools/monitor"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Monitor serial output from an ESP32 device",
