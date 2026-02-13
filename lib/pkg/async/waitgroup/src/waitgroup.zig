@@ -9,7 +9,7 @@
 //! const Rt = @import("std_impl").runtime;
 //! const WaitGroup = waitgroup.WaitGroup(Rt);
 //!
-//! var wg = WaitGroup.init(allocator);
+//! var wg = WaitGroup.init();
 //! defer wg.deinit();
 //!
 //! // Spawn tracked tasks
@@ -40,15 +40,13 @@ pub fn WaitGroup(comptime Rt: type) type {
         mutex: Rt.Mutex,
         cond: Rt.Condition,
         counter: i32,
-        allocator: std.mem.Allocator,
 
         /// Initialize a new WaitGroup
-        pub fn init(allocator: std.mem.Allocator) Self {
+        pub fn init() Self {
             return .{
                 .mutex = Rt.Mutex.init(),
                 .cond = Rt.Condition.init(),
                 .counter = 0,
-                .allocator = allocator,
             };
         }
 
@@ -129,7 +127,7 @@ const TestRt = @import("std_impl").runtime;
 
 test "WaitGroup empty wait" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     // Should not block (no threads spawned)
@@ -138,7 +136,7 @@ test "WaitGroup empty wait" {
 
 test "WaitGroup go single task" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     var result = std.atomic.Value(i32).init(0);
@@ -156,7 +154,7 @@ test "WaitGroup go single task" {
 
 test "WaitGroup go multiple tasks" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     var counter = std.atomic.Value(u32).init(0);
