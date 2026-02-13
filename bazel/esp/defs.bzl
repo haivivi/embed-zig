@@ -116,7 +116,6 @@ def esp_modules():
 # Labels relative to this repository (works when used from external repos)
 _LIBS_LABEL = Label("//:all_libs")
 _CMAKE_MODULES_LABEL = Label("//cmake:cmake_modules")
-_SCRIPTS_LABEL = Label("//bazel/esp:scripts")
 _APPS_LABEL = Label("//examples/apps:all_apps")
 
 # =============================================================================
@@ -158,13 +157,9 @@ def _esp_idf_app_impl(ctx):
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
-    build_sh = None
-    for f in script_files:
-        if f.basename == "build.sh":
-            build_sh = f
-            break
+    # Get Go builder binary
+    builder_files = ctx.attr._builder.files.to_list()
+    builder_bin = builder_files[0]
     
     # Generate copy commands - preserve original directory structure
     src_copy_commands = _generate_copy_commands_preserve_structure(src_files)
@@ -172,10 +167,10 @@ def _esp_idf_app_impl(ctx):
     lib_copy_commands = _generate_copy_commands_preserve_structure(lib_files)
     apps_copy_commands = _generate_copy_commands_preserve_structure(apps_files)
     
-    # Create wrapper script that copies files and calls build.sh
+    # Create wrapper script that copies files and calls Go builder
     build_script = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
     
-    # Wrapper script: sets up environment, copies files, calls build.sh
+    # Wrapper script: sets up environment, copies files, calls Go builder
     # Files are copied preserving their original paths, so relative references work
     script_content = """#!/bin/bash
 set -e
@@ -189,7 +184,7 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 {cmake_copy_commands}
 {lib_copy_commands}
 {apps_copy_commands}
-exec bash "{build_sh}"
+exec "{builder}"
 """.format(
         board = board,
         project_name = project_name,
@@ -198,7 +193,7 @@ exec bash "{build_sh}"
         bootloader_out = bootloader_file.path,
         partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
-        build_sh = build_sh.path if build_sh else "",
+        builder = builder_bin.path,
         project_path = ctx.label.package,  # e.g., "examples/apps/gpio_button"
         src_copy_commands = "\n".join(src_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
@@ -213,7 +208,7 @@ exec bash "{build_sh}"
     )
     
     # Collect all inputs
-    inputs = src_files + cmake_files + zig_files + lib_files + apps_files + script_files + [build_script]
+    inputs = src_files + cmake_files + zig_files + lib_files + apps_files + builder_files + [build_script]
     
     # Run build
     ctx.actions.run_shell(
@@ -287,9 +282,11 @@ esp_idf_app = rule(
         "_board": attr.label(
             default = Label("//bazel:board"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
-            doc = "Build scripts",
+        "_builder": attr.label(
+            default = Label("//bazel/esp/tools/builder"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF build",
         ),
     },
     doc = "Build an ESP-IDF project with Zig support",
@@ -330,100 +327,34 @@ def _esp_configure_impl(ctx):
     # ESP-IDF requires
     requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "freertos"
     
-    # Script files for common.sh
-    script_files = ctx.attr._scripts.files.to_list()
+    # Get configurator Go binary
+    configurator_files = ctx.attr._configurator.files.to_list()
+    configurator_bin = configurator_files[0]
     
     # Build the configure script
     configure_script = ctx.actions.declare_file(ctx.label.name + "_configure.sh")
     
+    # Use heredoc to safely pass idf_component_yml without escaping issues
     script_content = """#!/bin/bash
 set -e
 export ESP_BAZEL_RUN=1
-
-# Setup
-WORK=$(mktemp -d) && trap "rm -rf $WORK" EXIT
-mkdir -p "$WORK/project/main"
-
-# Generate minimal CMakeLists.txt
-cat > "$WORK/project/CMakeLists.txt" << 'EOF'
-cmake_minimum_required(VERSION 3.16)
-include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
-project(esp_configure)
-EOF
-
-# Generate main component
-cat > "$WORK/project/main/CMakeLists.txt" << 'EOF'
-idf_component_register(
-    SRCS "main.c"
-    REQUIRES {requires}
-)
-EOF
-
-cat > "$WORK/project/main/main.c" << 'EOF'
-void app_main(void) {{}}
-EOF
-
-# Generate idf_component.yml if needed
+export ESP_SDKCONFIG_PATH="{sdkconfig_path}"
+export ESP_CONFIG_DIR="{config_dir}"
+export ESP_INCLUDE_DIRS_FILE="{include_dirs_file}"
+export ESP_REQUIRES="{requires}"
+export ESP_IDF_COMPONENT_YML=$(cat <<'EOF'
 {idf_component_yml}
+EOF
+)
 
-# Copy sdkconfig
-cp "{sdkconfig_path}" "$WORK/project/sdkconfig.defaults"
-
-# Source common functions and setup IDF
-source "{common_sh}"
-setup_home
-setup_idf_env
-
-if ! command -v idf.py &> /dev/null; then
-    echo "[esp_configure] Error: idf.py not found"
-    exit 1
-fi
-
-# Extract chip type from sdkconfig
-cd "$WORK/project"
-ESP_CHIP=$(grep -E '^CONFIG_IDF_TARGET=' sdkconfig.defaults | sed 's/CONFIG_IDF_TARGET="\\(.*\\)"/\\1/' | head -1)
-if [ -z "$ESP_CHIP" ]; then
-    echo "[esp_configure] Error: CONFIG_IDF_TARGET not found"
-    exit 1
-fi
-echo "[esp_configure] Chip: $ESP_CHIP"
-
-# Run configure only (no build)
-idf.py set-target "$ESP_CHIP"
-idf.py reconfigure
-
-# Copy generated config directory (contains sdkconfig.h)
-cp -r "$WORK/project/build/config/." "{config_dir}"
-
-# Extract include directories from CMake
-# Parse compile_commands.json or use cmake --build to get includes
-# Simpler: list the standard IDF component include paths
-echo "[esp_configure] Extracting include directories..."
-cat > "{include_dirs_file}" << 'IDEOF'
-IDEOF
-
-# Get include dirs from the CMake cache
-cmake -L "$WORK/project/build" 2>/dev/null | grep -E '_INCLUDE_DIRS|_DIR' | while IFS='=' read -r key value; do
-    echo "$value" >> "{include_dirs_file}"
-done
-
-# Also add the standard paths that are always needed
-echo "{config_dir}" >> "{include_dirs_file}"
-echo "$IDF_PATH/components/esp_common/include" >> "{include_dirs_file}"
-echo "$IDF_PATH/components/esp_system/include" >> "{include_dirs_file}"
-
-echo "[esp_configure] Done. Config at {config_dir}"
+exec "{configurator}"
 """.format(
-        requires = requires,
         sdkconfig_path = sdkconfig_file.path,
         config_dir = config_dir.path,
         include_dirs_file = include_dirs_file.path,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
-        idf_component_yml = """
-cat > "$WORK/project/main/idf_component.yml" << 'COMPEOF'
-dependencies:
-{deps}COMPEOF
-""".format(deps = idf_deps_yml) if idf_deps_yml else "",
+        requires = requires,
+        idf_component_yml = idf_deps_yml,
+        configurator = configurator_bin.path,
     )
     
     ctx.actions.write(
@@ -434,7 +365,7 @@ dependencies:
     
     ctx.actions.run_shell(
         command = configure_script.path,
-        inputs = [sdkconfig_file, configure_script] + script_files,
+        inputs = [sdkconfig_file, configure_script] + configurator_files,
         outputs = [config_dir, include_dirs_file],
         execution_requirements = {
             "local": "1",
@@ -463,8 +394,11 @@ esp_configure = rule(
             default = [],
             doc = "IDF component manager dependencies",
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_configurator": attr.label(
+            default = Label("//bazel/esp/tools/configurator"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF configure",
         ),
     },
     doc = """Run ESP-IDF CMake configure to generate sdkconfig.h.
@@ -545,12 +479,9 @@ def _esp_zig_app_impl(ctx):
         if env_files_list:
             env_file = env_files_list[0]
     
-    script_files = ctx.attr._scripts.files.to_list()
-    build_sh = None
-    for f in script_files:
-        if f.basename == "build.sh":
-            build_sh = f
-            break
+    # Get Go builder binary
+    builder_files = ctx.attr._builder.files.to_list()
+    builder_bin = builder_files[0]
     
     sdkconfig_file = None
     sdkconfig_files = []
@@ -993,7 +924,7 @@ dependencies:
 {idf_deps_yml}IDFCOMPEOF
 fi
 
-exec bash "{build_sh}"
+exec "{builder}"
 """.format(
         board = board,
         env_file_export = 'export ESP_ENV_FILE="$(pwd)/{}"'.format(env_file.path) if env_file else "",
@@ -1004,7 +935,7 @@ exec bash "{build_sh}"
         bootloader_out = bootloader_file.path,
         partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
-        build_sh = build_sh.path if build_sh else "",
+        builder = builder_bin.path,
         app_name = app_name,
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
@@ -1037,7 +968,7 @@ exec bash "{build_sh}"
     # Collect all inputs — Zig sources via exec-root paths (no copying needed)
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + builder_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
     
     ctx.actions.run_shell(
         command = build_script.path,
@@ -1145,8 +1076,11 @@ esp_zig_app = rule(
         "_board": attr.label(
             default = Label("//bazel:board"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_builder": attr.label(
+            default = Label("//bazel/esp/tools/builder"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF build",
         ),
     },
     doc = "Build an ESP-IDF Zig app, generating the ESP shell automatically",
@@ -1180,9 +1114,6 @@ def _esp_flash_impl(ctx):
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "460800"
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
-    
     # Collect data partition bins and NVS info if partition_table is provided
     data_flash_args = ""
     data_files = []
@@ -1200,7 +1131,11 @@ def _esp_flash_impl(ctx):
                 nvs_size = "0x%X" % pinfo["size"]
                 break
     
-    # Create wrapper script
+    # Get the flasher Go binary
+    flasher_files = ctx.attr._flasher.files.to_list()
+    flasher_bin = flasher_files[0]  # go_binary produces single executable
+    
+    # Create wrapper script that sets env vars and calls Go binary
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
     
     # Determine if we have full flash files
@@ -1209,10 +1144,8 @@ def _esp_flash_impl(ctx):
     script_content = """#!/bin/bash
 set -e
 
-# Mark as Bazel-invoked
+# Configuration (passed to Go binary via environment)
 export ESP_BAZEL_RUN=1
-
-# Configuration
 export ESP_BOARD="{board}"
 export ESP_BAUD="{baud}"
 export ESP_BIN="{bin_path}"
@@ -1224,107 +1157,8 @@ export ESP_DATA_FLASH_ARGS="{data_flash_args}"
 export ESP_NVS_OFFSET="{nvs_offset}"
 export ESP_NVS_SIZE="{nvs_size}"
 
-# Parse command line arguments
-APP_ONLY=0
-ERASE_NVS=0
-for arg in "$@"; do
-    case $arg in
-        --app-only)
-            APP_ONLY=1
-            ;;
-        --erase-nvs)
-            ERASE_NVS=1
-            ;;
-    esac
-done
-
-# Source common functions
-source "{common_sh}"
-
-# Run flash
-setup_home
-find_idf_python
-
-if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_flash"; then
-    exit 1
-fi
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[esp_flash] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-echo "[esp_flash] Board: $ESP_BOARD"
-echo "[esp_flash] Flashing to $PORT at $ESP_BAUD baud..."
-echo "[esp_flash] Binary: $ESP_BIN"
-
-# Detect reset mode based on port type
-# USB-JTAG ports (usbmodem) need usb_reset for entering bootloader
-# USB-JTAG DTR/RTS are CDC virtual signals - use watchdog reset instead
-if [[ "$PORT" == *"usbmodem"* ]]; then
-    BEFORE_RESET="usb_reset"
-    AFTER_RESET="no_reset"
-    USB_JTAG_MODE=1
-    echo "[esp_flash] Using USB-JTAG mode (watchdog reset after flash)"
-else
-    BEFORE_RESET="default_reset"
-    AFTER_RESET="hard_reset"
-    USB_JTAG_MODE=0
-fi
-
-# Erase NVS if requested
-if [[ "$ERASE_NVS" == "1" ]]; then
-    if [[ -n "$ESP_NVS_OFFSET" && -n "$ESP_NVS_SIZE" ]]; then
-        echo "[esp_flash] Erasing NVS partition at $ESP_NVS_OFFSET (size: $ESP_NVS_SIZE)..."
-        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-            --before "$BEFORE_RESET" --after "no_reset" \\
-            erase_region $ESP_NVS_OFFSET $ESP_NVS_SIZE
-    else
-        # Fallback to default offset for backward compatibility
-        echo "[esp_flash] Warning: NVS partition info not available, using default (0x9000, 0x6000)"
-        "$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-            --before "$BEFORE_RESET" --after "no_reset" \\
-            erase_region 0x9000 0x6000
-    fi
-fi
-
-# Build flash arguments
-FLASH_ARGS=""
-
-if [[ "$APP_ONLY" == "1" ]]; then
-    echo "[esp_flash] App-only mode"
-    FLASH_ARGS="0x10000 $ESP_BIN"
-elif [[ "$ESP_FULL_FLASH" == "1" ]]; then
-    echo "[esp_flash] Full flash mode (bootloader + partition + app)"
-    FLASH_ARGS="0x0 $ESP_BOOTLOADER 0x8000 $ESP_PARTITION 0x10000 $ESP_BIN"
-    # Add data partitions if any
-    if [[ -n "$ESP_DATA_FLASH_ARGS" ]]; then
-        FLASH_ARGS="$FLASH_ARGS$ESP_DATA_FLASH_ARGS"
-        echo "[esp_flash] Including data partitions"
-    fi
-else
-    FLASH_ARGS="0x10000 $ESP_BIN"
-fi
-
-# esptool auto-detects chip type
-"$IDF_PYTHON" -m esptool --port "$PORT" --baud "$ESP_BAUD" \\
-    --before "$BEFORE_RESET" --after "$AFTER_RESET" \\
-    write_flash -z $FLASH_ARGS
-
-# For USB-JTAG, use watchdog reset (DTR/RTS don't work)
-if [[ "$USB_JTAG_MODE" == "1" ]]; then
-    echo "[esp_flash] Executing watchdog reset..."
-    "$IDF_PYTHON" -c "
-import esptool
-esp = esptool.detect_chip('$PORT', 115200, 'usb_reset', False, 3)
-esp = esp.run_stub()
-esp.watchdog_reset()
-" 2>/dev/null || echo "[esp_flash] Watchdog reset failed, manual RST may be needed"
-fi
-
-echo "[esp_flash] Flash complete!"
+# Execute Go flasher with arguments
+exec "{flasher}" "$@"
 """.format(
         board = board,
         baud = baud,
@@ -1336,7 +1170,7 @@ echo "[esp_flash] Flash complete!"
         data_flash_args = data_flash_args,
         nvs_offset = nvs_offset,
         nvs_size = nvs_size,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        flasher = flasher_bin.short_path,
     )
     
     ctx.actions.write(
@@ -1355,7 +1189,7 @@ echo "[esp_flash] Flash complete!"
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = flash_files + script_files),
+            runfiles = ctx.runfiles(files = flash_files + flasher_files),
         ),
     ]
 
@@ -1380,8 +1214,10 @@ esp_flash = rule(
         "_baud": attr.label(
             default = Label("//bazel:baud"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_flasher": attr.label(
+            default = Label("//bazel/esp/tools/flasher"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Flash an ESP-IDF binary to a device",
@@ -1398,72 +1234,28 @@ def _esp_monitor_impl(ctx):
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
+    # Get the monitor Go binary
+    monitor_files = ctx.attr._monitor.files.to_list()
+    monitor_bin = monitor_files[0]  # go_binary produces single executable
     
-    # Create wrapper script
+    # Create wrapper script that sets env vars and calls Go binary
     monitor_script = ctx.actions.declare_file("{}_monitor.sh".format(ctx.label.name))
     
     script_content = """#!/bin/bash
 set -e
 
-# Mark as Bazel-invoked
+# Configuration (passed to Go binary via environment)
 export ESP_BAZEL_RUN=1
-
-# Configuration
 export ESP_BOARD="{board}"
 export ESP_MONITOR_BAUD="115200"
 export ESP_PORT_CONFIG="{port}"
 
-# Source common functions
-source "{common_sh}"
-
-# Run monitor
-setup_home
-find_idf_python
-
-if ! detect_serial_port "$ESP_PORT_CONFIG" "esp_monitor"; then
-    exit 1
-fi
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[esp_monitor] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-echo "[esp_monitor] Board: $ESP_BOARD"
-echo "[esp_monitor] Monitoring $PORT at $ESP_MONITOR_BAUD baud..."
-echo "[esp_monitor] Press Ctrl+C to exit"
-
-"$IDF_PYTHON" -c "
-import serial
-import sys
-
-try:
-    ser = serial.Serial('$PORT', $ESP_MONITOR_BAUD, timeout=0.5)
-    ser.setDTR(False)  # Don't trigger reset
-    ser.setRTS(False)
-    print('Connected to $PORT at $ESP_MONITOR_BAUD baud')
-    print('Waiting for data... (press RST on device if needed)')
-    print('---')
-    while True:
-        data = ser.read(ser.in_waiting or 1)
-        if data:
-            text = data.decode('utf-8', errors='replace')
-            sys.stdout.write(text)
-            sys.stdout.flush()
-except KeyboardInterrupt:
-    print('\\n--- Monitor stopped ---')
-except Exception as e:
-    print(f'Error: {{e}}')
-    sys.exit(1)
-"
+# Execute Go monitor
+exec "{monitor}" "$@"
 """.format(
         board = board,
         port = port,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
+        monitor = monitor_bin.short_path,
     )
     
     ctx.actions.write(
@@ -1475,7 +1267,7 @@ except Exception as e:
     return [
         DefaultInfo(
             executable = monitor_script,
-            runfiles = ctx.runfiles(files = script_files),
+            runfiles = ctx.runfiles(files = monitor_files),
         ),
     ]
 
@@ -1489,8 +1281,10 @@ esp_monitor = rule(
         "_port": attr.label(
             default = Label("//bazel:port"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_monitor": attr.label(
+            default = Label("//bazel/esp/tools/monitor"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Monitor serial output from an ESP32 device",
