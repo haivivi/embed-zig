@@ -45,6 +45,7 @@ pub const crypto = @import("crypto.zig");
 pub const net = @import("net.zig");
 pub const sync = @import("sync.zig");
 pub const spawner = @import("spawner.zig");
+pub const system = @import("system.zig");
 pub const codec = @import("codec.zig");
 pub const io = @import("io.zig");
 
@@ -70,6 +71,7 @@ test {
     _ = net;
     _ = sync;
     _ = spawner;
+    _ = system;
     _ = codec;
     _ = io;
 }

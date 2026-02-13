@@ -16,8 +16,6 @@
 //!         pub fn join(self: Thread) void;
 //!         pub fn detach(self: Thread) void;
 //!     };
-//!     
-//!     pub fn getCpuCount() !usize;
 //! };
 //! ```
 //!
@@ -31,18 +29,14 @@
 //! // Fire-and-forget
 //! const thread = try Rt.Thread.spawn(.{}, worker, .{ctx});
 //! thread.detach();
-//!
-//! // Get CPU count
-//! const num_workers = try Rt.getCpuCount();
 //! ```
 
 const std = @import("std");
 
-/// Validate that Impl provides Thread and getCpuCount
+/// Validate that Impl provides Thread
 ///
 /// Required:
 /// - `Thread` type with `spawn()`, `join()`, `detach()`
-/// - `getCpuCount() !usize`
 pub fn from(comptime Impl: type) void {
     comptime {
         // Validate Thread type
@@ -52,18 +46,5 @@ pub fn from(comptime Impl: type) void {
         if (!@hasDecl(ThreadType, "spawn")) @compileError("Thread missing spawn() method");
         if (!@hasDecl(ThreadType, "join")) @compileError("Thread missing join() method");
         if (!@hasDecl(ThreadType, "detach")) @compileError("Thread missing detach() method");
-        
-        // Validate getCpuCount
-        if (!@hasDecl(Impl, "getCpuCount")) @compileError("Spawner missing getCpuCount() function");
-        
-        // Validate return type (allow any error set)
-        const getCpuCountFn = @typeInfo(@TypeOf(Impl.getCpuCount));
-        if (getCpuCountFn != .@"fn") @compileError("getCpuCount must be a function");
-        
-        const return_type = @typeInfo(getCpuCountFn.@"fn".return_type.?);
-        if (return_type != .error_union) @compileError("getCpuCount() must return error union");
-        if (return_type.error_union.payload != usize) {
-            @compileError("getCpuCount() must return !usize");
-        }
     }
 }
