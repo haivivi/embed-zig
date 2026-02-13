@@ -28,6 +28,20 @@ func main() {
 		requires = "freertos"
 	}
 
+	// Convert output paths to absolute before Chdir
+	// (Bazel passes relative paths from exec root)
+	var err error
+	configDir, err = filepath.Abs(configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[esp_configure] Error: Failed to resolve config_dir: %v\n", err)
+		os.Exit(1)
+	}
+	includeDirsFile, err = filepath.Abs(includeDirsFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[esp_configure] Error: Failed to resolve include_dirs_file: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Setup environment
 	common.SetupHome()
 	if err := common.SetupIDFEnv("[esp_configure]"); err != nil {
@@ -86,10 +100,8 @@ project(esp_configure)
 
 	// Generate idf_component.yml if needed
 	if idfComponentYml != "" {
-		// Unescape only \n -> newline (bash already handles \" and \\)
-		unescaped := strings.ReplaceAll(idfComponentYml, "\\n", "\n")
-		
-		ymlContent := fmt.Sprintf("dependencies:\n%s", unescaped)
+		// Content arrives via heredoc (<<'EOF'), no unescaping needed
+		ymlContent := fmt.Sprintf("dependencies:\n%s", idfComponentYml)
 		if err := os.WriteFile(filepath.Join(mainDir, "idf_component.yml"), []byte(ymlContent), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "[esp_configure] Error: Failed to write idf_component.yml: %v\n", err)
 			os.Exit(1)
