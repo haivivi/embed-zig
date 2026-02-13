@@ -27,13 +27,14 @@ func SetupHome() {
 	}
 }
 
-// SetupIDFEnv sets up ESP-IDF environment (PATH and IDF_PYTHON).
-// toolPrefix is used for log messages (e.g., "[esp_build]").
-func SetupIDFEnv(toolPrefix string) error {
+// findIDFPythonEnvDir finds the ESP-IDF Python environment directory.
+// Returns the env directory path (e.g., ~/.espressif/python_env/idf5.3_env)
+// or empty string if not found. Selects the last match (highest version).
+func findIDFPythonEnvDir() string {
 	home := os.Getenv("HOME")
 	pythonEnvDir := filepath.Join(home, ".espressif", "python_env")
 
-	var idfPythonEnv string
+	var lastEnvPath string
 	if _, err := os.Stat(pythonEnvDir); err == nil {
 		entries, err := os.ReadDir(pythonEnvDir)
 		if err == nil {
@@ -42,13 +43,21 @@ func SetupIDFEnv(toolPrefix string) error {
 					envPath := filepath.Join(pythonEnvDir, entry.Name())
 					pythonPath := filepath.Join(envPath, "bin", "python")
 					if _, err := os.Stat(pythonPath); err == nil {
-						idfPythonEnv = envPath
+						lastEnvPath = envPath
 						// Keep iterating to select the last match (highest version)
 					}
 				}
 			}
 		}
 	}
+	return lastEnvPath
+}
+
+// SetupIDFEnv sets up ESP-IDF environment (PATH and IDF_PYTHON).
+// toolPrefix is used for log messages (e.g., "[esp_build]").
+func SetupIDFEnv(toolPrefix string) error {
+	home := os.Getenv("HOME")
+	idfPythonEnv := findIDFPythonEnvDir()
 
 	if idfPythonEnv == "" {
 		fmt.Printf("%s Warning: ESP-IDF Python env not found\n", toolPrefix)
@@ -100,27 +109,10 @@ func SetupIDFEnv(toolPrefix string) error {
 // FindIDFPython finds the ESP-IDF Python interpreter.
 // toolPrefix is used for log messages (e.g., "[esp_flash]").
 func FindIDFPython(toolPrefix string) (string, error) {
-	home := os.Getenv("HOME")
-	pythonEnvDir := filepath.Join(home, ".espressif", "python_env")
+	idfPythonEnv := findIDFPythonEnvDir()
 
-	var lastPythonPath string
-	if _, err := os.Stat(pythonEnvDir); err == nil {
-		entries, err := os.ReadDir(pythonEnvDir)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && strings.HasPrefix(entry.Name(), "idf") && strings.HasSuffix(entry.Name(), "_env") {
-					pythonPath := filepath.Join(pythonEnvDir, entry.Name(), "bin", "python")
-					if _, err := os.Stat(pythonPath); err == nil {
-						lastPythonPath = pythonPath
-						// Keep iterating to select the last match (highest version)
-					}
-				}
-			}
-		}
-	}
-
-	if lastPythonPath != "" {
-		return lastPythonPath, nil
+	if idfPythonEnv != "" {
+		return filepath.Join(idfPythonEnv, "bin", "python"), nil
 	}
 
 	fmt.Printf("%s Warning: ESP-IDF Python env not found, using system python3\n", toolPrefix)
