@@ -84,7 +84,12 @@ project(esp_configure)
 
 	// Generate idf_component.yml if needed
 	if idfComponentYml != "" {
-		ymlContent := fmt.Sprintf("dependencies:\n%s", idfComponentYml)
+		// Unescape the content: \n -> newline, \" -> ", \\ -> \
+		unescaped := strings.ReplaceAll(idfComponentYml, "\\n", "\n")
+		unescaped = strings.ReplaceAll(unescaped, "\\\"", "\"")
+		unescaped = strings.ReplaceAll(unescaped, "\\\\", "\\")
+		
+		ymlContent := fmt.Sprintf("dependencies:\n%s", unescaped)
 		if err := os.WriteFile(filepath.Join(mainDir, "idf_component.yml"), []byte(ymlContent), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "[esp_configure] Error: Failed to write idf_component.yml: %v\n", err)
 			os.Exit(1)
@@ -157,7 +162,8 @@ func extractIncludeDirs(projectDir, outputFile, configDir string) error {
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	re := regexp.MustCompile(`(_INCLUDE_DIRS|_DIR)=(.+)`)
+	// Match cmake -L output format: KEY:TYPE=VALUE
+	re := regexp.MustCompile(`(_INCLUDE_DIRS|_DIR):[^=]+=(.+)`)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if matches := re.FindStringSubmatch(line); len(matches) > 2 {
