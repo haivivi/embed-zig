@@ -37,24 +37,31 @@ pub fn WaitGroup(comptime Rt: type) type {
 
         threads: std.ArrayListUnmanaged(Rt.Thread),
         allocator: std.mem.Allocator,
+        mutex: Rt.Mutex,
 
         /// Initialize a new WaitGroup
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .threads = .{},
                 .allocator = allocator,
+                .mutex = Rt.Mutex.init(),
             };
         }
 
         /// Release resources. Must call wait() first to ensure all threads complete.
         pub fn deinit(self: *Self) void {
             self.threads.deinit(self.allocator);
+            self.mutex.deinit();
         }
 
         /// Spawn a tracked task
         pub fn go(self: *Self, comptime func: anytype, args: anytype) !void {
             const thread = try Rt.Thread.spawn(.{}, func, args);
             errdefer thread.detach(); // Fix #1: cleanup if append fails
+            
+            // Fix #6: protect threads list with mutex
+            self.mutex.lock();
+            defer self.mutex.unlock();
             try self.threads.append(self.allocator, thread);
         }
 
@@ -62,15 +69,26 @@ pub fn WaitGroup(comptime Rt: type) type {
         pub fn goWithConfig(self: *Self, config: Rt.Thread.SpawnConfig, comptime func: anytype, args: anytype) !void {
             const thread = try Rt.Thread.spawn(config, func, args);
             errdefer thread.detach(); // Fix #1: cleanup if append fails
+            
+            // Fix #6: protect threads list with mutex
+            self.mutex.lock();
+            defer self.mutex.unlock();
             try self.threads.append(self.allocator, thread);
         }
 
         /// Block until all spawned tasks complete
         pub fn wait(self: *Self) void {
-            for (self.threads.items) |thread| {
+            // Fix #6: swap threads out under lock to avoid holding lock during join
+            self.mutex.lock();
+            var threads_to_join = self.threads;
+            self.threads = .{};
+            self.mutex.unlock();
+            
+            // Join all threads (can take time, so don't hold lock)
+            for (threads_to_join.items) |thread| {
                 thread.join();
             }
-            self.threads.clearRetainingCapacity();
+            threads_to_join.deinit(self.allocator);
         }
     };
 }
