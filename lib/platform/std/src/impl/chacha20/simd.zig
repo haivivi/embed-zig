@@ -154,6 +154,16 @@ pub const Poly1305 = struct {
         }
     }
 
+    /// Process complete 16-byte aligned blocks for AEAD construction
+    /// Data must be 16-byte aligned. All blocks use hibit=1.
+    fn updateBlocks(self: *Poly1305, data: []const u8) void {
+        std.debug.assert(data.len % 16 == 0);
+        var i: usize = 0;
+        while (i < data.len) : (i += 16) {
+            self.addBlock(data[i..][0..16], 1);
+        }
+    }
+
     fn addBlock(self: *Poly1305, block: *const [16]u8, hibit: u64) void {
         const s0 = std.mem.readInt(u64, block[0..8], .little);
         const s1 = std.mem.readInt(u64, block[8..16], .little);
@@ -232,15 +242,6 @@ pub const Poly1305 = struct {
     }
 };
 
-/// Pad Poly1305 input to 16-byte boundary (RFC 8439 Section 2.8)
-fn padTo16(poly: *Poly1305, len: usize) void {
-    const pad_len = (16 - (len % 16)) % 16;
-    if (pad_len > 0) {
-        const zeros = [_]u8{0} ** 15;
-        poly.update(zeros[0..pad_len]);
-    }
-}
-
 /// ChaCha20-Poly1305 AEAD encrypt
 pub fn encrypt(
     key: *const [32]u8,
@@ -273,17 +274,40 @@ pub fn encrypt(
     }
 
     // Compute Poly1305 tag with AD (RFC 8439 Section 2.8)
+    // Process all data in 16-byte aligned blocks to avoid spurious padding
     var poly = Poly1305.init(poly_key[0..32]);
-    poly.update(ad);
-    padTo16(&poly, ad.len);
-    poly.update(out[0..plaintext.len]);
-    padTo16(&poly, plaintext.len);
 
-    // Append lengths (AD || Ciphertext)
+    // Process AD: complete blocks first
+    const ad_complete = (ad.len / 16) * 16;
+    if (ad_complete > 0) {
+        poly.updateBlocks(ad[0..ad_complete]);
+    }
+    // Process AD remainder + zero padding if not 16-byte aligned
+    const ad_rem = ad.len % 16;
+    if (ad_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ad_rem], ad[ad_complete..]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process ciphertext: complete blocks first
+    const ct_complete = (plaintext.len / 16) * 16;
+    if (ct_complete > 0) {
+        poly.updateBlocks(out[0..ct_complete]);
+    }
+    // Process ciphertext remainder + zero padding if not 16-byte aligned
+    const ct_rem = plaintext.len % 16;
+    if (ct_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ct_rem], out[ct_complete..plaintext.len]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process lengths (always 16 bytes, aligned)
     var lengths: [16]u8 = undefined;
     std.mem.writeInt(u64, lengths[0..8], ad.len, .little);
     std.mem.writeInt(u64, lengths[8..16], plaintext.len, .little);
-    poly.update(&lengths);
+    poly.updateBlocks(&lengths);
 
     poly.final(out[plaintext.len..][0..16]);
 }
@@ -307,17 +331,40 @@ pub fn decrypt(
     chachaBlock(key, 0, &nonce_bytes, &poly_key);
 
     // Verify tag with AD (RFC 8439 Section 2.8)
+    // Process all data in 16-byte aligned blocks to avoid spurious padding
     var poly = Poly1305.init(poly_key[0..32]);
-    poly.update(ad);
-    padTo16(&poly, ad.len);
-    poly.update(ciphertext[0..ct_len]);
-    padTo16(&poly, ct_len);
 
-    // Append lengths (AD || Ciphertext)
+    // Process AD: complete blocks first
+    const ad_complete = (ad.len / 16) * 16;
+    if (ad_complete > 0) {
+        poly.updateBlocks(ad[0..ad_complete]);
+    }
+    // Process AD remainder + zero padding if not 16-byte aligned
+    const ad_rem = ad.len % 16;
+    if (ad_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ad_rem], ad[ad_complete..]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process ciphertext: complete blocks first
+    const ct_complete = (ct_len / 16) * 16;
+    if (ct_complete > 0) {
+        poly.updateBlocks(ciphertext[0..ct_complete]);
+    }
+    // Process ciphertext remainder + zero padding if not 16-byte aligned
+    const ct_rem = ct_len % 16;
+    if (ct_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ct_rem], ciphertext[ct_complete..ct_len]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process lengths (always 16 bytes, aligned)
     var lengths: [16]u8 = undefined;
     std.mem.writeInt(u64, lengths[0..8], ad.len, .little);
     std.mem.writeInt(u64, lengths[8..16], ct_len, .little);
-    poly.update(&lengths);
+    poly.updateBlocks(&lengths);
 
     var computed_tag: [16]u8 = undefined;
     poly.final(&computed_tag);
