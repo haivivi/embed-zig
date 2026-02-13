@@ -23,72 +23,98 @@
 const std = @import("std");
 const trait = @import("trait");
 
-/// WaitGroup — thread-based task completion tracker
+/// WaitGroup — counter-based task completion tracker
 ///
-/// - `Rt`: Runtime type providing Thread, getCpuCount
+/// - `Rt`: Runtime type providing Thread, Mutex, Condition
 pub fn WaitGroup(comptime Rt: type) type {
     // Validate Runtime at comptime
     comptime {
         trait.spawner.from(Rt);
+        _ = trait.sync.Mutex(Rt.Mutex);
+        _ = trait.sync.Condition(Rt.Condition, Rt.Mutex);
     }
 
     return struct {
         const Self = @This();
 
-        threads: std.ArrayListUnmanaged(Rt.Thread),
-        allocator: std.mem.Allocator,
         mutex: Rt.Mutex,
+        cond: Rt.Condition,
+        counter: i32,
+        allocator: std.mem.Allocator,
 
         /// Initialize a new WaitGroup
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
-                .threads = .{},
-                .allocator = allocator,
                 .mutex = Rt.Mutex.init(),
+                .cond = Rt.Condition.init(),
+                .counter = 0,
+                .allocator = allocator,
             };
         }
 
-        /// Release resources. Must call wait() first to ensure all threads complete.
+        /// Release resources
         pub fn deinit(self: *Self) void {
-            self.threads.deinit(self.allocator);
+            self.cond.deinit();
             self.mutex.deinit();
+        }
+
+        /// Add delta to counter (internal)
+        fn add(self: *Self, delta: i32) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.counter += delta;
+        }
+
+        /// Decrement counter and signal if zero (internal)
+        fn done(self: *Self) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.counter -= 1;
+            if (self.counter == 0) {
+                self.cond.broadcast();
+            }
         }
 
         /// Spawn a tracked task
         pub fn go(self: *Self, comptime func: anytype, args: anytype) !void {
-            const thread = try Rt.Thread.spawn(.{}, func, args);
-            errdefer thread.detach(); // Fix #1: cleanup if append fails
+            self.add(1);
             
-            // Fix #6: protect threads list with mutex
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            try self.threads.append(self.allocator, thread);
+            const ArgsType = @TypeOf(args);
+            const Wrapper = struct {
+                fn run(wg: *Self, user_args: ArgsType) void {
+                    defer wg.done();
+                    @call(.auto, func, user_args);
+                }
+            };
+            
+            const thread = try Rt.Thread.spawn(.{}, Wrapper.run, .{self, args});
+            thread.detach();  // detach immediately, threadWrapper cleans up sem
         }
 
         /// Spawn a tracked task with custom config
         pub fn goWithConfig(self: *Self, config: Rt.Thread.SpawnConfig, comptime func: anytype, args: anytype) !void {
-            const thread = try Rt.Thread.spawn(config, func, args);
-            errdefer thread.detach(); // Fix #1: cleanup if append fails
+            self.add(1);
             
-            // Fix #6: protect threads list with mutex
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            try self.threads.append(self.allocator, thread);
+            const ArgsType = @TypeOf(args);
+            const Wrapper = struct {
+                fn run(wg: *Self, user_args: ArgsType) void {
+                    defer wg.done();
+                    @call(.auto, func, user_args);
+                }
+            };
+            
+            const thread = try Rt.Thread.spawn(config, Wrapper.run, .{self, args});
+            thread.detach();  // detach immediately, threadWrapper cleans up sem
         }
 
         /// Block until all spawned tasks complete
         pub fn wait(self: *Self) void {
-            // Fix #6: swap threads out under lock to avoid holding lock during join
             self.mutex.lock();
-            var threads_to_join = self.threads;
-            self.threads = .{};
-            self.mutex.unlock();
+            defer self.mutex.unlock();
             
-            // Join all threads (can take time, so don't hold lock)
-            for (threads_to_join.items) |thread| {
-                thread.join();
+            while (self.counter > 0) {
+                self.cond.wait(&self.mutex);
             }
-            threads_to_join.deinit(self.allocator);
         }
     };
 }
