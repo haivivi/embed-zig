@@ -4,13 +4,16 @@ load("//bazel/esp:defs.bzl", "esp_monitor")
 
 package(default_visibility = ["//visibility:public"])
 
-# Build scripts
+# Build scripts (build.sh and common.sh still used by esp_idf_app and esp_configure)
 filegroup(
     name = "scripts",
-    srcs = glob(["scripts/*.sh"]),
+    srcs = [
+        "scripts/build.sh",
+        "scripts/common.sh",
+    ],
 )
 
-# Serial monitor
+# Serial monitor (uses Go binary from //bazel/esp/tools/monitor)
 esp_monitor(
     name = "monitor",
 )
