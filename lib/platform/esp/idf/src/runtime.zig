@@ -356,10 +356,7 @@ pub const Thread = struct {
         const result = c.xTaskCreateRestrictedPinnedToCore(&task_params, &handle, core_id);
         
         if (result != c.pdPASS) {
-            allocator.destroy(args_copy);
-            allocator.destroy(thread_ctx);
-            allocator.free(stack);
-            c.vSemaphoreDelete(done_sem);
+            // Fix #4: Don't manually free - errdefer handlers will clean up
             return error.SpawnFailed;
         }
         
@@ -393,7 +390,7 @@ pub const Thread = struct {
 
 /// Get CPU core count
 pub fn getCpuCount() !usize {
-    // ESP32-S3 is dual-core, ESP32-C3 is single-core
-    // For simplicity, return 2 (can be made configurable if needed)
-    return 2;
+    // Use compile-time constant from ESP-IDF
+    // ESP32-S3: 2 cores, ESP32-C3: 1 core, ESP32: 2 cores
+    return c.SOC_CPU_CORES_NUM;
 }
