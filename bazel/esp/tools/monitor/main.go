@@ -1,12 +1,10 @@
 package main
 
 import (
+	"embed-zig/bazel/esp/tools/common"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
 )
 
 type Config struct {
@@ -24,17 +22,17 @@ func main() {
 	}
 
 	// Setup environment
-	setupHome()
+	common.SetupHome()
 
 	// Find ESP-IDF Python
-	idfPython, err := findIDFPython()
+	idfPython, err := common.FindIDFPython("[esp_monitor]")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[esp_monitor] Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Detect serial port
-	port, err := detectSerialPort(cfg.Port)
+	port, err := common.DetectSerialPort(cfg.Port, "[esp_monitor]")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[esp_monitor] Error: %v\n", err)
 		os.Exit(1)
@@ -42,7 +40,7 @@ func main() {
 	cfg.Port = port
 
 	// Kill any process using the port
-	killPortProcess(cfg.Port)
+	common.KillPortProcess(cfg.Port, "[esp_monitor]")
 
 	fmt.Printf("[esp_monitor] Board: %s\n", cfg.Board)
 	fmt.Printf("[esp_monitor] Monitoring %s at %s baud...\n", cfg.Port, cfg.Baud)
@@ -80,96 +78,5 @@ except Exception as e:
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "[esp_monitor] Error: Monitor failed: %v\n", err)
 		os.Exit(1)
-	}
-}
-
-// setupHome sets HOME if not already set.
-func setupHome() {
-	if os.Getenv("HOME") == "" {
-		idfPath := os.Getenv("IDF_PATH")
-		if idfPath != "" {
-			re := regexp.MustCompile(`^(/[^/]+/[^/]+)/`)
-			matches := re.FindStringSubmatch(idfPath)
-			if len(matches) > 1 {
-				os.Setenv("HOME", matches[1])
-				return
-			}
-		}
-		os.Setenv("HOME", "/tmp")
-	}
-}
-
-// findIDFPython finds the ESP-IDF Python interpreter.
-func findIDFPython() (string, error) {
-	home := os.Getenv("HOME")
-	pythonEnvDir := filepath.Join(home, ".espressif", "python_env")
-
-	if _, err := os.Stat(pythonEnvDir); err == nil {
-		entries, err := os.ReadDir(pythonEnvDir)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && strings.HasPrefix(entry.Name(), "idf") && strings.HasSuffix(entry.Name(), "_env") {
-					pythonPath := filepath.Join(pythonEnvDir, entry.Name(), "bin", "python")
-					if _, err := os.Stat(pythonPath); err == nil {
-						return pythonPath, nil
-					}
-				}
-			}
-		}
-	}
-
-	fmt.Println("[esp_monitor] Warning: ESP-IDF Python env not found, using system python3")
-	return "python3", nil
-}
-
-// detectSerialPort auto-detects or validates the serial port.
-func detectSerialPort(configured string) (string, error) {
-	// Priority: configured > ESP_PORT env > auto-detect
-	if configured != "" {
-		return configured, nil
-	}
-
-	if envPort := os.Getenv("ESP_PORT"); envPort != "" {
-		return envPort, nil
-	}
-
-	// Auto-detect
-	fmt.Println("[esp_monitor] Auto-detecting serial port...")
-
-	var ports []string
-	patterns := []string{"/dev/cu.usb*", "/dev/ttyUSB*", "/dev/ttyACM*"}
-	for _, pattern := range patterns {
-		matches, _ := filepath.Glob(pattern)
-		ports = append(ports, matches...)
-	}
-
-	if len(ports) == 0 {
-		return "", fmt.Errorf("no USB serial ports found\n" +
-			"Please connect your ESP32 board or specify port:\n" +
-			"    bazel run <target> --//bazel:port=/dev/xxx")
-	}
-
-	if len(ports) == 1 {
-		fmt.Printf("[esp_monitor] Auto-detected: %s\n", ports[0])
-		return ports[0], nil
-	}
-
-	// Multiple ports found
-	fmt.Println("[esp_monitor] Multiple serial ports found:")
-	for i, port := range ports {
-		fmt.Printf("  [%d] %s\n", i, port)
-	}
-	return "", fmt.Errorf("please specify port:\n" +
-		"    bazel run <target> --//bazel:port=%s", ports[0])
-}
-
-// killPortProcess kills any process using the specified port.
-func killPortProcess(port string) {
-	cmd := exec.Command("lsof", port)
-	if err := cmd.Run(); err == nil {
-		fmt.Printf("[esp_monitor] Killing process using %s...\n", port)
-		killCmd := exec.Command("sh", "-c", fmt.Sprintf("lsof -t %s | xargs kill 2>/dev/null || true", port))
-		_ = killCmd.Run()
-		exec.Command("sleep", "0.5").Run()
 	}
 }

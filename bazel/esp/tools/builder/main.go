@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bufio"
+	"embed-zig/bazel/esp/tools/common"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -90,14 +89,14 @@ func build(cfg *Config) error {
 
 	// Setup environment
 	os.Setenv("ZIG_BOARD", cfg.Board)
-	setupHome()
+	common.SetupHome()
 
 	fmt.Printf("[esp_build] IDF_PATH: %s\n", os.Getenv("IDF_PATH"))
 	fmt.Printf("[esp_build] ZIG_INSTALL: %s\n", cfg.ZigInstall)
 	fmt.Printf("[esp_build] ZIG_BOARD: %s\n", cfg.Board)
 
 	// Setup ESP-IDF environment (PATH, IDF_PYTHON)
-	if err := setupIDFEnv(); err != nil {
+	if err := common.SetupIDFEnv("[esp_build]"); err != nil {
 		return err
 	}
 
@@ -121,7 +120,7 @@ func build(cfg *Config) error {
 
 	// Run idf.py set-target
 	fmt.Printf("[esp_build] Running: idf.py set-target %s\n", chip)
-	if err := runCommand("idf.py", "set-target", chip); err != nil {
+	if err := common.RunCommand("idf.py", "set-target", chip); err != nil {
 		return fmt.Errorf("idf.py set-target failed: %w", err)
 	}
 
@@ -147,21 +146,21 @@ func build(cfg *Config) error {
 	// Run idf.py build
 	args := append(cmakeArgs, "build")
 	fmt.Printf("[esp_build] Running: idf.py %s\n", strings.Join(args, " "))
-	if err := runCommand("idf.py", args...); err != nil {
+	if err := common.RunCommand("idf.py", args...); err != nil {
 		return fmt.Errorf("idf.py build failed: %w", err)
 	}
 
 	// Copy outputs back to Bazel execroot
 	buildDir := filepath.Join(projectDir, "build")
 
-	if err := copyFile(
+	if err := common.CopyFile(
 		filepath.Join(buildDir, cfg.ProjectName+".bin"),
 		filepath.Join(cfg.ExecRoot, cfg.BinOut),
 	); err != nil {
 		return fmt.Errorf("failed to copy .bin: %w", err)
 	}
 
-	if err := copyFile(
+	if err := common.CopyFile(
 		filepath.Join(buildDir, cfg.ProjectName+".elf"),
 		filepath.Join(cfg.ExecRoot, cfg.ElfOut),
 	); err != nil {
@@ -169,7 +168,7 @@ func build(cfg *Config) error {
 	}
 
 	if cfg.BootloaderOut != "" {
-		if err := copyFile(
+		if err := common.CopyFile(
 			filepath.Join(buildDir, "bootloader", "bootloader.bin"),
 			filepath.Join(cfg.ExecRoot, cfg.BootloaderOut),
 		); err != nil {
@@ -178,7 +177,7 @@ func build(cfg *Config) error {
 	}
 
 	if cfg.PartitionOut != "" {
-		if err := copyFile(
+		if err := common.CopyFile(
 			filepath.Join(buildDir, "partition_table", "partition-table.bin"),
 			filepath.Join(cfg.ExecRoot, cfg.PartitionOut),
 		); err != nil {
@@ -189,143 +188,10 @@ func build(cfg *Config) error {
 	return nil
 }
 
-// setupHome sets HOME if not already set.
-func setupHome() {
-	if os.Getenv("HOME") == "" {
-		idfPath := os.Getenv("IDF_PATH")
-		if idfPath != "" {
-			re := regexp.MustCompile(`^(/[^/]+/[^/]+)/`)
-			matches := re.FindStringSubmatch(idfPath)
-			if len(matches) > 1 {
-				os.Setenv("HOME", matches[1])
-				return
-			}
-		}
-		os.Setenv("HOME", "/tmp")
-	}
-}
-
-// setupIDFEnv sets up ESP-IDF environment (PATH and IDF_PYTHON).
-func setupIDFEnv() error {
-	home := os.Getenv("HOME")
-	pythonEnvDir := filepath.Join(home, ".espressif", "python_env")
-
-	var idfPythonEnv string
-	if _, err := os.Stat(pythonEnvDir); err == nil {
-		entries, err := os.ReadDir(pythonEnvDir)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && strings.HasPrefix(entry.Name(), "idf") && strings.HasSuffix(entry.Name(), "_env") {
-					envPath := filepath.Join(pythonEnvDir, entry.Name())
-					pythonPath := filepath.Join(envPath, "bin", "python")
-					if _, err := os.Stat(pythonPath); err == nil {
-						idfPythonEnv = envPath
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if idfPythonEnv == "" {
-		fmt.Println("[esp_build] Warning: ESP-IDF Python env not found")
-		// Try to use system python3 and hope export.sh was sourced
-		os.Setenv("IDF_PYTHON", "python3")
-		return nil
-	}
-
-	fmt.Printf("[esp] Using Python env: %s\n", idfPythonEnv)
-
-	// Build PATH with ESP-IDF tools
-	espressifTools := filepath.Join(home, ".espressif", "tools")
-	var idfToolsPaths []string
-
-	if _, err := os.Stat(espressifTools); err == nil {
-		// Find all bin directories under tools
-		filepath.Walk(espressifTools, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			if info.IsDir() && info.Name() == "bin" {
-				// Limit depth to 4 levels (same as shell script)
-				rel, _ := filepath.Rel(espressifTools, path)
-				if strings.Count(rel, string(os.PathSeparator)) <= 3 {
-					idfToolsPaths = append(idfToolsPaths, path)
-				}
-			}
-			return nil
-		})
-	}
-
-	idfPath := os.Getenv("IDF_PATH")
-	pathComponents := []string{
-		filepath.Join(idfPythonEnv, "bin"),
-	}
-	pathComponents = append(pathComponents, idfToolsPaths...)
-	if idfPath != "" {
-		pathComponents = append(pathComponents, filepath.Join(idfPath, "tools"))
-	}
-	pathComponents = append(pathComponents, os.Getenv("PATH"))
-
-	newPath := strings.Join(pathComponents, string(os.PathListSeparator))
-	os.Setenv("PATH", newPath)
-	os.Setenv("IDF_PYTHON", filepath.Join(idfPythonEnv, "bin", "python"))
-
-	return nil
-}
-
-// extractChipFromSdkconfig extracts CONFIG_IDF_TARGET from sdkconfig.defaults.
-func extractChipFromSdkconfig(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to open %s: %w", path, err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	re := regexp.MustCompile(`^CONFIG_IDF_TARGET="(.+)"`)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if matches := re.FindStringSubmatch(line); len(matches) > 1 {
-			return matches[1], nil
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading %s: %w", path, err)
-	}
-
-	return "", fmt.Errorf("CONFIG_IDF_TARGET not found in %s", path)
-}
-
 // getEnvWithFallback returns the value of the first environment variable that is set.
 func getEnvWithFallback(primary, fallback string) string {
 	if val := os.Getenv(primary); val != "" {
 		return val
 	}
 	return os.Getenv(fallback)
-}
-
-// runCommand runs a command and streams output to stdout/stderr.
-func runCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// copyFile copies a file from src to dst.
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-
-	// Create parent directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(dst, data, 0644)
 }

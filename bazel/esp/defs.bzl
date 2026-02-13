@@ -324,6 +324,10 @@ def _esp_configure_impl(ctx):
         else:
             idf_deps_yml += '  {}: "*"\n'.format(dep)
     
+    # Escape idf_component_yml for safe shell substitution
+    # Replace " with \" and \ with \\, then replace newlines with \n
+    idf_component_yml_escaped = idf_deps_yml.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    
     # ESP-IDF requires
     requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "freertos"
     
@@ -349,7 +353,7 @@ exec "{configurator}"
         config_dir = config_dir.path,
         include_dirs_file = include_dirs_file.path,
         requires = requires,
-        idf_component_yml = idf_deps_yml,
+        idf_component_yml = idf_component_yml_escaped,
         configurator = configurator_bin.path,
     )
     

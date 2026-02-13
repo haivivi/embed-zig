@@ -4,4 +4,5 @@ go_binary(
     name = "monitor",
     srcs = ["main.go"],
     visibility = ["//visibility:public"],
+    deps = ["//bazel/esp/tools/common"],
 )
