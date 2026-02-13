@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
 type Config struct {
@@ -33,7 +31,8 @@ func main() {
 	eraseNVS := flag.Bool("erase-nvs", false, "Erase NVS partition before flashing")
 	flag.Parse()
 
-	// Load configuration from environment (set by Bazel rule)
+	// Load configuration from environment (set by Bazel rule wrapper script)
+	// Paths are already resolved by the wrapper using runfiles
 	cfg := Config{
 		Board:          os.Getenv("ESP_BOARD"),
 		Baud:           os.Getenv("ESP_BAUD"),
@@ -47,22 +46,6 @@ func main() {
 		NVSSize:        os.Getenv("ESP_NVS_SIZE"),
 		AppOnly:        *appOnly,
 		EraseNVS:       *eraseNVS,
-	}
-
-	// Resolve paths using Bazel runfiles
-	r, err := runfiles.New()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[esp_flash] Error: Failed to initialize runfiles: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Resolve file paths
-	cfg.BinPath = resolvePath(r, cfg.BinPath)
-	if cfg.BootloaderPath != "" {
-		cfg.BootloaderPath = resolvePath(r, cfg.BootloaderPath)
-	}
-	if cfg.PartitionPath != "" {
-		cfg.PartitionPath = resolvePath(r, cfg.PartitionPath)
 	}
 
 	// Setup environment
@@ -170,22 +153,6 @@ esp.watchdog_reset()
 	}
 
 	fmt.Println("[esp_flash] Flash complete!")
-}
-
-// resolvePath resolves a path using Bazel runfiles.
-// If path is already absolute, returns it as-is.
-// Otherwise, tries to resolve it as a runfiles path.
-func resolvePath(r *runfiles.Runfiles, path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	// Try to resolve as runfiles path
-	resolved, err := r.Rlocation(path)
-	if err == nil && resolved != "" {
-		return resolved
-	}
-	// If resolution fails, return original path
-	return path
 }
 
 // setupHome sets HOME if not already set.

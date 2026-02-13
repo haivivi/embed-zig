@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
 type Config struct {
@@ -18,18 +16,11 @@ type Config struct {
 }
 
 func main() {
-	// Load configuration from environment (set by Bazel rule)
+	// Load configuration from environment (set by Bazel rule wrapper script)
 	cfg := Config{
 		Board: os.Getenv("ESP_BOARD"),
 		Baud:  os.Getenv("ESP_MONITOR_BAUD"),
 		Port:  os.Getenv("ESP_PORT_CONFIG"),
-	}
-
-	// Initialize runfiles (not used for monitor, but keep for consistency)
-	_, err := runfiles.New()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[esp_monitor] Error: Failed to initialize runfiles: %v\n", err)
-		os.Exit(1)
 	}
 
 	// Setup environment

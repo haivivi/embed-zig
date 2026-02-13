@@ -1,15 +1,7 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
-
-go_library(
-    name = "flasher_lib",
-    srcs = ["main.go"],
-    importpath = "github.com/haivivi/embed-zig/bazel/esp/tools/flasher",
-    visibility = ["//visibility:private"],
-    deps = ["@rules_go//go/runfiles:go_default_library"],
-)
+load("@rules_go//go:def.bzl", "go_binary")
 
 go_binary(
     name = "flasher",
-    embed = [":flasher_lib"],
+    srcs = ["main.go"],
     visibility = ["//visibility:public"],
 )

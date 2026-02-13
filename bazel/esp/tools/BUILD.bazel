@@ -1,0 +1,3 @@
+# ESP32 Go tools
+
+package(default_visibility = ["//visibility:public"])
