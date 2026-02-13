@@ -324,10 +324,6 @@ def _esp_configure_impl(ctx):
         else:
             idf_deps_yml += '  {}: "*"\n'.format(dep)
     
-    # Escape idf_component_yml for safe shell substitution
-    # Replace " with \" and \ with \\, then replace newlines with \n
-    idf_component_yml_escaped = idf_deps_yml.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    
     # ESP-IDF requires
     requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "freertos"
     
@@ -338,6 +334,7 @@ def _esp_configure_impl(ctx):
     # Build the configure script
     configure_script = ctx.actions.declare_file(ctx.label.name + "_configure.sh")
     
+    # Use heredoc to safely pass idf_component_yml without escaping issues
     script_content = """#!/bin/bash
 set -e
 export ESP_BAZEL_RUN=1
@@ -345,7 +342,10 @@ export ESP_SDKCONFIG_PATH="{sdkconfig_path}"
 export ESP_CONFIG_DIR="{config_dir}"
 export ESP_INCLUDE_DIRS_FILE="{include_dirs_file}"
 export ESP_REQUIRES="{requires}"
-export ESP_IDF_COMPONENT_YML="{idf_component_yml}"
+export ESP_IDF_COMPONENT_YML=$(cat <<'EOF'
+{idf_component_yml}
+EOF
+)
 
 exec "{configurator}"
 """.format(
@@ -353,7 +353,7 @@ exec "{configurator}"
         config_dir = config_dir.path,
         include_dirs_file = include_dirs_file.path,
         requires = requires,
-        idf_component_yml = idf_component_yml_escaped,
+        idf_component_yml = idf_deps_yml,
         configurator = configurator_bin.path,
     )
     

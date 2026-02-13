@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // SetupHome sets HOME if not already set.
@@ -174,9 +175,9 @@ func KillPortProcess(port string, toolPrefix string) {
 	cmd := exec.Command("lsof", port)
 	if err := cmd.Run(); err == nil {
 		fmt.Printf("%s Killing process using %s...\n", toolPrefix, port)
-		killCmd := exec.Command("sh", "-c", fmt.Sprintf("lsof -t %s | xargs kill 2>/dev/null || true", port))
+		killCmd := exec.Command("sh", "-c", fmt.Sprintf("lsof -t '%s' | xargs kill 2>/dev/null || true", port))
 		_ = killCmd.Run()
-		exec.Command("sleep", "0.5").Run()
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
