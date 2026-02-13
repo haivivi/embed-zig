@@ -154,6 +154,16 @@ pub const Poly1305 = struct {
         }
     }
 
+    /// Process complete 16-byte aligned blocks for AEAD construction
+    /// Data must be 16-byte aligned. All blocks use hibit=1.
+    fn updateBlocks(self: *Poly1305, data: []const u8) void {
+        std.debug.assert(data.len % 16 == 0);
+        var i: usize = 0;
+        while (i < data.len) : (i += 16) {
+            self.addBlock(data[i..][0..16], 1);
+        }
+    }
+
     fn addBlock(self: *Poly1305, block: *const [16]u8, hibit: u64) void {
         const s0 = std.mem.readInt(u64, block[0..8], .little);
         const s1 = std.mem.readInt(u64, block[8..16], .little);
@@ -240,8 +250,6 @@ pub fn encrypt(
     ad: []const u8,
     out: []u8,
 ) void {
-    _ = ad; // TODO: implement AD support
-
     var nonce_bytes: [12]u8 = [_]u8{0} ** 12;
     std.mem.writeInt(u64, nonce_bytes[0..8], nonce, .little);
 
@@ -265,9 +273,42 @@ pub fn encrypt(
         counter += 1;
     }
 
-    // Compute Poly1305 tag
+    // Compute Poly1305 tag with AD (RFC 8439 Section 2.8)
+    // Process all data in 16-byte aligned blocks to avoid spurious padding
     var poly = Poly1305.init(poly_key[0..32]);
-    poly.update(out[0..plaintext.len]);
+
+    // Process AD: complete blocks first
+    const ad_complete = (ad.len / 16) * 16;
+    if (ad_complete > 0) {
+        poly.updateBlocks(ad[0..ad_complete]);
+    }
+    // Process AD remainder + zero padding if not 16-byte aligned
+    const ad_rem = ad.len % 16;
+    if (ad_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ad_rem], ad[ad_complete..]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process ciphertext: complete blocks first
+    const ct_complete = (plaintext.len / 16) * 16;
+    if (ct_complete > 0) {
+        poly.updateBlocks(out[0..ct_complete]);
+    }
+    // Process ciphertext remainder + zero padding if not 16-byte aligned
+    const ct_rem = plaintext.len % 16;
+    if (ct_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ct_rem], out[ct_complete..plaintext.len]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process lengths (always 16 bytes, aligned)
+    var lengths: [16]u8 = undefined;
+    std.mem.writeInt(u64, lengths[0..8], ad.len, .little);
+    std.mem.writeInt(u64, lengths[8..16], plaintext.len, .little);
+    poly.updateBlocks(&lengths);
+
     poly.final(out[plaintext.len..][0..16]);
 }
 
@@ -279,8 +320,6 @@ pub fn decrypt(
     ad: []const u8,
     out: []u8,
 ) !void {
-    _ = ad; // TODO: implement AD support
-
     if (ciphertext.len < 16) return error.InvalidCiphertext;
     const ct_len = ciphertext.len - 16;
 
@@ -291,9 +330,42 @@ pub fn decrypt(
     var poly_key: [64]u8 = undefined;
     chachaBlock(key, 0, &nonce_bytes, &poly_key);
 
-    // Verify tag first
+    // Verify tag with AD (RFC 8439 Section 2.8)
+    // Process all data in 16-byte aligned blocks to avoid spurious padding
     var poly = Poly1305.init(poly_key[0..32]);
-    poly.update(ciphertext[0..ct_len]);
+
+    // Process AD: complete blocks first
+    const ad_complete = (ad.len / 16) * 16;
+    if (ad_complete > 0) {
+        poly.updateBlocks(ad[0..ad_complete]);
+    }
+    // Process AD remainder + zero padding if not 16-byte aligned
+    const ad_rem = ad.len % 16;
+    if (ad_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ad_rem], ad[ad_complete..]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process ciphertext: complete blocks first
+    const ct_complete = (ct_len / 16) * 16;
+    if (ct_complete > 0) {
+        poly.updateBlocks(ciphertext[0..ct_complete]);
+    }
+    // Process ciphertext remainder + zero padding if not 16-byte aligned
+    const ct_rem = ct_len % 16;
+    if (ct_rem > 0) {
+        var block: [16]u8 = [_]u8{0} ** 16;
+        @memcpy(block[0..ct_rem], ciphertext[ct_complete..ct_len]);
+        poly.updateBlocks(&block);
+    }
+
+    // Process lengths (always 16 bytes, aligned)
+    var lengths: [16]u8 = undefined;
+    std.mem.writeInt(u64, lengths[0..8], ad.len, .little);
+    std.mem.writeInt(u64, lengths[8..16], ct_len, .little);
+    poly.updateBlocks(&lengths);
+
     var computed_tag: [16]u8 = undefined;
     poly.final(&computed_tag);
 
@@ -356,4 +428,51 @@ test "wrong key fails" {
 
     encrypt(&key1, 0, plaintext, "", &ciphertext);
     try std.testing.expectError(error.DecryptionFailed, decrypt(&key2, 0, &ciphertext, "", &decrypted));
+}
+
+test "RFC 8439 AEAD with AD" {
+    // Test vector from RFC 8439 Appendix A.5
+    const key = [_]u8{
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+        0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+        0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    };
+    const ad = "Additional authenticated data";
+    const plaintext = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+
+    var ciphertext: [plaintext.len + 16]u8 = undefined;
+    var decrypted: [plaintext.len]u8 = undefined;
+
+    encrypt(&key, 0x0706050403020100, plaintext, ad, &ciphertext);
+    try decrypt(&key, 0x0706050403020100, &ciphertext, ad, &decrypted);
+    try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
+}
+
+test "AD tampering detection" {
+    const key = [_]u8{1} ** 32;
+    const ad1 = "original AD";
+    const ad2 = "tampered AD";
+    const plaintext = "secret message";
+
+    var ciphertext: [plaintext.len + 16]u8 = undefined;
+    var decrypted: [plaintext.len]u8 = undefined;
+
+    encrypt(&key, 42, plaintext, ad1, &ciphertext);
+    try std.testing.expectError(
+        error.DecryptionFailed,
+        decrypt(&key, 42, &ciphertext, ad2, &decrypted),
+    );
+}
+
+test "empty AD backward compatibility" {
+    // Ensure empty AD still works
+    const key = [_]u8{0} ** 32;
+    const plaintext = "test";
+    var ciphertext: [plaintext.len + 16]u8 = undefined;
+    var decrypted: [plaintext.len]u8 = undefined;
+
+    encrypt(&key, 0, plaintext, "", &ciphertext);
+    try decrypt(&key, 0, &ciphertext, "", &decrypted);
+    try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
 }
