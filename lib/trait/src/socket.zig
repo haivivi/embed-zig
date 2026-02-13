@@ -62,33 +62,29 @@ pub fn from(comptime Impl: type) type {
         // Static methods
         _ = @as(*const fn () Error!BaseType, &BaseType.tcp);
         _ = @as(*const fn () Error!BaseType, &BaseType.udp);
-        // Instance methods
+        // Instance methods - basic operations
         _ = @as(*const fn (*BaseType) void, &BaseType.close);
         _ = @as(*const fn (*BaseType, Ipv4Address, u16) Error!void, &BaseType.connect);
         _ = @as(*const fn (*BaseType, []const u8) Error!usize, &BaseType.send);
         _ = @as(*const fn (*BaseType, []u8) Error!usize, &BaseType.recv);
+        // Socket options
         _ = @as(*const fn (*BaseType, u32) void, &BaseType.setRecvTimeout);
         _ = @as(*const fn (*BaseType, u32) void, &BaseType.setSendTimeout);
         _ = @as(*const fn (*BaseType, bool) void, &BaseType.setTcpNoDelay);
+        // UDP operations
         _ = @as(*const fn (*BaseType, Ipv4Address, u16, []const u8) Error!usize, &BaseType.sendTo);
         _ = @as(*const fn (*BaseType, []u8) Error!usize, &BaseType.recvFrom);
-        // Optional: recvFromWithAddr for source IP validation (RFC 5905 security)
-        // If not provided, NTP client falls back to recvFrom without source validation
-        if (@hasDecl(BaseType, "recvFromWithAddr")) {
-            _ = @as(*const fn (*BaseType, []u8) Error!RecvFromResult, &BaseType.recvFromWithAddr);
-        }
+        _ = @as(*const fn (*BaseType, []u8) Error!RecvFromResult, &BaseType.recvFromWithAddr);
+        // Server operations (UDP/TCP)
+        _ = @as(*const fn (*BaseType, Ipv4Address, u16) Error!void, &BaseType.bind);
+        _ = @as(*const fn (*BaseType) Error!u16, &BaseType.getBoundPort);
+        // Async IO support
+        _ = @as(*const fn (*BaseType) i32, &BaseType.getFd);
+        _ = @as(*const fn (*BaseType, bool) Error!void, &BaseType.setNonBlocking);
     }
     return Impl;
 }
 
-/// Check if socket implementation supports source address retrieval
-pub fn hasRecvFromWithAddr(comptime Impl: type) bool {
-    const BaseType = switch (@typeInfo(Impl)) {
-        .pointer => |p| p.child,
-        else => Impl,
-    };
-    return @hasDecl(BaseType, "recvFromWithAddr");
-}
 
 /// Parse IPv4 address string (e.g., "192.168.1.1")
 pub fn parseIpv4(str: []const u8) ?Ipv4Address {

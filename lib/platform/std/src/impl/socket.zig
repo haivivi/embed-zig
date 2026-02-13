@@ -127,13 +127,21 @@ pub const Socket = struct {
         return n;
     }
 
-    // ========================================================================
-    // Additional utility methods (not required by trait)
-    // ========================================================================
-
-    /// Get the underlying file descriptor
-    pub fn getFd(self: Self) i32 {
-        return @intCast(self.fd);
+    /// Receive data from socket (UDP - returns sender address for security validation)
+    pub fn recvFromWithAddr(self: *Self, buf: []u8) Error!trait.socket.RecvFromResult {
+        var src_addr: posix.sockaddr.in = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        const n = posix.recvfrom(self.fd, buf, 0, @ptrCast(&src_addr), &addr_len) catch {
+            return error.RecvFailed;
+        };
+        if (n == 0) return error.Closed;
+        
+        const ip: Ipv4Address = @bitCast(src_addr.addr);
+        return .{
+            .len = n,
+            .src_addr = ip,
+            .src_port = std.mem.bigToNative(u16, src_addr.port),
+        };
     }
 
     /// Bind socket to a local address and port
@@ -145,6 +153,37 @@ pub const Socket = struct {
         };
         posix.bind(self.fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) catch {
             return error.BindFailed;
+        };
+    }
+
+    /// Get the port that the socket is bound to (useful after bind(port=0))
+    pub fn getBoundPort(self: *Self) Error!u16 {
+        var addr: posix.sockaddr.in = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        posix.getsockname(self.fd, @ptrCast(&addr), &addr_len) catch {
+            return error.InvalidAddress;
+        };
+        return std.mem.bigToNative(u16, addr.port);
+    }
+
+    /// Get the underlying file descriptor
+    pub fn getFd(self: *Self) i32 {
+        return @intCast(self.fd);
+    }
+
+    /// Set socket to non-blocking mode (for async IO with kqueue/epoll)
+    pub fn setNonBlocking(self: *Self, enable: bool) Error!void {
+        const flags = posix.fcntl(self.fd, posix.F.GETFL, 0) catch {
+            return error.InvalidAddress;
+        };
+        // O_NONBLOCK = 0x0004 on macOS/BSD, 0x0800 on Linux
+        const O_NONBLOCK: u32 = if (@hasDecl(posix.O, "NONBLOCK"))
+            @intFromEnum(posix.O.NONBLOCK)
+        else
+            0x0004; // macOS default
+        const new_flags = if (enable) flags | O_NONBLOCK else flags & ~O_NONBLOCK;
+        _ = posix.fcntl(self.fd, posix.F.SETFL, new_flags) catch {
+            return error.InvalidAddress;
         };
     }
 };
