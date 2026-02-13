@@ -241,3 +241,158 @@ pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) 
         return error.SpawnFailed;
     }
 }
+
+// ============================================================================
+// Thread — Joinable thread with FreeRTOS task + binary semaphore
+// ============================================================================
+
+/// Joinable thread handle — wraps FreeRTOS task with completion semaphore.
+pub const Thread = struct {
+    handle: c.TaskHandle_t,
+    done_sem: c.SemaphoreHandle_t,
+    ctx: *ThreadCtx,
+
+    /// Spawn configuration
+    pub const SpawnConfig = struct {
+        stack_size: usize = 8192,
+        priority: u8 = 16,
+        core: i8 = -1,
+        allocator: std.mem.Allocator = heap.psram,
+    };
+
+    /// Context for joinable thread wrapper
+    const ThreadCtx = struct {
+        func_ptr: *const anyopaque,
+        args_ptr: *const anyopaque,
+        cleanup_fn: *const fn (?*anyopaque, std.mem.Allocator) void,
+        done_sem: c.SemaphoreHandle_t,
+        allocator: std.mem.Allocator,
+        detached: std.atomic.Value(bool),
+    };
+
+    /// Thread wrapper that calls user function and signals completion
+    fn threadWrapper(raw_ctx: ?*anyopaque) callconv(.c) void {
+        const thread_ctx: *ThreadCtx = @ptrCast(@alignCast(raw_ctx));
+        
+        // Extract all fields (don't destroy ctx yet)
+        const done_sem = thread_ctx.done_sem;
+        const allocator = thread_ctx.allocator;
+        const func_ptr = thread_ctx.func_ptr;
+        const args_ptr = thread_ctx.args_ptr;
+        const cleanup_fn = thread_ctx.cleanup_fn;
+        
+        // Call user function (type-erased, will be cast back by spawn)
+        const FnType = *const fn (*const anyopaque) void;
+        const func: FnType = @ptrCast(func_ptr);
+        func(args_ptr);
+        
+        // Free args (Fix #3: args_copy memory leak)
+        cleanup_fn(@constCast(args_ptr), allocator);
+        
+        // Check if detached (Fix #7: coordinate cleanup with detach)
+        const is_detached = thread_ctx.detached.load(.acquire);
+        if (is_detached) {
+            // Detached: nobody waiting, clean up everything ourselves
+            c.vSemaphoreDelete(done_sem);
+            allocator.destroy(thread_ctx);
+        } else {
+            // Not detached: join() will clean up ctx and semaphore
+            _ = c.xSemaphoreGive(done_sem);
+        }
+        
+        // Delete self (stack freed by FreeRTOS)
+        c.vTaskDelete(null);
+    }
+
+    /// Spawn a joinable thread
+    pub fn spawn(config: SpawnConfig, comptime func: anytype, args: anytype) !Thread {
+        const allocator = config.allocator;
+        
+        // Create binary semaphore for join
+        const done_sem = c.xSemaphoreCreateBinary();
+        if (done_sem == null) return error.OutOfMemory;
+        errdefer c.vSemaphoreDelete(done_sem);
+        
+        // Allocate context
+        const thread_ctx = try allocator.create(ThreadCtx);
+        errdefer allocator.destroy(thread_ctx);
+        
+        // Allocate stack
+        const stack = try allocator.alloc(u8, config.stack_size);
+        errdefer allocator.free(stack);
+        
+        // Store function and args (type-erased)
+        const ArgsType = @TypeOf(args);
+        const args_copy = try allocator.create(ArgsType);
+        errdefer allocator.destroy(args_copy);
+        args_copy.* = args;
+        
+        // Wrapper function to call user function with correct types
+        const Wrapper = struct {
+            fn call(args_ptr: *const anyopaque) void {
+                const typed_args: *const ArgsType = @ptrCast(@alignCast(args_ptr));
+                @call(.auto, func, typed_args.*);
+            }
+            
+            fn cleanup(args_ptr: ?*anyopaque, alloc: std.mem.Allocator) void {
+                const typed: *ArgsType = @ptrCast(@alignCast(args_ptr));
+                alloc.destroy(typed);
+            }
+        };
+        
+        thread_ctx.* = .{
+            .func_ptr = @ptrCast(&Wrapper.call),
+            .args_ptr = @ptrCast(args_copy),
+            .cleanup_fn = &Wrapper.cleanup,
+            .done_sem = done_sem,
+            .allocator = allocator,
+            .detached = std.atomic.Value(bool).init(false),
+        };
+        
+        // Create FreeRTOS task
+        var task_params: c.TaskParameters_t = std.mem.zeroes(c.TaskParameters_t);
+        task_params.pvTaskCode = threadWrapper;
+        task_params.pcName = "thread";
+        task_params.usStackDepth = config.stack_size / @sizeOf(c.StackType_t);
+        task_params.puxStackBuffer = @ptrCast(@alignCast(stack.ptr));
+        task_params.pvParameters = thread_ctx;
+        task_params.uxPriority = config.priority;
+        
+        var handle: c.TaskHandle_t = null;
+        const core_id: c.BaseType_t = if (config.core < 0) c.tskNO_AFFINITY else config.core;
+        const result = c.xTaskCreateRestrictedPinnedToCore(&task_params, &handle, core_id);
+        
+        if (result != c.pdPASS) {
+            // Fix #4: Don't manually free - errdefer handlers will clean up
+            return error.SpawnFailed;
+        }
+        
+        return Thread{
+            .handle = handle,
+            .done_sem = done_sem,
+            .ctx = thread_ctx,
+        };
+    }
+
+    /// Wait for thread to complete
+    pub fn join(self: Thread) void {
+        _ = c.xSemaphoreTake(self.done_sem, c.portMAX_DELAY);
+        c.vSemaphoreDelete(self.done_sem);
+        self.ctx.allocator.destroy(self.ctx);
+    }
+
+    /// Detach thread (release resources without waiting)
+    ///
+    /// Fix #7: Use atomic flag to coordinate cleanup with threadWrapper.
+    /// When detached, threadWrapper will clean up semaphore and ctx itself.
+    pub fn detach(self: Thread) void {
+        self.ctx.detached.store(true, .release);
+    }
+};
+
+/// Get CPU core count
+pub fn getCpuCount() !usize {
+    // Use compile-time constant from ESP-IDF
+    // ESP32-S3: 2 cores, ESP32-C3: 1 core, ESP32: 2 cores
+    return c.SOC_CPU_CORES_NUM;
+}

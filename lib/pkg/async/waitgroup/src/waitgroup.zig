@@ -9,40 +9,29 @@
 //! const Rt = @import("std_impl").runtime;
 //! const WaitGroup = waitgroup.WaitGroup(Rt);
 //!
-//! var wg = WaitGroup.init(allocator);
+//! var wg = WaitGroup.init();
 //! defer wg.deinit();
 //!
 //! // Spawn tracked tasks
-//! try wg.go("worker-1", myFn, &ctx1, .{});
-//! try wg.go("worker-2", myFn, &ctx2, .{});
+//! try wg.go(worker, .{ctx1});
+//! try wg.go(worker, .{ctx2});
 //!
 //! // Wait for all to complete
 //! wg.wait();
-//! ```
-//!
-//! ## Manual add/done
-//!
-//! ```zig
-//! wg.add(1);
-//! defer wg.done();
-//! // ... work ...
 //! ```
 
 const std = @import("std");
 const trait = @import("trait");
 
-/// Task function signature (matches spawner.TaskFn)
-pub const TaskFn = trait.spawner.TaskFn;
-
 /// WaitGroup — counter-based task completion tracker
 ///
-/// - `Rt`: Runtime type providing Mutex, Condition, Options, spawn
+/// - `Rt`: Runtime type providing Thread, Mutex, Condition
 pub fn WaitGroup(comptime Rt: type) type {
     // Validate Runtime at comptime
     comptime {
+        trait.spawner.from(Rt);
         _ = trait.sync.Mutex(Rt.Mutex);
         _ = trait.sync.Condition(Rt.Condition, Rt.Mutex);
-        trait.spawner.from(Rt);
     }
 
     return struct {
@@ -51,16 +40,13 @@ pub fn WaitGroup(comptime Rt: type) type {
         mutex: Rt.Mutex,
         cond: Rt.Condition,
         counter: i32,
-        allocator: std.mem.Allocator,
 
-        /// Initialize a new WaitGroup with counter = 0.
-        /// The allocator is used internally by go() to allocate task context.
-        pub fn init(allocator: std.mem.Allocator) Self {
+        /// Initialize a new WaitGroup
+        pub fn init() Self {
             return .{
                 .mutex = Rt.Mutex.init(),
                 .cond = Rt.Condition.init(),
                 .counter = 0,
-                .allocator = allocator,
             };
         }
 
@@ -70,77 +56,65 @@ pub fn WaitGroup(comptime Rt: type) type {
             self.mutex.deinit();
         }
 
-        /// Add delta to the counter.
-        /// Typically called before spawning a task.
-        pub fn add(self: *Self, delta: i32) void {
+        /// Add delta to counter (internal)
+        fn add(self: *Self, delta: i32) void {
             self.mutex.lock();
             defer self.mutex.unlock();
-
             self.counter += delta;
+        }
 
-            if (self.counter <= 0) {
+        /// Decrement counter and signal if zero (internal)
+        fn done(self: *Self) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.counter -= 1;
+            if (self.counter == 0) {
                 self.cond.broadcast();
             }
         }
 
-        /// Decrement the counter by 1.
-        /// Typically called at the end of a task (often via defer).
-        pub fn done(self: *Self) void {
-            self.add(-1);
+        /// Spawn a tracked task
+        pub fn go(self: *Self, comptime func: anytype, args: anytype) !void {
+            self.add(1);
+            errdefer self.done(); // Fix #9: rollback counter if spawn fails
+            
+            const ArgsType = @TypeOf(args);
+            const Wrapper = struct {
+                fn run(wg: *Self, user_args: ArgsType) void {
+                    defer wg.done();
+                    @call(.auto, func, user_args);
+                }
+            };
+            
+            const thread = try Rt.Thread.spawn(.{}, Wrapper.run, .{self, args});
+            thread.detach();  // detach immediately, threadWrapper cleans up sem
         }
 
-        /// Block until the counter reaches 0.
+        /// Spawn a tracked task with custom config
+        pub fn goWithConfig(self: *Self, config: Rt.Thread.SpawnConfig, comptime func: anytype, args: anytype) !void {
+            self.add(1);
+            errdefer self.done(); // Fix #9: rollback counter if spawn fails
+            
+            const ArgsType = @TypeOf(args);
+            const Wrapper = struct {
+                fn run(wg: *Self, user_args: ArgsType) void {
+                    defer wg.done();
+                    @call(.auto, func, user_args);
+                }
+            };
+            
+            const thread = try Rt.Thread.spawn(config, Wrapper.run, .{self, args});
+            thread.detach();  // detach immediately, threadWrapper cleans up sem
+        }
+
+        /// Block until all spawned tasks complete
         pub fn wait(self: *Self) void {
             self.mutex.lock();
             defer self.mutex.unlock();
-
+            
             while (self.counter > 0) {
                 self.cond.wait(&self.mutex);
             }
-        }
-
-        /// Spawn a tracked task. Equivalent to:
-        ///   wg.add(1)
-        ///   Rt.spawn(name, wrappedFunc, ctx, opts)
-        ///
-        /// The task will automatically call wg.done() when it returns.
-        /// GoContext is heap-allocated via the WaitGroup's allocator and
-        /// freed by the wrapper after the user function completes.
-        pub fn go(self: *Self, name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Rt.Options) !void {
-            self.add(1);
-            errdefer self.done(); // rollback counter if spawn fails
-
-            const go_ctx = try self.allocator.create(GoContext);
-            errdefer self.allocator.destroy(go_ctx); // free if spawn fails
-
-            go_ctx.* = .{
-                .wg = self,
-                .func = func,
-                .ctx = ctx,
-                .allocator = self.allocator,
-            };
-
-            try Rt.spawn(name, goWrapper, @ptrCast(go_ctx), opts);
-        }
-
-        /// Context for go() wrapper. Heap-allocated, freed by goWrapper.
-        const GoContext = struct {
-            wg: *Self,
-            func: TaskFn,
-            ctx: ?*anyopaque,
-            allocator: std.mem.Allocator,
-        };
-
-        fn goWrapper(raw_ctx: ?*anyopaque) void {
-            const go_ctx: *GoContext = @ptrCast(@alignCast(raw_ctx));
-            const wg = go_ctx.wg;
-            const func = go_ctx.func;
-            const ctx = go_ctx.ctx;
-            const allocator = go_ctx.allocator;
-            allocator.destroy(go_ctx);
-
-            func(ctx);
-            wg.done();
         }
     };
 }
@@ -149,52 +123,29 @@ pub fn WaitGroup(comptime Rt: type) type {
 // Tests
 // ============================================================================
 
-const TestRt = @import("runtime");
+const TestRt = @import("std_impl").runtime;
 
 test "WaitGroup empty wait" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
-    // Should not block
+    // Should not block (no threads spawned)
     wg.wait();
-}
-
-test "WaitGroup manual add/done" {
-    const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
-    defer wg.deinit();
-
-    var result: i32 = 0;
-
-    wg.add(1);
-
-    const thread = try std.Thread.spawn(.{}, struct {
-        fn run(r: *i32, w: *WG) void {
-            r.* = 42;
-            w.done();
-        }
-    }.run, .{ &result, &wg });
-
-    wg.wait();
-    thread.detach();
-
-    try std.testing.expectEqual(@as(i32, 42), result);
 }
 
 test "WaitGroup go single task" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     var result = std.atomic.Value(i32).init(0);
 
-    try wg.go("task", struct {
-        fn run(ctx: ?*anyopaque) void {
-            const r: *std.atomic.Value(i32) = @ptrCast(@alignCast(ctx));
+    try wg.go(struct {
+        fn run(r: *std.atomic.Value(i32)) void {
             r.store(42, .release);
         }
-    }.run, &result, .{});
+    }.run, .{&result});
 
     wg.wait();
 
@@ -203,19 +154,18 @@ test "WaitGroup go single task" {
 
 test "WaitGroup go multiple tasks" {
     const WG = WaitGroup(TestRt);
-    var wg = WG.init(std.testing.allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     var counter = std.atomic.Value(u32).init(0);
     const num_tasks = 10;
 
     for (0..num_tasks) |_| {
-        try wg.go("worker", struct {
-            fn run(ctx: ?*anyopaque) void {
-                const c: *std.atomic.Value(u32) = @ptrCast(@alignCast(ctx));
+        try wg.go(struct {
+            fn run(c: *std.atomic.Value(u32)) void {
                 _ = c.fetchAdd(1, .acq_rel);
             }
-        }.run, &counter, .{});
+        }.run, .{&counter});
     }
 
     wg.wait();

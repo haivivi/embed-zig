@@ -93,6 +93,34 @@ pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) 
 }
 
 // ============================================================================
+// Thread — Joinable thread (wraps std.Thread)
+// ============================================================================
+
+/// Joinable thread — wraps std.Thread for trait.spawner compatibility
+pub const Thread = std.Thread;
+
+// ============================================================================
+// Time
+// ============================================================================
+
+/// Get current time in milliseconds
+pub fn nowMs() u64 {
+    return @intCast(std.time.milliTimestamp());
+}
+
+// ============================================================================
+// CPU Info
+// ============================================================================
+
+/// Get CPU core count
+pub fn getCpuCount() !usize {
+    return std.Thread.getCpuCount() catch |err| {
+        // std.Thread.getCpuCount() can fail on some platforms
+        return err;
+    };
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

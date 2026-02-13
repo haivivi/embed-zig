@@ -204,6 +204,79 @@ pub const Socket = struct {
         return @intCast(result);
     }
 
+    /// Receive data with source address (for UDP security validation)
+    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!@import("trait").socket.RecvFromResult {
+        var sa: c.sockaddr_in = undefined;
+        var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
+        const result = c.recvfrom(
+            self.fd,
+            buf.ptr,
+            buf.len,
+            0,
+            @ptrCast(&sa),
+            &sa_len,
+        );
+        if (result < 0) {
+            const errno_val = c.__errno().*;
+            if (errno_val == c.EAGAIN or errno_val == c.EWOULDBLOCK) {
+                return error.Timeout;
+            }
+            return error.RecvFailed;
+        }
+        if (result == 0) {
+            return error.Closed;
+        }
+        
+        const s_addr = sa.sin_addr.s_addr;
+        const src_ip: Ipv4Address = .{
+            @truncate(s_addr & 0xFF),
+            @truncate((s_addr >> 8) & 0xFF),
+            @truncate((s_addr >> 16) & 0xFF),
+            @truncate((s_addr >> 24) & 0xFF),
+        };
+        
+        return .{
+            .len = @intCast(result),
+            .src_addr = src_ip,
+            .src_port = ntohs(sa.sin_port),
+        };
+    }
+
+    /// Bind socket to a specific address and port (UDP server / TCP server)
+    pub fn bind(self: *Self, ip: Ipv4Address, port: u16) SocketError!void {
+        var sa = sockaddrIn(ip, port);
+        const result = c.bind(self.fd, @ptrCast(&sa), @sizeOf(c.sockaddr_in));
+        if (result < 0) return error.BindFailed;
+    }
+
+    /// Get the port that socket is bound to
+    pub fn getBoundPort(self: *Self) SocketError!u16 {
+        var sa: c.sockaddr_in = undefined;
+        var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
+        const result = c.getsockname(self.fd, @ptrCast(&sa), &sa_len);
+        if (result < 0) return error.InvalidAddress;
+        return ntohs(sa.sin_port);
+    }
+
+    /// Get the underlying file descriptor
+    pub fn getFd(self: *Self) c_int {
+        return self.fd;
+    }
+
+    /// Set socket to non-blocking mode
+    pub fn setNonBlocking(self: *Self, enable: bool) SocketError!void {
+        const flags = c.fcntl(self.fd, c.F_GETFL, @as(c_int, 0));
+        if (flags < 0) return error.InvalidAddress;
+        
+        const new_flags = if (enable) 
+            flags | c.O_NONBLOCK 
+        else 
+            flags & ~@as(c_int, c.O_NONBLOCK);
+        
+        const result = c.fcntl(self.fd, c.F_SETFL, new_flags);
+        if (result < 0) return error.InvalidAddress;
+    }
+
     fn sockaddrIn(addr: Ipv4Address, port: u16) c.sockaddr_in {
         return .{
             .sin_family = c.AF_INET,
@@ -219,6 +292,10 @@ pub const Socket = struct {
     }
 
     fn htons(v: u16) u16 {
+        return @byteSwap(v);
+    }
+
+    fn ntohs(v: u16) u16 {
         return @byteSwap(v);
     }
 };
