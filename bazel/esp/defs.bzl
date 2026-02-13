@@ -116,7 +116,6 @@ def esp_modules():
 # Labels relative to this repository (works when used from external repos)
 _LIBS_LABEL = Label("//:all_libs")
 _CMAKE_MODULES_LABEL = Label("//cmake:cmake_modules")
-_SCRIPTS_LABEL = Label("//bazel/esp:scripts")
 _APPS_LABEL = Label("//examples/apps:all_apps")
 
 # =============================================================================
@@ -158,13 +157,9 @@ def _esp_idf_app_impl(ctx):
     # Build settings
     board = ctx.attr._board[BuildSettingInfo].value if ctx.attr._board and BuildSettingInfo in ctx.attr._board else DEFAULT_BOARD
     
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
-    build_sh = None
-    for f in script_files:
-        if f.basename == "build.sh":
-            build_sh = f
-            break
+    # Get Go builder binary
+    builder_files = ctx.attr._builder.files.to_list()
+    builder_bin = builder_files[0]
     
     # Generate copy commands - preserve original directory structure
     src_copy_commands = _generate_copy_commands_preserve_structure(src_files)
@@ -172,10 +167,10 @@ def _esp_idf_app_impl(ctx):
     lib_copy_commands = _generate_copy_commands_preserve_structure(lib_files)
     apps_copy_commands = _generate_copy_commands_preserve_structure(apps_files)
     
-    # Create wrapper script that copies files and calls build.sh
+    # Create wrapper script that copies files and calls Go builder
     build_script = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
     
-    # Wrapper script: sets up environment, copies files, calls build.sh
+    # Wrapper script: sets up environment, copies files, calls Go builder
     # Files are copied preserving their original paths, so relative references work
     script_content = """#!/bin/bash
 set -e
@@ -189,7 +184,7 @@ WORK=$(mktemp -d) && export ESP_WORK_DIR="$WORK" && trap "rm -rf $WORK" EXIT
 {cmake_copy_commands}
 {lib_copy_commands}
 {apps_copy_commands}
-exec bash "{build_sh}"
+exec "{builder}"
 """.format(
         board = board,
         project_name = project_name,
@@ -198,7 +193,7 @@ exec bash "{build_sh}"
         bootloader_out = bootloader_file.path,
         partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
-        build_sh = build_sh.path if build_sh else "",
+        builder = builder_bin.path,
         project_path = ctx.label.package,  # e.g., "examples/apps/gpio_button"
         src_copy_commands = "\n".join(src_copy_commands),
         cmake_copy_commands = "\n".join(cmake_copy_commands),
@@ -213,7 +208,7 @@ exec bash "{build_sh}"
     )
     
     # Collect all inputs
-    inputs = src_files + cmake_files + zig_files + lib_files + apps_files + script_files + [build_script]
+    inputs = src_files + cmake_files + zig_files + lib_files + apps_files + builder_files + [build_script]
     
     # Run build
     ctx.actions.run_shell(
@@ -287,9 +282,11 @@ esp_idf_app = rule(
         "_board": attr.label(
             default = Label("//bazel:board"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
-            doc = "Build scripts",
+        "_builder": attr.label(
+            default = Label("//bazel/esp/tools/builder"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF build",
         ),
     },
     doc = "Build an ESP-IDF project with Zig support",
@@ -330,8 +327,9 @@ def _esp_configure_impl(ctx):
     # ESP-IDF requires
     requires = " ".join(ctx.attr.requires) if ctx.attr.requires else "freertos"
     
-    # Script files for common.sh
-    script_files = ctx.attr._scripts.files.to_list()
+    # Get configurator Go binary
+    configurator_files = ctx.attr._configurator.files.to_list()
+    configurator_bin = configurator_files[0]
     
     # Build the configure script
     configure_script = ctx.actions.declare_file(ctx.label.name + "_configure.sh")
@@ -339,91 +337,20 @@ def _esp_configure_impl(ctx):
     script_content = """#!/bin/bash
 set -e
 export ESP_BAZEL_RUN=1
+export ESP_SDKCONFIG_PATH="{sdkconfig_path}"
+export ESP_CONFIG_DIR="{config_dir}"
+export ESP_INCLUDE_DIRS_FILE="{include_dirs_file}"
+export ESP_REQUIRES="{requires}"
+export ESP_IDF_COMPONENT_YML="{idf_component_yml}"
 
-# Setup
-WORK=$(mktemp -d) && trap "rm -rf $WORK" EXIT
-mkdir -p "$WORK/project/main"
-
-# Generate minimal CMakeLists.txt
-cat > "$WORK/project/CMakeLists.txt" << 'EOF'
-cmake_minimum_required(VERSION 3.16)
-include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
-project(esp_configure)
-EOF
-
-# Generate main component
-cat > "$WORK/project/main/CMakeLists.txt" << 'EOF'
-idf_component_register(
-    SRCS "main.c"
-    REQUIRES {requires}
-)
-EOF
-
-cat > "$WORK/project/main/main.c" << 'EOF'
-void app_main(void) {{}}
-EOF
-
-# Generate idf_component.yml if needed
-{idf_component_yml}
-
-# Copy sdkconfig
-cp "{sdkconfig_path}" "$WORK/project/sdkconfig.defaults"
-
-# Source common functions and setup IDF
-source "{common_sh}"
-setup_home
-setup_idf_env
-
-if ! command -v idf.py &> /dev/null; then
-    echo "[esp_configure] Error: idf.py not found"
-    exit 1
-fi
-
-# Extract chip type from sdkconfig
-cd "$WORK/project"
-ESP_CHIP=$(grep -E '^CONFIG_IDF_TARGET=' sdkconfig.defaults | sed 's/CONFIG_IDF_TARGET="\\(.*\\)"/\\1/' | head -1)
-if [ -z "$ESP_CHIP" ]; then
-    echo "[esp_configure] Error: CONFIG_IDF_TARGET not found"
-    exit 1
-fi
-echo "[esp_configure] Chip: $ESP_CHIP"
-
-# Run configure only (no build)
-idf.py set-target "$ESP_CHIP"
-idf.py reconfigure
-
-# Copy generated config directory (contains sdkconfig.h)
-cp -r "$WORK/project/build/config/." "{config_dir}"
-
-# Extract include directories from CMake
-# Parse compile_commands.json or use cmake --build to get includes
-# Simpler: list the standard IDF component include paths
-echo "[esp_configure] Extracting include directories..."
-cat > "{include_dirs_file}" << 'IDEOF'
-IDEOF
-
-# Get include dirs from the CMake cache
-cmake -L "$WORK/project/build" 2>/dev/null | grep -E '_INCLUDE_DIRS|_DIR' | while IFS='=' read -r key value; do
-    echo "$value" >> "{include_dirs_file}"
-done
-
-# Also add the standard paths that are always needed
-echo "{config_dir}" >> "{include_dirs_file}"
-echo "$IDF_PATH/components/esp_common/include" >> "{include_dirs_file}"
-echo "$IDF_PATH/components/esp_system/include" >> "{include_dirs_file}"
-
-echo "[esp_configure] Done. Config at {config_dir}"
+exec "{configurator}"
 """.format(
-        requires = requires,
         sdkconfig_path = sdkconfig_file.path,
         config_dir = config_dir.path,
         include_dirs_file = include_dirs_file.path,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
-        idf_component_yml = """
-cat > "$WORK/project/main/idf_component.yml" << 'COMPEOF'
-dependencies:
-{deps}COMPEOF
-""".format(deps = idf_deps_yml) if idf_deps_yml else "",
+        requires = requires,
+        idf_component_yml = idf_deps_yml,
+        configurator = configurator_bin.path,
     )
     
     ctx.actions.write(
@@ -434,7 +361,7 @@ dependencies:
     
     ctx.actions.run_shell(
         command = configure_script.path,
-        inputs = [sdkconfig_file, configure_script] + script_files,
+        inputs = [sdkconfig_file, configure_script] + configurator_files,
         outputs = [config_dir, include_dirs_file],
         execution_requirements = {
             "local": "1",
@@ -463,8 +390,11 @@ esp_configure = rule(
             default = [],
             doc = "IDF component manager dependencies",
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_configurator": attr.label(
+            default = Label("//bazel/esp/tools/configurator"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF configure",
         ),
     },
     doc = """Run ESP-IDF CMake configure to generate sdkconfig.h.
@@ -545,12 +475,9 @@ def _esp_zig_app_impl(ctx):
         if env_files_list:
             env_file = env_files_list[0]
     
-    script_files = ctx.attr._scripts.files.to_list()
-    build_sh = None
-    for f in script_files:
-        if f.basename == "build.sh":
-            build_sh = f
-            break
+    # Get Go builder binary
+    builder_files = ctx.attr._builder.files.to_list()
+    builder_bin = builder_files[0]
     
     sdkconfig_file = None
     sdkconfig_files = []
@@ -993,7 +920,7 @@ dependencies:
 {idf_deps_yml}IDFCOMPEOF
 fi
 
-exec bash "{build_sh}"
+exec "{builder}"
 """.format(
         board = board,
         env_file_export = 'export ESP_ENV_FILE="$(pwd)/{}"'.format(env_file.path) if env_file else "",
@@ -1004,7 +931,7 @@ exec bash "{build_sh}"
         bootloader_out = bootloader_file.path,
         partition_out = partition_file.path,
         zig_dir = zig_bin.dirname if zig_bin else "",
-        build_sh = build_sh.path if build_sh else "",
+        builder = builder_bin.path,
         app_name = app_name,
         cmake_copy_commands = "\n".join(cmake_copy_commands),
         lib_copy_commands = "\n".join(lib_copy_commands),
@@ -1037,7 +964,7 @@ exec bash "{build_sh}"
     # Collect all inputs — Zig sources via exec-root paths (no copying needed)
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + script_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
+    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + builder_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
     
     ctx.actions.run_shell(
         command = build_script.path,
@@ -1145,8 +1072,11 @@ esp_zig_app = rule(
         "_board": attr.label(
             default = Label("//bazel:board"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_builder": attr.label(
+            default = Label("//bazel/esp/tools/builder"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs ESP-IDF build",
         ),
     },
     doc = "Build an ESP-IDF Zig app, generating the ESP shell automatically",
