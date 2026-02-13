@@ -66,7 +66,7 @@ func SetupIDFEnv(toolPrefix string) error {
 		return nil
 	}
 
-	fmt.Printf("[esp] Using Python env: %s\n", idfPythonEnv)
+	fmt.Printf("%s Using Python env: %s\n", toolPrefix, idfPythonEnv)
 
 	// Build PATH with ESP-IDF tools
 	espressifTools := filepath.Join(home, ".espressif", "tools")

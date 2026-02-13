@@ -62,19 +62,23 @@ func main() {
 }
 
 func validateConfig(cfg *Config) error {
-	required := map[string]string{
-		"ESP_BOARD":        cfg.Board,
-		"ESP_PROJECT_NAME": cfg.ProjectName,
-		"ESP_BIN_OUT":      cfg.BinOut,
-		"ESP_ELF_OUT":      cfg.ElfOut,
-		"ESP_WORK_DIR":     cfg.WorkDir,
-		"ESP_PROJECT_PATH": cfg.ProjectPath,
-		"ESP_EXECROOT":     cfg.ExecRoot,
+	// Use slice for deterministic error reporting order
+	required := []struct {
+		name  string
+		value string
+	}{
+		{"ESP_BOARD", cfg.Board},
+		{"ESP_PROJECT_NAME", cfg.ProjectName},
+		{"ESP_BIN_OUT", cfg.BinOut},
+		{"ESP_ELF_OUT", cfg.ElfOut},
+		{"ESP_WORK_DIR", cfg.WorkDir},
+		{"ESP_PROJECT_PATH", cfg.ProjectPath},
+		{"ESP_EXECROOT", cfg.ExecRoot},
 	}
 
-	for name, value := range required {
-		if value == "" {
-			return fmt.Errorf("%s not set", name)
+	for _, field := range required {
+		if field.value == "" {
+			return fmt.Errorf("%s not set", field.name)
 		}
 	}
 	return nil
