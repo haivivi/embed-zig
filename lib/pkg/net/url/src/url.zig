@@ -27,8 +27,6 @@ pub const ParseError = error{
     InvalidPort,
     /// Host component is malformed (e.g., unclosed IPv6 bracket).
     InvalidHost,
-    /// Scheme is present (colon found) but empty (e.g., "://host").
-    EmptyScheme,
 };
 
 /// A parsed URL. All slice fields point into the original input string.
@@ -167,7 +165,6 @@ pub fn parse(raw: []const u8) ParseError!Url {
 
     // 3. Extract scheme
     if (getSchemeEnd(rest)) |scheme_end| {
-        if (scheme_end == 0) return error.EmptyScheme;
         result.scheme = rest[0..scheme_end];
         rest = rest[scheme_end + 1 ..]; // skip ':'
     }
