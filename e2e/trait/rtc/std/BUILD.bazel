@@ -11,8 +11,8 @@ zig_library(
 
 zig_test(
     name = "test",
-    main = "//e2e/hal/rtc:app.zig",
-    srcs = ["//e2e/hal/rtc:app_srcs"],
+    main = "//e2e/trait/rtc:app.zig",
+    srcs = ["//e2e/trait/rtc:app_srcs"],
     deps = [":board", "//lib/hal"],
     tags = ["e2e"],
 )

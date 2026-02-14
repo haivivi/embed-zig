@@ -6,7 +6,7 @@ esp_modules()
 
 zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":idf", ":esp"])
 
-filegroup(name = "srcs", srcs = ["//e2e/hal/wifi:app_srcs"] + glob(["*.zig"]))
+filegroup(name = "srcs", srcs = ["//e2e/trait/wifi:app_srcs"] + glob(["*.zig"]))
 
 esp_zig_app(
     name = "app",

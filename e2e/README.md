@@ -136,7 +136,7 @@ Bugs found and fixed by e2e (7 total):
 
 ## Adding a New Test
 
-1. Create directory: `e2e/trait/{name}/` or `e2e/hal/{name}/`
+1. Create directory: `e2e/trait/{name}/`
 
 2. Write `app.zig` — cross-platform test logic:
    ```zig

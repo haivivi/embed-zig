@@ -20,5 +20,6 @@ test_suite(
         "//e2e/trait/spawner/std:test",
         "//e2e/trait/io/std:test",
         "//e2e/trait/codec/std:test",
+        "//e2e/trait/rtc/std:test",
     ],
 )
