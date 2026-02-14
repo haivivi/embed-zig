@@ -1,8 +1,8 @@
-//! Korvo-2 V3 Board — 6 ADC buttons + 9 WS2812 LED strip
+//! Korvo-2 V3 Board — 6 ADC buttons + 1 TCA9554 LED
 //!
 //! Mimics the real ESP32-S3-Korvo-2 V3 layout:
 //! - 6 ADC buttons: vol_up, vol_down, set, play, mute, rec
-//! - 9 WS2812 RGB LEDs (diamond layout)
+//! - 1 TCA9554-controlled LED
 //! - Speaker + Mic (sim)
 //! - WiFi + Net + BLE (sim)
 
@@ -49,10 +49,10 @@ pub const adc_ranges = &[_]hal.ButtonGroupRange{
 pub const adc_values = [_]u16{ 425, 925, 1300, 1800, 2330, 2875 };
 
 // ============================================================================
-// LED Driver (9 WS2812 LEDs)
+// LED Driver (1 TCA9554 LED — real Korvo-2 V3 hardware)
 // ============================================================================
 
-pub const led_count: u32 = 9;
+pub const led_count: u32 = 1;
 
 pub const LedDriver = struct {
     const Self = @This();
@@ -60,7 +60,7 @@ pub const LedDriver = struct {
 
     pub fn init() !Self {
         state.state.led_count = led_count;
-        state.state.addLog("WebSim: Korvo2 LED strip (9) initialized");
+        state.state.addLog("WebSim: Korvo2 LED (TCA9554) initialized");
         return .{ .count = led_count };
     }
 

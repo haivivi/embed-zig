@@ -1218,7 +1218,6 @@ exec "{flasher}" "$@"
         nvs_offset = nvs_offset,
         nvs_size = nvs_size,
         flasher = flasher_bin.short_path,
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
         wasm_path = wasm_path,
     )
     
@@ -1241,7 +1240,7 @@ exec "{flasher}" "$@"
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = flash_files + script_files + wasm_files),
+            runfiles = ctx.runfiles(files = flash_files + flasher_files + wasm_files),
         ),
     ]
 

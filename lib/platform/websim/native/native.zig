@@ -288,89 +288,98 @@ fn onPushAudioInSample(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) call
 
 fn onGetState(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     var buf: [8192]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    const json_result = buildStateJson(&buf) catch {
+        // On any write error, return empty object so JS Promise resolves
+        _ = c.webview_return(g_webview, id, 0, "{}");
+        return;
+    };
+    buf[json_result] = 0;
+    _ = c.webview_return(g_webview, id, 0, @ptrCast(buf[0..json_result :0]));
+}
+
+/// Build the state JSON into `buf`, returning the length written.
+/// Separated from onGetState so errors propagate cleanly via `!`.
+fn buildStateJson(buf: *[8192]u8) !usize {
+    var fbs = std.io.fixedBufferStream(buf);
     const w = fbs.writer();
 
-    w.print("{{", .{}) catch return;
+    try w.print("{{", .{});
 
     // LEDs
-    w.print("\"leds\":[", .{}) catch return;
+    try w.print("\"leds\":[", .{});
     const led_count = shared.led_count;
     for (0..led_count) |i| {
         const col = shared.led_colors[i];
         const rgb = (@as(u32, col.r) << 16) | (@as(u32, col.g) << 8) | @as(u32, col.b);
-        if (i > 0) w.writeByte(',') catch return;
-        w.print("{}", .{rgb}) catch return;
+        if (i > 0) try w.writeByte(',');
+        try w.print("{}", .{rgb});
     }
-    w.print("],\"led_count\":{}", .{led_count}) catch return;
+    try w.print("],\"led_count\":{}", .{led_count});
 
     // Log
-    w.print(",\"log_dirty\":{}", .{@intFromBool(shared.log_dirty)}) catch return;
+    try w.print(",\"log_dirty\":{}", .{@intFromBool(shared.log_dirty)});
     if (shared.log_dirty) {
         shared.log_dirty = false;
-        w.print(",\"logs\":[", .{}) catch return;
+        try w.print(",\"logs\":[", .{});
         const total = @min(shared.log_count, state_mod.LOG_LINES_MAX);
         for (0..total) |i| {
             if (shared.getLogLine(@intCast(i))) |line| {
-                if (i > 0) w.writeByte(',') catch return;
-                w.writeByte('"') catch return;
+                if (i > 0) try w.writeByte(',');
+                try w.writeByte('"');
                 // Escape JSON string
                 for (line) |ch| {
                     switch (ch) {
-                        '"' => w.writeAll("\\\"") catch return,
-                        '\\' => w.writeAll("\\\\") catch return,
-                        '\n' => w.writeAll("\\n") catch return,
+                        '"' => try w.writeAll("\\\""),
+                        '\\' => try w.writeAll("\\\\"),
+                        '\n' => try w.writeAll("\\n"),
                         '\r' => {},
                         else => {
                             if (ch >= 0x20) {
-                                w.writeByte(ch) catch return;
+                                try w.writeByte(ch);
                             }
                         },
                     }
                 }
-                w.writeByte('"') catch return;
+                try w.writeByte('"');
             }
         }
-        w.print("]", .{}) catch return;
+        try w.print("]", .{});
     }
 
     // WiFi
-    w.print(",\"wifi_connected\":{}", .{@intFromBool(shared.wifi_connected)}) catch return;
+    try w.print(",\"wifi_connected\":{}", .{@intFromBool(shared.wifi_connected)});
     if (shared.wifi_connected) {
-        w.print(",\"wifi_ssid\":\"", .{}) catch return;
+        try w.print(",\"wifi_ssid\":\"", .{});
         const ssid_len = shared.wifi_ssid_len;
         if (ssid_len > 0) {
-            w.writeAll(shared.wifi_ssid[0..ssid_len]) catch return;
+            try w.writeAll(shared.wifi_ssid[0..ssid_len]);
         }
-        w.print("\",\"wifi_rssi\":{}", .{@as(i32, shared.wifi_rssi)}) catch return;
+        try w.print("\",\"wifi_rssi\":{}", .{@as(i32, shared.wifi_rssi)});
     }
 
     // Net
-    w.print(",\"net_has_ip\":{}", .{@intFromBool(shared.net_has_ip)}) catch return;
+    try w.print(",\"net_has_ip\":{}", .{@intFromBool(shared.net_has_ip)});
     if (shared.net_has_ip) {
-        w.print(",\"net_ip\":\"{}.{}.{}.{}\"", .{
+        try w.print(",\"net_ip\":\"{}.{}.{}.{}\"", .{
             shared.net_ip[0], shared.net_ip[1], shared.net_ip[2], shared.net_ip[3],
-        }) catch return;
+        });
     }
 
     // BLE
-    w.print(",\"ble_state\":{},\"ble_connected\":{}", .{
+    try w.print(",\"ble_state\":{},\"ble_connected\":{}", .{
         @as(u32, shared.ble_state),
         @intFromBool(shared.ble_connected),
-    }) catch return;
+    });
 
     // Display dirty flag (framebuffer sent separately if needed)
-    w.print(",\"display_dirty\":{}", .{@intFromBool(shared.display_dirty)}) catch return;
+    try w.print(",\"display_dirty\":{}", .{@intFromBool(shared.display_dirty)});
 
     // Audio out available
-    w.print(",\"audio_out_avail\":{}", .{shared.audioOutAvailable()}) catch return;
+    try w.print(",\"audio_out_avail\":{}", .{shared.audioOutAvailable()});
 
-    w.print("}}", .{}) catch return;
+    try w.print("}}", .{});
 
-    const json_len = fbs.getWritten().len;
-    // Null-terminate in the same buffer (capacity is 8192, used at most ~4KB)
-    buf[json_len] = 0;
-    _ = c.webview_return(g_webview, id, 0, @ptrCast(buf[0..json_len :0]));
+    return fbs.getWritten().len;
 }
 
 // ============================================================================
