@@ -1,57 +1,41 @@
-//! BK7258 Hardware Timer Binding
+//! BK7258 Software Timer Binding
 //!
-//! 4 available channels (TIMER_ID0, 1, 4, 5 — timer2/3 system-reserved).
-//! Callbacks run in ISR context — must be fast, no blocking.
-//! Periodic (ms) and one-shot (us) modes.
+//! Wraps RTOS software timers (periodic + one-shot).
 
-pub const TimerCallback = *const fn (slot: c_uint) callconv(.c) void;
+pub const TimerCallback = *const fn (timer_id: c_uint) callconv(.c) void;
 
-extern fn bk_zig_hw_timer_start(period_ms: c_uint, callback: TimerCallback) c_int;
-extern fn bk_zig_hw_timer_oneshot_us(delay_us: c_ulonglong, callback: TimerCallback) c_int;
-extern fn bk_zig_hw_timer_stop(slot: c_int) void;
-extern fn bk_zig_hw_timer_get_cnt(slot: c_int) c_uint;
-extern fn bk_zig_hw_timer_available() c_int;
+extern fn bk_zig_timer_start_periodic(period_ms: c_uint, callback: TimerCallback) c_int;
+extern fn bk_zig_timer_start_oneshot(delay_ms: c_uint, callback: TimerCallback) c_int;
+extern fn bk_zig_timer_stop_periodic(handle: c_int) void;
+extern fn bk_zig_timer_stop_oneshot(handle: c_int) void;
 
 pub const Error = error{TimerError};
 
-/// Maximum usable hardware timer slots
-pub const MAX_TIMERS = 4;
-
 pub const Timer = struct {
-    slot: c_int,
+    handle: c_int,
+    is_oneshot: bool,
 
-    /// Start a periodic hardware timer (ISR callback).
+    /// Start a periodic timer with callback
     pub fn startPeriodic(period_ms: u32, callback: TimerCallback) Error!Timer {
-        const s = bk_zig_hw_timer_start(@intCast(period_ms), callback);
-        if (s < 0) return error.TimerError;
-        return .{ .slot = s };
+        const h = bk_zig_timer_start_periodic(@intCast(period_ms), callback);
+        if (h < 0) return error.TimerError;
+        return .{ .handle = h, .is_oneshot = false };
     }
 
-    /// Start a one-shot hardware timer with microsecond precision (ISR callback).
-    pub fn startOneshotUs(delay_us: u64, callback: TimerCallback) Error!Timer {
-        const s = bk_zig_hw_timer_oneshot_us(@intCast(delay_us), callback);
-        if (s < 0) return error.TimerError;
-        return .{ .slot = s };
-    }
-
-    /// Start a one-shot hardware timer with millisecond precision.
+    /// Start a one-shot timer with callback
     pub fn startOneshot(delay_ms: u32, callback: TimerCallback) Error!Timer {
-        return startOneshotUs(@as(u64, delay_ms) * 1000, callback);
+        const h = bk_zig_timer_start_oneshot(@intCast(delay_ms), callback);
+        if (h < 0) return error.TimerError;
+        return .{ .handle = h, .is_oneshot = true };
     }
 
-    /// Stop and release the timer.
+    /// Stop and free the timer
     pub fn stop(self: *Timer) void {
-        bk_zig_hw_timer_stop(self.slot);
-        self.slot = -1;
-    }
-
-    /// Get current counter value (counts down from period).
-    pub fn getCount(self: Timer) u32 {
-        return @intCast(bk_zig_hw_timer_get_cnt(self.slot));
+        if (self.is_oneshot) {
+            bk_zig_timer_stop_oneshot(self.handle);
+        } else {
+            bk_zig_timer_stop_periodic(self.handle);
+        }
+        self.handle = -1;
     }
 };
-
-/// Get number of free timer slots.
-pub fn available() u32 {
-    return @intCast(bk_zig_hw_timer_available());
-}
