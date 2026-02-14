@@ -1,9 +1,9 @@
 //! WebSim Shared State
 //!
-//! Flat struct in WASM linear memory, readable from both Zig and JS.
-//! JS reads this struct by offset from the pointer returned by getStatePtr().
-//!
-//! Memory layout is packed and stable — JS accesses fields by known offsets.
+//! Central state struct in WASM linear memory. HAL drivers read/write fields
+//! directly. JS accesses state through typed WASM export functions defined in
+//! `wasm/wasm.zig` (e.g. getLedColor, getDisplayWidth, getLogLinePtr) —
+//! never by raw memory offsets. Fields can be reordered freely.
 
 /// Maximum number of LEDs in a strip
 pub const MAX_LEDS = 16;
