@@ -1,9 +1,9 @@
-//! e2e: trait/sync — Verify Mutex, Condition, spawn, Channel, WaitGroup
+//! e2e: trait/sync — Verify Mutex, Condition, Thread.spawn, Channel, WaitGroup
 //!
 //! Tests:
 //!   1. Mutex lock/unlock without deadlock
 //!   2. Condition signal wakes waiting thread
-//!   3. spawn fires a detached task
+//!   3. Thread.spawn + detach fires a task
 //!   4. Channel send/recv across threads
 //!   5. WaitGroup tracks task completion
 //!
@@ -54,23 +54,16 @@ fn testCondition() !void {
 
     var ready: bool = false;
 
-    const Ctx = struct {
-        m: *Rt.Mutex,
-        c: *Rt.Condition,
-        r: *bool,
-    };
-    var ctx = Ctx{ .m = &mutex, .c = &cond, .r = &ready };
-
-    try Rt.spawn("cond_signaler", struct {
-        fn task(raw: ?*anyopaque) void {
-            const c: *Ctx = @ptrCast(@alignCast(raw));
+    const thread = try Rt.Thread.spawn(.{}, struct {
+        fn run(m: *Rt.Mutex, c: *Rt.Condition, r: *bool) void {
             std.Thread.sleep(5 * std.time.ns_per_ms);
-            c.m.lock();
-            c.r.* = true;
-            c.c.signal();
-            c.m.unlock();
+            m.lock();
+            r.* = true;
+            c.signal();
+            m.unlock();
         }
-    }.task, @ptrCast(&ctx), .{});
+    }.run, .{ &mutex, &cond, &ready });
+    thread.detach();
 
     mutex.lock();
     while (!ready) {
@@ -85,16 +78,16 @@ fn testCondition() !void {
     log.info("[e2e] PASS: trait/sync/condition", .{});
 }
 
-// Test 3: spawn fires a detached task that runs to completion
+// Test 3: Thread.spawn + detach fires a task that runs to completion
 fn testSpawn() !void {
     var done = std.atomic.Value(bool).init(false);
 
-    try Rt.spawn("spawn_test", struct {
-        fn task(raw: ?*anyopaque) void {
-            const d: *std.atomic.Value(bool) = @ptrCast(@alignCast(raw));
+    const thread = try Rt.Thread.spawn(.{}, struct {
+        fn run(d: *std.atomic.Value(bool)) void {
             d.store(true, .release);
         }
-    }.task, @ptrCast(&done), .{});
+    }.run, .{&done});
+    thread.detach();
 
     // Wait up to 500ms for the task
     var waited: u32 = 0;
@@ -118,21 +111,15 @@ fn testChannel() !void {
 
     const count: u32 = 10;
 
-    const ProducerCtx = struct {
-        ch: *Ch,
-        n: u32,
-    };
-    var producer_ctx = ProducerCtx{ .ch = &ch, .n = count };
-
-    try Rt.spawn("producer", struct {
-        fn task(raw: ?*anyopaque) void {
-            const ctx: *ProducerCtx = @ptrCast(@alignCast(raw));
-            for (0..ctx.n) |i| {
-                ctx.ch.send(@intCast(i)) catch break;
+    const thread = try Rt.Thread.spawn(.{}, struct {
+        fn run(c: *Ch, n: u32) void {
+            for (0..n) |i| {
+                c.send(@intCast(i)) catch break;
             }
-            ctx.ch.close();
+            c.close();
         }
-    }.task, @ptrCast(&producer_ctx), .{});
+    }.run, .{ &ch, count });
+    thread.detach();
 
     // Consumer: recv all
     var received: u32 = 0;
@@ -150,18 +137,17 @@ fn testChannel() !void {
 // Test 5: WaitGroup waits for all spawned tasks
 fn testWaitGroup() !void {
     const WG = waitgroup_pkg.WaitGroup(Rt);
-    var wg = WG.init(std.heap.page_allocator);
+    var wg = WG.init();
     defer wg.deinit();
 
     var counter = std.atomic.Value(u32).init(0);
 
     for (0..3) |_| {
-        try wg.go("wg_worker", struct {
-            fn task(raw: ?*anyopaque) void {
-                const c: *std.atomic.Value(u32) = @ptrCast(@alignCast(raw));
+        try wg.go(struct {
+            fn run(c: *std.atomic.Value(u32)) void {
                 _ = c.fetchAdd(1, .release);
             }
-        }.task, @ptrCast(&counter), .{});
+        }.run, .{&counter});
     }
 
     wg.wait();

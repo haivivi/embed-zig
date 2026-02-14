@@ -28,7 +28,7 @@ pub const time = struct {
         std_impl.time.sleepMs(ms);
     }
 
-    pub fn getTimeMs() u64 {
+    pub fn nowMs() u64 {
         return std_impl.time.nowMs();
     }
 };

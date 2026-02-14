@@ -18,11 +18,11 @@ fn runTests() !void {
     time.sleepMs(10);
     log.info("[e2e] PASS: trait/time/sleepMs", .{});
 
-    // Test 2: getTimeMs returns monotonically increasing values
+    // Test 2: nowMs returns monotonically increasing values
     {
-        const t1 = time.getTimeMs();
+        const t1 = time.nowMs();
         time.sleepMs(10);
-        const t2 = time.getTimeMs();
+        const t2 = time.nowMs();
 
         if (t2 <= t1) {
             log.err("[e2e] FAIL: trait/time/monotonic — t1={}, t2={}", .{ t1, t2 });
@@ -33,9 +33,9 @@ fn runTests() !void {
 
     // Test 3: sleepMs(50) takes roughly 50ms (allow 40-200ms for scheduler jitter)
     {
-        const before = time.getTimeMs();
+        const before = time.nowMs();
         time.sleepMs(50);
-        const after = time.getTimeMs();
+        const after = time.nowMs();
         const elapsed = after - before;
 
         if (elapsed < 40) {
