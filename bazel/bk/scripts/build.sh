@@ -358,6 +358,17 @@ done
 
 cp "$AP_LIB" "$PROJECT_DIR/ap/libbk_zig_ap.a"
 
+# Copy static libs (e.g., opus cross-compiled for ARM)
+STATIC_LIB_CMAKE=""
+if [ -n "$BK_STATIC_LIBS" ]; then
+    for slib in $BK_STATIC_LIBS; do
+        slib_bn=$(basename "$slib")
+        cp "$E/$slib" "$PROJECT_DIR/ap/$slib_bn"
+        STATIC_LIB_CMAKE="$STATIC_LIB_CMAKE \${CMAKE_CURRENT_SOURCE_DIR}/$slib_bn"
+        echo "[bk_build] Static lib: $slib_bn ($(wc -c < "$E/$slib") bytes)"
+    done
+fi
+
 AP_STACK=${BK_AP_STACK_SIZE:-16384}
 PSRAM_STACK=${BK_RUN_IN_PSRAM:-0}
 
@@ -431,7 +442,7 @@ set(srcs ap_main.c $C_HELPER_SRCS)
 set(priv_req driver lwip_intf_v2_1 $BK_AP_REQUIRES)
 armino_component_register(SRCS "\${srcs}" INCLUDE_DIRS "\${incs}" PRIV_REQUIRES "\${priv_req}")
 $PRELINK_CMAKE
-target_link_libraries(\${COMPONENT_LIB} INTERFACE -Wl,--whole-archive \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a -Wl,--no-whole-archive)
+target_link_libraries(\${COMPONENT_LIB} INTERFACE -Wl,--whole-archive \${CMAKE_CURRENT_SOURCE_DIR}/libbk_zig_ap.a -Wl,--no-whole-archive $STATIC_LIB_CMAKE)
 target_link_options(\${COMPONENT_LIB} INTERFACE $BK_FORCE_LINK)
 APCMAKEOF
 

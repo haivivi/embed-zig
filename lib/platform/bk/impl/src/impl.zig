@@ -49,3 +49,9 @@ pub const Timer = timer.Timer;
 
 pub const hci = @import("hci.zig");
 pub const HciDriver = hci.HciDriver;
+
+pub const codec = struct {
+    pub const opus = @import("codec/opus.zig");
+    pub const OpusEncoder = opus.OpusEncoder;
+    pub const OpusDecoder = opus.OpusDecoder;
+};

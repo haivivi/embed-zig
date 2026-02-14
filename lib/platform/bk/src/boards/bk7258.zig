@@ -275,6 +275,13 @@ pub const HciDriver = impl.HciDriver;
 pub const hci_spec = impl.hci.hci_spec;
 
 // ============================================================================
+// Opus Codec (FIXED_POINT, PSRAM allocated)
+// ============================================================================
+
+pub const OpusEncoder = impl.codec.OpusEncoder;
+pub const OpusDecoder = impl.codec.OpusDecoder;
+
+// ============================================================================
 // Default GPIO assignments (BK7258 dev board)
 // ============================================================================
 

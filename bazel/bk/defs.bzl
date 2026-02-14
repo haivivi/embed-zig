@@ -137,6 +137,11 @@ def _bk_zig_app_impl(ctx):
     if not bk_zig:
         fail("No 'bk' module found in deps. Did you call bk_modules()?")
 
+    # Collect static .a libraries
+    static_lib_files = []
+    for src in ctx.attr.static_libs:
+        static_lib_files.extend(src.files.to_list())
+
     # C helper paths (space-separated for build.sh)
     c_helper_paths = " ".join([f.path for f in c_helper_files])
 
@@ -168,6 +173,7 @@ export BK_PARTITION_CSV="{partition_csv}"
 export BK_AP_STACK_SIZE="{ap_stack_size}"
 export BK_RUN_IN_PSRAM="{run_in_psram}"
 export BK_PRELINK_LIBS="{prelink_libs}"
+export BK_STATIC_LIBS="{static_libs}"
 exec bash "$E/{build_sh}"
 """.format(
         project_name = project_name,
@@ -192,6 +198,7 @@ exec bash "$E/{build_sh}"
         ap_stack_size = str(ctx.attr.ap_stack_size),
         run_in_psram = str(ctx.attr.run_in_psram),
         prelink_libs = " ".join(ctx.attr.prelink_libs),
+        static_libs = " ".join([f.path for f in static_lib_files]),
         build_sh = build_sh.path if build_sh else "",
     )
 
@@ -213,7 +220,7 @@ exec bash "$E/{build_sh}"
 
     # All inputs
     partition_files = [ctx.file.partition_table] if ctx.file.partition_table else []
-    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + partition_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + partition_files + static_lib_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -300,6 +307,10 @@ bk_zig_app = rule(
         "prelink_libs": attr.string_list(
             default = [],
             doc = "SDK .a libs to link BEFORE bk_libs (resolves symbol priority). Paths relative to $ARMINO_PATH. E.g., ['components/bk_libs/bk7258_ap/libs/libaec_v3.a']",
+        ),
+        "static_libs": attr.label_list(
+            allow_files = [".a"],
+            doc = "Pre-compiled .a libraries to link with the AP Zig code (e.g., opus cross-compiled for ARM).",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
