@@ -217,11 +217,15 @@ html2canvas = module_extension(
 _KCP_VERSION = "1.7"
 
 def _kcp_repo_impl(ctx):
-    """Download and setup KCP C library source."""
+    """Download and setup KCP C library source with RTO tuning patch."""
     ctx.download_and_extract(
         url = "https://github.com/skywind3000/kcp/archive/refs/tags/{}.tar.gz".format(_KCP_VERSION),
         strip_prefix = "kcp-{}".format(_KCP_VERSION),
     )
+
+    # Apply patch: RTO tuning + size_t→IUINT32 fix (prevents memory corruption on 64-bit)
+    ctx.patch(ctx.attr._patch_file, strip = 1)
+
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
 
@@ -238,6 +242,11 @@ filegroup(
 
 _kcp_repo = repository_rule(
     implementation = _kcp_repo_impl,
+    attrs = {
+        "_patch_file": attr.label(
+            default = Label("//third_party/kcp:ikcp.patch"),
+        ),
+    },
 )
 
 def _kcp_ext_impl(ctx):

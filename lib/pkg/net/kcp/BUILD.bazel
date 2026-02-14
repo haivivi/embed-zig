@@ -1,0 +1,17 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_package(
+    name = "kcp",
+    c_srcs = [
+        "@kcp//:srcs",
+        "@kcp//:headers",
+    ],
+    # -fno-sanitize=undefined: KCP uses ((TYPE*)0)->member offsetof pattern
+    # which triggers zig cc's UB sanitizer (null pointer arithmetic).
+    c_flags = ["-O3", "-DNDEBUG", "-fno-sanitize=undefined"],
+    link_libc = True,
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
