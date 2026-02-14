@@ -71,15 +71,15 @@ bazel run //e2e/trait/time/esp:flash
 
 | Trait | std (macOS/Linux) | ESP32-S3 | Korvo2-v3 |
 |-------|:-----------------:|:--------:|:---------:|
-| time | PASS | PASS | BUILD |
-| log | PASS | BUILD | BUILD |
-| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | BUILD | BUILD |
-| socket (TCP, UDP) | PASS | BLOCKED | BLOCKED |
-| crypto (SHA256, AES-GCM, X25519) | PASS | BUILD | BUILD |
-| rng | PASS | BUILD | BUILD |
-| spawner (spawn, join, detach) | PASS | BUILD | BUILD |
+| time | PASS | PASS | PASS |
+| log | PASS | PASS | - |
+| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | PASS | - |
+| socket (TCP, UDP) | PASS | BUILD | - |
+| crypto (SHA256, AES-GCM, X25519) | PASS | **FAIL** | - |
+| rng | PASS | PASS | - |
+| spawner (spawn, join, detach) | PASS | PASS | - |
 | io (kqueue/epoll) | PASS | N/A | N/A |
-| system (getCpuCount) | PASS | BUILD | BUILD |
+| system (getCpuCount) | PASS | PASS | - |
 | i2c | N/A | - | - |
 | spi | N/A | - | - |
 | codec | - | - | - |
@@ -122,17 +122,17 @@ bazel run //e2e/trait/time/esp:flash
 | Platform | Trait | HAL | Total |
 |----------|:-----:|:---:|:-----:|
 | std (macOS/Linux) | 9/13 | 0/16 | 9/29 |
-| ESP32-S3 DevKit | 7 BUILD, 1 BLOCKED | 0/16 | 7/29 |
-| Korvo2-v3 | 7 BUILD, 1 BLOCKED | 0/16 | 7/29 |
+| ESP32-S3 DevKit | 6 PASS, 1 FAIL, 1 BUILD | 0/16 | 6/29 |
+| Korvo2-v3 | 1 PASS, 7 not yet flashed | 0/16 | 1/29 |
 
-Bugs found and fixed by e2e:
-- `runtime.zig:286` — `@ptrCast` without `@alignCast` when casting `*const anyopaque` to fn ptr
-- `crypto/esp` — missing `extra_cmake` for mbedTLS C helper sources
-- `sync/spawner` app.zig — used `std.Thread.sleep` (unavailable on freestanding), fixed to `time.sleepMs`
-- `log` app.zig — `{d:.2}` float format triggers `__udivti3` on xtensa, replaced with hex
-
-ESP BLOCKED (remaining):
-- `socket` — TCP echo server needs listen/accept which aren't in trait.socket; needs platform-specific server
+Bugs found and fixed by e2e (7 total):
+1. `runtime.zig:286` — `@ptrCast` without `@alignCast` (fn ptr alignment)
+2. `crypto/esp BUILD` — missing `extra_cmake` for mbedTLS C helpers
+3. `sync/spawner` app.zig — `std.Thread.sleep` on freestanding
+4. `log` app.zig — f64 format triggers `__udivti3` on xtensa
+5. `idf.Socket` — bind/listen/accept don't match trait.socket (rewrote)
+6. `trait.socket` — missing listen/accept validation (added)
+7. **ESP crypto SHA256 FAIL** — `esp-sha: SHA DMA buf_len cannot exceed max size` (OPEN)
 
 ## Adding a New Test
 
