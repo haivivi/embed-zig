@@ -31,6 +31,12 @@ const std = @import("std");
 pub const fec = @import("fec.zig");
 pub const ring_buffer = @import("ring_buffer.zig");
 pub const stream_mod = @import("stream.zig");
+pub const output_filter = @import("output_filter.zig");
+
+pub const loss_test = @import("loss_test.zig");
+
+pub const Filter = output_filter.Filter;
+pub const FilterConfig = output_filter.Config;
 
 pub const RingBuffer = ring_buffer.RingBuffer;
 pub const Stream = stream_mod.Stream;
@@ -542,4 +548,13 @@ test "getConvFromPacket" {
 
     // Too short
     try std.testing.expectEqual(@as(u32, 0), getConvFromPacket(&[_]u8{ 1, 2 }));
+}
+
+// Force test discovery in all sub-modules
+comptime {
+    _ = fec;
+    _ = ring_buffer;
+    _ = stream_mod;
+    _ = output_filter;
+    _ = loss_test;
 }
