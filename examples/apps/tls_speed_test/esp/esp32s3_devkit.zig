@@ -76,3 +76,4 @@ pub const env = struct {
     pub const test_server = @import("env").env.test_server;
     pub const tls_port = @import("env").env.tls_port;
 };
+pub const runtime = idf.runtime;

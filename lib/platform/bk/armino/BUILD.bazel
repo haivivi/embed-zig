@@ -82,6 +82,12 @@ filegroup(
     srcs = ["src/bk_zig_aec_helper.c"],
 )
 
+# Runtime helper (Mutex, Condition, spawn for async packages)
+filegroup(
+    name = "c_helpers_runtime",
+    srcs = ["src/bk_zig_runtime_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

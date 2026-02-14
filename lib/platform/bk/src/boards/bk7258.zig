@@ -372,6 +372,12 @@ pub const audio = struct {
 pub const AudioSystem = impl.audio_system.AudioSystem;
 
 // ============================================================================
+// Runtime (Mutex, Condition, spawn — for async packages like TLS, Channel)
+// ============================================================================
+
+pub const runtime = armino.runtime;
+
+// ============================================================================
 // Default GPIO assignments (BK7258 dev board)
 // ============================================================================
 

@@ -59,6 +59,7 @@ pub const net_spec = net.net_spec;
 
 /// Crypto implementation (mbedTLS-based)
 pub const crypto = impl.crypto.Suite;
+pub const runtime = idf.runtime;
 
 // ============================================================================
 // GPIO Definitions

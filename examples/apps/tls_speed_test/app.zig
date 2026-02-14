@@ -18,7 +18,7 @@ const log = Board.log;
 const Socket = trait.socket.from(Board.socket);
 
 const Crypto = Board.crypto;
-const TlsClient = tls.Client(Board.socket, Crypto);
+const TlsClient = tls.Client(Board.socket, Crypto, platform.runtime);
 
 const TestConfig = struct {
     server_ip: [4]u8,

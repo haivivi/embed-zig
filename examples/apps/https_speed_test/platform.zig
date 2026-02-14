@@ -27,3 +27,6 @@ pub const Board = hal.Board(spec);
 
 /// Platform allocator (PSRAM on BK, PSRAM DMA on ESP)
 pub const allocator = hw.allocator;
+
+/// Runtime (Mutex, Condition, spawn) for async packages
+pub const runtime = hw.runtime;

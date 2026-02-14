@@ -29,3 +29,4 @@ pub const adc = @import("adc.zig");
 pub const heap = @import("heap.zig");
 pub const mic = @import("mic.zig");
 pub const aec = @import("aec.zig");
+pub const runtime = @import("runtime.zig");

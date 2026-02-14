@@ -68,7 +68,7 @@ fn runPublicTest(
 
     // TLS handshake
     const Crypto = Board.crypto;
-    const TlsClient = tls.Client(Board.socket, Crypto);
+    const TlsClient = tls.Client(Board.socket, Crypto, platform.runtime);
 
     var tls_client = TlsClient.init(&sock, .{
         .allocator = platform.allocator,

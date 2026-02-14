@@ -26,3 +26,4 @@ pub const time = board.time;
 pub fn isRunning() bool {
     return board.isRunning();
 }
+pub const runtime = board.runtime;

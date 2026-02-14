@@ -85,3 +85,4 @@ pub const env = struct {
     pub const wifi_password = @import("env").WIFI_PASSWORD;
     pub const test_server = @import("env").TEST_SERVER;
 };
+pub const runtime = idf.runtime;
