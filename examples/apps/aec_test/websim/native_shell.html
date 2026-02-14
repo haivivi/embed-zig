@@ -186,11 +186,27 @@ const WebSim = (() => {
         try {
             audioCtx = new AudioContext({ sampleRate: 16000 });
 
-            /* Speaker playback node (pulls from Zig ring buffer) */
+            /* Speaker playback node (pulls from Zig ring buffer via batch binding) */
             const spkNode = audioCtx.createScriptProcessor(1024, 0, 1);
             spkNode.onaudioprocess = async (e) => {
-                /* TODO: pull speaker samples from Zig via binding */
-                e.outputBuffer.getChannelData(0).fill(0);
+                const output = e.outputBuffer.getChannelData(0);
+                try {
+                    const b64 = await zigPullAudioOut(output.length);
+                    if (b64 && b64.length > 0) {
+                        const raw = atob(b64);
+                        const bytes = new Uint8Array(raw.length);
+                        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                        const i16 = new Int16Array(bytes.buffer);
+                        const count = Math.min(i16.length, output.length);
+                        for (let i = 0; i < count; i++) output[i] = i16[i] / 32768.0;
+                        for (let i = count; i < output.length; i++) output[i] = 0;
+                        /* Update speaker VU */
+                        const vuEl = document.getElementById('spkLevel');
+                        if (vuEl) vuEl.style.width = Math.min(100, (count / output.length) * 100) + '%';
+                        return;
+                    }
+                } catch(err) { /* binding not available or error */ }
+                output.fill(0);
             };
             spkNode.connect(audioCtx.destination);
 

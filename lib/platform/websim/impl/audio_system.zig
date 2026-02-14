@@ -33,17 +33,27 @@ pub const AudioSystem = struct {
     /// Write samples to the speaker.
     /// Returns the number of samples actually written.
     pub fn writeSpeaker(self: *Self, samples: []const i16) !usize {
-        // Apply volume scaling
-        if (self.volume < 255) {
-            var scaled: [512]i16 = undefined;
-            const len = @min(samples.len, scaled.len);
-            for (0..len) |i| {
-                const s: i32 = @divTrunc(@as(i32, samples[i]) * @as(i32, self.volume), 255);
+        // Fast path: no volume scaling needed
+        if (self.volume == 255) {
+            return @as(usize, shared.audioOutWrite(samples));
+        }
+
+        // Apply volume scaling in chunks (512-sample stack buffer)
+        const vol: i32 = @as(i32, self.volume);
+        var scaled: [512]i16 = undefined;
+        var total_written: usize = 0;
+        var offset: usize = 0;
+
+        while (offset < samples.len) {
+            const chunk_len = @min(samples.len - offset, scaled.len);
+            for (0..chunk_len) |i| {
+                const s: i32 = @divTrunc(@as(i32, samples[offset + i]) * vol, 255);
                 scaled[i] = @intCast(@max(-32768, @min(32767, s)));
             }
-            return @as(usize, shared.audioOutWrite(scaled[0..len]));
+            total_written += @as(usize, shared.audioOutWrite(scaled[0..chunk_len]));
+            offset += chunk_len;
         }
-        return @as(usize, shared.audioOutWrite(samples));
+        return total_written;
     }
 
     /// Set speaker volume (0-255).

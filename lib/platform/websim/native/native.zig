@@ -98,6 +98,7 @@ pub fn run(comptime App: type, html: [:0]const u8) void {
     _ = c.webview_bind(w, "zigSetWifiRssi", &onSetWifiRssi, null);
     _ = c.webview_bind(w, "zigPushAudioInSample", &onPushAudioInSample, null);
     _ = c.webview_bind(w, "zigPushAudioBatch", &onPushAudioBatch, null);
+    _ = c.webview_bind(w, "zigPullAudioOut", &onPullAudioOut, null);
 
     // Bind state query callbacks (JS polls Zig state)
     _ = c.webview_bind(w, "zigGetState", &onGetState, null);
@@ -329,6 +330,53 @@ fn onPushAudioBatch(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callcon
     }
 
     returnNull(id);
+}
+
+/// Pull speaker samples: zigPullAudioOut(maxSamples) → base64 of i16le
+/// Returns available speaker samples (up to maxSamples) as base64-encoded
+/// little-endian i16 data. Advances audio_out_read. One binding call per
+/// ScriptProcessorNode buffer instead of per-sample polling.
+fn onPullAudioOut(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+    const max_samples = parseFirstArgU32(req) orelse 1024;
+    const avail = shared.audioOutAvailable();
+    if (avail == 0) {
+        // Return empty string (no samples)
+        _ = c.webview_return(g_webview, id, 0, "\"\"");
+        return;
+    }
+
+    const to_read = @min(avail, max_samples);
+    // Encode i16le samples to base64
+    var raw_buf: [2048]u8 = undefined; // 1024 samples * 2 bytes
+    const byte_count = to_read * 2;
+    if (byte_count > raw_buf.len) {
+        _ = c.webview_return(g_webview, id, 0, "\"\"");
+        return;
+    }
+
+    var i: u32 = 0;
+    while (i < to_read) : (i += 1) {
+        const sample = shared.audio_out_buf[(shared.audio_out_read +% i) & state_mod.AUDIO_BUF_MASK];
+        const u_sample: u16 = @bitCast(sample);
+        raw_buf[i * 2] = @truncate(u_sample);
+        raw_buf[i * 2 + 1] = @truncate(u_sample >> 8);
+    }
+    shared.audio_out_read +%= to_read;
+
+    // Base64 encode
+    const b64_len = std.base64.standard.Encoder.calcSize(byte_count);
+    var b64_buf: [4096]u8 = undefined; // ~2730 chars for 2048 bytes
+    if (b64_len + 2 > b64_buf.len) {
+        _ = c.webview_return(g_webview, id, 0, "\"\"");
+        return;
+    }
+
+    // Build JSON string: "base64data"
+    b64_buf[0] = '"';
+    _ = std.base64.standard.Encoder.encode(b64_buf[1..][0..b64_len], raw_buf[0..byte_count]);
+    b64_buf[b64_len + 1] = '"';
+    b64_buf[b64_len + 2] = 0;
+    _ = c.webview_return(g_webview, id, 0, @ptrCast(b64_buf[0 .. b64_len + 2 :0]));
 }
 
 // ============================================================================
