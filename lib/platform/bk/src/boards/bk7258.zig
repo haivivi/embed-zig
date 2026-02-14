@@ -62,26 +62,11 @@ pub const heap = armino.heap;
 pub const KvsDriver = impl.KvsDriver;
 
 // ============================================================================
-// RTC Driver (uptime from AON RTC)
+// RTC Driver (uptime from AON RTC, wall clock via sync)
 // ============================================================================
 
-pub const RtcDriver = struct {
-    const Self = @This();
-
-    pub fn init() !Self {
-        return .{};
-    }
-
-    pub fn deinit(_: *Self) void {}
-
-    pub fn uptime(_: *Self) u64 {
-        return armino.time.nowMs();
-    }
-
-    pub fn nowMs(_: *Self) ?i64 {
-        return null; // No wall-clock RTC on BK7258
-    }
-};
+pub const RtcDriver = impl.RtcReaderDriver;
+pub const RtcWriterDriver = impl.RtcWriterDriver;
 
 // ============================================================================
 // WiFi (hal.wifi compatible)
@@ -101,30 +86,7 @@ pub const net_spec = impl.net.net_spec;
 // Button Driver (GPIO-based)
 // ============================================================================
 
-pub fn ButtonDriver(comptime gpio_pin: u32, comptime active_low: bool) type {
-    return struct {
-        const Self = @This();
-
-        initialized: bool = false,
-
-        pub fn init() !Self {
-            armino.gpio.enableInput(gpio_pin) catch return error.InitFailed;
-            if (active_low) {
-                armino.gpio.pullUp(gpio_pin) catch {};
-            }
-            return .{ .initialized = true };
-        }
-
-        pub fn deinit(self: *Self) void {
-            self.initialized = false;
-        }
-
-        pub fn isPressed(_: *const Self) bool {
-            const level = armino.gpio.getInput(gpio_pin);
-            return if (active_low) !level else level;
-        }
-    };
-}
+pub const ButtonDriver = impl.ButtonDriver;
 
 // ============================================================================
 // Matrix Key Driver (3 GPIOs → 5 keys via matrix scan)
@@ -212,58 +174,7 @@ pub fn MatrixKeyDriver(comptime gpio_pins: [3]u32, comptime num_keys: comptime_i
 // LED Driver (PWM-based single LED)
 // ============================================================================
 
-pub fn PwmLedDriver(comptime pwm_channel: u32, comptime period_us: u32) type {
-    return struct {
-        const Self = @This();
-        const MAX_DUTY: u16 = 65535;
-
-        duty: u16 = 0,
-        initialized: bool = false,
-
-        pub fn init() !Self {
-            armino.pwm.init(pwm_channel, period_us, 0) catch return error.InitFailed;
-            armino.pwm.start(pwm_channel) catch return error.InitFailed;
-            return .{ .initialized = true };
-        }
-
-        pub fn deinit(self: *Self) void {
-            if (self.initialized) {
-                armino.pwm.stop(pwm_channel) catch {};
-                self.initialized = false;
-            }
-        }
-
-        pub fn setDuty(self: *Self, duty: u16) void {
-            self.duty = duty;
-            // Map u16 duty (0-65535) to PWM period (0-period_us)
-            const hw_duty: u32 = @as(u32, duty) * period_us / MAX_DUTY;
-            armino.pwm.setDuty(pwm_channel, hw_duty) catch {};
-        }
-
-        pub fn getDuty(self: *const Self) u16 {
-            return self.duty;
-        }
-
-        pub fn fade(self: *Self, target: u16, duration_ms: u32) void {
-            // Software fade: step from current to target over duration
-            const steps: u32 = duration_ms / 10; // 10ms per step
-            if (steps == 0) {
-                self.setDuty(target);
-                return;
-            }
-            const current = self.duty;
-            var i: u32 = 0;
-            while (i <= steps) : (i += 1) {
-                const progress = @as(u32, i) * 65535 / steps;
-                const new_duty: u16 = @intCast(
-                    (@as(u32, current) * (65535 - progress) + @as(u32, target) * progress) / 65535,
-                );
-                self.setDuty(new_duty);
-                armino.time.sleepMs(10);
-            }
-        }
-    };
-}
+pub const PwmLedDriver = impl.PwmLedDriver;
 
 // ============================================================================
 // Speaker Driver (direct DAC + DMA, no pipeline)
@@ -321,35 +232,7 @@ pub const PaSwitchDriver = struct {
 // Microphone Driver (direct audio ADC + DMA)
 // ============================================================================
 
-pub const MicDriver = struct {
-    const Self = @This();
-
-    mic: armino.mic.Mic = .{},
-    initialized: bool = false,
-
-    pub fn init() !Self {
-        var self = Self{};
-        self.mic = armino.mic.Mic.init(
-            audio.sample_rate,
-            audio.channels,
-            audio.mic_dig_gain,
-            audio.mic_ana_gain,
-        ) catch return error.InitFailed;
-        self.initialized = true;
-        return self;
-    }
-
-    pub fn deinit(self: *Self) void {
-        if (self.initialized) {
-            self.mic.deinit();
-            self.initialized = false;
-        }
-    }
-
-    pub fn read(self: *Self, buffer: []i16) !usize {
-        return self.mic.read(buffer) catch return error.ReadFailed;
-    }
-};
+pub const MicDriverImpl = impl.MicDriver;
 
 // ============================================================================
 // Audio Configuration (BK7258 Onboard DAC)

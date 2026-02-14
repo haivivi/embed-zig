@@ -30,3 +30,16 @@ pub const kvs = @import("kvs.zig");
 pub const KvsDriver = kvs.KvsDriver;
 
 pub const audio_system = @import("audio_system.zig");
+
+pub const button = @import("button.zig");
+pub const ButtonDriver = button.ButtonDriver;
+
+pub const led = @import("led.zig");
+pub const PwmLedDriver = led.PwmLedDriver;
+
+pub const rtc = @import("rtc.zig");
+pub const RtcReaderDriver = rtc.RtcReaderDriver;
+pub const RtcWriterDriver = rtc.RtcWriterDriver;
+
+pub const mic = @import("mic.zig");
+pub const MicDriver = mic.MicDriver;
