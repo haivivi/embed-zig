@@ -12,9 +12,20 @@ esp_zig_app(
     name = "app",
     app = ":srcs",
     boards = ["esp32s3_devkit", "korvo2_v3"],
-    requires = ["freertos"],
+    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip"],
+    force_link = [
+        "${WIFI_FORCE_LINK}",
+        "${NET_FORCE_LINK}",
+        "${EVENT_FORCE_LINK}",
+    ],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
+        "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
+    ],
+    extra_c_sources = ["WIFI_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
     deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],
-    sdkconfig = "//examples/esp:esp32s3",
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
     tags = ["manual"],
 )
