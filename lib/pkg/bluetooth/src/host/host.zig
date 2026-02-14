@@ -279,7 +279,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 .event_queue = EventChannel.init(),
                 .acl_credits = Credits.init(0),
                 .cmd_credits = Credits.init(1), // controller allows 1 command initially
-                .wg = WG.init(allocator),
+                .wg = WG.init(),
                 .cancel = cancellation.CancellationToken.init(),
                 .connections = std.AutoArrayHashMap(u16, *ConnectionState).init(allocator),
                 .allocator = allocator,
@@ -368,8 +368,8 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
 
             // --- 8. Spawn loops ---
             self.cancel.reset();
-            try self.wg.go("ble-read", readLoopEntry, self, opts);
-            try self.wg.go("ble-write", writeLoopEntry, self, opts);
+            try self.wg.go(readLoopEntry, .{self});
+            try self.wg.go(writeLoopEntry, .{self});
         }
 
         /// Stop the Host.
@@ -783,8 +783,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // readLoop
         // ================================================================
 
-        fn readLoopEntry(ctx: ?*anyopaque) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
+        fn readLoopEntry(self: *Self) void {
             self.readLoop();
         }
 
@@ -1001,8 +1000,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // writeLoop — with HCI ACL flow control
         // ================================================================
 
-        fn writeLoopEntry(ctx: ?*anyopaque) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
+        fn writeLoopEntry(self: *Self) void {
             self.writeLoop();
         }
 

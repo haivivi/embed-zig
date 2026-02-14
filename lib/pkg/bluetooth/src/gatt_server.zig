@@ -547,10 +547,7 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
                     @memcpy(ctx.data_buf[0..copy_len], data[0..copy_len]);
                 }
 
-                self.wg.?.go("gatt-handler", handlerTaskEntry, @ptrCast(ctx), .{
-                    .stack_size = 4096,
-                    .priority = 15,
-                }) catch {
+                self.wg.?.go(handlerTaskEntry, .{ctx}) catch {
                     // Spawn failed — free context and fall back to sync
                     self.async_allocator.?.destroy(ctx);
                     return self.callHandlerSync(binding, conn_handle, attr_handle, op, data, buf);
@@ -627,8 +624,7 @@ pub fn GattServer(comptime Rt: type, comptime services: []const ServiceDef) type
             data_len: usize,
         };
 
-        fn handlerTaskEntry(raw_ctx: ?*anyopaque) void {
-            const ctx: *HandlerTaskCtx = @ptrCast(@alignCast(raw_ctx));
+        fn handlerTaskEntry(ctx: *HandlerTaskCtx) void {
             const server = ctx.server;
             const allocator = server.async_allocator.?;
 

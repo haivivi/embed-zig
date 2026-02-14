@@ -71,8 +71,7 @@ const StaInitCtx = struct {
 };
 
 /// STA init task - runs on IRAM stack to avoid XIP PSRAM conflict
-fn staInitTask(ctx_ptr: ?*anyopaque) void {
-    const ctx: *StaInitCtx = @ptrCast(@alignCast(ctx_ptr));
+fn staInitTask(ctx: *StaInitCtx) void {
 
     // 1. Initialize event loop
     idf.event.init() catch {
@@ -116,8 +115,7 @@ const StaConnectCtx = struct {
 };
 
 /// STA connect task - runs on IRAM stack
-fn staConnectTask(ctx_ptr: ?*anyopaque) void {
-    const ctx: *StaConnectCtx = @ptrCast(@alignCast(ctx_ptr));
+fn staConnectTask(ctx: *StaConnectCtx) void {
 
     const ssid_len = std.mem.indexOfScalar(u8, &ctx.ssid, 0) orelse ctx.ssid.len;
     const pass_len = std.mem.indexOfScalar(u8, &ctx.password, 0) orelse ctx.password.len;
@@ -167,11 +165,7 @@ pub const StaDriver = struct {
         defer wg.deinit();
 
         var ctx = StaInitCtx{};
-        wg.go("sta_init", staInitTask, &ctx, .{
-            .stack_size = 8192,
-            .priority = 20,
-            .allocator = heap.iram,
-        }) catch {
+        wg.go(staInitTask, .{&ctx}) catch {
             return error.InitFailed;
         };
         wg.wait();
@@ -216,11 +210,7 @@ pub const StaDriver = struct {
         @memcpy(ctx.ssid[0..ssid_len], ssid[0..ssid_len]);
         @memcpy(ctx.password[0..pass_len], password[0..pass_len]);
 
-        wg.go("sta_conn", staConnectTask, &ctx, .{
-            .stack_size = 8192,
-            .priority = 20,
-            .allocator = heap.iram,
-        }) catch {
+        wg.go(staConnectTask, .{&ctx}) catch {
             log.err("Failed to spawn connect task", .{});
             return;
         };
@@ -288,8 +278,7 @@ const ApInitCtx = struct {
 };
 
 /// AP init task - runs on IRAM stack
-fn apInitTask(ctx_ptr: ?*anyopaque) void {
-    const ctx: *ApInitCtx = @ptrCast(@alignCast(ctx_ptr));
+fn apInitTask(ctx: *ApInitCtx) void {
 
     // 1. Initialize event loop
     idf.event.init() catch {
@@ -339,11 +328,7 @@ pub const ApDriver = struct {
         defer wg.deinit();
 
         var ctx = ApInitCtx{};
-        wg.go("ap_init", apInitTask, &ctx, .{
-            .stack_size = 8192,
-            .priority = 20,
-            .allocator = heap.iram,
-        }) catch {
+        wg.go(apInitTask, .{&ctx}) catch {
             return error.InitFailed;
         };
         wg.wait();
