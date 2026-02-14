@@ -29,6 +29,7 @@ fn runZigTest(
     host: []const u8,
     path: []const u8,
     test_name: []const u8,
+    range_end: i32,
 ) void {
     log.info("", .{});
     log.info("--- [ZIG] {s} ---", .{test_name});
@@ -94,11 +95,18 @@ fn runZigTest(
 
     // HTTP GET
     var request_buf: [512]u8 = undefined;
-    const request = std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n", .{ path, host }) catch {
-        log.err("Request too long", .{});
-        tls_client.deinit();
-        return;
-    };
+    const request = if (range_end > 0)
+        std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}\r\nRange: bytes=0-{}\r\nConnection: close\r\n\r\n", .{ path, host, range_end }) catch {
+            log.err("Request too long", .{});
+            tls_client.deinit();
+            return;
+        }
+    else
+        std.fmt.bufPrint(&request_buf, "GET {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n\r\n", .{ path, host }) catch {
+            log.err("Request too long", .{});
+            tls_client.deinit();
+            return;
+        };
 
     _ = tls_client.send(request) catch |err| {
         log.err("TLS send failed: {}", .{err});
@@ -218,11 +226,11 @@ pub fn run(env: anytype) void {
 
                 const dns_server = if (dhcp_dns[0] != 0) dhcp_dns else [4]u8{ 223, 5, 5, 5 };
 
-                // Same tests with Zig TLS
-                runZigTest(dns_server, "httpbin.org", "/get", "HTTPS small (httpbin)");
+                // Same tests with Zig TLS — QQ CDN (domestic)
+                runZigTest(dns_server, "dldir1.qq.com", "/weixin/Windows/WeChatSetup.exe", "HTTPS 1KB (qq CDN)", 1023);
                 Board.time.sleepMs(2000);
 
-                runZigTest(dns_server, "httpbin.org", "/bytes/102400", "HTTPS 100KB download");
+                runZigTest(dns_server, "dldir1.qq.com", "/weixin/Windows/WeChatSetup.exe", "HTTPS 100KB (qq CDN)", 102399);
 
                 state = .running_zig;
             },

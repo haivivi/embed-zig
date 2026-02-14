@@ -47,7 +47,7 @@ static int my_rng(void *ctx, unsigned char *output, size_t len) {
  * Run a single native HTTPS test.
  * Returns 0 on success, -1 on error.
  */
-static int run_native_test(const char *host, const char *path, const char *test_name) {
+static int run_native_test(const char *host, const char *path, const char *test_name, int range_end) {
     uint32_t t_start, t_dns, t_tcp, t_tls, t_body_start, t_end;
     int ret;
     char err_buf[128];
@@ -200,12 +200,23 @@ static int run_native_test(const char *host, const char *path, const char *test_
     /* ---- HTTP GET ---- */
     {
         char request[512];
-        int req_len = snprintf(request, sizeof(request),
-            "GET %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "Connection: close\r\n"
-            "\r\n",
-            path, host);
+        int req_len;
+        if (range_end > 0) {
+            req_len = snprintf(request, sizeof(request),
+                "GET %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Range: bytes=0-%d\r\n"
+                "Connection: close\r\n"
+                "\r\n",
+                path, host, range_end);
+        } else {
+            req_len = snprintf(request, sizeof(request),
+                "GET %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Connection: close\r\n"
+                "\r\n",
+                path, host);
+        }
 
         ret = mbedtls_ssl_write(&ssl, (unsigned char *)request, req_len);
         if (ret < 0) {
@@ -307,13 +318,15 @@ void bk_native_https_test(void) {
 
     rtos_delay_milliseconds(1000);
 
-    /* Test 1: Small HTTPS request */
-    run_native_test("httpbin.org", "/get", "HTTPS small (httpbin)");
+    /* Test 1: Small HTTPS request (1KB range) */
+    run_native_test("dldir1.qq.com", "/weixin/Windows/WeChatSetup.exe",
+                    "HTTPS 1KB (qq CDN)", 1023);
 
     rtos_delay_milliseconds(2000);
 
-    /* Test 2: 100KB download */
-    run_native_test("httpbin.org", "/bytes/102400", "HTTPS 100KB download");
+    /* Test 2: 100KB download (range request) */
+    run_native_test("dldir1.qq.com", "/weixin/Windows/WeChatSetup.exe",
+                    "HTTPS 100KB (qq CDN)", 102399);
 
     BK_LOGI(TAG, "\r\n");
     BK_LOGI(TAG, "=== [NATIVE] All Tests Complete ===\r\n");
