@@ -31,3 +31,4 @@ pub const mic = @import("mic.zig");
 pub const aec = @import("aec.zig");
 pub const runtime = @import("runtime.zig");
 pub const timer = @import("timer.zig");
+pub const ble = @import("ble.zig");

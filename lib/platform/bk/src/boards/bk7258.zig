@@ -268,6 +268,13 @@ pub const Timer = armino.timer.Timer;
 pub const TimerCallback = armino.timer.TimerCallback;
 
 // ============================================================================
+// BLE (HCI transport via Armino BLE controller)
+// ============================================================================
+
+pub const HciDriver = impl.HciDriver;
+pub const hci_spec = impl.hci.hci_spec;
+
+// ============================================================================
 // Default GPIO assignments (BK7258 dev board)
 // ============================================================================
 

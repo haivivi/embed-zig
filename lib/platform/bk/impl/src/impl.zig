@@ -46,3 +46,6 @@ pub const MicDriver = mic.MicDriver;
 
 pub const timer = @import("timer.zig");
 pub const Timer = timer.Timer;
+
+pub const hci = @import("hci.zig");
+pub const HciDriver = hci.HciDriver;

@@ -112,6 +112,12 @@ filegroup(
     srcs = ["src/bk_zig_timer_helper.c"],
 )
 
+# BLE HCI transport (ring buffer + callbacks for BLE controller)
+filegroup(
+    name = "c_helpers_ble",
+    srcs = ["src/bk_zig_ble_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",
