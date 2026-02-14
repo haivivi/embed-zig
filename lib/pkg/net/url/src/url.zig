@@ -242,7 +242,11 @@ fn parseAuthority(result: *Url, authority: []const u8) ParseError!void {
         const after = host_part[bracket + 1 ..];
         if (after.len == 0) return;
         if (after[0] != ':') return error.InvalidHost;
-        result.port = parsePort(after[1..]) orelse return error.InvalidPort;
+        // RFC 3986: port = *DIGIT — empty port after ':' is valid
+        const port_str = after[1..];
+        if (port_str.len > 0) {
+            result.port = parsePort(port_str) orelse return error.InvalidPort;
+        }
     } else {
         // Regular host — split on last ':' for port
         if (lastIndexOf(host_part, ':')) |colon| {
@@ -379,6 +383,13 @@ test "IPv6 host with port" {
     try testing.expectEqualStrings("[2001:db8::1]", u.host.?);
     try testing.expectEqualStrings("2001:db8::1", u.hostname().?);
     try testing.expectEqual(@as(u16, 8080), u.port.?);
+    try testing.expectEqualStrings("/path", u.path);
+}
+
+test "IPv6 trailing colon, no port" {
+    const u = try parse("http://[::1]:/path");
+    try testing.expectEqualStrings("[::1]", u.host.?);
+    try testing.expect(u.port == null);
     try testing.expectEqualStrings("/path", u.path);
 }
 
