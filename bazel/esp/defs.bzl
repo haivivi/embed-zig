@@ -1173,6 +1173,13 @@ if [[ "$ESP_PORT_CONFIG" == websim://* ]]; then
     WEBSIM_ADDR="${{ESP_PORT_CONFIG#websim://}}"
     WEBSIM_HOST="${{WEBSIM_ADDR%%:*}}"
     WEBSIM_PORT="${{WEBSIM_ADDR##*:}}"
+    # Validate port: if no ':' in URL, ##*: returns the whole string (== host)
+    if [[ "$WEBSIM_PORT" == "$WEBSIM_HOST" || -z "$WEBSIM_PORT" ]]; then
+        echo "[flash] ERROR: No port in websim URL '$ESP_PORT_CONFIG'"
+        echo "[flash] Usage: --//bazel:port=websim://localhost:PORT"
+        echo "[flash] Start the simulator first: bazel run //tools/websim"
+        exit 1
+    fi
     echo "[flash] WebSim mode: $WEBSIM_HOST:$WEBSIM_PORT"
 
     # Board config is embedded in WASM (read by JS via getBoardConfigPtr/Len exports)

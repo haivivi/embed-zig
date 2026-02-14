@@ -381,7 +381,10 @@ def _websim_native_impl(ctx):
     # Link libc++ for webview C++ code
     zig_args.extend(["-lc++", "-lc"])
 
-    # macOS: link frameworks (WebKit for webview, Cocoa for clipboard/media capture)
+    # Platform-specific linking.
+    # Currently macOS-only: WebKit (webview backend) + Cocoa (clipboard/media).
+    # Linux would need WebKitGTK + GTK, Windows would need WebView2 + COM.
+    # TODO: Add platform detection when Linux/Windows support is added.
     zig_args.extend(["-framework", "WebKit", "-framework", "Cocoa"])
 
     # Compute webview include dir
