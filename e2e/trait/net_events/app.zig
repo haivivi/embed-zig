@@ -12,8 +12,8 @@ const platform = @import("platform.zig");
 const log = platform.log;
 const NetEvent = platform.NetEvent;
 
-const SSID = "HAIVIVI-MFG";
-const PASSWORD = "!haivivi";
+var g_ssid: []const u8 = "";
+var g_password: []const u8 = "";
 
 // Collected events (ring buffer, max 16)
 const MAX_EVENTS = 16;
@@ -81,8 +81,8 @@ fn runTests() !void {
 
     // Test 2: Connect → dhcp_bound
     resetEvents();
-    log.info("[e2e] INFO: connecting to {s}...", .{SSID});
-    wifi.connect(SSID, PASSWORD);
+    log.info("[e2e] INFO: connecting to {s}...", .{g_ssid});
+    wifi.connect(g_ssid, g_password);
 
     // Wait for connection + DHCP (up to 30s)
     var waited: u32 = 0;
@@ -156,7 +156,7 @@ fn runTests() !void {
     // Don't reset — ip_lost from disconnect may arrive late
     const events_before_reconnect = getEventCount();
     log.info("[e2e] INFO: reconnecting...", .{});
-    wifi.connect(SSID, PASSWORD);
+    wifi.connect(g_ssid, g_password);
 
     waited = 0;
     while (!wifi.isConnected() and waited < 30000) {
@@ -222,7 +222,9 @@ fn runTests() !void {
     log.info("[e2e] PASS: trait/net_events", .{});
 }
 
-pub fn run(_: anytype) void {
+pub fn run(env: anytype) void {
+    g_ssid = env.wifi_ssid;
+    g_password = env.wifi_password;
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/net_events — {}", .{err});
     };

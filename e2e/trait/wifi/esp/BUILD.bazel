@@ -1,6 +1,12 @@
 load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 load("//bazel/zig:defs.bzl", "zig_module")
+load("//bazel:env.bzl", "make_env_file")
 package(default_visibility = ["//visibility:public"])
+
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD"],
+)
 
 esp_modules()
 
@@ -34,6 +40,7 @@ esp_zig_app(
     ],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
+    env = ":env",
     tags = ["manual"],
 )
 

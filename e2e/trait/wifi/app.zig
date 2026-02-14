@@ -11,6 +11,9 @@ const std = @import("std");
 const platform = @import("platform.zig");
 const log = platform.log;
 
+var g_ssid: []const u8 = "";
+var g_password: []const u8 = "";
+
 fn runTests() !void {
     log.info("[e2e] START: hal/wifi", .{});
 
@@ -23,8 +26,8 @@ fn runTests() !void {
     log.info("[e2e] PASS: hal/wifi/init", .{});
 
     // Test 2: Connect to AP
-    const ssid = "HAIVIVI-MFG";
-    const password = "!haivivi";
+    const ssid = g_ssid;
+    const password = g_password;
     log.info("[e2e] INFO: connecting to {s}...", .{ssid});
     wifi.connect(ssid, password);
 
@@ -103,7 +106,9 @@ fn runTests() !void {
     log.info("[e2e] PASS: hal/wifi", .{});
 }
 
-pub fn run(_: anytype) void {
+pub fn run(env: anytype) void {
+    g_ssid = env.wifi_ssid;
+    g_password = env.wifi_password;
     runTests() catch |err| {
         log.err("[e2e] FATAL: hal/wifi — {}", .{err});
     };

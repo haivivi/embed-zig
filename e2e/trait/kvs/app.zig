@@ -68,8 +68,8 @@ fn runTests() !void {
 pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/kvs — {}", .{err});
+        return;
     };
-    // If runTests returned normally via the "not_found" early return, still log pass
     log.info("[e2e] PASS: trait/kvs", .{});
 }
 
