@@ -1,0 +1,22 @@
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_module")
+package(default_visibility = ["//visibility:public"])
+
+esp_modules()
+
+zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":idf"])
+
+filegroup(name = "srcs", srcs = ["//e2e/trait/kvs:app_srcs"] + glob(["*.zig"]))
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit", "korvo2_v3"],
+    requires = ["nvs_flash"],
+    deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app_internal",
+    tags = ["manual"],
+)
+
+esp_flash(name = "flash", app = ":app")
