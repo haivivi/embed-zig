@@ -167,6 +167,23 @@ pub const Socket = struct {
         return std.mem.bigToNative(u16, addr.port);
     }
 
+    /// Listen for incoming connections (TCP server)
+    pub fn listen(self: *Self) Error!void {
+        posix.listen(self.fd, 128) catch {
+            return error.ListenFailed;
+        };
+    }
+
+    /// Accept an incoming connection (TCP server)
+    pub fn accept(self: *Self) Error!Self {
+        var client_addr: posix.sockaddr.in = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        const client_fd = posix.accept(self.fd, @ptrCast(&client_addr), &addr_len, 0) catch {
+            return error.AcceptFailed;
+        };
+        return .{ .fd = client_fd };
+    }
+
     /// Get the underlying file descriptor
     pub fn getFd(self: *Self) i32 {
         return @intCast(self.fd);

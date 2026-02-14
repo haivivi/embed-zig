@@ -1,15 +1,16 @@
-//! e2e: trait/socket — Verify TCP connect/send/recv, UDP sendTo/recvFrom
+//! e2e: trait/socket — Verify TCP connect/send/recv/listen/accept, UDP sendTo/recvFrom
 //!
 //! Tests:
-//!   1. TCP: connect to localhost server, send + recv echo
+//!   1. TCP: listen + accept + echo via trait Socket (all localhost)
 //!   2. UDP: sendTo + recvFromWithAddr on localhost
 //!
-//! The TCP echo server is provided by board.zig (platform-specific).
+//! Both server and client use trait Socket — fully cross-platform.
 
+const std = @import("std");
 const platform = @import("platform.zig");
 const log = platform.log;
 const Socket = platform.Socket;
-const board = @import("board");
+const Rt = platform.runtime;
 
 fn runTests() !void {
     log.info("[e2e] START: trait/socket", .{});
@@ -20,20 +21,43 @@ fn runTests() !void {
     log.info("[e2e] PASS: trait/socket", .{});
 }
 
-// Test 1: TCP connect + send + recv via localhost echo server
+// Test 1: TCP listen + accept + echo — all using trait Socket
 fn testTcpEcho() !void {
     const localhost: [4]u8 = .{ 127, 0, 0, 1 };
 
-    // Board provides the echo server (posix on std, lwip on ESP)
-    var server = board.TcpEchoServer.start(localhost) catch |err| {
-        log.err("[e2e] FAIL: trait/socket/tcp — server start failed: {}", .{err});
+    // Server: bind + listen
+    var server = Socket.tcp() catch |err| {
+        log.err("[e2e] FAIL: trait/socket/tcp — server tcp() failed: {}", .{err});
         return error.TcpServerFailed;
     };
-    defer server.stop();
+    defer server.close();
 
-    const port = server.port;
+    server.bind(localhost, 0) catch |err| {
+        log.err("[e2e] FAIL: trait/socket/tcp — bind failed: {}", .{err});
+        return error.TcpBindFailed;
+    };
+    const port = server.getBoundPort() catch |err| {
+        log.err("[e2e] FAIL: trait/socket/tcp — getBoundPort failed: {}", .{err});
+        return error.TcpGetPortFailed;
+    };
+    server.listen() catch |err| {
+        log.err("[e2e] FAIL: trait/socket/tcp — listen failed: {}", .{err});
+        return error.TcpListenFailed;
+    };
 
-    // Client: use trait Socket
+    // Echo server in background thread
+    const thread = try Rt.Thread.spawn(.{}, struct {
+        fn run(srv: *Socket) void {
+            var client = srv.accept() catch return;
+            defer client.close();
+            var buf: [64]u8 = undefined;
+            const n = client.recv(&buf) catch return;
+            _ = client.send(buf[0..n]) catch {};
+        }
+    }.run, .{&server});
+    defer thread.join();
+
+    // Client: connect + send + recv
     var client = Socket.tcp() catch |err| {
         log.err("[e2e] FAIL: trait/socket/tcp — client tcp() failed: {}", .{err});
         return error.TcpClientFailed;
@@ -58,7 +82,6 @@ fn testTcpEcho() !void {
         return error.TcpRecvFailed;
     };
 
-    const std = @import("std");
     if (!std.mem.eql(u8, buf[0..n], msg)) {
         log.err("[e2e] FAIL: trait/socket/tcp — echo mismatch", .{});
         return error.TcpEchoMismatch;
@@ -103,7 +126,6 @@ fn testUdpEcho() !void {
         return error.UdpRecvFailed;
     };
 
-    const std = @import("std");
     if (!std.mem.eql(u8, buf[0..result.len], msg)) {
         log.err("[e2e] FAIL: trait/socket/udp — message mismatch", .{});
         return error.UdpMismatch;
