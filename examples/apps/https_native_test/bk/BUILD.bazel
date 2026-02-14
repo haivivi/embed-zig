@@ -56,6 +56,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_wifi",
         "//lib/platform/bk/armino:c_helpers_socket",
         "//lib/platform/bk/armino:c_helpers_crypto",
+        "//lib/platform/bk/armino:c_helpers_rsa",
         "//lib/platform/bk/armino:c_helpers_x509",
         "//lib/platform/bk/armino:c_helpers_heap",
         "//lib/platform/bk/armino:c_helpers_runtime",

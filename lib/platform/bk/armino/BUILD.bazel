@@ -100,6 +100,12 @@ filegroup(
     srcs = ["src/bk_zig_x509_helper.c"],
 )
 
+# RSA signature verification (PKCS1v1.5 + PSS via mbedTLS)
+filegroup(
+    name = "c_helpers_rsa",
+    srcs = ["src/bk_zig_rsa_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

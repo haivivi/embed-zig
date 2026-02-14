@@ -442,6 +442,33 @@ pub const Ed25519 = struct {
 };
 
 pub const rsa = struct {
+    // C helper externs (bk_zig_rsa_helper.c)
+    extern fn bk_zig_rsa_pkcs1v15_verify(
+        modulus: [*]const u8, modulus_len: c_uint,
+        exponent: [*]const u8, exponent_len: c_uint,
+        hash: [*]const u8, hash_len: c_uint,
+        signature: [*]const u8,
+        hash_id: c_int,
+    ) c_int;
+
+    extern fn bk_zig_rsa_pss_verify(
+        modulus: [*]const u8, modulus_len: c_uint,
+        exponent: [*]const u8, exponent_len: c_uint,
+        hash: [*]const u8, hash_len: c_uint,
+        signature: [*]const u8,
+        hash_id: c_int,
+    ) c_int;
+
+    pub const HashType = enum { sha256, sha384, sha512 };
+
+    fn hashTypeToId(ht: HashType) c_int {
+        return switch (ht) {
+            .sha256 => 0,
+            .sha384 => 1,
+            .sha512 => 2,
+        };
+    }
+
     pub const PublicKey = struct {
         n: []const u8,
         e: []const u8,
@@ -488,13 +515,68 @@ pub const rsa = struct {
             return PublicKey{ .n = modulus, .e = exponent };
         }
     };
+
     pub const PKCS1v1_5Signature = struct {
-        pub fn verify(comptime _: usize, _: anytype, _: []const u8, _: PublicKey, _: HashType) !void {}
+        pub fn verify(
+            comptime modulus_len: usize,
+            sig: [modulus_len]u8,
+            msg: []const u8,
+            pk: PublicKey,
+            comptime hash_type: HashType,
+        ) !void {
+            var hash_buf: [64]u8 = undefined;
+            const hash_len: usize = switch (hash_type) {
+                .sha256 => 32,
+                .sha384 => 48,
+                .sha512 => 64,
+            };
+            switch (hash_type) {
+                .sha256 => Sha256.hash(msg, hash_buf[0..32], .{}),
+                .sha384 => Sha384.hash(msg, hash_buf[0..48], .{}),
+                .sha512 => Sha512.hash(msg, hash_buf[0..64], .{}),
+            }
+
+            const ret = bk_zig_rsa_pkcs1v15_verify(
+                pk.n.ptr, @intCast(pk.n.len),
+                pk.e.ptr, @intCast(pk.e.len),
+                &hash_buf, @intCast(hash_len),
+                &sig,
+                hashTypeToId(hash_type),
+            );
+            if (ret != 0) return error.SignatureVerificationFailed;
+        }
     };
+
     pub const PSSSignature = struct {
-        pub fn verify(comptime _: usize, _: anytype, _: []const u8, _: PublicKey, _: HashType) !void {}
+        pub fn verify(
+            comptime modulus_len: usize,
+            sig: [modulus_len]u8,
+            msg: []const u8,
+            pk: PublicKey,
+            comptime hash_type: HashType,
+        ) !void {
+            var hash_buf: [64]u8 = undefined;
+            const hash_len: usize = switch (hash_type) {
+                .sha256 => 32,
+                .sha384 => 48,
+                .sha512 => 64,
+            };
+            switch (hash_type) {
+                .sha256 => Sha256.hash(msg, hash_buf[0..32], .{}),
+                .sha384 => Sha384.hash(msg, hash_buf[0..48], .{}),
+                .sha512 => Sha512.hash(msg, hash_buf[0..64], .{}),
+            }
+
+            const ret = bk_zig_rsa_pss_verify(
+                pk.n.ptr, @intCast(pk.n.len),
+                pk.e.ptr, @intCast(pk.e.len),
+                &hash_buf, @intCast(hash_len),
+                &sig,
+                hashTypeToId(hash_type),
+            );
+            if (ret != 0) return error.SignatureVerificationFailed;
+        }
     };
-    pub const HashType = enum { sha256, sha384, sha512 };
 };
 
 // ============================================================================
