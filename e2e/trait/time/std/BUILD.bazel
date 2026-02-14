@@ -1,0 +1,21 @@
+# e2e: trait/time — std platform test (CI-mandatory)
+#
+# Run: bazel test //e2e/trait/time/std:test
+
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "test",
+    main = "test.zig",
+    srcs = [
+        "test.zig",
+        "board.zig",
+    ],
+    deps = [
+        "//e2e/trait/time:e2e_time",
+        "//lib/platform/std",
+    ],
+    tags = ["e2e"],
+)

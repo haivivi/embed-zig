@@ -1,0 +1,19 @@
+# e2e: trait/sync — std platform test (CI-mandatory)
+
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "test",
+    main = "test.zig",
+    srcs = [
+        "test.zig",
+        "board.zig",
+    ],
+    deps = [
+        "//e2e/trait/sync:e2e_sync",
+        "//lib/platform/std",
+    ],
+    tags = ["e2e"],
+)

@@ -1,0 +1,9 @@
+# e2e: trait/time — ESP platform test (manual, requires hardware)
+#
+# Build: bazel build //e2e/trait/time/esp:app
+# Flash: bazel run //e2e/trait/time/esp:flash
+
+# TODO: Add esp_zig_app target when ready
+# load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])

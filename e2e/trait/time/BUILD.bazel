@@ -1,0 +1,14 @@
+# e2e: trait/time — cross-platform test logic
+#
+# This library has zero platform deps. Board is injected via comptime param.
+
+load("//bazel/zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "e2e_time",
+    main = "app.zig",
+    srcs = ["app.zig"],
+    module_name = "e2e_time",
+)

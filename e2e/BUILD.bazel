@@ -1,0 +1,21 @@
+# e2e — Platform Conformance Tests
+#
+# Each test verifies one trait or HAL interface across platforms.
+# std tests run in CI on every push; ESP tests are manual (require hardware).
+#
+# Usage:
+#   bazel test //e2e/...                          # all std tests (CI)
+#   bazel test //e2e/trait/time/std:test           # single test
+#   bazel build //e2e/trait/time/esp:app           # ESP build (manual)
+
+package(default_visibility = ["//visibility:public"])
+
+# Aggregate all std platform tests (CI-mandatory)
+test_suite(
+    name = "std",
+    tests = [
+        "//e2e/trait/time/std:test",
+        "//e2e/trait/log/std:test",
+        "//e2e/trait/sync/std:test",
+    ],
+)
