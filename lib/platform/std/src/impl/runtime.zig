@@ -176,3 +176,27 @@ test "spawn fire and forget" {
     }
     try std.testing.expect(done.load(.acquire));
 }
+
+test "Thread joinable spawn" {
+    var called = std.atomic.Value(bool).init(false);
+
+    const t = try std.Thread.spawn(.{}, struct {
+        fn run(c: *std.atomic.Value(bool)) void {
+            std.Thread.sleep(1 * std.time.ns_per_ms);
+            c.store(true, .release);
+        }
+    }.run, .{&called});
+
+    t.join();
+    try std.testing.expect(called.load(.acquire));
+}
+
+test "nowMs returns positive" {
+    const ms = nowMs();
+    try std.testing.expect(ms > 0);
+}
+
+test "getCpuCount returns at least 1" {
+    const count = try getCpuCount();
+    try std.testing.expect(count >= 1);
+}

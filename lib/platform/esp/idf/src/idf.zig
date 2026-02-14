@@ -30,7 +30,7 @@
 //! | Sync | sync | Mutex, Semaphore, Event |
 //! | Sync | queue | FreeRTOS queue |
 //! | Async | runtime | Mutex, Condition, spawn (for pkg/channel, pkg/waitgroup) |
-//! | Thread | thread | FreeRTOS task wrapper |
+//! | Thread | (removed — use runtime.Thread) |
 //! | Time | time | Sleep, timestamps |
 //! | Log | log | ESP logging |
 
@@ -156,7 +156,6 @@ pub const Queue = queue.Queue;
 // ============================================================================
 
 pub const runtime = @import("runtime.zig");
-pub const thread = @import("thread.zig");
 pub const time = @import("time.zig");
 pub const sleepMs = time.sleepMs;
 pub const nowMs = time.nowMs;

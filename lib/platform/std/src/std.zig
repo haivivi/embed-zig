@@ -17,7 +17,6 @@
 //!   mutex.unlock();
 
 // impl modules
-pub const thread = @import("impl/thread.zig");
 pub const time = @import("impl/time.zig");
 pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");

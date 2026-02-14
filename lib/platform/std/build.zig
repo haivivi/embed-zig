@@ -31,7 +31,6 @@ pub fn build(b: *std.Build) void {
     const test_files = [_][]const u8{
         "src/impl/sync.zig",
         "src/impl/time.zig",
-        "src/impl/thread.zig",
         "src/impl/runtime.zig",
     };
 
