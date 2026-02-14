@@ -18,7 +18,7 @@ esp_zig_app(
         "include(${_ESP_LIB}/platform/esp/idf/src/mbed_tls/mbed_tls.cmake)",
     ],
     extra_c_sources = ["MBED_TLS_C_SOURCES"],
-    sdkconfig = "//examples/esp:esp32s3",
+    sdkconfig = "//examples/esp:esp32s3_mbedtls",
     app_config = "//examples/esp:app",
     tags = ["manual"],
 )

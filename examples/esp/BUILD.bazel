@@ -225,6 +225,16 @@ esp_sdkconfig(
     lwip = ":lwip",
 )
 
+# Basic + mbedTLS crypto (no WiFi) — for crypto tests
+esp_sdkconfig(
+    name = "esp32s3_mbedtls",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram",
+    crypto = ":mbedtls_full",
+)
+
 # For WiFi apps - larger stack in internal RAM
 esp_sdkconfig(
     name = "esp32s3_wifi",
