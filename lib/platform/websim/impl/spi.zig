@@ -163,9 +163,9 @@ pub const SimSpi = struct {
 
     fn writePixels(self: *Self, data: []const u8) void {
         const shared = &state_mod.state;
-        const W = state_mod.DISPLAY_WIDTH;
+        const W: u32 = @as(u32, shared.display_width);
         const BPP = state_mod.DISPLAY_BPP;
-        const FB_SIZE = state_mod.DISPLAY_FB_SIZE;
+        const FB_SIZE = state_mod.MAX_DISPLAY_FB_SIZE;
 
         var i: usize = 0;
         while (i + BPP <= data.len) : (i += BPP) {

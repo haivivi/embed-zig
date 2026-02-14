@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim — Korvo-2 V3 (Native)</title>
+    <style>
+:root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-2: #232733;
+    --border: #2d3245;
+    --text: #e1e4ed;
+    --text-dim: #7a7f96;
+    --accent: #6c8cff;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --pcb: #1a5c2a;
+    --pcb-dark: #144a22;
+    --pcb-border: #0d3518;
+    --pin: #c4a85a;
+    --radius: 12px;
+    --radius-sm: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: var(--bg); color: var(--text); font-family: var(--font);
+    min-height: 100vh; display: flex; justify-content: center; padding: 40px 20px;
+}
+.sim-container { width: 100%; max-width: 360px; }
+.sim-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;
+}
+.sim-header h1 { font-size: 18px; font-weight: 600; color: var(--text-dim); }
+.sim-header .accent { color: var(--accent); }
+.status {
+    font-size: 12px; font-family: var(--mono); padding: 4px 10px; border-radius: 20px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+}
+.status.running { color: var(--green); border-color: rgba(74, 222, 128, 0.3); }
+.board {
+    background: var(--pcb); border: 2px solid var(--pcb-border); border-radius: var(--radius);
+    padding: 20px 16px; display: flex; flex-direction: column; align-items: center;
+    gap: 20px; margin-bottom: 16px;
+}
+.board-label {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    color: rgba(255,255,255,0.25); letter-spacing: 0.1em; text-transform: uppercase;
+}
+.component-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.component-label {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.1em; color: rgba(255,255,255,0.3);
+}
+.hint { font-size: 9px; color: rgba(255,255,255,0.2); }
+.leds { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.led {
+    width: 16px; height: 16px; border-radius: 50%; background: #0a3015;
+    border: 1.5px solid #0d3518; transition: all 0.1s ease;
+}
+.led.lit {
+    border-color: transparent;
+    box-shadow: 0 0 12px var(--led-color, #4ade80), 0 0 4px var(--led-color, #4ade80);
+}
+.adc-buttons { display: flex; flex-direction: column; gap: 8px; }
+.btn-row { display: flex; gap: 8px; justify-content: center; }
+.hw-button {
+    appearance: none; border: none; background: #222; border-radius: 4px;
+    padding: 0; cursor: pointer; width: 64px; height: 28px;
+    transition: transform 0.05s ease; user-select: none;
+}
+.hw-button:active, .hw-button.pressed { transform: translateY(1px); }
+.btn-inner {
+    display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+    border-radius: 4px; background: linear-gradient(180deg, #444 0%, #333 100%);
+    border: 1px solid #555; border-bottom: 2px solid #222;
+    font-family: var(--mono); font-size: 9px; font-weight: 700; color: #ccc; letter-spacing: 0.05em;
+}
+.hw-button:active .btn-inner, .hw-button.pressed .btn-inner {
+    background: linear-gradient(180deg, #333 0%, #444 100%);
+    border-bottom: 1px solid #222; color: var(--accent);
+}
+.boot-btn { width: 56px; }
+.log-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+}
+.log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+.log-actions { display: flex; gap: 6px; }
+.log-btn {
+    appearance: none; border: 1px solid var(--border); background: transparent;
+    color: var(--text-dim); font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer;
+}
+.log-btn:hover { border-color: var(--accent); color: var(--accent); }
+.log-content {
+    padding: 12px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    max-height: 200px; overflow-y: auto; color: var(--text-dim);
+}
+.log-content .log-line { white-space: pre; }
+.log-content .log-line.info { color: var(--green); }
+.log-content .log-line.error { color: var(--red); }
+.log-content .log-line.warn { color: var(--yellow); }
+/* Recording */
+.rec-btn {
+    appearance: none; border: none; background: #c0392b; color: white;
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    padding: 4px 10px; border-radius: 20px; cursor: pointer; letter-spacing: 0.05em;
+}
+.rec-btn:hover { background: #e74c3c; }
+.rec-btn.recording { background: #e74c3c; animation: rec-pulse 1s infinite; }
+@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+.rec-status { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+    </style>
+</head>
+<body>
+    <div class="sim-container">
+        <header class="sim-header">
+            <h1>embed-zig <span class="accent">WebSim</span></h1>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="status" id="status">Loading...</span>
+                <button class="rec-btn" id="recBtn">REC</button>
+                <span class="rec-status" id="recStatus"></span>
+            </div>
+        </header>
+
+        <div class="board">
+            <div class="board-label">ESP32-S3-Korvo-2 V3 (Native)</div>
+
+            <div class="component-group">
+                <div class="component-label">LED Strip (9x WS2812)</div>
+                <div class="leds" id="ledContainer">
+                    <div class="led"></div><div class="led"></div><div class="led"></div>
+                    <div class="led"></div><div class="led"></div><div class="led"></div>
+                    <div class="led"></div><div class="led"></div><div class="led"></div>
+                </div>
+            </div>
+
+            <div class="component-group">
+                <div class="component-label">ADC Buttons</div>
+                <div class="adc-buttons">
+                    <div class="btn-row">
+                        <button class="hw-button adc-btn" data-adc="425"><span class="btn-inner">VOL+</span></button>
+                        <button class="hw-button adc-btn" data-adc="925"><span class="btn-inner">VOL-</span></button>
+                        <button class="hw-button adc-btn" data-adc="1300"><span class="btn-inner">SET</span></button>
+                    </div>
+                    <div class="btn-row">
+                        <button class="hw-button adc-btn" data-adc="1800"><span class="btn-inner">PLAY</span></button>
+                        <button class="hw-button adc-btn" data-adc="2330"><span class="btn-inner">MUTE</span></button>
+                        <button class="hw-button adc-btn" data-adc="2875"><span class="btn-inner">REC</span></button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="component-group">
+                <button class="hw-button boot-btn" id="btnBoot"><span class="btn-inner">BOOT</span></button>
+                <div class="hint">Click or Space</div>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <div class="log-actions">
+                    <button class="log-btn" id="logCopy">Copy</button>
+                    <button class="log-btn" id="logClear">Clear</button>
+                </div>
+            </div>
+            <div class="log-content" id="logContent"></div>
+        </div>
+    </div>
+
+    <script>
+/* WebSim Native JS — communicates with Zig via webview bindings */
+const WebSim = (() => {
+    let running = false;
+
+    function updateLEDs(state) {
+        const container = document.getElementById('ledContainer');
+        if (!container || !state.leds) return;
+        const count = state.led_count || 0;
+        for (let i = 0; i < Math.min(count, container.children.length); i++) {
+            const packed = state.leds[i];
+            const el = container.children[i];
+            if (packed) {
+                const c = `rgb(${(packed>>16)&0xFF},${(packed>>8)&0xFF},${packed&0xFF})`;
+                el.classList.add('lit');
+                el.style.background = c;
+                el.style.setProperty('--led-color', c);
+            } else {
+                el.classList.remove('lit');
+                el.style.background = '';
+                el.style.removeProperty('--led-color');
+            }
+        }
+    }
+
+    let logAutoScroll = true;
+    function updateLog(state) {
+        if (!state.log_dirty) return;
+        const content = document.getElementById('logContent');
+        if (!content || !state.logs) return;
+        content.innerHTML = state.logs.map(l => {
+            let c = 'log-line';
+            if (l.startsWith('[INFO]')) c += ' info';
+            else if (l.startsWith('[ERROR]')) c += ' error';
+            else if (l.startsWith('[WARN]')) c += ' warn';
+            return '<div class="' + c + '">' + l.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</div>';
+        }).join('');
+        if (logAutoScroll) content.scrollTop = content.scrollHeight;
+    }
+
+    function initInput() {
+        const adcBtns = document.querySelectorAll('.adc-btn');
+        let activeAdc = null;
+        function setAdc(btn, pressed) {
+            if (pressed) {
+                if (activeAdc && activeAdc !== btn) activeAdc.classList.remove('pressed');
+                activeAdc = btn; btn.classList.add('pressed');
+                zigSetAdcValue(parseInt(btn.dataset.adc));
+            } else {
+                if (activeAdc === btn) activeAdc = null;
+                btn.classList.remove('pressed');
+                zigSetAdcValue(4095);
+            }
+        }
+        adcBtns.forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); setAdc(btn, true); });
+            btn.addEventListener('mouseup', () => setAdc(btn, false));
+            btn.addEventListener('mouseleave', () => { if (activeAdc === btn) setAdc(btn, false); });
+        });
+        const btnBoot = document.getElementById('btnBoot');
+        if (btnBoot) {
+            btnBoot.addEventListener('mousedown', e => { e.preventDefault(); btnBoot.classList.add('pressed'); zigButtonPress(); });
+            btnBoot.addEventListener('mouseup', () => { btnBoot.classList.remove('pressed'); zigButtonRelease(); });
+            btnBoot.addEventListener('mouseleave', () => { if (btnBoot.classList.contains('pressed')) { btnBoot.classList.remove('pressed'); zigButtonRelease(); }});
+        }
+        document.addEventListener('keydown', e => {
+            if (e.repeat) return;
+            const keyMap = {'ArrowUp':425,'ArrowDown':925,'ArrowLeft':1300,'ArrowRight':1800,'Escape':2330,'Enter':2875};
+            const v = keyMap[e.code];
+            if (v !== undefined) { e.preventDefault(); zigSetAdcValue(v); adcBtns.forEach(b => { if (parseInt(b.dataset.adc) === v) b.classList.add('pressed'); }); }
+            if (e.code === 'Space' && btnBoot) { e.preventDefault(); btnBoot.classList.add('pressed'); zigButtonPress(); }
+        });
+        document.addEventListener('keyup', e => {
+            const keyMap = {'ArrowUp':425,'ArrowDown':925,'ArrowLeft':1300,'ArrowRight':1800,'Escape':2330,'Enter':2875};
+            const v = keyMap[e.code];
+            if (v !== undefined) { e.preventDefault(); zigSetAdcValue(4095); adcBtns.forEach(b => { if (parseInt(b.dataset.adc) === v) b.classList.remove('pressed'); }); }
+            if (e.code === 'Space' && btnBoot) { e.preventDefault(); btnBoot.classList.remove('pressed'); zigButtonRelease(); }
+        });
+        const logClear = document.getElementById('logClear');
+        const logContent = document.getElementById('logContent');
+        if (logClear && logContent) logClear.addEventListener('click', () => { logContent.innerHTML = ''; });
+        const logCopy = document.getElementById('logCopy');
+        if (logCopy && logContent) logCopy.addEventListener('click', () => {
+            const ta = document.createElement('textarea');
+            ta.value = logContent.innerText;
+            ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            document.body.appendChild(ta); ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            logCopy.textContent = 'Copied!'; setTimeout(() => { logCopy.textContent = 'Copy'; }, 1000);
+        });
+    }
+
+    async function frame() {
+        if (!running) return;
+        try {
+            const state = await zigGetState();
+            if (state) { updateLEDs(state); updateLog(state); }
+        } catch(e) { console.warn('poll error:', e); }
+        requestAnimationFrame(frame);
+    }
+
+    return {
+        start() {
+            initInput();
+            running = true;
+            const status = document.getElementById('status');
+            if (status) { status.textContent = 'Running'; status.classList.add('running'); }
+            requestAnimationFrame(frame);
+        }
+    };
+})();
+
+WebSim.start();
+
+    /* ====== Recording ====== */
+    (function() {
+        const recBtn = document.getElementById('recBtn');
+        const recStatus = document.getElementById('recStatus');
+        if (!recBtn) return;
+
+        let isRecording = false;
+        let recPath = '';
+        let recStartTime = 0;
+        let recTimer = null;
+        let recCanvas = null;
+        let recCtx = null;
+
+        function initRecCanvas() {
+            if (recCanvas) return;
+            recCanvas = document.createElement('canvas');
+            recCanvas.width = 960;
+            recCanvas.height = 720;
+            recCtx = recCanvas.getContext('2d');
+        }
+
+        /* Capture current page as RGBA using SVG foreignObject */
+        async function captureFrame() {
+            initRecCanvas();
+            const target = document.querySelector('.sim-container') || document.body;
+
+            /* Serialize DOM to SVG foreignObject */
+            const html = target.outerHTML;
+            const styles = Array.from(document.querySelectorAll('style')).map(s => s.outerHTML).join('');
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720">
+                <foreignObject width="100%" height="100%">
+                    <div xmlns="http://www.w3.org/1999/xhtml" style="width:960px;height:720px;background:#0f1117;">
+                        ${styles}${html}
+                    </div>
+                </foreignObject>
+            </svg>`;
+
+            const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    recCtx.fillStyle = '#0f1117';
+                    recCtx.fillRect(0, 0, 960, 720);
+                    recCtx.drawImage(img, 0, 0, 960, 720);
+                    URL.revokeObjectURL(url);
+                    const imageData = recCtx.getImageData(0, 0, 960, 720);
+                    /* Convert to base64 */
+                    const bytes = imageData.data;
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) {
+                        binary += String.fromCharCode(bytes[i]);
+                    }
+                    resolve(btoa(binary));
+                };
+                img.onerror = () => {
+                    URL.revokeObjectURL(url);
+                    resolve(null);
+                };
+                img.src = url;
+            });
+        }
+
+        async function recordLoop() {
+            if (!isRecording) return;
+            const b64 = await captureFrame();
+            if (b64 && isRecording) {
+                try { await zigRecordFrame(b64); } catch(e) {}
+            }
+            /* ~30fps capture */
+            if (isRecording) recTimer = setTimeout(recordLoop, 33);
+        }
+
+        function updateTimer() {
+            if (!isRecording) return;
+            const elapsed = ((Date.now() - recStartTime) / 1000).toFixed(1);
+            recStatus.innerHTML = '<span class="rec-dot active"></span> ' + elapsed + 's';
+            requestAnimationFrame(updateTimer);
+        }
+
+        recBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                /* Start */
+                try {
+                    recPath = await zigStartRecording();
+                    isRecording = true;
+                    recStartTime = Date.now();
+                    recBtn.textContent = 'STOP';
+                    recBtn.classList.add('recording');
+                    recStatus.innerHTML = '<span class="rec-dot active"></span> 0.0s';
+                    recordLoop();
+                    updateTimer();
+                } catch(e) {
+                    recStatus.textContent = 'Error: ' + e;
+                }
+            } else {
+                /* Stop */
+                isRecording = false;
+                if (recTimer) { clearTimeout(recTimer); recTimer = null; }
+                try {
+                    await zigStopRecording();
+                    recStatus.textContent = 'Copied!';
+                    setTimeout(() => { recStatus.textContent = ''; }, 3000);
+                } catch(e) {
+                    recStatus.textContent = 'Error';
+                }
+                recBtn.textContent = 'REC';
+                recBtn.classList.remove('recording');
+            }
+        });
+    })();
+    </script>
+</body>
+</html>

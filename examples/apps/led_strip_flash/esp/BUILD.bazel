@@ -39,4 +39,5 @@ esp_zig_app(
 esp_flash(
     name = "flash",
     app = ":app",
+    wasm_app = "//examples/apps/led_strip_flash/websim:sim",
 )

@@ -1,0 +1,235 @@
+/* ============================================================================
+   BK7258 WebSim — 800x480 RGB LCD board
+   ============================================================================ */
+
+:root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-2: #242836;
+    --border: #2d3148;
+    --text: #e0e0e6;
+    --text-dim: #8888a0;
+    --accent: #6c8fff;
+    --accent-glow: rgba(108, 143, 255, 0.3);
+    --green: #4ade80;
+    --red: #f87171;
+    --orange: #fb923c;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+}
+
+.sim-container {
+    max-width: 960px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Header */
+.sim-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+.sim-header h1 { font-size: 16px; font-weight: 600; }
+.accent { color: var(--accent); }
+.board-name {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-left: 4px;
+}
+.header-right { display: flex; align-items: center; gap: 10px; }
+.status {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text-dim);
+}
+.status.running { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+
+/* Device frame */
+.device {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Display */
+.display-area {
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    border: 2px solid var(--border);
+}
+#displayCanvas {
+    width: 100%;
+    max-width: 800px;
+    height: auto;
+    image-rendering: pixelated;
+}
+
+/* Controls row */
+.controls-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.button-group {
+    display: flex;
+    gap: 6px;
+}
+
+.hw-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 14px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.1s;
+    user-select: none;
+}
+.hw-button:hover { background: #2f3450; }
+.hw-button:active, .hw-button.pressed {
+    background: var(--accent);
+    color: #fff;
+    transform: scale(0.95);
+}
+
+/* Status panel */
+.status-panel {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+    justify-content: center;
+}
+.status-item {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text-dim);
+}
+.status-item.connected, .status-item.has-ip { color: var(--green); }
+.status-item.disconnected { color: var(--red); }
+.status-item.advertising { color: var(--orange); }
+
+/* Sim controls */
+.sim-controls {
+    display: flex;
+    gap: 4px;
+}
+.sim-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.1s;
+}
+.sim-btn:hover { background: #2f3450; color: var(--text); }
+.sim-btn.active { color: var(--green); border-color: var(--green); }
+
+/* LED row */
+.led-row {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0;
+}
+.led-strip { display: flex; gap: 4px; }
+.led {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #333;
+    transition: all 0.1s;
+}
+.led.lit { box-shadow: 0 0 6px 2px var(--led-color); }
+
+/* Log panel */
+.log-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: var(--surface-2);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+}
+.log-actions { display: flex; gap: 4px; }
+.log-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    padding: 2px 8px;
+    font-family: inherit;
+    font-size: 10px;
+    cursor: pointer;
+}
+.log-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.log-btn.active { color: var(--accent); border-color: var(--accent); }
+.log-content {
+    padding: 8px 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.5;
+}
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line.info { color: var(--accent); }
+.log-line.error { color: var(--red); }
+.log-line.warn { color: var(--orange); }
+
+/* Error panel */
+.error-wrap { max-width: 960px; width: 100%; margin-top: 8px; }
+.error-panel { border-color: rgba(248, 113, 113, 0.3); }
+.error-content { max-height: 120px; }
+
+/* Screen recording */
+.rec-screen-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--red);
+    padding: 3px 10px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+.sim-container.recording { box-shadow: 0 0 0 2px var(--red); }

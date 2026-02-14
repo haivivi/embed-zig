@@ -51,6 +51,13 @@ kcp_lib = use_extension("//:extensions.bzl", "kcp_lib")
 use_repo(kcp_lib, "kcp")
 
 # =============================================================================
+# WebSim dependencies (webview, minih264, minimp4)
+# =============================================================================
+
+websim_libs = use_extension("//:extensions.bzl", "websim_libs")
+use_repo(websim_libs, "webview", "minih264", "minimp4")
+
+# =============================================================================
 # Zig toolchain extension (with Xtensa support)
 # =============================================================================
 

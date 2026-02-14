@@ -1,0 +1,14 @@
+{
+  "name": "ESP32-S3 DevKit",
+  "chip": "ESP32-S3",
+  "leds": {"count": 1, "layout": "single"},
+  "buttons": {
+    "adc": [],
+    "boot": true,
+    "power": false
+  },
+  "display": null,
+  "audio": null,
+  "wifi": true,
+  "ble": true
+}

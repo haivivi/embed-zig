@@ -1,0 +1,40 @@
+package(default_visibility = ["//visibility:public"])
+
+# Standalone WebSim simulator.
+# Usage: bazel run //tools/websim
+
+genrule(
+    name = "websim_build",
+    srcs = glob(["*.zig"]) + glob(["*.html"]) + glob(["*.js"]) + glob(["*.m"]) + ["Info.plist"] + [
+        "//third_party/webview:webview_static",
+        "//third_party/webview:webview_headers",
+    ],
+    outs = ["websim"],
+    cmd = """
+        set -e
+        CACHE=$$(mktemp -d)
+        trap "rm -rf $$CACHE" EXIT
+
+        WEBVIEW_INC=$$(dirname $$(echo "$(locations //third_party/webview:webview_headers)" | tr ' ' '\\n' | grep 'include/webview/webview.h' | head -1) | sed 's|/webview$$||')
+        # Compile ObjC media permission helper
+        cc -c tools/websim/media_permission.m -o $$CACHE/media_permission.o \
+            -framework WebKit -framework Cocoa -fobjc-arc -w
+
+        # Embed Info.plist for macOS mic permission dialog
+        PLIST=$$(echo "$(SRCS)" | tr ' ' '\\n' | grep 'Info.plist' | head -1)
+        ld -r -sectcreate __TEXT __info_plist $$PLIST \
+            -o $$CACHE/info_plist.o $$CACHE/media_permission.o
+
+        zig build-exe \
+            -lc++ -lc -lobjc \
+            -framework WebKit -framework Cocoa \
+            -I $$WEBVIEW_INC \
+            tools/websim/main.zig \
+            $$CACHE/info_plist.o \
+            $(location //third_party/webview:webview_static) \
+            -femit-bin=$@ \
+            --cache-dir $$CACHE \
+            --global-cache-dir $$CACHE
+    """,
+    executable = True,
+)

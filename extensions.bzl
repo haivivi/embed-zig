@@ -379,3 +379,79 @@ def _esp_sysroot_ext_impl(ctx):
 esp_sysroot = module_extension(
     implementation = _esp_sysroot_ext_impl,
 )
+
+# =============================================================================
+# WebSim dependencies (webview, minih264, minimp4)
+# =============================================================================
+
+_WEBVIEW_VERSION = "0.12.0"
+
+def _webview_repo_impl(ctx):
+    """Download webview C library."""
+    ctx.execute(["sh", "-c",
+        "curl -sL -H 'Accept: application/vnd.github+json' " +
+        "https://api.github.com/repos/webview/webview/tarball/{} ".format(_WEBVIEW_VERSION) +
+        "| tar xz --strip-components=1",
+    ], timeout = 60)
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "webview_srcs",
+    srcs = ["core/src/webview.cc"],
+)
+
+filegroup(
+    name = "webview_headers",
+    srcs = glob(["core/include/**/*.h"]),
+)
+
+filegroup(
+    name = "webview_include",
+    srcs = ["core/include"],
+)
+""")
+
+_webview_repo = repository_rule(
+    implementation = _webview_repo_impl,
+)
+
+def _minih264_repo_impl(ctx):
+    """Download minih264e single header."""
+    ctx.download(
+        url = "https://raw.githubusercontent.com/lieff/minih264/master/minih264e.h",
+        output = "minih264e.h",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "minih264_headers", srcs = ["minih264e.h"])
+""")
+
+_minih264_repo = repository_rule(
+    implementation = _minih264_repo_impl,
+)
+
+def _minimp4_repo_impl(ctx):
+    """Download minimp4 single header."""
+    ctx.download(
+        url = "https://raw.githubusercontent.com/lieff/minimp4/master/minimp4.h",
+        output = "minimp4.h",
+    )
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+filegroup(name = "minimp4_headers", srcs = ["minimp4.h"])
+""")
+
+_minimp4_repo = repository_rule(
+    implementation = _minimp4_repo_impl,
+)
+
+def _websim_libs_ext_impl(ctx):
+    """Module extension for WebSim dependencies."""
+    _webview_repo(name = "webview")
+    _minih264_repo(name = "minih264")
+    _minimp4_repo(name = "minimp4")
+
+websim_libs = module_extension(
+    implementation = _websim_libs_ext_impl,
+)

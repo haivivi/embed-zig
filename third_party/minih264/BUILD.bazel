@@ -1,0 +1,7 @@
+package(default_visibility = ["//visibility:public"])
+
+# minih264e — downloaded from @minih264 external repo
+filegroup(
+    name = "minih264_headers",
+    srcs = ["@minih264//:minih264_headers"],
+)

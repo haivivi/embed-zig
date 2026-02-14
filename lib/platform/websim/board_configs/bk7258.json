@@ -1,0 +1,14 @@
+{
+  "name": "BK7258 V3",
+  "chip": "BK7258",
+  "leds": {"count": 0},
+  "buttons": {
+    "adc": [],
+    "boot": true,
+    "power": true
+  },
+  "display": {"width": 800, "height": 480},
+  "audio": {"speaker": true, "mic": true, "aec": false, "sample_rate": 16000},
+  "wifi": true,
+  "ble": true
+}

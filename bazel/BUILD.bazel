@@ -33,3 +33,11 @@ string_flag(
     name = "baud",
     build_setting_default = "460800",
 )
+
+# WebSim mode — compile for WASM simulator instead of real hardware
+# Auto-set by esp_flash when port starts with websim://
+# Usage: --//bazel:websim=true
+string_flag(
+    name = "websim",
+    build_setting_default = "",
+)

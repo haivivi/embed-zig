@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.embedzig.websim</string>
+    <key>CFBundleName</key>
+    <string>WebSim</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>WebSim needs microphone access for audio simulation (AEC test).</string>
+    <key>NSCameraUsageDescription</key>
+    <string>WebSim may use camera for future features.</string>
+</dict>
+</plist>
