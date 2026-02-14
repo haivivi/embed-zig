@@ -71,7 +71,7 @@ bazel run //e2e/trait/time/esp:flash
 
 | Trait | std (macOS/Linux) | ESP32-S3 | Korvo2-v3 |
 |-------|:-----------------:|:--------:|:---------:|
-| time | PASS | BUILD | BUILD |
+| time | PASS | PASS | BUILD |
 | log | PASS | BUILD | BUILD |
 | sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | BUILD | BUILD |
 | socket (TCP, UDP) | PASS | BLOCKED | BLOCKED |
