@@ -96,7 +96,7 @@ fn testMultipleJoin() !void {
     log.info("[e2e] PASS: trait/spawner/multi — 3/3 joined", .{});
 }
 
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/spawner — {}", .{err});
     };

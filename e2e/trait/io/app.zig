@@ -105,7 +105,7 @@ fn testWake() !void {
     log.info("[e2e] PASS: trait/io/wake", .{});
 }
 
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/io — {}", .{err});
     };

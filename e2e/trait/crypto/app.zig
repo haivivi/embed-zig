@@ -117,7 +117,7 @@ fn testX25519() !void {
     log.info("[e2e] PASS: trait/crypto/x25519", .{});
 }
 
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/crypto — {}", .{err});
     };

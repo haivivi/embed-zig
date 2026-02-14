@@ -71,15 +71,15 @@ bazel run //e2e/trait/time/esp:flash
 
 | Trait | std (macOS/Linux) | ESP32-S3 | Korvo2-v3 |
 |-------|:-----------------:|:--------:|:---------:|
-| time | PASS | - | - |
-| log | PASS | - | - |
-| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | - | - |
-| socket (TCP, UDP) | PASS | - | - |
-| crypto (SHA256, AES-GCM, X25519) | PASS | - | - |
-| rng | PASS | - | - |
-| spawner (spawn, join, detach) | PASS | - | - |
+| time | PASS | BUILD | BUILD |
+| log | PASS | BUILD | BUILD |
+| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | BLOCKED | BLOCKED |
+| socket (TCP, UDP) | PASS | BLOCKED | BLOCKED |
+| crypto (SHA256, AES-GCM, X25519) | PASS | BLOCKED | BLOCKED |
+| rng | PASS | BUILD | BUILD |
+| spawner (spawn, join, detach) | PASS | BLOCKED | BLOCKED |
 | io (kqueue/epoll) | PASS | N/A | N/A |
-| system (getCpuCount) | PASS | - | - |
+| system (getCpuCount) | PASS | BUILD | BUILD |
 | i2c | N/A | - | - |
 | spi | N/A | - | - |
 | codec | - | - | - |
@@ -111,6 +111,8 @@ bazel run //e2e/trait/time/esp:flash
 | Symbol | Meaning |
 |--------|---------|
 | PASS | Test exists and passes |
+| BUILD | Compiles for target, not yet flashed/verified on hardware |
+| BLOCKED | Board.zig exists but platform has pre-existing compile errors |
 | FAIL | Test exists but fails |
 | - | Test not yet implemented |
 | N/A | Not applicable for this platform |
@@ -120,8 +122,13 @@ bazel run //e2e/trait/time/esp:flash
 | Platform | Trait | HAL | Total |
 |----------|:-----:|:---:|:-----:|
 | std (macOS/Linux) | 9/13 | 0/16 | 9/29 |
-| ESP32-S3 DevKit | 0/13 | 0/16 | 0/29 |
-| Korvo2-v3 | 0/13 | 0/16 | 0/29 |
+| ESP32-S3 DevKit | 4 BUILD, 4 BLOCKED | 0/16 | 4/29 |
+| Korvo2-v3 | 4 BUILD, 4 BLOCKED | 0/16 | 4/29 |
+
+ESP BLOCKED issues (pre-existing, not e2e bugs):
+- `runtime.zig:286` — `@ptrCast increases pointer alignment` (blocks: sync, spawner)
+- `mbed_tls.zig` — missing mbedtls headers in cmake config (blocks: crypto)
+- `socket` app uses `std.posix` for server side, N/A on freestanding (blocks: socket)
 
 ## Adding a New Test
 
@@ -138,7 +145,7 @@ bazel run //e2e/trait/time/esp:flash
        log.info("[e2e] PASS: trait/{name}", .{});
    }
 
-   pub fn entry(_: anytype) void {
+   pub fn run(_: anytype) void {
        runTests() catch |err| { log.err("[e2e] FATAL: {}", .{err}); };
    }
 

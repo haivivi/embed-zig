@@ -53,7 +53,7 @@ fn runTests() !void {
 }
 
 /// ESP entry point (called by esp_zig_app framework)
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/time — {}", .{err});
     };

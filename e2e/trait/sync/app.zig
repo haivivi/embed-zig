@@ -161,7 +161,7 @@ fn testWaitGroup() !void {
 }
 
 // ESP entry
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/sync — {}", .{err});
     };

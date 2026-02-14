@@ -147,7 +147,7 @@ fn testUdpEcho() !void {
     log.info("[e2e] PASS: trait/socket/udp — {} bytes from port {}", .{ result.len, result.src_port });
 }
 
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/socket — {}", .{err});
     };

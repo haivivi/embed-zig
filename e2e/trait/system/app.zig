@@ -26,7 +26,7 @@ fn runTests() !void {
     log.info("[e2e] PASS: trait/system", .{});
 }
 
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/system — {}", .{err});
     };

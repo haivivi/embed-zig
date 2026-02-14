@@ -22,7 +22,7 @@ fn runTests() !void {
     log.info("[e2e] PASS: trait/log/levels — all four levels work", .{});
 
     // Test 2: Format strings with various argument types
-    log.info("int={} str={s} float={d:.2}", .{ @as(u32, 42), "hello", @as(f64, 3.14) });
+    log.info("int={} str={s} hex=0x{x}", .{ @as(u32, 42), "hello", @as(u32, 0xDEAD) });
     log.info("[e2e] PASS: trait/log/format — mixed argument types", .{});
 
     // Test 3: Empty args
@@ -37,7 +37,7 @@ fn runTests() !void {
 }
 
 // ESP entry
-pub fn entry(_: anytype) void {
+pub fn run(_: anytype) void {
     runTests() catch |err| {
         log.err("[e2e] FATAL: trait/log — {}", .{err});
     };
