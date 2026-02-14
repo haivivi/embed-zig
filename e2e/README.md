@@ -74,16 +74,16 @@ bazel run //e2e/trait/time/esp:flash
 | time | PASS | - | - |
 | log | PASS | - | - |
 | sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | - | - |
-| socket | - | - | - |
-| crypto | - | - | - |
-| rng | - | - | - |
-| spawner (standalone) | - | - | - |
-| io (kqueue/epoll) | - | N/A | N/A |
+| socket (TCP, UDP) | PASS | - | - |
+| crypto (SHA256, AES-GCM, X25519) | PASS | - | - |
+| rng | PASS | - | - |
+| spawner (spawn, join, detach) | PASS | - | - |
+| io (kqueue/epoll) | PASS | N/A | N/A |
+| system (getCpuCount) | PASS | - | - |
 | i2c | N/A | - | - |
 | spi | N/A | - | - |
 | codec | - | - | - |
 | net | N/A | - | - |
-| system | - | - | - |
 
 ### HAL Tests
 
@@ -119,7 +119,7 @@ bazel run //e2e/trait/time/esp:flash
 
 | Platform | Trait | HAL | Total |
 |----------|:-----:|:---:|:-----:|
-| std (macOS/Linux) | 3/13 | 0/16 | 3/29 |
+| std (macOS/Linux) | 9/13 | 0/16 | 9/29 |
 | ESP32-S3 DevKit | 0/13 | 0/16 | 0/29 |
 | Korvo2-v3 | 0/13 | 0/16 | 0/29 |
 
