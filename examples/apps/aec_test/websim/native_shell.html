@@ -186,27 +186,45 @@ const WebSim = (() => {
         try {
             audioCtx = new AudioContext({ sampleRate: 16000 });
 
-            /* Speaker playback node (pulls from Zig ring buffer via batch binding) */
+            /* Speaker playback node (pulls from Zig ring buffer via batch binding).
+             * ScriptProcessorNode.onaudioprocess is synchronous — async/await would
+             * return before the output buffer is filled. Use a pre-fetch pattern:
+             * consume the previously fetched buffer synchronously, then kick off
+             * the next async fetch in the background. */
+            let _spkPending = null; /* Float32Array from previous fetch */
             const spkNode = audioCtx.createScriptProcessor(1024, 0, 1);
-            spkNode.onaudioprocess = async (e) => {
+
+            function fetchNextSpkBuffer(size) {
+                zigPullAudioOut(size).then(function(b64) {
+                    if (!b64 || b64.length === 0) { _spkPending = null; return; }
+                    const raw = atob(b64);
+                    const bytes = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                    const i16 = new Int16Array(bytes.buffer);
+                    const f32 = new Float32Array(i16.length);
+                    for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
+                    _spkPending = f32;
+                }).catch(function() { _spkPending = null; });
+            }
+
+            /* Kick off first fetch */
+            fetchNextSpkBuffer(1024);
+
+            spkNode.onaudioprocess = function(e) {
                 const output = e.outputBuffer.getChannelData(0);
-                try {
-                    const b64 = await zigPullAudioOut(output.length);
-                    if (b64 && b64.length > 0) {
-                        const raw = atob(b64);
-                        const bytes = new Uint8Array(raw.length);
-                        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-                        const i16 = new Int16Array(bytes.buffer);
-                        const count = Math.min(i16.length, output.length);
-                        for (let i = 0; i < count; i++) output[i] = i16[i] / 32768.0;
-                        for (let i = count; i < output.length; i++) output[i] = 0;
-                        /* Update speaker VU */
-                        const vuEl = document.getElementById('speakerLevel');
-                        if (vuEl) vuEl.style.width = Math.min(100, (count / output.length) * 100) + '%';
-                        return;
-                    }
-                } catch(err) { /* binding not available or error */ }
-                output.fill(0);
+                if (_spkPending && _spkPending.length > 0) {
+                    const count = Math.min(_spkPending.length, output.length);
+                    output.set(_spkPending.subarray(0, count));
+                    for (let i = count; i < output.length; i++) output[i] = 0;
+                    _spkPending = null;
+                    /* Update speaker VU */
+                    const vuEl = document.getElementById('speakerLevel');
+                    if (vuEl) vuEl.style.width = Math.min(100, (count / output.length) * 100) + '%';
+                } else {
+                    output.fill(0);
+                }
+                /* Pre-fetch next buffer for the next callback */
+                fetchNextSpkBuffer(output.length);
             };
             spkNode.connect(audioCtx.destination);
 
