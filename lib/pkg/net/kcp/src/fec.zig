@@ -220,6 +220,11 @@ pub const Decoder = struct {
         const hdr = decodeHeader(data) catch return;
         if (data.len < HeaderSize + hdr.payload_len) return;
 
+        // Validate untrusted wire values against array bounds.
+        // count must be in [1, max_group_size], index in [0, count].
+        if (hdr.count == 0 or hdr.count > Encoder.max_group_size) return;
+        if (hdr.index > hdr.count) return;
+
         const payload = data[HeaderSize..][0..hdr.payload_len];
         const slot = hdr.group_id % window_size;
 
@@ -448,4 +453,29 @@ test "FEC recover single lost data packet" {
 
     // Third is recovered "BBB"
     try std.testing.expectEqualStrings("BBB", TestCtx.packet_store[2][0..TestCtx.packet_lens[2]]);
+}
+
+test "FEC decoder rejects out-of-bounds count and index" {
+    const NullCtx = struct {
+        fn output(_: []const u8, _: ?*anyopaque) void {}
+    };
+    var dec = Decoder.init(NullCtx.output, null);
+
+    // count=255 (> max_group_size=16) — must be silently dropped, not OOB
+    var bad1: [HeaderSize + 4]u8 = undefined;
+    encodeHeader(&bad1, 0, 0, 255, 4);
+    @memcpy(bad1[HeaderSize..][0..4], "XXXX");
+    dec.addPacket(&bad1); // should not panic
+
+    // count=0 — invalid, must be dropped
+    var bad2: [HeaderSize + 4]u8 = undefined;
+    encodeHeader(&bad2, 0, 0, 0, 4);
+    @memcpy(bad2[HeaderSize..][0..4], "XXXX");
+    dec.addPacket(&bad2); // should not panic
+
+    // index > count — must be dropped
+    var bad3: [HeaderSize + 4]u8 = undefined;
+    encodeHeader(&bad3, 0, 5, 3, 4); // index=5, count=3
+    @memcpy(bad3[HeaderSize..][0..4], "XXXX");
+    dec.addPacket(&bad3); // should not panic
 }
