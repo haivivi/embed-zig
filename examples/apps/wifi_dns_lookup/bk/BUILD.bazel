@@ -1,5 +1,6 @@
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_custom")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -37,6 +38,17 @@ bk_partition_table(
                ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"],
 )
 
+bk_custom(
+    name = "debug",
+    configs = [
+        "CONFIG_ASSERT_HALT=y",
+        "# CONFIG_ASSERT_REBOOT is not set",
+        "CONFIG_DUMP_ENABLE=y",
+    ],
+)
+
+bk_config(name = "kconfig", modules = [":debug"])
+
 bk_modules()
 
 bk_zig_app(
@@ -46,6 +58,7 @@ bk_zig_app(
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
+    kconfig_ap = ":kconfig",
     # run_in_psram = 131072,  # TODO: fix PSRAM thread
     ap_stack_size = 32768,  # 32KB SRAM test
     c_helpers = [

@@ -65,3 +65,23 @@ int bk_zig_create_thread(
                                  arg);
     return ret;
 }
+
+/* ============================================================
+ * ARM ABI helper functions required by Zig freestanding code.
+ * GCC's libgcc provides these, but Zig's freestanding runtime
+ * needs them explicitly when linked into an Armino project.
+ * ============================================================ */
+
+#include <string.h>
+
+void __aeabi_memclr(void *dest, size_t n) {
+    memset(dest, 0, n);
+}
+
+void __aeabi_memclr4(void *dest, size_t n) {
+    memset(dest, 0, n);
+}
+
+void __aeabi_memclr8(void *dest, size_t n) {
+    memset(dest, 0, n);
+}
