@@ -55,6 +55,9 @@ pub fn step() void {
     _ = board.audio.writeSpeaker(output_buffer[0..samples_read]) catch return;
 }
 
+// Board config JSON for dynamic UI rendering in JS
+pub const board_config_json = websim.boards.korvo2_v3.board_config_json;
+
 comptime {
     websim.wasm.exportAll(@This());
 }

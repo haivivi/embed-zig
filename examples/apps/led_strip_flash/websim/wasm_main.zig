@@ -49,6 +49,9 @@ pub fn step() void {
     }
 }
 
+// Board config JSON for dynamic UI rendering in JS
+pub const board_config_json = websim.boards.esp32_devkit.board_config_json;
+
 comptime {
     websim.wasm.exportAll(@This());
 }

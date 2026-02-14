@@ -47,7 +47,10 @@ pub const LedDriver = struct {
 
     pub fn init() !Self {
         state.state.led_count = led_count;
-        state.state.addLog("WebSim: BK7258 LED initialized");
+        // Set display dimensions for BK7258 (800x480)
+        state.state.display_width = display_width;
+        state.state.display_height = display_height;
+        state.state.addLog("WebSim: BK7258 initialized (800x480 display)");
         return .{ .count = led_count };
     }
 
@@ -123,6 +126,19 @@ pub const ble_spec = struct {
     pub const Driver = ble_mod.BleDriver;
     pub const meta = .{ .id = "ble.sim" };
 };
+
+// ============================================================================
+// Board Config JSON (embedded in WASM, read by JS to render UI)
+// ============================================================================
+
+pub const board_config_json =
+    \\{"name":"BK7258","chip":"BK7258",
+    \\"leds":{"count":1,"type":"gpio","layout":"single"},
+    \\"buttons":{"adc":[],"boot":true,"power":true},
+    \\"display":{"width":800,"height":480},
+    \\"audio":{"speaker":true,"mic":true,"aec":false,"sample_rate":16000},
+    \\"wifi":true,"ble":true}
+;
 
 pub const log = drivers.sal.log;
 pub const time = drivers.sal.time;

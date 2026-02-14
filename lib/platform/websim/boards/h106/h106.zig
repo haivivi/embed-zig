@@ -158,6 +158,24 @@ pub const ble_spec = struct {
     pub const meta = .{ .id = "ble.sim" };
 };
 
+// ============================================================================
+// Board Config JSON (embedded in WASM, read by JS to render UI)
+// ============================================================================
+
+pub const board_config_json =
+    \\{"name":"HAIVIVI H106","chip":"ESP32-S3",
+    \\"leds":{"count":9,"layout":"diamond"},
+    \\"buttons":{"adc":[
+    \\{"name":"VOL+","value":200},{"name":"VOL-","value":500},
+    \\{"name":"LEFT","value":800},{"name":"RIGHT","value":1100},
+    \\{"name":"BACK","value":1400},{"name":"OK","value":1700},
+    \\{"name":"REC","value":2000}
+    \\],"boot":false,"power":true},
+    \\"display":{"width":240,"height":240},
+    \\"audio":{"speaker":true,"mic":true,"aec":true,"sample_rate":16000},
+    \\"wifi":true,"ble":true}
+;
+
 pub const log = drivers.sal.log;
 pub const time = drivers.sal.time;
 pub const isRunning = drivers.sal.isRunning;

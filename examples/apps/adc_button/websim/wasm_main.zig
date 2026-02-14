@@ -76,6 +76,8 @@ pub fn step() void {
     }
 }
 
+pub const board_config_json = websim.boards.korvo2_v3.board_config_json;
+
 comptime {
     websim.wasm.exportAll(@This());
 }

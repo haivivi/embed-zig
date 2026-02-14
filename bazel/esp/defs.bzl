@@ -1136,13 +1136,7 @@ def _esp_flash_impl(ctx):
     flasher_bin = flasher_files[0]  # go_binary produces single executable
     
     # Create wrapper script that sets env vars and calls Go binary
-    # WebSim: board config directory and WASM path
-    board_config_files = ctx.attr._board_configs.files.to_list() if ctx.attr._board_configs else []
-    board_config_dir = ""
-    if board_config_files:
-        # Get directory from first file path: lib/platform/websim/board_configs/xxx.json -> lib/platform/websim/board_configs
-        board_config_dir = board_config_files[0].short_path.rsplit("/", 1)[0] if "/" in board_config_files[0].short_path else "."
-    
+    # WebSim: WASM path (board config is embedded in WASM itself)
     wasm_path = ""
     if ctx.attr.wasm_app:
         for f in ctx.attr.wasm_app.files.to_list():
@@ -1180,28 +1174,8 @@ if [[ "$ESP_PORT_CONFIG" == websim://* ]]; then
     WEBSIM_HOST="${{WEBSIM_ADDR%%:*}}"
     WEBSIM_PORT="${{WEBSIM_ADDR##*:}}"
     echo "[flash] WebSim mode: $WEBSIM_HOST:$WEBSIM_PORT"
-    echo "[flash] Board: $ESP_BOARD"
 
-    # Find board config JSON
-    BOARD_CONFIG=""
-    for f in {board_config_dir}/*.json; do
-        fname=$(basename "$f" .json)
-        if [[ "$fname" == "$ESP_BOARD" ]]; then
-            BOARD_CONFIG="$f"
-            break
-        fi
-    done
-
-    if [[ -z "$BOARD_CONFIG" ]]; then
-        echo "[flash] ERROR: No board config for '$ESP_BOARD'"
-        echo "[flash] Available: $(ls {board_config_dir}/*.json 2>/dev/null | xargs -I{{}} basename {{}} .json | tr '\\n' ' ')"
-        exit 1
-    fi
-
-    echo "[flash] Board config: $BOARD_CONFIG"
-
-    # Find WASM file — look for websim WASM build output
-    # The WASM is built by websim_app target (same app, different target)
+    # Board config is embedded in WASM (read by JS via getBoardConfigPtr/Len exports)
     WASM_FILE="{wasm_path}"
     if [[ ! -f "$WASM_FILE" ]]; then
         echo "[flash] ERROR: No WASM firmware found at $WASM_FILE"
@@ -1209,20 +1183,13 @@ if [[ "$ESP_PORT_CONFIG" == websim://* ]]; then
         exit 1
     fi
 
-    # Inject target name into config JSON
-    TARGET_NAME="{target_label}"
-    CONFIG_RAW=$(cat "$BOARD_CONFIG")
-    # Insert "target":"xxx" after first brace
-    CONFIG_CONTENT=$(echo "$CONFIG_RAW" | sed "s/{{/{{\"target\":\"$TARGET_NAME\",/")
-    CONFIG_LEN=${{#CONFIG_CONTENT}}
     WASM_LEN=$(stat -f%z "$WASM_FILE" 2>/dev/null || stat -c%s "$WASM_FILE" 2>/dev/null)
-
-    echo "[flash] Config: $CONFIG_LEN bytes, WASM: $WASM_LEN bytes"
+    echo "[flash] WASM: $WASM_LEN bytes"
     echo "[flash] Uploading to websim://$WEBSIM_HOST:$WEBSIM_PORT..."
 
-    # FLASH2 protocol
+    # FLASH protocol: command + size + binary data
     PAYLOAD=$(mktemp)
-    printf "FLASH2\\n%d\\n%s%d\\n" "$CONFIG_LEN" "$CONFIG_CONTENT" "$WASM_LEN" > "$PAYLOAD"
+    printf "FLASH\\n%d\\n" "$WASM_LEN" > "$PAYLOAD"
     cat "$WASM_FILE" >> "$PAYLOAD"
 
     RESPONSE=$(nc -w 5 "$WEBSIM_HOST" "$WEBSIM_PORT" < "$PAYLOAD" 2>&1 || true)
@@ -1252,9 +1219,7 @@ exec "{flasher}" "$@"
         nvs_size = nvs_size,
         flasher = flasher_bin.short_path,
         common_sh = [f for f in script_files if f.basename == "common.sh"][0].path,
-        board_config_dir = board_config_dir,
         wasm_path = wasm_path,
-        target_label = str(ctx.label),
     )
     
     ctx.actions.write(
@@ -1270,15 +1235,13 @@ exec "{flasher}" "$@"
     if partition_file:
         flash_files.append(partition_file)
     
-    # Add websim files
-    board_config_files = ctx.attr._board_configs.files.to_list() if ctx.attr._board_configs else []
+    # Add websim WASM files
     wasm_files = ctx.attr.wasm_app.files.to_list() if ctx.attr.wasm_app else []
     
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = flash_files + flasher_files),
-            runfiles = ctx.runfiles(files = flash_files + script_files + board_config_files + wasm_files),
+            runfiles = ctx.runfiles(files = flash_files + script_files + wasm_files),
         ),
     ]
 
@@ -1310,9 +1273,6 @@ esp_flash = rule(
         ),
         "wasm_app": attr.label(
             doc = "WebSim WASM app target (for websim:// flashing). Optional.",
-        ),
-        "_board_configs": attr.label(
-            default = Label("//lib/platform/websim:board_configs"),
         ),
     },
     doc = "Flash an ESP-IDF binary to a device",

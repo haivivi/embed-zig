@@ -89,12 +89,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);
 %%RENDERER_JS%%
 </script>
 <script>
-// Board config injected by simulator
-var BOARD_CONFIG = %%BOARD_CONFIG%%;
-renderBoard(BOARD_CONFIG);
-
-
 // WASM Firmware Loader — uses WebKit's built-in WebAssembly runtime
+// Board config is read from WASM exports after instantiation (no server-side injection needed).
 var _wasm = null;
 var _wasmMemory = null;
 var _running = false;
@@ -146,6 +142,24 @@ function loadWasmFirmware() {
         console.log('[WebSim] WASM instantiated!');
 
         var ex = result.instance.exports;
+
+        // Read board config from WASM and render UI
+        if (ex.getBoardConfigPtr && ex.getBoardConfigLen) {
+            var cfgPtr = ex.getBoardConfigPtr();
+            var cfgLen = ex.getBoardConfigLen();
+            if (cfgLen > 0) {
+                var cfgStr = _decoder.decode(new Uint8Array(_wasmMemory.buffer, cfgPtr, cfgLen));
+                console.log('[WebSim] Board config from WASM:', cfgStr.substring(0, 100) + '...');
+                try {
+                    var config = JSON.parse(cfgStr);
+                    // Inject target from flash metadata (if available)
+                    if (window._wasmTarget) config.target = window._wasmTarget;
+                    renderBoard(config);
+                } catch(e) {
+                    console.error('[WebSim] Config parse error:', e);
+                }
+            }
+        }
 
         // Set initial time and call init
         ex.setTime(Math.floor(performance.now()));

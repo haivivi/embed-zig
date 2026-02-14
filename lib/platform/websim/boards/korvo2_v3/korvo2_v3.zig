@@ -148,6 +148,23 @@ pub const PaSwitchDriver = audio_system_mod.PaSwitchDriver;
 pub const name = "WebSim Korvo-2 V3";
 pub const sample_rate: u32 = 16000;
 
+// ============================================================================
+// Board Config JSON (embedded in WASM, read by JS to render UI)
+// ============================================================================
+
+pub const board_config_json =
+    \\{"name":"ESP32-S3 Korvo-2 V3","chip":"ESP32-S3",
+    \\"leds":{"count":1,"type":"tca9554","layout":"single"},
+    \\"buttons":{"adc":[
+    \\{"name":"VOL+","value":425},{"name":"VOL-","value":925},
+    \\{"name":"SET","value":1300},{"name":"PLAY","value":1800},
+    \\{"name":"MUTE","value":2330},{"name":"REC","value":2875}
+    \\],"boot":true,"power":false},
+    \\"display":null,
+    \\"audio":{"speaker":true,"mic":true,"aec":true,"sample_rate":16000},
+    \\"wifi":true,"ble":true}
+;
+
 pub const log = drivers.sal.log;
 pub const time = drivers.sal.time;
 pub const isRunning = drivers.sal.isRunning;

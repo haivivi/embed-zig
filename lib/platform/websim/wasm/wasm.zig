@@ -273,11 +273,24 @@ export fn bleSimDisconnect() void {
 // App init/step generation
 // ============================================================================
 
+// ============================================================================
+// Board config export (WASM → JS)
+//
+// The board config JSON is embedded in the WASM binary at compile time.
+// JS reads it via getBoardConfigPtr/Len after instantiation, then calls
+// renderBoard() to generate the UI dynamically.
+// ============================================================================
+
+// Board config is exported via exportAll() — see below
+
 /// Generate standard WASM exports for an app module.
 ///
 /// The app module must provide:
 /// - `fn init() void`
 /// - `fn step() void`
+///
+/// Optionally, the app module can provide:
+/// - `const board_config_json: []const u8` — board UI config (from board module)
 ///
 /// This creates the `init` and `step` exports that the JS shell calls.
 pub fn exportAll(comptime App: type) void {
@@ -329,6 +342,25 @@ pub fn exportAll(comptime App: type) void {
     _ = &wifiForceDisconnect;
     _ = &getNetHasIp;
     _ = &getNetIp;
+
+    // Board config — comptime-captured from App or platform module
+    {
+        const config_json: []const u8 = if (@hasDecl(App, "board_config_json"))
+            App.board_config_json
+        else
+            "{}";
+
+        const CfgExport = struct {
+            fn getPtr() callconv(.c) [*]const u8 {
+                return config_json.ptr;
+            }
+            fn getLen() callconv(.c) u32 {
+                return config_json.len;
+            }
+        };
+        @export(&CfgExport.getPtr, .{ .name = "getBoardConfigPtr" });
+        @export(&CfgExport.getLen, .{ .name = "getBoardConfigLen" });
+    }
 
     // Create app-specific exports
     const S = struct {

@@ -225,9 +225,10 @@ fn getCurrentTimeMs() u64 {
 // Input callbacks (JS → Zig)
 // ============================================================================
 
-fn onSetAdcValue(_: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+fn onSetAdcValue(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     const val = parseFirstArgU32(req) orelse return;
     shared.adc_raw = @intCast(@min(val, 4095));
+    returnNull(id);
 }
 
 fn onButtonPress(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
@@ -265,18 +266,20 @@ fn onBleSimDisconnect(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callcon
     returnNull(id);
 }
 
-fn onSetWifiRssi(_: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+fn onSetWifiRssi(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     const val = parseFirstArgI32(req) orelse return;
     shared.wifi_rssi = @intCast(@max(-127, @min(0, val)));
+    returnNull(id);
 }
 
-fn onPushAudioInSample(_: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+fn onPushAudioInSample(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     const val = parseFirstArgI32(req) orelse return;
     const avail = state_mod.AUDIO_BUF_SAMPLES - (shared.audio_in_write -% shared.audio_in_read);
     if (avail > 0) {
         shared.audio_in_buf[shared.audio_in_write & state_mod.AUDIO_BUF_MASK] = @intCast(@max(-32768, @min(32767, val)));
         shared.audio_in_write +%= 1;
     }
+    returnNull(id);
 }
 
 // ============================================================================
@@ -364,12 +367,10 @@ fn onGetState(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.c) vo
 
     w.print("}}", .{}) catch return;
 
-    const json = fbs.getWritten();
-    // Null-terminate for webview_return
-    var result: [8192]u8 = undefined;
-    @memcpy(result[0..json.len], json);
-    result[json.len] = 0;
-    _ = c.webview_return(g_webview, id, 0, @ptrCast(&result));
+    const json_len = fbs.getWritten().len;
+    // Null-terminate in the same buffer (capacity is 8192, used at most ~4KB)
+    buf[json_len] = 0;
+    _ = c.webview_return(g_webview, id, 0, @ptrCast(buf[0..json_len :0]));
 }
 
 // ============================================================================
@@ -487,7 +488,7 @@ fn onStopRecording(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.
 /// Receive a video frame from JS as base64-encoded RGBA data.
 /// JS calls: zigRecordFrame(base64String)
 fn onRecordFrame(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
-    var rec = g_recorder orelse {
+    var rec = if (g_recorder) |*r| r else {
         returnNull(id);
         return;
     };

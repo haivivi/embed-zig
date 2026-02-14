@@ -256,12 +256,10 @@ fn handlePage(ctx: *RequestContext) void {
 // ============================================================================
 
 fn onFirmwareReceived(bundle: FirmwareBundle) void {
-    std.debug.print("[WebSim] Firmware: config={} wasm={} bytes\n", .{
-        bundle.config_json.len, bundle.wasm_data.len,
-    });
+    std.debug.print("[WebSim] Firmware: wasm={} bytes\n", .{bundle.wasm_data.len});
 
-    // Generate board HTML
-    const html = generateBoardHtml(bundle.config_json) catch |err| {
+    // Generate board HTML (config is embedded in WASM, read by JS after instantiation)
+    const html = generateBoardHtml() catch |err| {
         std.debug.print("[WebSim] HTML gen failed: {}\n", .{err});
         return;
     };
@@ -339,16 +337,12 @@ fn injectWasm() void {
 // Generate board HTML from config JSON
 // ============================================================================
 
-fn generateBoardHtml(config_json: []const u8) ![]u8 {
-    // Template has %%RENDERER_JS%% and %%BOARD_CONFIG%% placeholders
-    // Replace them with actual content
-
-    // Calculate output size
+fn generateBoardHtml() ![]u8 {
+    // Template has %%RENDERER_JS%% placeholder — board config comes from WASM exports
     const template = board_template_html;
     const rjs_placeholder = "%%RENDERER_JS%%";
-    const cfg_placeholder = "%%BOARD_CONFIG%%";
 
-    const output_size = template.len + renderer_js.len + config_json.len;
+    const output_size = template.len + renderer_js.len;
     var output = try std.heap.c_allocator.alloc(u8, output_size);
     var pos: usize = 0;
 
@@ -360,12 +354,6 @@ fn generateBoardHtml(config_json: []const u8) ![]u8 {
             @memcpy(output[pos..][0..renderer_js.len], renderer_js);
             pos += renderer_js.len;
             i += rjs_placeholder.len;
-        } else if (i + cfg_placeholder.len <= template.len and
-            std.mem.eql(u8, template[i..][0..cfg_placeholder.len], cfg_placeholder))
-        {
-            @memcpy(output[pos..][0..config_json.len], config_json);
-            pos += config_json.len;
-            i += cfg_placeholder.len;
         } else {
             output[pos] = template[i];
             pos += 1;

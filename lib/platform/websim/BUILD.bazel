@@ -74,10 +74,4 @@ filegroup(
     ],
 )
 
-# Board config JSON files (for websim flash)
-filegroup(
-    name = "board_configs",
-    srcs = glob(["board_configs/*.json"]),
-)
-
 filegroup(name = "srcs", srcs = glob(["**/*"]))

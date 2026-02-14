@@ -123,6 +123,8 @@ pub fn step() void {
     board.rgb_leds.setColor(color);
 }
 
+pub const board_config_json = websim.boards.esp32_devkit.board_config_json;
+
 comptime {
     websim.wasm.exportAll(@This());
 }
