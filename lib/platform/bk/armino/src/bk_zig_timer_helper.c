@@ -1,91 +1,77 @@
 /**
- * bk_zig_timer_helper.c — Software timer via RTOS timer
+ * bk_zig_timer_helper.c — Hardware timer for Zig
  *
- * Wraps FreeRTOS software timers for Zig.
- * Supports periodic and one-shot timers with callback.
+ * Uses BK7258 hardware timer (bk_timer_*), not RTOS software timer.
+ * ISR-level precision, 6 channels total (timer2/3 system-reserved).
+ *
+ * Available: TIMER_ID0, TIMER_ID1, TIMER_ID4, TIMER_ID5 (4 channels)
  */
 
-#include <os/os.h>
+#include <driver/timer.h>
 #include <components/log.h>
 
 #define TAG "zig_timer"
-#define MAX_TIMERS 8
 
-typedef void (*zig_timer_callback_t)(unsigned int timer_id);
+/* Map user slot (0-3) to actual hardware timer ID, skipping reserved 2/3 */
+static const int s_hw_timer_ids[4] = { 0, 1, 4, 5 }; /* TIMER_ID0,1,4,5 */
+#define MAX_SLOTS 4
 
-static beken_timer_t s_timers[MAX_TIMERS];
-static beken2_timer_t s_oneshot_timers[MAX_TIMERS];
-static int s_timer_used[MAX_TIMERS] = {0};
-static int s_oneshot_used[MAX_TIMERS] = {0};
-static zig_timer_callback_t s_callbacks[MAX_TIMERS] = {0};
-static zig_timer_callback_t s_oneshot_callbacks[MAX_TIMERS] = {0};
+typedef void (*zig_timer_callback_t)(unsigned int slot);
 
-/* Periodic timer callback trampoline */
-static void timer_trampoline(void *arg) {
-    unsigned int id = (unsigned int)(uintptr_t)arg;
-    if (id < MAX_TIMERS && s_callbacks[id]) {
-        s_callbacks[id](id);
-    }
-}
+static zig_timer_callback_t s_callbacks[MAX_SLOTS] = {0};
+static int s_slot_used[MAX_SLOTS] = {0};
 
-/* One-shot timer callback trampoline */
-static void oneshot_trampoline(void *arg1, void *arg2) {
-    (void)arg2;
-    unsigned int id = (unsigned int)(uintptr_t)arg1;
-    if (id < MAX_TIMERS && s_oneshot_callbacks[id]) {
-        s_oneshot_callbacks[id](id);
-    }
-}
+/* ISR trampoline — called in ISR context */
+static void timer_isr_0(timer_id_t id) { (void)id; if (s_callbacks[0]) s_callbacks[0](0); }
+static void timer_isr_1(timer_id_t id) { (void)id; if (s_callbacks[1]) s_callbacks[1](1); }
+static void timer_isr_2(timer_id_t id) { (void)id; if (s_callbacks[2]) s_callbacks[2](2); }
+static void timer_isr_3(timer_id_t id) { (void)id; if (s_callbacks[3]) s_callbacks[3](3); }
+
+static timer_isr_t s_isr_table[MAX_SLOTS] = {
+    timer_isr_0, timer_isr_1, timer_isr_2, timer_isr_3
+};
 
 /**
- * Create and start a periodic timer.
- * @return timer handle (0..MAX_TIMERS-1), or -1 on error
+ * Start a periodic hardware timer.
+ * @param period_ms  Period in milliseconds
+ * @param callback   Zig callback (called in ISR context!)
+ * @return slot (0-3), or -1 if no free slot
  */
-int bk_zig_timer_start_periodic(unsigned int period_ms, zig_timer_callback_t callback) {
-    for (int i = 0; i < MAX_TIMERS; i++) {
-        if (!s_timer_used[i]) {
-            s_timer_used[i] = 1;
+int bk_zig_hw_timer_start(unsigned int period_ms, zig_timer_callback_t callback) {
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        if (!s_slot_used[i]) {
+            s_slot_used[i] = 1;
             s_callbacks[i] = callback;
-            int ret = rtos_init_timer(&s_timers[i], period_ms,
-                                       (timer_handler_t)timer_trampoline,
-                                       (void *)(uintptr_t)i);
+            int ret = bk_timer_start(s_hw_timer_ids[i], period_ms, s_isr_table[i]);
             if (ret != 0) {
-                s_timer_used[i] = 0;
-                return -1;
-            }
-            ret = rtos_start_timer(&s_timers[i]);
-            if (ret != 0) {
-                rtos_deinit_timer(&s_timers[i]);
-                s_timer_used[i] = 0;
+                BK_LOGE(TAG, "bk_timer_start(%d) failed: %d\r\n", s_hw_timer_ids[i], ret);
+                s_slot_used[i] = 0;
+                s_callbacks[i] = NULL;
                 return -1;
             }
             return i;
         }
     }
-    return -1; /* No free slot */
+    BK_LOGW(TAG, "no free hw timer slot\r\n");
+    return -1;
 }
 
 /**
- * Create and start a one-shot timer.
- * @return timer handle (0..MAX_TIMERS-1), or -1 on error
+ * Start a one-shot hardware timer (microsecond precision).
+ * @param delay_us   Delay in microseconds
+ * @param callback   Zig callback (called in ISR context!)
+ * @return slot (0-3), or -1 if no free slot
  */
-int bk_zig_timer_start_oneshot(unsigned int delay_ms, zig_timer_callback_t callback) {
-    for (int i = 0; i < MAX_TIMERS; i++) {
-        if (!s_oneshot_used[i]) {
-            s_oneshot_used[i] = 1;
-            s_oneshot_callbacks[i] = callback;
-            int ret = rtos_init_oneshot_timer(&s_oneshot_timers[i], delay_ms,
-                                               (timer_2handler_t)oneshot_trampoline,
-                                               (void *)(uintptr_t)i,
-                                               NULL);
+int bk_zig_hw_timer_oneshot_us(unsigned long long delay_us, zig_timer_callback_t callback) {
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        if (!s_slot_used[i]) {
+            s_slot_used[i] = 1;
+            s_callbacks[i] = callback;
+            int ret = bk_timer_delay_with_callback(s_hw_timer_ids[i], delay_us, s_isr_table[i]);
             if (ret != 0) {
-                s_oneshot_used[i] = 0;
-                return -1;
-            }
-            ret = rtos_start_oneshot_timer(&s_oneshot_timers[i]);
-            if (ret != 0) {
-                rtos_deinit_oneshot_timer(&s_oneshot_timers[i]);
-                s_oneshot_used[i] = 0;
+                BK_LOGE(TAG, "bk_timer_delay(%d) failed: %d\r\n", s_hw_timer_ids[i], ret);
+                s_slot_used[i] = 0;
+                s_callbacks[i] = NULL;
                 return -1;
             }
             return i;
@@ -95,23 +81,33 @@ int bk_zig_timer_start_oneshot(unsigned int delay_ms, zig_timer_callback_t callb
 }
 
 /**
- * Stop and free a periodic timer.
+ * Stop a hardware timer.
+ * @param slot  Slot returned by start (0-3)
  */
-void bk_zig_timer_stop_periodic(int handle) {
-    if (handle < 0 || handle >= MAX_TIMERS || !s_timer_used[handle]) return;
-    rtos_stop_timer(&s_timers[handle]);
-    rtos_deinit_timer(&s_timers[handle]);
-    s_callbacks[handle] = NULL;
-    s_timer_used[handle] = 0;
+void bk_zig_hw_timer_stop(int slot) {
+    if (slot < 0 || slot >= MAX_SLOTS || !s_slot_used[slot]) return;
+    bk_timer_stop(s_hw_timer_ids[slot]);
+    s_callbacks[slot] = NULL;
+    s_slot_used[slot] = 0;
 }
 
 /**
- * Stop and free a one-shot timer.
+ * Get current counter value of a running timer.
+ * @param slot  Slot (0-3)
+ * @return counter value (counts down from period)
  */
-void bk_zig_timer_stop_oneshot(int handle) {
-    if (handle < 0 || handle >= MAX_TIMERS || !s_oneshot_used[handle]) return;
-    rtos_stop_oneshot_timer(&s_oneshot_timers[handle]);
-    rtos_deinit_oneshot_timer(&s_oneshot_timers[handle]);
-    s_oneshot_callbacks[handle] = NULL;
-    s_oneshot_used[handle] = 0;
+unsigned int bk_zig_hw_timer_get_cnt(int slot) {
+    if (slot < 0 || slot >= MAX_SLOTS) return 0;
+    return bk_timer_get_cnt(s_hw_timer_ids[slot]);
+}
+
+/**
+ * Get number of available (free) timer slots.
+ */
+int bk_zig_hw_timer_available(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        if (!s_slot_used[i]) count++;
+    }
+    return count;
 }
