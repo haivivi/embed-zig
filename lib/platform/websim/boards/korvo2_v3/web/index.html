@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim — Korvo-2 V3</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="sim-container">
+        <header class="sim-header">
+            <h1>embed-zig <span class="accent">WebSim</span></h1>
+            <span class="status" id="status">Loading...</span>
+        </header>
+
+        <div class="board">
+            <div class="board-label">ESP32-S3-Korvo-2 V3</div>
+
+            <!-- LED (1x TCA9554) -->
+            <div class="component-group">
+                <div class="component-label">LED (TCA9554)</div>
+                <div class="leds" id="ledContainer">
+                    <div class="led" id="led-0"></div>
+                </div>
+            </div>
+
+            <!-- ADC Buttons (6) -->
+            <div class="component-group">
+                <div class="component-label">ADC Buttons</div>
+                <div class="adc-buttons">
+                    <div class="btn-row">
+                        <button class="hw-button adc-btn" data-adc="425" data-name="vol+">
+                            <span class="btn-inner">VOL+</span>
+                        </button>
+                        <button class="hw-button adc-btn" data-adc="925" data-name="vol-">
+                            <span class="btn-inner">VOL-</span>
+                        </button>
+                        <button class="hw-button adc-btn" data-adc="1300" data-name="set">
+                            <span class="btn-inner">SET</span>
+                        </button>
+                    </div>
+                    <div class="btn-row">
+                        <button class="hw-button adc-btn" data-adc="1800" data-name="play">
+                            <span class="btn-inner">PLAY</span>
+                        </button>
+                        <button class="hw-button adc-btn" data-adc="2330" data-name="mute">
+                            <span class="btn-inner">MUTE</span>
+                        </button>
+                        <button class="hw-button adc-btn" data-adc="2875" data-name="rec">
+                            <span class="btn-inner">REC</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BOOT button -->
+            <div class="component-group">
+                <button class="hw-button boot-btn" id="btnBoot">
+                    <span class="btn-inner">BOOT</span>
+                </button>
+                <div class="hint">Click or Space</div>
+            </div>
+        </div>
+
+        <!-- Hidden elements for compatibility (no display on korvo2) -->
+        <div style="display:none">
+            <canvas id="displayCanvas" width="1" height="1"></canvas>
+        </div>
+
+        <!-- Log panel -->
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <div class="log-actions">
+                    <button class="log-btn" id="logCopy">Copy</button>
+                    <button class="log-btn" id="logClear">Clear</button>
+                </div>
+            </div>
+            <div class="log-content" id="logContent"></div>
+        </div>
+    </div>
+
+    <script src="websim.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>

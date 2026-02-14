@@ -1136,6 +1136,15 @@ def _esp_flash_impl(ctx):
     flasher_bin = flasher_files[0]  # go_binary produces single executable
     
     # Create wrapper script that sets env vars and calls Go binary
+    # WebSim: WASM path (board config is embedded in WASM itself)
+    wasm_path = ""
+    if ctx.attr.wasm_app:
+        for f in ctx.attr.wasm_app.files.to_list():
+            if f.path.endswith(".wasm"):
+                wasm_path = f.short_path
+                break
+    
+    # Create wrapper script
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
     
     # Determine if we have full flash files
@@ -1157,7 +1166,52 @@ export ESP_DATA_FLASH_ARGS="{data_flash_args}"
 export ESP_NVS_OFFSET="{nvs_offset}"
 export ESP_NVS_SIZE="{nvs_size}"
 
-# Execute Go flasher with arguments
+# ============================================================
+# WebSim mode: detect websim:// port and upload via TCP
+# ============================================================
+if [[ "$ESP_PORT_CONFIG" == websim://* ]]; then
+    WEBSIM_ADDR="${{ESP_PORT_CONFIG#websim://}}"
+    WEBSIM_HOST="${{WEBSIM_ADDR%%:*}}"
+    WEBSIM_PORT="${{WEBSIM_ADDR##*:}}"
+    # Validate port: if no ':' in URL, ##*: returns the whole string (== host)
+    if [[ "$WEBSIM_PORT" == "$WEBSIM_HOST" || -z "$WEBSIM_PORT" ]]; then
+        echo "[flash] ERROR: No port in websim URL '$ESP_PORT_CONFIG'"
+        echo "[flash] Usage: --//bazel:port=websim://localhost:PORT"
+        echo "[flash] Start the simulator first: bazel run //tools/websim"
+        exit 1
+    fi
+    echo "[flash] WebSim mode: $WEBSIM_HOST:$WEBSIM_PORT"
+
+    # Board config is embedded in WASM (read by JS via getBoardConfigPtr/Len exports)
+    WASM_FILE="{wasm_path}"
+    if [[ ! -f "$WASM_FILE" ]]; then
+        echo "[flash] ERROR: No WASM firmware found at $WASM_FILE"
+        echo "[flash] Build it first: bazel build <app>:sim (websim_app target)"
+        exit 1
+    fi
+
+    WASM_LEN=$(stat -f%z "$WASM_FILE" 2>/dev/null || stat -c%s "$WASM_FILE" 2>/dev/null)
+    echo "[flash] WASM: $WASM_LEN bytes"
+    echo "[flash] Uploading to websim://$WEBSIM_HOST:$WEBSIM_PORT..."
+
+    # FLASH protocol: command + size + binary data
+    PAYLOAD=$(mktemp)
+    printf "FLASH\\n%d\\n" "$WASM_LEN" > "$PAYLOAD"
+    cat "$WASM_FILE" >> "$PAYLOAD"
+
+    RESPONSE=$(nc -w 5 "$WEBSIM_HOST" "$WEBSIM_PORT" < "$PAYLOAD" 2>&1 || true)
+    rm -f "$PAYLOAD"
+
+    if [[ "$RESPONSE" == *"OK"* ]]; then
+        echo "[flash] WebSim flash successful!"
+    else
+        echo "[flash] WebSim flash failed: $RESPONSE"
+        exit 1
+    fi
+    exit 0
+fi
+
+# Execute Go flasher for real hardware
 exec "{flasher}" "$@"
 """.format(
         board = board,
@@ -1171,6 +1225,7 @@ exec "{flasher}" "$@"
         nvs_offset = nvs_offset,
         nvs_size = nvs_size,
         flasher = flasher_bin.short_path,
+        wasm_path = wasm_path,
     )
     
     ctx.actions.write(
@@ -1186,10 +1241,13 @@ exec "{flasher}" "$@"
     if partition_file:
         flash_files.append(partition_file)
     
+    # Add websim WASM files
+    wasm_files = ctx.attr.wasm_app.files.to_list() if ctx.attr.wasm_app else []
+    
     return [
         DefaultInfo(
             executable = flash_script,
-            runfiles = ctx.runfiles(files = flash_files + flasher_files),
+            runfiles = ctx.runfiles(files = flash_files + flasher_files + wasm_files),
         ),
     ]
 
@@ -1218,6 +1276,9 @@ esp_flash = rule(
             default = Label("//bazel/esp/tools/flasher"),
             executable = True,
             cfg = "exec",
+        ),
+        "wasm_app": attr.label(
+            doc = "WebSim WASM app target (for websim:// flashing). Optional.",
         ),
     },
     doc = "Flash an ESP-IDF binary to a device",

@@ -1,9 +1,9 @@
 //! WebSim Shared State
 //!
-//! Flat struct in WASM linear memory, readable from both Zig and JS.
-//! JS reads this struct by offset from the pointer returned by getStatePtr().
-//!
-//! Memory layout is packed and stable — JS accesses fields by known offsets.
+//! Central state struct in WASM linear memory. HAL drivers read/write fields
+//! directly. JS accesses state through typed WASM export functions defined in
+//! `wasm/wasm.zig` (e.g. getLedColor, getDisplayWidth, getLogLinePtr) —
+//! never by raw memory offsets. Fields can be reordered freely.
 
 /// Maximum number of LEDs in a strip
 pub const MAX_LEDS = 16;
@@ -38,11 +38,25 @@ pub const LOG_LINES_MAX = 32;
 /// Maximum number of ADC buttons
 pub const MAX_ADC_BUTTONS = 8;
 
-/// Display framebuffer size (240x240 RGB565 = 115200 bytes)
-pub const DISPLAY_WIDTH = 240;
-pub const DISPLAY_HEIGHT = 240;
+/// Maximum display dimensions (framebuffer allocated for largest board)
+pub const MAX_DISPLAY_WIDTH = 800;
+pub const MAX_DISPLAY_HEIGHT = 480;
 pub const DISPLAY_BPP = 2; // RGB565
-pub const DISPLAY_FB_SIZE = DISPLAY_WIDTH * DISPLAY_HEIGHT * DISPLAY_BPP;
+pub const MAX_DISPLAY_FB_SIZE = MAX_DISPLAY_WIDTH * MAX_DISPLAY_HEIGHT * DISPLAY_BPP;
+
+/// Default display dimensions (H106: 240x240)
+pub const DEFAULT_DISPLAY_WIDTH: u16 = 240;
+pub const DEFAULT_DISPLAY_HEIGHT: u16 = 240;
+
+/// Legacy aliases for backward compatibility
+pub const DISPLAY_WIDTH = DEFAULT_DISPLAY_WIDTH;
+pub const DISPLAY_HEIGHT = DEFAULT_DISPLAY_HEIGHT;
+pub const DISPLAY_FB_SIZE = MAX_DISPLAY_FB_SIZE;
+
+/// Audio ring buffer size (power of 2 for fast modulo)
+/// 16384 samples @ 16kHz = ~1 second of audio headroom
+pub const AUDIO_BUF_SAMPLES = 16384;
+pub const AUDIO_BUF_MASK = AUDIO_BUF_SAMPLES - 1;
 
 /// Shared state between WASM (Zig) and JS.
 ///
@@ -81,8 +95,13 @@ pub const SharedState = struct {
     start_time_ms: u64 = 0,
 
     // ======== Display Framebuffer ========
+    /// Active display width (set per board, default 240)
+    display_width: u16 = DEFAULT_DISPLAY_WIDTH,
+    /// Active display height (set per board, default 240)
+    display_height: u16 = DEFAULT_DISPLAY_HEIGHT,
     /// LVGL flush writes here, JS reads for canvas rendering
-    display_fb: [DISPLAY_FB_SIZE]u8 = [_]u8{0} ** DISPLAY_FB_SIZE,
+    /// Sized for maximum supported resolution (800x480)
+    display_fb: [MAX_DISPLAY_FB_SIZE]u8 = [_]u8{0} ** MAX_DISPLAY_FB_SIZE,
     /// Dirty flag: set by flush, cleared by JS after rendering
     display_dirty: bool = false,
 
@@ -97,6 +116,53 @@ pub const SharedState = struct {
     log_next: u32 = 0,
     /// Flag: new log lines available (JS resets after reading)
     log_dirty: bool = false,
+
+    // ======== Audio Output (Speaker: Zig writes, JS reads) ========
+    /// Ring buffer for speaker PCM samples (i16, mono, 16kHz)
+    audio_out_buf: [AUDIO_BUF_SAMPLES]i16 = [_]i16{0} ** AUDIO_BUF_SAMPLES,
+    /// Write cursor (advanced by Zig speaker driver)
+    audio_out_write: u32 = 0,
+    /// Read cursor (advanced by JS Web Audio playback)
+    audio_out_read: u32 = 0,
+
+    // ======== Audio Input (Mic: JS writes, Zig reads) ========
+    /// Ring buffer for microphone PCM samples (i16, mono, 16kHz)
+    audio_in_buf: [AUDIO_BUF_SAMPLES]i16 = [_]i16{0} ** AUDIO_BUF_SAMPLES,
+    /// Write cursor (advanced by JS audio capture)
+    audio_in_write: u32 = 0,
+    /// Read cursor (advanced by Zig mic driver)
+    audio_in_read: u32 = 0,
+
+    // ======== WiFi Simulation ========
+    /// WiFi connected state (updated by driver, read by JS for UI)
+    wifi_connected: bool = false,
+    /// Connected SSID
+    wifi_ssid: [32]u8 = undefined,
+    wifi_ssid_len: u8 = 0,
+    /// Simulated RSSI (JS can adjust for testing)
+    wifi_rssi: i8 = -50,
+    /// JS sets true to simulate AP loss / connection drop
+    wifi_force_disconnect: bool = false,
+
+    // ======== Net Simulation ========
+    /// IP address obtained (set by Net driver after WiFi connects)
+    net_has_ip: bool = false,
+    /// Simulated IP address
+    net_ip: [4]u8 = .{ 192, 168, 1, 100 },
+    /// Simulated gateway
+    net_gateway: [4]u8 = .{ 192, 168, 1, 1 },
+    /// Simulated DNS
+    net_dns: [4]u8 = .{ 8, 8, 8, 8 },
+
+    // ======== BLE Simulation ========
+    /// BLE state (as u8, maps to hal.ble.State enum)
+    ble_state: u8 = 0,
+    /// BLE connected flag (for JS UI)
+    ble_connected: bool = false,
+    /// JS sets true to simulate a peer connecting
+    ble_sim_connect: bool = false,
+    /// JS sets true to simulate a peer disconnecting
+    ble_sim_disconnect: bool = false,
 
     // ======== Running Flag ========
     running: bool = true,
@@ -156,11 +222,12 @@ pub const SharedState = struct {
     pub fn displayFlush(self: *SharedState, x1: u16, y1: u16, x2: u16, y2: u16, data: [*]const u8) void {
         const w = @as(u32, x2 - x1 + 1);
         const line_bytes = w * DISPLAY_BPP;
+        const stride: u32 = @as(u32, self.display_width);
         var y: u16 = y1;
         while (y <= y2) : (y += 1) {
-            const fb_offset = (@as(u32, y) * DISPLAY_WIDTH + @as(u32, x1)) * DISPLAY_BPP;
+            const fb_offset = (@as(u32, y) * stride + @as(u32, x1)) * DISPLAY_BPP;
             const src_offset = @as(u32, y - y1) * line_bytes;
-            if (fb_offset + line_bytes <= DISPLAY_FB_SIZE) {
+            if (fb_offset + line_bytes <= MAX_DISPLAY_FB_SIZE) {
                 const dst = self.display_fb[fb_offset..][0..line_bytes];
                 const src = data[src_offset..][0..line_bytes];
                 @memcpy(dst, src);
@@ -189,6 +256,53 @@ pub const SharedState = struct {
         else
             (self.log_next + idx) % LOG_LINES_MAX;
         return self.log_lines[actual_idx][0..self.log_lens[actual_idx]];
+    }
+
+    // ================================================================
+    // Audio Output API (Speaker)
+    // ================================================================
+
+    /// Number of samples available for JS to read
+    pub fn audioOutAvailable(self: *const SharedState) u32 {
+        return self.audio_out_write -% self.audio_out_read;
+    }
+
+    /// Space available for Zig to write
+    pub fn audioOutSpace(self: *const SharedState) u32 {
+        return AUDIO_BUF_SAMPLES - self.audioOutAvailable();
+    }
+
+    /// Write samples to speaker ring buffer (returns number written)
+    pub fn audioOutWrite(self: *SharedState, samples: []const i16) u32 {
+        const space = self.audioOutSpace();
+        const to_write = @min(@as(u32, @intCast(samples.len)), space);
+        var i: u32 = 0;
+        while (i < to_write) : (i += 1) {
+            self.audio_out_buf[(self.audio_out_write +% i) & AUDIO_BUF_MASK] = samples[i];
+        }
+        self.audio_out_write +%= to_write;
+        return to_write;
+    }
+
+    // ================================================================
+    // Audio Input API (Mic)
+    // ================================================================
+
+    /// Number of samples available for Zig to read
+    pub fn audioInAvailable(self: *const SharedState) u32 {
+        return self.audio_in_write -% self.audio_in_read;
+    }
+
+    /// Read samples from mic ring buffer (returns number read)
+    pub fn audioInRead(self: *SharedState, buffer: []i16) u32 {
+        const avail = self.audioInAvailable();
+        const to_read = @min(@as(u32, @intCast(buffer.len)), avail);
+        var i: u32 = 0;
+        while (i < to_read) : (i += 1) {
+            buffer[i] = self.audio_in_buf[(self.audio_in_read +% i) & AUDIO_BUF_MASK];
+        }
+        self.audio_in_read +%= to_read;
+        return to_read;
     }
 
     // ================================================================

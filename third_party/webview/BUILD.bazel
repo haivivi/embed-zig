@@ -1,0 +1,31 @@
+package(default_visibility = ["//visibility:public"])
+
+# webview 0.12.0 — downloaded from @webview external repo
+genrule(
+    name = "webview_static",
+    srcs = [
+        "@webview//:webview_srcs",
+        "@webview//:webview_headers",
+    ],
+    outs = ["libwebview.a"],
+    cmd = """
+        set -e
+        WORK=$$(mktemp -d)
+        trap "rm -rf $$WORK" EXIT
+
+        # Find include dir
+        INC_DIR=$$(dirname $$(echo $(locations @webview//:webview_headers) | tr ' ' '\\n' | grep 'include/webview/webview.h' | head -1) | sed 's|/webview$$||')
+
+        c++ -c $(location @webview//:webview_srcs) \
+            -o $$WORK/webview.o \
+            -I$$INC_DIR \
+            -std=c++11 -DWEBVIEW_STATIC -fPIC -O2 -w
+
+        ar rcs $@ $$WORK/webview.o
+    """,
+)
+
+filegroup(
+    name = "webview_headers",
+    srcs = ["@webview//:webview_headers"],
+)

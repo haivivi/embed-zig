@@ -10,6 +10,11 @@ const hal = @import("hal");
 const display = @import("display");
 const drivers = @import("../../impl/drivers.zig");
 const spi_sim = @import("../../impl/spi.zig");
+const wifi_mod = @import("../../impl/wifi.zig");
+const net_mod = @import("../../impl/net.zig");
+const speaker_mod = @import("../../impl/speaker.zig");
+const mic_mod = @import("../../impl/mic.zig");
+const ble_mod = @import("../../impl/ble.zig");
 const state = @import("../../impl/state.zig");
 
 // ============================================================================
@@ -105,15 +110,71 @@ pub const led_spec = struct {
     pub const meta = .{ .id = "led.status" };
 };
 
+/// Display dimensions for H106
+pub const display_width: u16 = 240;
+pub const display_height: u16 = 240;
+
 /// SPI LCD driver: SpiLcd(SimSpi, SimDcPin) — goes through simulated SPI bus.
 /// Use directly with ui.init(Display, &display).
 pub const Display = display.SpiLcd(spi_sim.SimSpi, spi_sim.SimDcPin, .{
-    .width = state.DISPLAY_WIDTH,
-    .height = state.DISPLAY_HEIGHT,
+    .width = display_width,
+    .height = display_height,
     .color_format = .rgb565,
     .render_mode = .partial,
     .buf_lines = 20,
 });
+
+pub const wifi_spec = struct {
+    pub const Driver = wifi_mod.WifiDriver;
+    pub const meta = .{ .id = "wifi.sim" };
+};
+
+pub const net_spec = struct {
+    pub const Driver = net_mod.NetDriver;
+    pub const meta = .{ .id = "net.sim" };
+};
+
+pub const speaker_spec = struct {
+    pub const Driver = speaker_mod.SpeakerDriver;
+    pub const meta = .{ .id = "speaker.sim" };
+    pub const config = hal.mono_speaker.Config{
+        .sample_rate = 16000,
+        .bits_per_sample = 16,
+    };
+};
+
+pub const mic_spec = struct {
+    pub const Driver = mic_mod.MicDriver;
+    pub const meta = .{ .id = "mic.sim" };
+    pub const config = hal.mic.Config{
+        .sample_rate = 16000,
+        .channels = 1,
+        .bits_per_sample = 16,
+    };
+};
+
+pub const ble_spec = struct {
+    pub const Driver = ble_mod.BleDriver;
+    pub const meta = .{ .id = "ble.sim" };
+};
+
+// ============================================================================
+// Board Config JSON (embedded in WASM, read by JS to render UI)
+// ============================================================================
+
+pub const board_config_json =
+    \\{"name":"HAIVIVI H106","chip":"ESP32-S3",
+    \\"leds":{"count":9,"layout":"diamond"},
+    \\"buttons":{"adc":[
+    \\{"name":"VOL+","value":200},{"name":"VOL-","value":500},
+    \\{"name":"LEFT","value":800},{"name":"RIGHT","value":1100},
+    \\{"name":"BACK","value":1400},{"name":"OK","value":1700},
+    \\{"name":"REC","value":2000}
+    \\],"boot":false,"power":true},
+    \\"display":{"width":240,"height":240},
+    \\"audio":{"speaker":true,"mic":true,"aec":true,"sample_rate":16000},
+    \\"wifi":true,"ble":true}
+;
 
 pub const log = drivers.sal.log;
 pub const time = drivers.sal.time;

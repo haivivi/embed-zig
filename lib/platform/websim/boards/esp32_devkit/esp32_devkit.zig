@@ -52,6 +52,19 @@ pub const led_spec = struct {
     pub const meta = .{ .id = "led.rgb" };
 };
 
+// ============================================================================
+// Board Config JSON (embedded in WASM, read by JS to render UI)
+// ============================================================================
+
+pub const board_config_json =
+    \\{"name":"ESP32-S3 DevKit","chip":"ESP32-S3",
+    \\"leds":{"count":1,"type":"ws2812","layout":"single"},
+    \\"buttons":{"adc":[],"boot":true,"power":false},
+    \\"display":null,
+    \\"audio":null,
+    \\"wifi":false,"ble":false}
+;
+
 pub const log = drivers.sal.log;
 pub const time = drivers.sal.time;
 pub const isRunning = drivers.sal.isRunning;

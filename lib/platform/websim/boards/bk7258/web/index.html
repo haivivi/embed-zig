@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim — BK7258</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="sim-container">
+        <header class="sim-header">
+            <h1>embed-zig <span class="accent">WebSim</span> <span class="board-name">BK7258</span></h1>
+            <div class="header-right">
+                <button class="rec-screen-btn" id="screenRecBtn" title="Record screen video">&#9679; Rec</button>
+                <span class="status" id="status">Loading...</span>
+            </div>
+        </header>
+
+        <div class="device" id="deviceFrame">
+            <!-- Display: 800x480 landscape -->
+            <div class="display-area" id="displayArea">
+                <canvas id="displayCanvas" width="800" height="480"></canvas>
+            </div>
+
+            <!-- Controls row -->
+            <div class="controls-row">
+                <div class="button-group">
+                    <button class="hw-button" id="btnPower">
+                        <span class="btn-inner">&#9211; Power</span>
+                    </button>
+                    <button class="hw-button" id="btnBoot">
+                        <span class="btn-inner">BOOT</span>
+                    </button>
+                </div>
+
+                <div class="status-panel">
+                    <span class="status-item" id="wifiStatus">WiFi: disconnected</span>
+                    <span class="status-item" id="ipStatus">IP: —</span>
+                    <span class="status-item" id="bleStatus">BLE: uninit</span>
+                </div>
+
+                <div class="sim-controls">
+                    <button class="sim-btn" id="wifiDisconnectBtn" title="Force WiFi disconnect">WiFi ✕</button>
+                    <button class="sim-btn" id="bleConnectBtn" title="Simulate BLE connect">BLE Connect</button>
+                    <button class="sim-btn" id="bleDisconnectBtn" title="Simulate BLE disconnect">BLE Disconnect</button>
+                    <button class="sim-btn" id="micToggleBtn" title="Toggle microphone">&#127897; Mic Off</button>
+                </div>
+            </div>
+
+            <!-- LED indicator -->
+            <div class="led-row">
+                <div class="led-strip" id="ledContainer"></div>
+            </div>
+        </div>
+
+        <!-- Log panel -->
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <div class="log-actions">
+                    <button class="log-btn" id="logAutoScroll" title="Auto-scroll">&#8615; Auto</button>
+                    <button class="log-btn" id="logCopy">Copy</button>
+                    <button class="log-btn" id="logClear">Clear</button>
+                </div>
+            </div>
+            <div class="log-content" id="logContent"></div>
+        </div>
+    </div>
+
+    <!-- Error panel -->
+    <div class="error-wrap">
+        <div class="log-panel error-panel" id="errorPanel" style="display:none">
+            <div class="log-header"><span>Errors</span></div>
+            <div class="log-content error-content" id="errorContent"></div>
+        </div>
+    </div>
+
+    <script>
+        window.addEventListener('error', function(e) {
+            const panel = document.getElementById('errorPanel');
+            const content = document.getElementById('errorContent');
+            panel.style.display = '';
+            content.innerHTML += '<div class="log-line error">' + e.message + ' (' + e.filename + ':' + e.lineno + ')' + '</div>';
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            const panel = document.getElementById('errorPanel');
+            const content = document.getElementById('errorContent');
+            panel.style.display = '';
+            content.innerHTML += '<div class="log-line error">' + e.reason + '</div>';
+        });
+    </script>
+    <script src="html2canvas.min.js"></script>
+    <script src="websim.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>

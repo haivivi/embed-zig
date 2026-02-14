@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebSim — Board</title>
+<style>
+:root {
+    --bg:#0f1117; --surface:#1a1d27; --surface2:#232733; --border:#2d3245;
+    --text:#e1e4ed; --dim:#7a7f96; --accent:#6c8cff;
+    --green:#4ade80; --red:#f87171; --yellow:#fbbf24;
+    --pcb:#1a5c2a; --pcb-border:#0d3518;
+    --mono:'SF Mono','Fira Code',monospace; --font:system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);
+    min-height:100vh;display:flex;justify-content:center;padding:30px 20px;}
+#board-root{width:100%;max-width:480px;}
+.sim-header{margin-bottom:20px;}
+.header-top{display:flex;align-items:center;justify-content:space-between;}
+.sim-header h1{font-size:16px;font-weight:600;color:var(--text);margin:0;}
+.header-labels{display:flex;gap:6px;margin-top:6px;}
+.chip-badge{font-size:10px;font-family:var(--mono);color:var(--dim);background:var(--surface);
+    padding:2px 6px;border-radius:4px;}
+.target-badge{font-size:9px;font-family:var(--mono);color:var(--accent);background:rgba(108,140,255,0.1);
+    border:1px solid rgba(108,140,255,0.2);padding:2px 6px;border-radius:4px;}
+.header-actions{display:flex;align-items:center;gap:8px;}
+.rec-btn{appearance:none;border:none;background:#c0392b;color:#fff;font-family:var(--mono);
+    font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;cursor:pointer;}
+.rec-btn:hover{background:#e74c3c;}
+.rec-btn.recording{animation:rec-pulse 1s infinite;}
+@keyframes rec-pulse{0%,100%{opacity:1;}50%{opacity:0.6;}}
+.close-btn{appearance:none;border:1px solid var(--border);background:none;color:var(--dim);
+    font-size:12px;width:28px;height:28px;border-radius:50%;cursor:pointer;display:flex;
+    align-items:center;justify-content:center;line-height:1;}
+.close-btn:hover{border-color:var(--red);color:var(--red);background:rgba(248,113,113,0.1);}
+.mic-float{position:fixed;bottom:20px;right:20px;width:48px;height:48px;border-radius:50%;
+    background:var(--surface);border:2px solid var(--border);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;font-size:20px;
+    z-index:100;transition:all 0.2s;box-shadow:0 4px 12px rgba(0,0,0,0.3);}
+.mic-float:hover{border-color:var(--accent);transform:scale(1.1);}
+.mic-float.active{border-color:var(--green);background:rgba(74,222,128,0.15);}
+.mic-float.denied{border-color:var(--red);opacity:0.5;}
+.status{font-size:12px;font-family:var(--mono);padding:4px 10px;border-radius:20px;
+    background:var(--surface);border:1px solid var(--border);color:var(--dim);}
+.status.running{color:var(--green);border-color:rgba(74,222,128,0.3);}
+.board{background:var(--pcb);border:2px solid var(--pcb-border);border-radius:12px;
+    padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:16px;margin-bottom:16px;}
+.board-label{font-family:var(--mono);font-size:11px;font-weight:700;color:rgba(255,255,255,0.3);
+    letter-spacing:0.1em;text-transform:uppercase;}
+.board-chip{font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.2);}
+.component-group{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;}
+.component-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:rgba(255,255,255,0.3);}
+.display-frame{border:2px solid #333;border-radius:4px;overflow:hidden;}
+.leds{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+.led{width:16px;height:16px;border-radius:50%;background:#0a3015;border:1.5px solid #0d3518;transition:all 0.1s;}
+.led.lit{border-color:transparent;box-shadow:0 0 12px var(--led-color,#4ade80),0 0 4px var(--led-color,#4ade80);}
+.adc-buttons{display:flex;flex-direction:column;gap:8px;width:100%;}
+.btn-row{display:flex;gap:8px;justify-content:center;}
+.hw-button{appearance:none;border:none;background:#222;border-radius:4px;padding:0;cursor:pointer;
+    width:64px;height:28px;transition:transform 0.05s;user-select:none;}
+.hw-button:active,.hw-button.pressed{transform:translateY(1px);}
+.btn-inner{display:flex;align-items:center;justify-content:center;width:100%;height:100%;
+    border-radius:4px;background:linear-gradient(180deg,#444,#333);border:1px solid #555;
+    border-bottom:2px solid #222;font-family:var(--mono);font-size:9px;font-weight:700;color:#ccc;letter-spacing:0.05em;}
+.hw-button:active .btn-inner,.hw-button.pressed .btn-inner{
+    background:linear-gradient(180deg,#333,#444);border-bottom:1px solid #222;color:var(--accent);}
+.boot-btn{width:56px;} .power-btn{width:56px;}
+.audio-status{font-family:var(--mono);font-size:11px;color:var(--dim);}
+.vu-meter{width:100%;max-width:200px;height:20px;background:var(--surface);border-radius:4px;overflow:hidden;}
+.vu-bar{height:100%;background:var(--green);border-radius:4px;width:0%;transition:width 0.05s;}
+.status-row{display:flex;gap:16px;font-family:var(--mono);font-size:11px;color:var(--dim);
+    padding:8px 16px;justify-content:center;}
+.log-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.log-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
+    border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;}
+.log-actions{display:flex;gap:6px;}
+.log-btn{appearance:none;border:1px solid var(--border);background:transparent;color:var(--dim);
+    font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer;}
+.log-btn:hover{border-color:var(--accent);color:var(--accent);}
+.log-content{padding:12px 16px;font-family:var(--mono);font-size:12px;line-height:1.6;
+    max-height:200px;overflow-y:auto;color:var(--dim);}
+.log-line{white-space:pre;}.log-line.info{color:var(--green);}
+.log-line.error{color:var(--red);}.log-line.warn{color:var(--yellow);}
+</style>
+</head>
+<body>
+<div id="board-root"></div>
+<script>
+%%RENDERER_JS%%
+</script>
+<script>
+// WASM Firmware Loader — uses WebKit's built-in WebAssembly runtime
+// Board config is read from WASM exports after instantiation (no server-side injection needed).
+var _wasm = null;
+var _wasmMemory = null;
+var _running = false;
+var _decoder = new TextDecoder();
+
+function mem() {
+    if (_wasmMemory) return _wasmMemory.buffer;
+    if (_wasm) return _wasm.instance.exports.memory.buffer;
+    return new ArrayBuffer(0);
+}
+
+// WASI stubs (same as websim.js)
+var wasiStubs = {
+    fd_write: function() { return 0; },
+    fd_read: function() { return 0; },
+    fd_close: function() { return 0; },
+    fd_seek: function() { return 0; },
+    fd_fdstat_get: function() { return 0; },
+    fd_prestat_get: function() { return 8; },
+    fd_prestat_dir_name: function() { return 8; },
+    environ_get: function() { return 0; },
+    environ_sizes_get: function(a, b) { var v = new DataView(mem()); v.setUint32(a,0,true); v.setUint32(b,0,true); return 0; },
+    args_get: function() { return 0; },
+    args_sizes_get: function(a, b) { var v = new DataView(mem()); v.setUint32(a,0,true); v.setUint32(b,0,true); return 0; },
+    clock_time_get: function(_,__,p) { new DataView(mem()).setBigUint64(p, BigInt(Math.floor(performance.now()*1e6)), true); return 0; },
+    proc_exit: function(c) { console.log('[WASM] exit:', c); },
+    random_get: function(b, l) { crypto.getRandomValues(new Uint8Array(mem(), b, l)); return 0; }
+};
+
+function loadWasmFirmware() {
+    if (!window._wasmB64 || !window._wasmReady) {
+        console.log('[WebSim] No WASM data yet');
+        return;
+    }
+    console.log('[WebSim] Loading WASM firmware (' + window._wasmB64.length + ' base64 chars)...');
+
+    var binary = atob(window._wasmB64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    var imports = {
+        env: { consoleLog: function(p, l) { console.log('[WASM]', _decoder.decode(new Uint8Array(mem(), p, l))); } },
+        wasi_snapshot_preview1: wasiStubs
+    };
+
+    WebAssembly.instantiate(bytes.buffer, imports).then(function(result) {
+        _wasm = result;
+        _wasmMemory = result.instance.exports.memory;
+        console.log('[WebSim] WASM instantiated!');
+
+        var ex = result.instance.exports;
+
+        // Read board config from WASM and render UI
+        if (ex.getBoardConfigPtr && ex.getBoardConfigLen) {
+            var cfgPtr = ex.getBoardConfigPtr();
+            var cfgLen = ex.getBoardConfigLen();
+            if (cfgLen > 0) {
+                var cfgStr = _decoder.decode(new Uint8Array(_wasmMemory.buffer, cfgPtr, cfgLen));
+                console.log('[WebSim] Board config from WASM:', cfgStr.substring(0, 100) + '...');
+                try {
+                    var config = JSON.parse(cfgStr);
+                    // Inject target from flash metadata (if available)
+                    if (window._wasmTarget) config.target = window._wasmTarget;
+                    renderBoard(config);
+                } catch(e) {
+                    console.error('[WebSim] Config parse error:', e);
+                }
+            }
+        }
+
+        // Set initial time and call init
+        ex.setTime(Math.floor(performance.now()));
+        ex.init();
+        console.log('[WebSim] init() called');
+
+        // Shared AudioContext for both mic and speaker (required for AEC)
+        // AEC only cancels echo when mic and speaker use the SAME AudioContext
+        window._sharedAudioCtx = null;
+        window._speakerNode = null;
+
+        function ensureAudioCtx() {
+            if (!window._sharedAudioCtx) {
+                window._sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+            }
+            return window._sharedAudioCtx;
+        }
+
+        // Start speaker playback (pulls from WASM audio_out ring buffer)
+        try {
+            var ctx = ensureAudioCtx();
+            var spkNode = ctx.createScriptProcessor(256, 0, 1);
+            spkNode.onaudioprocess = function(e) {
+                var output = e.outputBuffer.getChannelData(0);
+                if (!_wasm || !_wasm.instance) { output.fill(0); return; }
+                var x = _wasm.instance.exports;
+                var writePos = x.getAudioOutWrite();
+                var readPos = x.getAudioOutRead();
+                var available = (writePos - readPos) >>> 0;
+                var bufMask = x.getAudioOutSize() - 1;
+                var ptr = x.getAudioOutPtr();
+                var i16View = new Int16Array(_wasmMemory.buffer, ptr, x.getAudioOutSize());
+                var toRead = Math.min(output.length, available);
+                for (var s = 0; s < toRead; s++) {
+                    output[s] = i16View[(readPos + s) & bufMask] / 32768.0;
+                }
+                for (var s2 = toRead; s2 < output.length; s2++) output[s2] = 0;
+                x.setAudioOutRead((readPos + toRead) >>> 0);
+
+                var vuEl = document.getElementById('speaker-vu');
+                if (vuEl) {
+                    var bar = vuEl.querySelector('.vu-bar');
+                    if (bar) bar.style.width = Math.min(100, (toRead / output.length) * 100) + '%';
+                }
+            };
+            // Reduce volume to prevent clipping (firmware may apply high gain)
+            var gainNode = ctx.createGain();
+            gainNode.gain.value = 0.5;
+            spkNode.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            window._speakerNode = spkNode;
+            console.log('[WebSim] Speaker started (shared AudioContext, volume 15%)');
+        } catch(e) { console.warn('[WebSim] Speaker failed:', e); }
+
+        // Update status
+        var st = document.getElementById('status');
+        if (st) { st.textContent = 'Running'; st.classList.add('running'); }
+
+        // Start frame loop
+        _running = true;
+        function frame(ts) {
+            if (!_running) return;
+            ex.setTime(Math.floor(ts));
+            ex.step();
+
+            // Update LEDs (gamma-corrected LED→screen color mapping)
+            // Real LEDs are emissive — gamma 0.4 maps LED PWM values to
+            // perceptually equivalent screen brightness
+            var ledCount = ex.getLedCount();
+            for (var i = 0; i < ledCount; i++) {
+                var packed = ex.getLedColor(i);
+                var el = document.getElementById('led-' + i);
+                if (!el) continue;
+                if (packed) {
+                    var r = (packed>>16)&0xFF, g = (packed>>8)&0xFF, b = packed&0xFF;
+                    // LED→screen gamma correction (0.4)
+                    r = Math.round(255 * Math.pow(r / 255, 0.4));
+                    g = Math.round(255 * Math.pow(g / 255, 0.4));
+                    b = Math.round(255 * Math.pow(b / 255, 0.4));
+                    var c = 'rgb(' + r + ',' + g + ',' + b + ')';
+                    el.classList.add('lit');
+                    el.style.background = c;
+                    el.style.setProperty('--led-color', c);
+                } else {
+                    el.classList.remove('lit');
+                    el.style.background = '';
+                    el.style.removeProperty('--led-color');
+                }
+            }
+
+            // Update logs
+            if (ex.getLogDirty()) {
+                ex.clearLogDirty();
+                var logEl = document.getElementById('log-content');
+                if (logEl) {
+                    var total = Math.min(ex.getLogCount(), 32);
+                    var lines = [];
+                    for (var j = 0; j < total; j++) {
+                        var len = ex.getLogLineLen(j);
+                        if (len > 0) {
+                            var ptr = ex.getLogLinePtr(j);
+                            lines.push(_decoder.decode(new Uint8Array(_wasmMemory.buffer, ptr, len)));
+                        }
+                    }
+                    logEl.innerHTML = lines.map(function(l) {
+                        var cls = 'log-line';
+                        if (l.indexOf('[INFO]') === 0) cls += ' info';
+                        else if (l.indexOf('[ERROR]') === 0) cls += ' error';
+                        else if (l.indexOf('[WARN]') === 0) cls += ' warn';
+                        return '<div class="' + cls + '">' + l.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</div>';
+                    }).join('');
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            }
+
+            // Update display if dirty
+            if (ex.getDisplayDirty && ex.getDisplayDirty()) {
+                ex.clearDisplayDirty();
+                var canvas = document.getElementById('display-canvas');
+                if (canvas) {
+                    var ctx = canvas.getContext('2d');
+                    var w = ex.getDisplayWidth(), h = ex.getDisplayHeight();
+                    var fbPtr = ex.getDisplayFbPtr();
+                    var fbSize = ex.getDisplayFbSize();
+                    var fb = new Uint8Array(_wasmMemory.buffer, fbPtr, fbSize);
+                    var imgData = ctx.createImageData(w, h);
+                    var rgba = imgData.data;
+                    for (var k = 0; k < w * h; k++) {
+                        var lo = fb[k*2], hi = fb[k*2+1];
+                        var rgb565 = (hi << 8) | lo;
+                        rgba[k*4]     = ((rgb565 >> 11) & 0x1F) * 255 / 31 | 0;
+                        rgba[k*4 + 1] = ((rgb565 >> 5) & 0x3F) * 255 / 63 | 0;
+                        rgba[k*4 + 2] = (rgb565 & 0x1F) * 255 / 31 | 0;
+                        rgba[k*4 + 3] = 255;
+                    }
+                    ctx.putImageData(imgData, 0, 0);
+                }
+            }
+
+            requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+    }).catch(function(err) {
+        console.error('[WebSim] WASM load failed:', err);
+        var st = document.getElementById('status');
+        if (st) { st.textContent = 'Error: ' + err.message; }
+    });
+}
+
+// Check if WASM data was already injected before page loaded
+if (window._wasmReady) loadWasmFirmware();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+package(default_visibility = ["//visibility:public"])
+
+# WebSim Flash Tool — upload firmware to simulator
+# Usage: bazel run //tools/flash -- --port 9999 --fw app.wasm
+
+genrule(
+    name = "flash_build",
+    srcs = ["main.zig"],
+    outs = ["websim-flash"],
+    cmd = """
+        set -e
+        CACHE=$$(mktemp -d)
+        trap "rm -rf $$CACHE" EXIT
+        zig build-exe \
+            tools/flash/main.zig \
+            -femit-bin=$@ \
+            --cache-dir $$CACHE \
+            --global-cache-dir $$CACHE
+    """,
+    executable = True,
+)
+
+alias(
+    name = "flash",
+    actual = ":flash_build",
+)

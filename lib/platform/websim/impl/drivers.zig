@@ -15,13 +15,19 @@ pub const DISPLAY_HEIGHT = state_mod.DISPLAY_HEIGHT;
 /// Global shared state
 pub const shared = &state_mod.state;
 
+const builtin = @import("builtin");
+const is_wasm = builtin.target.cpu.arch == .wasm32;
+
 // ============================================================================
-// WASM imports (provided by JS)
+// Platform-specific imports
 // ============================================================================
 
-/// JS-provided functions via WASM import "env"
-const env = struct {
+const env = if (is_wasm) struct {
     extern "env" fn consoleLog(ptr: [*]const u8, len: u32) void;
+} else struct {
+    fn consoleLog(ptr: [*]const u8, len: u32) void {
+        std.debug.print("{s}\n", .{ptr[0..len]});
+    }
 };
 
 // ============================================================================
@@ -186,13 +192,19 @@ pub const sal = struct {
     };
 
     pub const time = struct {
-        /// In WASM, sleep is a no-op — JS drives the frame loop.
-        /// The step function is called each frame by requestAnimationFrame.
-        pub fn sleepMs(_: u32) void {
-            // No-op in WASM: cooperative stepping, not blocking
+        /// Sleep for the given number of milliseconds.
+        /// WASM: no-op (cooperative stepping). Native: real sleep.
+        pub fn sleepMs(ms: u32) void {
+            if (!is_wasm) {
+                std.Thread.sleep(@as(u64, ms) * std.time.ns_per_ms);
+            }
         }
 
         pub fn getTimeMs() u64 {
+            return shared.uptime();
+        }
+
+        pub fn nowMs() u64 {
             return shared.uptime();
         }
     };
