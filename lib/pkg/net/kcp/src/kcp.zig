@@ -29,6 +29,18 @@
 const std = @import("std");
 
 pub const fec = @import("fec.zig");
+pub const ring_buffer = @import("ring_buffer.zig");
+pub const stream_mod = @import("stream.zig");
+
+pub const RingBuffer = ring_buffer.RingBuffer;
+pub const Stream = stream_mod.Stream;
+pub const Mux = stream_mod.Mux;
+pub const StreamState = stream_mod.StreamState;
+pub const StreamError = stream_mod.StreamError;
+pub const MuxConfig = stream_mod.MuxConfig;
+pub const MuxError = stream_mod.MuxError;
+pub const OutputFn = stream_mod.OutputFn;
+pub const OnNewStreamFn = stream_mod.OnNewStreamFn;
 
 const c = @cImport({
     @cInclude("ikcp.h");
