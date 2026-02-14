@@ -26,7 +26,7 @@ fn testSpawnJoin() !void {
 
     const thread = try Rt.Thread.spawn(.{}, struct {
         fn run(r: *std.atomic.Value(i32)) void {
-            std.Thread.sleep(5 * std.time.ns_per_ms);
+            platform.time.sleepMs(5);
             r.store(42, .release);
         }
     }.run, .{&result});
@@ -54,7 +54,7 @@ fn testSpawnDetach() !void {
 
     var waited: u32 = 0;
     while (!done.load(.acquire) and waited < 500) {
-        std.Thread.sleep(5 * std.time.ns_per_ms);
+        platform.time.sleepMs(5);
         waited += 5;
     }
 

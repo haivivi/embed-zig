@@ -6,4 +6,8 @@ pub const log = struct {
     pub fn warn(comptime fmt: []const u8, args: anytype) void { std.debug.print("[WARN] " ++ fmt ++ "\n", args); }
     pub fn debug(comptime fmt: []const u8, args: anytype) void { std.debug.print("[DBG]  " ++ fmt ++ "\n", args); }
 };
+pub const time = struct {
+    pub fn sleepMs(ms: u32) void { std_impl.time.sleepMs(ms); }
+    pub fn nowMs() u64 { return std_impl.time.nowMs(); }
+};
 pub const runtime = std_impl.runtime;

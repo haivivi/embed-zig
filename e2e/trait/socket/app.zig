@@ -4,14 +4,12 @@
 //!   1. TCP: connect to localhost server, send + recv echo
 //!   2. UDP: sendTo + recvFromWithAddr on localhost
 //!
-//! The server side uses std.posix directly (not the trait Socket),
-//! because listen/accept are not part of the cross-platform trait.
+//! The TCP echo server is provided by board.zig (platform-specific).
 
-const std = @import("std");
-const posix = std.posix;
 const platform = @import("platform.zig");
 const log = platform.log;
 const Socket = platform.Socket;
+const board = @import("board");
 
 fn runTests() !void {
     log.info("[e2e] START: trait/socket", .{});
@@ -26,48 +24,14 @@ fn runTests() !void {
 fn testTcpEcho() !void {
     const localhost: [4]u8 = .{ 127, 0, 0, 1 };
 
-    // Start a raw posix TCP server (listen/accept are not in trait)
-    const server_fd = posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0) catch {
-        log.err("[e2e] FAIL: trait/socket/tcp — server socket failed", .{});
+    // Board provides the echo server (posix on std, lwip on ESP)
+    var server = board.TcpEchoServer.start(localhost) catch |err| {
+        log.err("[e2e] FAIL: trait/socket/tcp — server start failed: {}", .{err});
         return error.TcpServerFailed;
     };
-    defer posix.close(server_fd);
+    defer server.stop();
 
-    const addr = posix.sockaddr.in{
-        .port = 0, // OS picks a port
-        .addr = @bitCast(localhost),
-    };
-    posix.bind(server_fd, @ptrCast(&addr), @sizeOf(posix.sockaddr.in)) catch {
-        log.err("[e2e] FAIL: trait/socket/tcp — server bind failed", .{});
-        return error.TcpServerFailed;
-    };
-    posix.listen(server_fd, 1) catch {
-        log.err("[e2e] FAIL: trait/socket/tcp — server listen failed", .{});
-        return error.TcpServerFailed;
-    };
-
-    // Get bound port
-    var bound_addr: posix.sockaddr.in = undefined;
-    var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-    posix.getsockname(server_fd, @ptrCast(&bound_addr), &addr_len) catch {
-        log.err("[e2e] FAIL: trait/socket/tcp — getsockname failed", .{});
-        return error.TcpServerFailed;
-    };
-    const port = std.mem.bigToNative(u16, bound_addr.port);
-
-    // Server thread: accept + echo
-    const server_thread = try std.Thread.spawn(.{}, struct {
-        fn run(fd: posix.socket_t) void {
-            var client_addr: posix.sockaddr.in = undefined;
-            var client_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-            const client = posix.accept(fd, @ptrCast(&client_addr), &client_len, 0) catch return;
-            defer posix.close(client);
-            var buf: [64]u8 = undefined;
-            const n = posix.read(client, &buf) catch return;
-            _ = posix.write(client, buf[0..n]) catch {};
-        }
-    }.run, .{server_fd});
-    defer server_thread.join();
+    const port = server.port;
 
     // Client: use trait Socket
     var client = Socket.tcp() catch |err| {
@@ -94,6 +58,7 @@ fn testTcpEcho() !void {
         return error.TcpRecvFailed;
     };
 
+    const std = @import("std");
     if (!std.mem.eql(u8, buf[0..n], msg)) {
         log.err("[e2e] FAIL: trait/socket/tcp — echo mismatch", .{});
         return error.TcpEchoMismatch;
@@ -105,7 +70,6 @@ fn testTcpEcho() !void {
 fn testUdpEcho() !void {
     const localhost: [4]u8 = .{ 127, 0, 0, 1 };
 
-    // UDP receiver
     var receiver = Socket.udp() catch |err| {
         log.err("[e2e] FAIL: trait/socket/udp — receiver failed: {}", .{err});
         return error.UdpReceiverFailed;
@@ -121,7 +85,6 @@ fn testUdpEcho() !void {
         return error.UdpGetPortFailed;
     };
 
-    // UDP sender
     var sender = Socket.udp() catch |err| {
         log.err("[e2e] FAIL: trait/socket/udp — sender failed: {}", .{err});
         return error.UdpSenderFailed;
@@ -140,6 +103,7 @@ fn testUdpEcho() !void {
         return error.UdpRecvFailed;
     };
 
+    const std = @import("std");
     if (!std.mem.eql(u8, buf[0..result.len], msg)) {
         log.err("[e2e] FAIL: trait/socket/udp — message mismatch", .{});
         return error.UdpMismatch;

@@ -73,11 +73,11 @@ bazel run //e2e/trait/time/esp:flash
 |-------|:-----------------:|:--------:|:---------:|
 | time | PASS | BUILD | BUILD |
 | log | PASS | BUILD | BUILD |
-| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | BLOCKED | BLOCKED |
+| sync (Mutex, Condition, Thread, Channel, WaitGroup) | PASS | BUILD | BUILD |
 | socket (TCP, UDP) | PASS | BLOCKED | BLOCKED |
-| crypto (SHA256, AES-GCM, X25519) | PASS | BLOCKED | BLOCKED |
+| crypto (SHA256, AES-GCM, X25519) | PASS | BUILD | BUILD |
 | rng | PASS | BUILD | BUILD |
-| spawner (spawn, join, detach) | PASS | BLOCKED | BLOCKED |
+| spawner (spawn, join, detach) | PASS | BUILD | BUILD |
 | io (kqueue/epoll) | PASS | N/A | N/A |
 | system (getCpuCount) | PASS | BUILD | BUILD |
 | i2c | N/A | - | - |
@@ -122,13 +122,17 @@ bazel run //e2e/trait/time/esp:flash
 | Platform | Trait | HAL | Total |
 |----------|:-----:|:---:|:-----:|
 | std (macOS/Linux) | 9/13 | 0/16 | 9/29 |
-| ESP32-S3 DevKit | 4 BUILD, 4 BLOCKED | 0/16 | 4/29 |
-| Korvo2-v3 | 4 BUILD, 4 BLOCKED | 0/16 | 4/29 |
+| ESP32-S3 DevKit | 7 BUILD, 1 BLOCKED | 0/16 | 7/29 |
+| Korvo2-v3 | 7 BUILD, 1 BLOCKED | 0/16 | 7/29 |
 
-ESP BLOCKED issues (pre-existing, not e2e bugs):
-- `runtime.zig:286` — `@ptrCast increases pointer alignment` (blocks: sync, spawner)
-- `mbed_tls.zig` — missing mbedtls headers in cmake config (blocks: crypto)
-- `socket` app uses `std.posix` for server side, N/A on freestanding (blocks: socket)
+Bugs found and fixed by e2e:
+- `runtime.zig:286` — `@ptrCast` without `@alignCast` when casting `*const anyopaque` to fn ptr
+- `crypto/esp` — missing `extra_cmake` for mbedTLS C helper sources
+- `sync/spawner` app.zig — used `std.Thread.sleep` (unavailable on freestanding), fixed to `time.sleepMs`
+- `log` app.zig — `{d:.2}` float format triggers `__udivti3` on xtensa, replaced with hex
+
+ESP BLOCKED (remaining):
+- `socket` — TCP echo server needs listen/accept which aren't in trait.socket; needs platform-specific server
 
 ## Adding a New Test
 

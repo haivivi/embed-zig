@@ -56,7 +56,7 @@ fn testCondition() !void {
 
     const thread = try Rt.Thread.spawn(.{}, struct {
         fn run(m: *Rt.Mutex, c: *Rt.Condition, r: *bool) void {
-            std.Thread.sleep(5 * std.time.ns_per_ms);
+            time.sleepMs(5);
             m.lock();
             r.* = true;
             c.signal();

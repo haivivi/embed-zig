@@ -12,9 +12,9 @@ esp_zig_app(
     name = "app",
     app = ":srcs",
     boards = ["esp32s3_devkit", "korvo2_v3"],
-    requires = ["freertos", "wifi", "lwip"],
+    requires = ["freertos", "lwip"],
     deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],
-    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
     tags = ["manual"],
 )

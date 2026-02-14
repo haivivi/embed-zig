@@ -12,8 +12,12 @@ esp_zig_app(
     name = "app",
     app = ":srcs",
     boards = ["esp32s3_devkit", "korvo2_v3"],
-    requires = ["freertos"],
+    requires = ["freertos", "mbedtls"],
     deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],
+    extra_cmake = [
+        "include(${_ESP_LIB}/platform/esp/idf/src/mbed_tls/mbed_tls.cmake)",
+    ],
+    extra_c_sources = ["MBED_TLS_C_SOURCES"],
     sdkconfig = "//examples/esp:esp32s3",
     app_config = "//examples/esp:app",
     tags = ["manual"],
