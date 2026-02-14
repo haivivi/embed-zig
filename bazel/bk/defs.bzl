@@ -129,11 +129,12 @@ def _bk_zig_app_impl(ctx):
 
     # Find bk.zig root from deps + collect all module info
     bk_zig = None
-    module_entries = []  # "name:root_path" pairs for build.sh
+    module_entries = []  # "name:root_path:inc_dirs" triples for build.sh
     for info in dep_infos:
         if info.module_name == "bk":
             bk_zig = info.root_source
-        module_entries.append("{}:{}".format(info.module_name, info.root_source.path))
+        inc_dirs = ",".join(info.own_c_include_dirs) if info.own_c_include_dirs else ""
+        module_entries.append("{}:{}:{}".format(info.module_name, info.root_source.path, inc_dirs))
     if not bk_zig:
         fail("No 'bk' module found in deps. Did you call bk_modules()?")
 

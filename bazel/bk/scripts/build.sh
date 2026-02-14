@@ -89,13 +89,24 @@ MAINEOF
         # Declare each dep module
         local mod_idx=0
         for entry in $BK_MODULES; do
+            # Format: name:root_path:inc_dir1,inc_dir2 (inc_dirs may be empty)
             local mod_name="${entry%%:*}"
-            local mod_path="${entry#*:}"
+            local rest="${entry#*:}"
+            local mod_path="${rest%%:*}"
+            local mod_incs="${rest#*:}"
+            [ "$mod_incs" = "$mod_path" ] && mod_incs="" # No inc dirs
             echo "    const mod_${mod_idx} = b.createModule(.{"
             echo "        .root_source_file = .{ .cwd_relative = \"$E/$mod_path\" },"
             echo '        .target = target,'
             echo '        .optimize = optimize,'
             echo '    });'
+            # Add C include dirs for @cImport resolution
+            if [ -n "$mod_incs" ]; then
+                IFS=',' read -ra INC_DIRS <<< "$mod_incs"
+                for inc in "${INC_DIRS[@]}"; do
+                    echo "    mod_${mod_idx}.addIncludePath(.{ .cwd_relative = \"$E/$inc\" });"
+                done
+            fi
             mod_idx=$((mod_idx + 1))
         done
 
