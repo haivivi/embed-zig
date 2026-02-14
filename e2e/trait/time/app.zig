@@ -4,12 +4,14 @@
 //!   1. sleepMs(10) completes without crash
 //!   2. getTimeMs() returns monotonically increasing values
 //!   3. sleepMs duration is within tolerance (50ms sleep → 40-200ms elapsed)
+//!
+//! This file is IDENTICAL for all platforms. platform.zig → board module handles switching.
 
-/// Run all time trait tests. Board is injected by the platform entry.
-pub fn run(comptime Board: type) !void {
-    const log = Board.log;
-    const time = Board.time;
+const platform = @import("platform.zig");
+const log = platform.log;
+const time = platform.time;
 
+fn runTests() !void {
     log.info("[e2e] START: trait/time", .{});
 
     // Test 1: sleepMs completes without crash
@@ -48,4 +50,16 @@ pub fn run(comptime Board: type) !void {
     }
 
     log.info("[e2e] PASS: trait/time", .{});
+}
+
+/// ESP entry point (called by esp_zig_app framework)
+pub fn entry(_: anytype) void {
+    runTests() catch |err| {
+        log.err("[e2e] FATAL: trait/time — {}", .{err});
+    };
+}
+
+// std test entry (only compiled by zig test)
+test "e2e: trait/time" {
+    try runTests();
 }

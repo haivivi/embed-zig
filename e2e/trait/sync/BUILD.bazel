@@ -1,17 +1,11 @@
-# e2e: trait/sync — cross-platform test logic
-
-load("//bazel/zig:defs.bzl", "zig_library")
+# e2e: trait/sync — shared app sources
 
 package(default_visibility = ["//visibility:public"])
 
-zig_library(
-    name = "e2e_sync",
-    main = "app.zig",
-    srcs = ["app.zig"],
-    module_name = "e2e_sync",
-    deps = [
-        "//lib/trait",
-        "//lib/pkg/async/channel",
-        "//lib/pkg/async/waitgroup",
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
     ],
 )

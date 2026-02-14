@@ -6,29 +6,32 @@
 //!   3. spawn fires a detached task
 //!   4. Channel send/recv across threads
 //!   5. WaitGroup tracks task completion
+//!
+//! This file is IDENTICAL for all platforms.
 
 const std = @import("std");
+const platform = @import("platform.zig");
 const channel_pkg = @import("channel");
 const waitgroup_pkg = @import("waitgroup");
 
-/// Run all sync trait tests.
-pub fn run(comptime Board: type) !void {
-    const log = Board.log;
-    const Rt = Board.runtime;
+const log = platform.log;
+const time = platform.time;
+const Rt = platform.runtime;
 
+fn runTests() !void {
     log.info("[e2e] START: trait/sync", .{});
 
-    try testMutex(Rt, log);
-    try testCondition(Rt, log);
-    try testSpawn(Rt, Board.time, log);
-    try testChannel(Rt, log);
-    try testWaitGroup(Rt, log);
+    try testMutex();
+    try testCondition();
+    try testSpawn();
+    try testChannel();
+    try testWaitGroup();
 
     log.info("[e2e] PASS: trait/sync", .{});
 }
 
-/// Test 1: Mutex lock/unlock works without deadlock
-fn testMutex(comptime Rt: type, comptime log: type) !void {
+// Test 1: Mutex lock/unlock works without deadlock
+fn testMutex() !void {
     var mutex = Rt.Mutex.init();
     defer mutex.deinit();
 
@@ -42,8 +45,8 @@ fn testMutex(comptime Rt: type, comptime log: type) !void {
     log.info("[e2e] PASS: trait/sync/mutex", .{});
 }
 
-/// Test 2: Condition signal wakes a waiting thread
-fn testCondition(comptime Rt: type, comptime log: type) !void {
+// Test 2: Condition signal wakes a waiting thread
+fn testCondition() !void {
     var mutex = Rt.Mutex.init();
     defer mutex.deinit();
     var cond = Rt.Condition.init();
@@ -61,7 +64,6 @@ fn testCondition(comptime Rt: type, comptime log: type) !void {
     try Rt.spawn("cond_signaler", struct {
         fn task(raw: ?*anyopaque) void {
             const c: *Ctx = @ptrCast(@alignCast(raw));
-            // Small delay then signal
             std.Thread.sleep(5 * std.time.ns_per_ms);
             c.m.lock();
             c.r.* = true;
@@ -83,8 +85,8 @@ fn testCondition(comptime Rt: type, comptime log: type) !void {
     log.info("[e2e] PASS: trait/sync/condition", .{});
 }
 
-/// Test 3: spawn fires a detached task that runs to completion
-fn testSpawn(comptime Rt: type, comptime time: type, comptime log: type) !void {
+// Test 3: spawn fires a detached task that runs to completion
+fn testSpawn() !void {
     var done = std.atomic.Value(bool).init(false);
 
     try Rt.spawn("spawn_test", struct {
@@ -108,15 +110,14 @@ fn testSpawn(comptime Rt: type, comptime time: type, comptime log: type) !void {
     log.info("[e2e] PASS: trait/sync/spawn — completed in ~{}ms", .{waited});
 }
 
-/// Test 4: Channel send/recv across producer-consumer threads
-fn testChannel(comptime Rt: type, comptime log: type) !void {
+// Test 4: Channel send/recv across producer-consumer threads
+fn testChannel() !void {
     const Ch = channel_pkg.Channel(u32, 16, Rt);
     var ch = Ch.init();
     defer ch.deinit();
 
     const count: u32 = 10;
 
-    // Producer task
     const ProducerCtx = struct {
         ch: *Ch,
         n: u32,
@@ -146,15 +147,14 @@ fn testChannel(comptime Rt: type, comptime log: type) !void {
     log.info("[e2e] PASS: trait/sync/channel — {}/{} items transferred", .{ received, count });
 }
 
-/// Test 5: WaitGroup waits for all spawned tasks
-fn testWaitGroup(comptime Rt: type, comptime log: type) !void {
+// Test 5: WaitGroup waits for all spawned tasks
+fn testWaitGroup() !void {
     const WG = waitgroup_pkg.WaitGroup(Rt);
     var wg = WG.init(std.heap.page_allocator);
     defer wg.deinit();
 
     var counter = std.atomic.Value(u32).init(0);
 
-    // Spawn 3 tasks, each increments counter
     for (0..3) |_| {
         try wg.go("wg_worker", struct {
             fn task(raw: ?*anyopaque) void {
@@ -172,4 +172,15 @@ fn testWaitGroup(comptime Rt: type, comptime log: type) !void {
         return error.WaitGroupCountMismatch;
     }
     log.info("[e2e] PASS: trait/sync/waitgroup — 3/3 tasks completed", .{});
+}
+
+// ESP entry
+pub fn entry(_: anytype) void {
+    runTests() catch |err| {
+        log.err("[e2e] FATAL: trait/sync — {}", .{err});
+    };
+}
+
+test "e2e: trait/sync" {
+    try runTests();
 }

@@ -1,12 +1,11 @@
-# e2e: trait/log — cross-platform test logic
-
-load("//bazel/zig:defs.bzl", "zig_library")
+# e2e: trait/log — shared app sources
 
 package(default_visibility = ["//visibility:public"])
 
-zig_library(
-    name = "e2e_log",
-    main = "app.zig",
-    srcs = ["app.zig"],
-    module_name = "e2e_log",
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
 )
