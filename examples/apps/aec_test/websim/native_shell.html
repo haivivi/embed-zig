@@ -201,7 +201,7 @@ const WebSim = (() => {
                         for (let i = 0; i < count; i++) output[i] = i16[i] / 32768.0;
                         for (let i = count; i < output.length; i++) output[i] = 0;
                         /* Update speaker VU */
-                        const vuEl = document.getElementById('spkLevel');
+                        const vuEl = document.getElementById('speakerLevel');
                         if (vuEl) vuEl.style.width = Math.min(100, (count / output.length) * 100) + '%';
                         return;
                     }
@@ -314,18 +314,83 @@ const WebSim = (() => {
 
 WebSim.start();
 
-/* Recording (same as adc_button) */
+/* Recording — captures DOM as RGBA frames via SVG foreignObject */
 (function() {
     const recBtn = document.getElementById('recBtn');
     const recStatus = document.getElementById('recStatus');
     if (!recBtn) return;
-    let isRec = false, recTimer = null, recStart = 0;
-    function updateTimer() { if (!isRec) return; recStatus.textContent = ((Date.now()-recStart)/1000).toFixed(1)+'s'; requestAnimationFrame(updateTimer); }
+
+    let isRecording = false, recTimer = null, recStartTime = 0;
+    let recCanvas = null, recCtx = null;
+
+    function initRecCanvas() {
+        if (recCanvas) return;
+        recCanvas = document.createElement('canvas');
+        recCanvas.width = 960; recCanvas.height = 720;
+        recCtx = recCanvas.getContext('2d');
+    }
+
+    async function captureFrame() {
+        initRecCanvas();
+        const target = document.querySelector('.sim-container') || document.body;
+        const html = target.outerHTML;
+        const styles = Array.from(document.querySelectorAll('style')).map(s => s.outerHTML).join('');
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720">' +
+            '<foreignObject width="100%" height="100%">' +
+            '<div xmlns="http://www.w3.org/1999/xhtml" style="width:960px;height:720px;background:#0f1117;">' +
+            styles + html + '</div></foreignObject></svg>';
+        const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                recCtx.fillStyle = '#0f1117';
+                recCtx.fillRect(0, 0, 960, 720);
+                recCtx.drawImage(img, 0, 0, 960, 720);
+                URL.revokeObjectURL(url);
+                const bytes = recCtx.getImageData(0, 0, 960, 720).data;
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                resolve(btoa(binary));
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+            img.src = url;
+        });
+    }
+
+    async function recordLoop() {
+        if (!isRecording) return;
+        const b64 = await captureFrame();
+        if (b64 && isRecording) {
+            try { await zigRecordFrame(b64); } catch(e) {}
+        }
+        if (isRecording) recTimer = setTimeout(recordLoop, 33);
+    }
+
+    function updateTimer() {
+        if (!isRecording) return;
+        const elapsed = ((Date.now() - recStartTime) / 1000).toFixed(1);
+        recStatus.innerHTML = '<span class="rec-dot active"></span> ' + elapsed + 's';
+        requestAnimationFrame(updateTimer);
+    }
+
     recBtn.addEventListener('click', async () => {
-        if (!isRec) {
-            try { await zigStartRecording(); isRec = true; recStart = Date.now(); recBtn.textContent = 'STOP'; recBtn.classList.add('recording'); updateTimer(); } catch(e) { recStatus.textContent = 'Error'; }
+        if (!isRecording) {
+            try {
+                await zigStartRecording();
+                isRecording = true; recStartTime = Date.now();
+                recBtn.textContent = 'STOP'; recBtn.classList.add('recording');
+                recStatus.innerHTML = '<span class="rec-dot active"></span> 0.0s';
+                recordLoop(); updateTimer();
+            } catch(e) { recStatus.textContent = 'Error: ' + e; }
         } else {
-            isRec = false; try { await zigStopRecording(); recStatus.textContent = 'Copied!'; setTimeout(() => { recStatus.textContent = ''; }, 3000); } catch(e) {}
+            isRecording = false;
+            if (recTimer) { clearTimeout(recTimer); recTimer = null; }
+            try {
+                await zigStopRecording();
+                recStatus.textContent = 'Copied!';
+                setTimeout(() => { recStatus.textContent = ''; }, 3000);
+            } catch(e) {}
             recBtn.textContent = 'REC'; recBtn.classList.remove('recording');
         }
     });

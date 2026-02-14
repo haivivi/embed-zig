@@ -423,20 +423,7 @@ fn buildStateJson(buf: *[8192]u8) !usize {
             if (shared.getLogLine(@intCast(i))) |line| {
                 if (i > 0) try w.writeByte(',');
                 try w.writeByte('"');
-                // Escape JSON string
-                for (line) |ch| {
-                    switch (ch) {
-                        '"' => try w.writeAll("\\\""),
-                        '\\' => try w.writeAll("\\\\"),
-                        '\n' => try w.writeAll("\\n"),
-                        '\r' => {},
-                        else => {
-                            if (ch >= 0x20) {
-                                try w.writeByte(ch);
-                            }
-                        },
-                    }
-                }
+                try writeJsonEscaped(w, line);
                 try w.writeByte('"');
             }
         }
@@ -449,7 +436,7 @@ fn buildStateJson(buf: *[8192]u8) !usize {
         try w.print(",\"wifi_ssid\":\"", .{});
         const ssid_len = shared.wifi_ssid_len;
         if (ssid_len > 0) {
-            try w.writeAll(shared.wifi_ssid[0..ssid_len]);
+            try writeJsonEscaped(w, shared.wifi_ssid[0..ssid_len]);
         }
         try w.print("\",\"wifi_rssi\":{}", .{@as(i32, shared.wifi_rssi)});
     }
@@ -485,6 +472,23 @@ fn buildStateJson(buf: *[8192]u8) !usize {
 
 fn returnNull(id: [*c]const u8) void {
     _ = c.webview_return(g_webview, id, 0, "null");
+}
+
+/// Write a string with JSON escaping (handles ", \, newlines, control chars).
+fn writeJsonEscaped(w: anytype, s: []const u8) !void {
+    for (s) |ch| {
+        switch (ch) {
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            '\n' => try w.writeAll("\\n"),
+            '\r' => {},
+            else => {
+                if (ch >= 0x20) {
+                    try w.writeByte(ch);
+                }
+            },
+        }
+    }
 }
 
 /// Parse first argument from JSON array like "[42,...]"
