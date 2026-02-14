@@ -88,6 +88,12 @@ filegroup(
     srcs = ["src/bk_zig_runtime_helper.c"],
 )
 
+# Native HTTPS test (mbedTLS direct — for speed comparison)
+filegroup(
+    name = "c_helpers_https_native",
+    srcs = ["src/bk_zig_https_native_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",
