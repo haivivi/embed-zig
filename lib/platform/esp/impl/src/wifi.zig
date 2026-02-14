@@ -163,7 +163,7 @@ pub const StaDriver = struct {
     /// Initializes: event loop -> netif -> wifi driver -> STA mode
     pub fn init() !Self {
         // Run initialization on IRAM stack (PHY calibration accesses Flash)
-        var wg = WG.init(heap.iram);
+        var wg = WG.init();
         defer wg.deinit();
 
         var ctx = StaInitCtx{};
@@ -204,7 +204,7 @@ pub const StaDriver = struct {
         }
 
         // Run connection on IRAM stack
-        var wg = WG.init(heap.iram);
+        var wg = WG.init();
         defer wg.deinit();
 
         var ctx = StaConnectCtx{
@@ -335,7 +335,7 @@ pub const ApDriver = struct {
 
     /// Initialize AP mode
     pub fn init() !Self {
-        var wg = WG.init(heap.iram);
+        var wg = WG.init();
         defer wg.deinit();
 
         var ctx = ApInitCtx{};
