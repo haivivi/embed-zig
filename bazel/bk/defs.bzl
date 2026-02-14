@@ -166,6 +166,7 @@ export BK_ENV_FILE="{env_file}"
 export ARMINO_PATH="{armino_path}"
 export BK_PARTITION_CSV="{partition_csv}"
 export BK_AP_STACK_SIZE="{ap_stack_size}"
+export BK_RUN_IN_PSRAM="{run_in_psram}"
 export BK_PRELINK_LIBS="{prelink_libs}"
 exec bash "$E/{build_sh}"
 """.format(
@@ -189,6 +190,7 @@ exec bash "$E/{build_sh}"
         armino_path = ctx.attr._armino_path[BuildSettingInfo].value if ctx.attr._armino_path and BuildSettingInfo in ctx.attr._armino_path else "",
         partition_csv = ctx.file.partition_table.path if ctx.file.partition_table else "",
         ap_stack_size = str(ctx.attr.ap_stack_size),
+        run_in_psram = str(ctx.attr.run_in_psram),
         prelink_libs = " ".join(ctx.attr.prelink_libs),
         build_sh = build_sh.path if build_sh else "",
     )
@@ -287,7 +289,13 @@ bk_zig_app = rule(
         ),
         "ap_stack_size": attr.int(
             default = 16384,
-            doc = "AP task stack size in bytes. Default 16KB. TLS apps need 65536 (64KB).",
+            doc = "AP task stack size in bytes. Default 16KB. Only used when run_in_psram=0.",
+        ),
+        "run_in_psram": attr.int(
+            default = 0,
+            doc = """PSRAM task stack size (bytes). 0=use SRAM (ap_stack_size).
+            >0: allocate stack from PSRAM via psram_malloc. BK7258 has 8MB PSRAM.
+            Recommended: 32768 (32KB) normal apps, 131072 (128KB) TLS/crypto apps.""",
         ),
         "prelink_libs": attr.string_list(
             default = [],

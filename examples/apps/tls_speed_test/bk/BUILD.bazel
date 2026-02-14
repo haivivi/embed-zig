@@ -50,7 +50,7 @@ bk_zig_app(
     env = ":env",
     partition_table = ":partitions",
     kconfig_ap = ":kconfig",
-    ap_stack_size = 131072,  # 128KB for TLS (X25519 + SHA + HMAC deep stack)
+    run_in_psram = 131072,  # 128KB PSRAM stack
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",

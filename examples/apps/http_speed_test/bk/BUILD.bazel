@@ -49,7 +49,7 @@ bk_zig_app(
     partition_table = ":partitions",
     env = ":env",
     kconfig_ap = ":kconfig",
-    ap_stack_size = 65536,  # 64KB for large recv_buf (16KB) on stack
+    run_in_psram = 131072,  # 128KB PSRAM stack
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",

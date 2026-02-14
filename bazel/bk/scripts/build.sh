@@ -357,20 +357,59 @@ done
 cp "$AP_LIB" "$PROJECT_DIR/ap/libbk_zig_ap.a"
 
 AP_STACK=${BK_AP_STACK_SIZE:-16384}
+PSRAM_STACK=${BK_RUN_IN_PSRAM:-0}
+
+if [ "$PSRAM_STACK" -gt 0 ] 2>/dev/null; then
+    AP_ACTUAL_STACK=$PSRAM_STACK
+    AP_STACK_MODE="PSRAM"
+else
+    AP_ACTUAL_STACK=$AP_STACK
+    AP_STACK_MODE="SRAM"
+fi
+
 cat > "$PROJECT_DIR/ap/ap_main.c" << APEOF
+/* AP task: stack=$AP_ACTUAL_STACK bytes ($AP_STACK_MODE) */
 #include "bk_private/bk_init.h"
 #include <components/system.h>
 #include <os/os.h>
+#include <os/mem.h>
+#include <components/log.h>
+#define TAG "bk_app"
 extern void zig_main(void);
-static void zig_task(void *arg) { zig_main(); }
+static void zig_task(void *arg) { (void)arg; zig_main(); }
 int main(void) {
     bk_init();
     beken_thread_t t;
-    rtos_create_thread(&t, 4, "zig_ap", (beken_thread_function_t)zig_task, $AP_STACK, 0);
+    int ret;
+APEOF
+
+if [ "$PSRAM_STACK" -gt 0 ] 2>/dev/null; then
+    cat >> "$PROJECT_DIR/ap/ap_main.c" << APEOF
+    BK_LOGI(TAG, "Starting zig_ap task (PSRAM, %d bytes)\\r\\n", $PSRAM_STACK);
+    ret = rtos_create_psram_thread(&t, 4, "zig_ap",
+        (beken_thread_function_t)zig_task, $PSRAM_STACK, 0);
+    if (ret != 0) {
+        BK_LOGE(TAG, "PSRAM thread fail (%d), falling back to SRAM\\r\\n", ret);
+        ret = rtos_create_thread(&t, 4, "zig_ap",
+            (beken_thread_function_t)zig_task, 32768, 0);
+    }
+APEOF
+else
+    cat >> "$PROJECT_DIR/ap/ap_main.c" << APEOF
+    BK_LOGI(TAG, "Starting zig_ap task (SRAM, %d bytes)\\r\\n", $AP_STACK);
+    ret = rtos_create_thread(&t, 4, "zig_ap",
+        (beken_thread_function_t)zig_task, $AP_STACK, 0);
+APEOF
+fi
+
+cat >> "$PROJECT_DIR/ap/ap_main.c" << APEOF
+    if (ret != 0) {
+        BK_LOGE(TAG, "Thread create FAILED: %d\\r\\n", ret);
+    }
     return 0;
 }
 APEOF
-echo "[bk_build] AP task stack: $AP_STACK bytes"
+echo "[bk_build] AP task stack: $AP_ACTUAL_STACK bytes ($AP_STACK_MODE)"
 
 PRELINK_CMAKE=""
 if [ -n "$BK_PRELINK_LIBS" ]; then

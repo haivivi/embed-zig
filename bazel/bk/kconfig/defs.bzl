@@ -118,6 +118,24 @@ bk_aec = rule(
     doc = "Enable AEC (Acoustic Echo Cancellation) algorithm",
 )
 
+def _bk_uart_direct_impl(ctx):
+    """AP logs direct to UART0 (not via mailbox to CP)."""
+    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
+    lines = [
+        "# UART direct print — AP logs visible on UART0",
+        "CONFIG_UART_PRINT_PORT=0",
+        "CONFIG_SYS_PRINT_DEV_UART=y",
+        "# CONFIG_SYS_PRINT_DEV_MAILBOX is not set",
+    ]
+    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
+    return [DefaultInfo(files = depset([out]))]
+
+bk_uart_direct = rule(
+    implementation = _bk_uart_direct_impl,
+    attrs = {},
+    doc = "AP logs direct to UART0 (required for serial monitoring)",
+)
+
 def _bk_custom_impl(ctx):
     """Escape hatch: raw Kconfig lines."""
     out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")

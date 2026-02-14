@@ -42,6 +42,8 @@ bk_zig_app(
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
+    # run_in_psram = 131072,  # TODO: fix PSRAM thread
+    ap_stack_size = 32768,  # 32KB SRAM test
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",
