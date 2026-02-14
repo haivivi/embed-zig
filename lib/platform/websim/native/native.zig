@@ -97,6 +97,7 @@ pub fn run(comptime App: type, html: [:0]const u8) void {
     _ = c.webview_bind(w, "zigBleSimDisconnect", &onBleSimDisconnect, null);
     _ = c.webview_bind(w, "zigSetWifiRssi", &onSetWifiRssi, null);
     _ = c.webview_bind(w, "zigPushAudioInSample", &onPushAudioInSample, null);
+    _ = c.webview_bind(w, "zigPushAudioBatch", &onPushAudioBatch, null);
 
     // Bind state query callbacks (JS polls Zig state)
     _ = c.webview_bind(w, "zigGetState", &onGetState, null);
@@ -226,7 +227,10 @@ fn getCurrentTimeMs() u64 {
 // ============================================================================
 
 fn onSetAdcValue(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
-    const val = parseFirstArgU32(req) orelse return;
+    const val = parseFirstArgU32(req) orelse {
+        returnNull(id);
+        return;
+    };
     shared.adc_raw = @intCast(@min(val, 4095));
     returnNull(id);
 }
@@ -267,18 +271,63 @@ fn onBleSimDisconnect(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callcon
 }
 
 fn onSetWifiRssi(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
-    const val = parseFirstArgI32(req) orelse return;
+    const val = parseFirstArgI32(req) orelse {
+        returnNull(id);
+        return;
+    };
     shared.wifi_rssi = @intCast(@max(-127, @min(0, val)));
     returnNull(id);
 }
 
 fn onPushAudioInSample(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
-    const val = parseFirstArgI32(req) orelse return;
+    const val = parseFirstArgI32(req) orelse {
+        returnNull(id);
+        return;
+    };
     const avail = state_mod.AUDIO_BUF_SAMPLES - (shared.audio_in_write -% shared.audio_in_read);
     if (avail > 0) {
         shared.audio_in_buf[shared.audio_in_write & state_mod.AUDIO_BUF_MASK] = @intCast(@max(-32768, @min(32767, val)));
         shared.audio_in_write +%= 1;
     }
+    returnNull(id);
+}
+
+/// Batch push audio samples: zigPushAudioBatch("base64_of_i16le_samples")
+/// One binding call for an entire ScriptProcessorNode buffer (e.g. 256 samples)
+/// instead of 256 individual zigPushAudioInSample calls.
+fn onPushAudioBatch(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+    const b64_data = parseFirstArgString(req) orelse {
+        returnNull(id);
+        return;
+    };
+
+    // Decode base64 to i16 samples (little-endian)
+    var decode_buf: [2048]u8 = undefined; // 1024 samples * 2 bytes
+    const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(b64_data) catch {
+        returnNull(id);
+        return;
+    };
+    if (decoded_len > decode_buf.len or decoded_len < 2) {
+        returnNull(id);
+        return;
+    }
+    std.base64.standard.Decoder.decode(&decode_buf, b64_data) catch {
+        returnNull(id);
+        return;
+    };
+
+    const sample_count = decoded_len / 2;
+    var i: usize = 0;
+    while (i < sample_count) : (i += 1) {
+        const avail = state_mod.AUDIO_BUF_SAMPLES - (shared.audio_in_write -% shared.audio_in_read);
+        if (avail == 0) break;
+        const lo: u16 = decode_buf[i * 2];
+        const hi: u16 = decode_buf[i * 2 + 1];
+        const sample: i16 = @bitCast(lo | (hi << 8));
+        shared.audio_in_buf[shared.audio_in_write & state_mod.AUDIO_BUF_MASK] = sample;
+        shared.audio_in_write +%= 1;
+    }
+
     returnNull(id);
 }
 
@@ -393,11 +442,13 @@ fn returnNull(id: [*c]const u8) void {
 /// Parse first argument from JSON array like "[42,...]"
 fn parseFirstArgU32(req: [*c]const u8) ?u32 {
     const s = std.mem.span(req);
-    // Skip '[' and find first number
+    // Skip to '[' delimiter
     var i: usize = 0;
     while (i < s.len and s[i] != '[') : (i += 1) {}
+    if (i >= s.len) return null;
     i += 1; // skip '['
-    // Parse number
+    // Must have at least one digit
+    if (i >= s.len or s[i] < '0' or s[i] > '9') return null;
     var val: u32 = 0;
     while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {
         val = val * 10 + @as(u32, s[i] - '0');
@@ -409,12 +460,15 @@ fn parseFirstArgI32(req: [*c]const u8) ?i32 {
     const s = std.mem.span(req);
     var i: usize = 0;
     while (i < s.len and s[i] != '[') : (i += 1) {}
+    if (i >= s.len) return null;
     i += 1;
     var neg = false;
     if (i < s.len and s[i] == '-') {
         neg = true;
         i += 1;
     }
+    // Must have at least one digit
+    if (i >= s.len or s[i] < '0' or s[i] > '9') return null;
     var val: i32 = 0;
     while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {
         val = val * 10 + @as(i32, s[i] - '0');

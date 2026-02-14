@@ -203,17 +203,20 @@ const WebSim = (() => {
             micNode = audioCtx.createScriptProcessor(256, 1, 1);
             micNode.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
+                /* Batch push: convert float32 → i16le → base64, one binding call */
+                const i16buf = new Int16Array(input.length);
+                let peak = 0;
                 for (let i = 0; i < input.length; i++) {
-                    const sample = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32768)));
-                    zigPushAudioInSample(sample);
+                    i16buf[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32768)));
+                    peak = Math.max(peak, Math.abs(input[i]));
                 }
+                const bytes = new Uint8Array(i16buf.buffer);
+                let b64 = '';
+                for (let i = 0; i < bytes.length; i++) b64 += String.fromCharCode(bytes[i]);
+                zigPushAudioBatch(btoa(b64));
                 /* Update mic VU meter */
                 const micEl = document.getElementById('micLevel');
-                if (micEl) {
-                    let peak = 0;
-                    for (let i = 0; i < input.length; i++) peak = Math.max(peak, Math.abs(input[i]));
-                    micEl.style.width = (peak * 100) + '%';
-                }
+                if (micEl) micEl.style.width = (peak * 100) + '%';
             };
             source.connect(micNode);
             micNode.connect(audioCtx.destination);
