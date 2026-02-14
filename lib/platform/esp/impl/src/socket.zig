@@ -7,7 +7,6 @@
 //!   const trait = @import("trait");
 //!   const Socket = trait.socket.from(impl.Socket);
 
-const std = @import("std");
 const idf = @import("idf");
 
 // Re-export idf.socket.Socket as the implementation
@@ -18,10 +17,4 @@ pub const Socket = idf.Socket;
 pub const Ipv4Address = idf.socket.Ipv4Address;
 pub const Address = idf.socket.Address;
 pub const SocketError = idf.socket.SocketError;
-pub const Protocol = idf.socket.Protocol;
-pub const Options = idf.socket.Options;
-
-// Re-export functions
-pub const tcp = idf.socket.tcp;
-pub const udp = idf.socket.udp;
-pub const create = idf.socket.create;
+pub const RecvFromResult = idf.socket.RecvFromResult;

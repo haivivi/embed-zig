@@ -418,10 +418,10 @@ esp_configure = rule(
 _REQUIRES_SDKCONFIG_CHECKS = {
     "mbedtls": (
         "CONFIG_MBEDTLS_HARDWARE_SHA",
-        "requires 'mbedtls' but sdkconfig has no crypto config.\n" +
-        "    Without crypto = \":mbedtls_full\", hardware SHA is enabled by default\n" +
-        "    which causes DMA errors when SHA context is on PSRAM stack.\n" +
-        "    Fix: add crypto = \":mbedtls_full\" to your esp_sdkconfig.",
+        "requires mbedtls but sdkconfig has no crypto config." +
+        " Without crypto = :mbedtls_full, hardware SHA is enabled by default" +
+        " which causes DMA errors when SHA context is on PSRAM stack." +
+        " Fix: add crypto = :mbedtls_full to your esp_sdkconfig.",
     ),
 }
 
