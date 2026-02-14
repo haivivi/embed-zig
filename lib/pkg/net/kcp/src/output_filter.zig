@@ -57,9 +57,12 @@ pub const Filter = struct {
     pub fn send(self: *Filter, data: []const u8) void {
         const is_ack = kcp_mod.Kcp.isAckOnly(data);
 
-        if (is_ack and self.config.ack_repeat > 1) {
-            // Redundant ACK: send multiple copies directly (bypass FEC)
-            for (0..self.config.ack_repeat) |_| {
+        if (is_ack) {
+            // ACK packets are always sent immediately — never buffered by FEC.
+            // ACKs are time-sensitive (delayed ACK stalls sender window) and
+            // small (~24 bytes), so FEC overhead is not beneficial.
+            const repeats: u8 = if (self.config.ack_repeat > 1) self.config.ack_repeat else 1;
+            for (0..repeats) |_| {
                 self.real_output(data, self.real_user_data);
             }
             return;

@@ -307,7 +307,12 @@ pub fn Stream(comptime Rt: type) type {
             } else if (current_state == .open) {
                 self.state.store(.remote_close, .seq_cst);
             }
+            // Hold recv_mutex while broadcasting to prevent lost wakeup:
+            // readBlocking checks state then calls wait() under recv_mutex,
+            // so broadcast without the mutex can fire in between and be missed.
+            self.recv_mutex.lock();
             self.data_available.broadcast();
+            self.recv_mutex.unlock();
         }
 
         fn kcpOutput(data: []const u8, user: ?*anyopaque) void {
@@ -630,9 +635,13 @@ pub fn Mux(comptime Rt: type) type {
                 self.accept_cond.signal();
             }
 
+            // Retain for callback duration — another thread could accept + close
+            // the stream while we're outside the mutex.
+            stream.retain();
             self.mutex.unlock();
             self.on_new_stream(@ptrCast(stream), self.user_data);
             self.mutex.lock();
+            _ = stream.release();
         }
 
         fn handleFin(self: *Self, id: u32) void {
