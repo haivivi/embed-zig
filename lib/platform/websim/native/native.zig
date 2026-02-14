@@ -523,6 +523,7 @@ fn onRecordFrame(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(.
         while (i < to_read) : (i += 1) {
             audio_buf[i] = shared.audio_out_buf[(shared.audio_out_read +% i) & state_mod.AUDIO_BUF_MASK];
         }
+        shared.audio_out_read +%= to_read;
         rec.addAudio(audio_buf[0..to_read]);
     }
 
