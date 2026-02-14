@@ -1,0 +1,18 @@
+load("//bazel/zig:defs.bzl", "zig_library", "zig_test")
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    module_name = "board",
+    deps = ["//third_party/opus:opus_float"],
+)
+
+zig_test(
+    name = "test",
+    main = "//e2e/trait/codec:app.zig",
+    srcs = ["//e2e/trait/codec:app_srcs"],
+    deps = [":board"],
+    tags = ["e2e"],
+)

@@ -1,0 +1,44 @@
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_module", "zig_static_library")
+load("@esp_sysroot//:defs.bzl", "NEWLIB_INCLUDE")
+package(default_visibility = ["//visibility:public"])
+
+# Cross-compile opus for xtensa
+zig_static_library(
+    name = "opus_xtensa",
+    lib = "//third_party/opus:opus_fixed",
+    target = "xtensa-freestanding-none",
+    cpu = "esp32s3",
+    optimize = "ReleaseSafe",
+    system_include_dirs = [NEWLIB_INCLUDE],
+)
+
+esp_modules()
+
+zig_module(
+    name = "board",
+    module_name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    deps = [":idf", "//third_party/opus:opus_fixed"],
+)
+
+filegroup(name = "srcs", srcs = ["//e2e/trait/codec:app_srcs"] + glob(["*.zig"]))
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit", "korvo2_v3"],
+    requires = ["freertos"],
+    deps = [
+        ":idf", ":esp", ":board",
+        "//lib/hal", "//lib/trait",
+        "//third_party/opus:opus_fixed",
+    ],
+    static_libs = [":opus_xtensa"],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+    tags = ["manual"],
+)
+
+esp_flash(name = "flash", app = ":app")
