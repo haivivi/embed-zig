@@ -261,6 +261,13 @@ pub const AudioSystem = impl.audio_system.AudioSystem;
 pub const runtime = armino.runtime;
 
 // ============================================================================
+// Timer (RTOS software timer)
+// ============================================================================
+
+pub const Timer = armino.timer.Timer;
+pub const TimerCallback = armino.timer.TimerCallback;
+
+// ============================================================================
 // Default GPIO assignments (BK7258 dev board)
 // ============================================================================
 

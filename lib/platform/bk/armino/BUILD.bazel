@@ -106,6 +106,12 @@ filegroup(
     srcs = ["src/bk_zig_rsa_helper.c"],
 )
 
+# Software timer (RTOS periodic + one-shot)
+filegroup(
+    name = "c_helpers_timer",
+    srcs = ["src/bk_zig_timer_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

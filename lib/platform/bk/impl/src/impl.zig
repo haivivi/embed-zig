@@ -43,3 +43,6 @@ pub const RtcWriterDriver = rtc.RtcWriterDriver;
 
 pub const mic = @import("mic.zig");
 pub const MicDriver = mic.MicDriver;
+
+pub const timer = @import("timer.zig");
+pub const Timer = timer.Timer;
