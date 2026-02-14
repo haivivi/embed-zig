@@ -56,6 +56,8 @@ compile_zig_lib() {
             echo '};'
             echo 'pub const env = Env{};'
         } > "$OUT_DIR/env.zig"
+        echo "[bk_build] env.zig:"
+        sed 's/^/[bk_build]   /' "$OUT_DIR/env.zig"
 
         # Generate main.zig bridge
         cat > "$OUT_DIR/main.zig" << 'MAINEOF'

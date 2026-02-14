@@ -13,6 +13,10 @@ filegroup(
 make_env_file(
     name = "env",
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
+    defaults = {
+        "WIFI_SSID": "HAIVIVI-MFG",
+        "WIFI_PASSWORD": "!haivivi",
+    },
 )
 
 
