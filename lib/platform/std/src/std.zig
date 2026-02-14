@@ -51,6 +51,16 @@ pub const Semaphore = sync.Semaphore;
 pub const Event = sync.Event;
 pub const Socket = socket.Socket;
 
+// ============================================================================
+// Comptime Trait Validation
+// ============================================================================
+
+const trait = @import("trait");
+
+comptime {
+    _ = trait.socket.from(socket.Socket);
+}
+
 test {
     @import("std").testing.refAllDecls(@This());
 }

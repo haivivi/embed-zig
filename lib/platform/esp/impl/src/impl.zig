@@ -131,6 +131,19 @@ pub const HciDriver = hci.HciDriver;
 
 
 // ============================================================================
+// Comptime Trait Validation
+// ============================================================================
+// Ensure all trait implementations actually satisfy the trait contracts.
+// Without this, trait methods can be defined as mandatory but never checked
+// at compile time — bugs only surface when downstream code calls them.
+
+const trait = @import("trait");
+
+comptime {
+    _ = trait.socket.from(socket.Socket);
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
