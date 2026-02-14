@@ -94,6 +94,12 @@ filegroup(
     srcs = ["src/bk_zig_https_native_helper.c"],
 )
 
+# X.509 certificate verification (mbedTLS x509_crt_*)
+filegroup(
+    name = "c_helpers_x509",
+    srcs = ["src/bk_zig_x509_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",
