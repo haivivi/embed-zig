@@ -375,127 +375,62 @@ fn validateRng(comptime Impl: type) void {
 // Tests
 // ============================================================================
 
-test "crypto trait validation - mock implementation" {
-    const MockCrypto = struct {
-        pub const Sha256 = struct {
-            pub const digest_length = 32;
-            pub const block_length = 64;
+test "crypto trait validation - full required set" {
+    const crypto = @import("crypto");
 
-            pub fn hash(_: []const u8, _: *[32]u8, _: anytype) void {}
-            pub fn init() @This() {
-                return .{};
-            }
-            pub fn update(_: *@This(), _: []const u8) void {}
-            pub fn final(_: *@This()) [32]u8 {
-                return [_]u8{0} ** 32;
-            }
-        };
+    // Validate all required primitives (default Config — all required fields are true)
+    const Validated = from(crypto, .{});
 
-        pub const Aes128Gcm = struct {
-            pub const key_length = 16;
-            pub const nonce_length = 12;
-            pub const tag_length = 16;
+    // Verify required hash types
+    try std.testing.expect(Validated.Sha256.digest_length == 32);
+    try std.testing.expect(Validated.Sha384.digest_length == 48);
 
-            pub fn encryptStatic(_: []u8, _: *[16]u8, _: []const u8, _: []const u8, _: [12]u8, _: [16]u8) void {}
-            pub fn decryptStatic(_: []u8, _: []const u8, _: [16]u8, _: []const u8, _: [12]u8, _: [16]u8) error{AuthenticationFailed}!void {}
-        };
+    // Verify required AEAD types
+    try std.testing.expect(Validated.Aes128Gcm.key_length == 16);
+    try std.testing.expect(Validated.Aes256Gcm.key_length == 32);
+    try std.testing.expect(Validated.ChaCha20Poly1305.key_length == 32);
 
-        pub const X25519 = struct {
-            pub const secret_length = 32;
-            pub const public_length = 32;
-            pub const shared_length = 32;
+    // Verify required key exchange
+    try std.testing.expect(Validated.X25519.secret_length == 32);
 
-            pub const KeyPair = struct {
-                secret_key: [32]u8,
-                public_key: [32]u8,
+    // Verify required KDF
+    try std.testing.expect(Validated.HkdfSha256.prk_length == 32);
+    try std.testing.expect(Validated.HkdfSha384.prk_length == 48);
 
-                pub fn generateDeterministic(_: [32]u8) !@This() {
-                    return @This(){ .secret_key = undefined, .public_key = undefined };
-                }
-            };
+    // Verify required MAC
+    try std.testing.expect(Validated.HmacSha256.mac_length == 32);
+    try std.testing.expect(Validated.HmacSha384.mac_length == 48);
+}
 
-            pub fn scalarmult(_: [32]u8, _: [32]u8) ![32]u8 {
-                return [_]u8{0} ** 32;
-            }
-        };
+test "crypto trait validation - optional primitives" {
+    const crypto = @import("crypto");
 
-        pub const HkdfSha256 = struct {
-            pub const prk_length = 32;
-
-            pub fn extract(_: ?[]const u8, _: []const u8) [32]u8 {
-                return [_]u8{0} ** 32;
-            }
-            pub fn expand(_: *const [32]u8, _: []const u8, comptime _: usize) [32]u8 {
-                return [_]u8{0} ** 32;
-            }
-        };
-
-        pub const HmacSha256 = struct {
-            pub const mac_length = 32;
-            pub const block_length = 64;
-
-            pub fn create(_: *[32]u8, _: []const u8, _: []const u8) void {}
-            pub fn init(_: []const u8) @This() {
-                return .{};
-            }
-        };
-
-        pub const Rng = struct {
-            pub fn fill(_: []u8) void {}
-        };
-    };
-
-    // This should compile without errors.
-    // Explicitly disable required primitives not present in this mock.
-    const Validated = from(MockCrypto, .{
-        .sha256 = true,
-        .sha384 = false,
-        .aes_128_gcm = true,
-        .aes_256_gcm = false,
-        .chacha20_poly1305 = false,
-        .x25519 = true,
-        .hkdf_sha256 = true,
-        .hkdf_sha384 = false,
-        .hmac_sha256 = true,
-        .hmac_sha384 = false,
-        .rng = true,
+    // Validate with optional primitives enabled
+    const Validated = from(crypto, .{
+        .sha512 = true,
+        .sha1 = true,
+        .blake2s = true,
+        .blake2b = true,
+        .p256 = true,
+        .p384 = true,
+        .hkdf_sha512 = true,
+        .hmac_sha512 = true,
+        .ed25519 = true,
+        .ecdsa_p256 = true,
+        .ecdsa_p384 = true,
+        .rsa = true,
+        .x509 = true,
     });
 
-    // Verify we can access the types
-    try std.testing.expect(Validated.Sha256.digest_length == 32);
-    try std.testing.expect(Validated.Aes128Gcm.key_length == 16);
-    try std.testing.expect(Validated.X25519.secret_length == 32);
+    try std.testing.expect(Validated.Sha512.digest_length == 64);
+    try std.testing.expect(Validated.Sha1.digest_length == 20);
 }
 
 test "has() helper function" {
-    const Mock = struct {
-        pub const Sha256 = struct {};
-    };
+    const crypto = @import("crypto");
 
-    try std.testing.expect(has(Mock, "Sha256"));
-    try std.testing.expect(!has(Mock, "Sha384"));
-}
-
-test "rng validation via crypto trait" {
-    const MockCryptoWithRng = struct {
-        pub const Rng = struct {
-            pub fn fill(_: []u8) void {}
-        };
-    };
-
-    // Should compile - Rng is validated via rng_trait.from()
-    // Disable all other required primitives since this mock only has Rng.
-    _ = from(MockCryptoWithRng, .{
-        .sha256 = false,
-        .sha384 = false,
-        .aes_128_gcm = false,
-        .aes_256_gcm = false,
-        .chacha20_poly1305 = false,
-        .x25519 = false,
-        .hkdf_sha256 = false,
-        .hkdf_sha384 = false,
-        .hmac_sha256 = false,
-        .hmac_sha384 = false,
-        .rng = true,
-    });
+    try std.testing.expect(has(crypto, "Sha256"));
+    try std.testing.expect(has(crypto, "Sha384"));
+    try std.testing.expect(has(crypto, "ChaCha20Poly1305"));
+    try std.testing.expect(has(crypto, "Rng"));
 }
