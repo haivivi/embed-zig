@@ -75,11 +75,10 @@ const WaitGroupCtx = struct {
 };
 
 fn waitGroupTask(ctx: *WaitGroupCtx) void {
-    const wg_ctx: *WaitGroupCtx = @ptrCast(@alignCast(ctx));
-    log.info("[WaitGroup #{}] Started, will sleep {}ms", .{ wg_ctx.id, wg_ctx.delay_ms });
-    idf.time.sleepMs(wg_ctx.delay_ms);
-    wg_ctx.completed = true;
-    log.info("[WaitGroup #{}] Completed!", .{wg_ctx.id});
+    log.info("[WaitGroup #{}] Started, will sleep {}ms", .{ ctx.id, ctx.delay_ms });
+    idf.time.sleepMs(ctx.delay_ms);
+    ctx.completed = true;
+    log.info("[WaitGroup #{}] Completed!", .{ctx.id});
 }
 
 fn testWaitGroupSingle() !void {
@@ -93,11 +92,7 @@ fn testWaitGroupSingle() !void {
     const start_time = idf.time.nowMs();
     log.info("Spawning WaitGroup task...", .{});
 
-    try wg.go(waitGroupTask, .{&ctx,
-        .stack_size = 4096,
-        .priority = 15,
-        .allocator = heap.iram,
-    });
+    try wg.go(waitGroupTask, .{&ctx});
 
     log.info("Waiting for task to complete...", .{});
     wg.wait();
@@ -131,21 +126,9 @@ fn testWaitGroupMultiple() !void {
     log.info("Spawning 3 WaitGroup tasks...", .{});
 
     // Spawn all tasks
-    try wg.go(waitGroupTask, .{&ctx1,
-        .stack_size = 4096,
-        .priority = 15,
-        .allocator = heap.iram,
-    });
-    try wg.go(waitGroupTask, .{&ctx2,
-        .stack_size = 4096,
-        .priority = 15,
-        .allocator = heap.iram,
-    });
-    try wg.go(waitGroupTask, .{&ctx3,
-        .stack_size = 4096,
-        .priority = 15,
-        .allocator = heap.iram,
-    });
+    try wg.go(waitGroupTask, .{&ctx1});
+    try wg.go(waitGroupTask, .{&ctx2});
+    try wg.go(waitGroupTask, .{&ctx3});
 
     log.info("All tasks spawned, waiting...", .{});
     wg.wait();

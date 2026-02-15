@@ -38,6 +38,7 @@ pub const socket = idf.socket.Socket;
 
 /// Full mbedTLS crypto suite (includes x509 for certificate verification)
 pub const crypto = board.crypto;
+pub const Rt = idf.runtime;
 
 // ============================================================================
 // Drivers (re-export from central board)

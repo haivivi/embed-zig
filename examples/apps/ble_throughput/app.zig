@@ -102,8 +102,7 @@ const FloodCtx = struct {
     use_notify: bool, // true = server sends notifications, false = client sends write cmd
 };
 
-fn txFloodTask(raw_ctx: ?*anyopaque) void {
-    const ctx: *FloodCtx = @ptrCast(@alignCast(raw_ctx));
+fn txFloodTask(ctx: *FloodCtx) void {
 
     var payload: [PAYLOAD_SIZE]u8 = undefined;
     for (&payload, 0..) |*b, i| b.* = @truncate(i);
@@ -295,11 +294,7 @@ fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []cons
     var wg = WG.init();
     defer wg.deinit();
 
-    wg.go("tx-flood", txFloodTask, &flood, .{
-        .stack_size = 8192,
-        .priority = 18,
-        .allocator = heap.psram,
-    }) catch {
+    wg.go(txFloodTask, .{&flood}) catch {
         log.err("Failed to spawn TX task", .{});
         return;
     };
