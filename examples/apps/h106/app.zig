@@ -26,6 +26,7 @@ var ready: bool = false;
 var bg_buf: [120 * 1024]u8 = undefined;
 var ultraman_buf: [120 * 1024]u8 = undefined;
 var menu_bufs: [5][52 * 1024]u8 = undefined;
+var font_buf: [2300 * 1024]u8 = undefined; // TTF font ~2.2MB
 
 pub fn init() void {
     Board.log.info("H106 Demo starting", .{});
@@ -49,10 +50,22 @@ pub fn init() void {
         Board.log.err("Failed to load background", .{});
         return;
     }
+
+    // Load TTF font via VFS
+    var font_data: ?[]const u8 = null;
+    {
+        var file = board.fs.open(assets.PATH_FONT, .read) orelse {
+            Board.log.err("Failed to load font", .{});
+            return;
+        };
+        defer file.close();
+        const data = file.readAll(&font_buf);
+        if (data.len > 0) font_data = data;
+    }
     Board.log.info("Assets loaded", .{});
 
-    // Init UI with loaded assets
-    ui.initAssets(bg_img.?, ultraman_img, menu_imgs);
+    // Init UI with loaded assets + font
+    ui.initAssets(bg_img.?, ultraman_img, menu_imgs, font_data);
 
     // Game
     store = ui.Store.init(.{}, ui.reduce);

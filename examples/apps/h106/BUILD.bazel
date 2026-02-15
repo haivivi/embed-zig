@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 websim_native_app(
     name = "native",
     main = "main.zig",
-    srcs = glob(["**/*.zig"]) + ["native_shell.html"] + glob(["assets/*.rgb565"]),
+    srcs = glob(["**/*.zig"]) + ["native_shell.html"] + glob(["assets/*"]),
     deps = [
         "//lib/platform/websim",
         "//lib/hal",

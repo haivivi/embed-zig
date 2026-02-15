@@ -5,6 +5,11 @@ package(default_visibility = ["//visibility:public"])
 zig_package(
     name = "ui_state",
     module_name = "ui_state",
+    c_srcs = [
+        "//third_party/stb_truetype:stb_truetype_srcs",
+    ],
+    c_includes = ["third_party/stb_truetype"],
+    link_libc = True,
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

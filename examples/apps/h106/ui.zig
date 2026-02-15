@@ -37,7 +37,7 @@ pub const DIM_WHITE: u16 = 0x7BEF;
 pub const ACCENT: u16 = 0x07FF;
 pub const SELECT_BG: u16 = 0x2965;
 
-const MENU_LABELS = [5][]const u8{ "Team", "Game", "Contact", "Points", "Settings" };
+const MENU_LABELS = [5][]const u8{ "\xe5\xa5\xa5\xe7\x89\xb9\xe9\x9b\x86\xe7\xbb\x93", "\xe8\xb6\x85\xe8\x83\xbd\xe9\xa9\xaf\xe5\x8c\x96", "\xe5\xae\x88\xe6\x8a\xa4\xe8\x81\x94\xe7\xbb\x9c", "\xe7\xa7\xaf\xe5\x88\x86", "\xe8\xae\xbe\xe7\xbd\xae" }; // 奥特集结, 超能驯化, 守护联络, 积分, 设置
 
 // ============================================================================
 // Runtime Assets (loaded via VFS in app.zig)
@@ -46,16 +46,23 @@ const MENU_LABELS = [5][]const u8{ "Team", "Game", "Contact", "Points", "Setting
 var bg_image: ?Image = null;
 var ultraman_image: ?Image = null;
 var menu_images: [5]?Image = [_]?Image{null} ** 5;
+var ttf_font_24: ?state_lib.TtfFont = null;
+var ttf_font_16: ?state_lib.TtfFont = null;
 
 /// Called by app.zig after loading assets from VFS.
 pub fn initAssets(
     bg: Image,
     ultraman: ?Image,
     menus: [5]?Image,
+    ttf_data: ?[]const u8,
 ) void {
     bg_image = bg;
     ultraman_image = ultraman;
     menu_images = menus;
+    if (ttf_data) |data| {
+        ttf_font_24 = state_lib.TtfFont.init(data, 24.0);
+        ttf_font_16 = state_lib.TtfFont.init(data, 16.0);
+    }
 }
 
 // ============================================================================
@@ -241,10 +248,16 @@ fn renderMenu(fb: *FB, state: *const AppState, x_off: i16) void {
             dx += if (active) DOT_ACTIVE_W + DOT_GAP - DOT_SIZE else DOT_GAP;
         }
 
-        // Label
+        // Label (TTF Chinese or fallback ASCII)
         const label = MENU_LABELS[state.menu_index];
-        const lx = (SCREEN_W / 2) -| @as(u16, @intCast(label.len * 6 / 2));
-        drawTextSimple(fb, lx, LABEL_Y, label, WHITE);
+        if (ttf_font_24) |*fnt| {
+            const tw = fnt.textWidth(label);
+            const lx = (SCREEN_W / 2) -| (tw / 2);
+            fb.drawTextTtf(lx, LABEL_Y - 4, label, fnt, WHITE);
+        } else {
+            const lx = (SCREEN_W / 2) -| @as(u16, @intCast(label.len * 6 / 2));
+            drawTextSimple(fb, lx, LABEL_Y, label, WHITE);
+        }
     }
 }
 
@@ -252,15 +265,23 @@ fn renderGameList(fb: *FB, state: *const AppState, x_off: i16) void {
     blitBg(fb, x_off);
     if (x_off != 0) return;
 
-    drawTextSimple(fb, 90, 20, "Games", WHITE);
+    if (ttf_font_24) |*fnt| {
+        fb.drawTextTtf(80, 14, "\xe8\xb6\x85\xe8\x83\xbd\xe9\xa9\xaf\xe5\x8c\x96", fnt, WHITE); // 超能驯化
+    } else {
+        drawTextSimple(fb, 90, 20, "Games", WHITE);
+    }
 
-    const names = [_][]const u8{ "Tetris", "Racer" };
+    const names = [_][]const u8{ "\xe7\x82\xbd\xe7\x84\xb0\xe8\xb7\x83\xe5\x8a\xa8", "\xe6\xb7\xb1\xe6\xb8\x8a\xe5\xbe\x81\xe9\x80\x94" }; // 炽焰跃动, 深渊征途
     for (0..GAME_COUNT) |i| {
         const y: u16 = 60 + @as(u16, @intCast(i)) * 48;
         const sel = (i == state.game_index);
         fb.fillRect(20, y, 200, 40, if (sel) SELECT_BG else BLACK);
         if (sel) fb.drawRect(20, y, 200, 40, ACCENT, 1);
-        drawTextSimple(fb, 36, y + 14, names[i], if (sel) ACCENT else GRAY);
+        if (ttf_font_24) |*fnt| {
+            fb.drawTextTtf(36, y + 8, names[i], fnt, if (sel) ACCENT else GRAY);
+        } else {
+            drawTextSimple(fb, 36, y + 14, names[i], if (sel) ACCENT else GRAY);
+        }
     }
 }
 
@@ -281,8 +302,13 @@ fn renderRacer(fb: *FB, state: *const AppState, x_off: i16) void {
 fn renderSettings(fb: *FB, x_off: i16) void {
     blitBg(fb, x_off);
     if (x_off == 0) {
-        drawTextSimple(fb, 60, 100, "Settings", WHITE);
-        drawTextSimple(fb, 50, 130, "Coming Soon", GRAY);
+        if (ttf_font_24) |*fnt| {
+            fb.drawTextTtf(80, 100, "\xe8\xae\xbe\xe7\xbd\xae", fnt, WHITE); // 设置
+            fb.drawTextTtf(60, 140, "\xe6\x95\xac\xe8\xaf\xb7\xe6\x9c\x9f\xe5\xbe\x85", fnt, GRAY); // 敬请期待
+        } else {
+            drawTextSimple(fb, 60, 100, "Settings", WHITE);
+            drawTextSimple(fb, 50, 130, "Coming Soon", GRAY);
+        }
     }
 }
 

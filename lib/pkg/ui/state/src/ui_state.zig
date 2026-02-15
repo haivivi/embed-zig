@@ -63,6 +63,7 @@ pub const ColorFormat = @import("framebuffer.zig").ColorFormat;
 pub const BitmapFont = @import("font.zig").BitmapFont;
 pub const asciiLookup = @import("font.zig").asciiLookup;
 pub const decodeUtf8 = @import("font.zig").decodeUtf8;
+pub const TtfFont = @import("ttf_font.zig").TtfFont;
 
 // Image
 pub const Image = @import("image.zig").Image;

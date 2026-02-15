@@ -44,6 +44,8 @@ pub const PATH_MENU_ITEMS = [5][]const u8{
     "/assets/menu_item4.rgb565",
 };
 
+pub const PATH_FONT = "/fonts/NotoSansSC-Bold.ttf";
+
 pub const MENU_LABELS = [5][]const u8{
     "Team",
     "Game",

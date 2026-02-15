@@ -21,6 +21,7 @@ const font_mod = @import("font.zig");
 const BitmapFont = font_mod.BitmapFont;
 const image_mod = @import("image.zig");
 const Image = image_mod.Image;
+pub const TtfFont = @import("ttf_font.zig").TtfFont;
 
 /// Color format for the framebuffer.
 pub const ColorFormat = enum {
@@ -221,6 +222,77 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                     }
                 }
             }
+        }
+
+        /// Draw a UTF-8 text string with a TrueType font (anti-aliased alpha blending).
+        pub fn drawTextTtf(self: *Self, x: u16, y: u16, text: []const u8, fnt: *TtfFont, color: Color) void {
+            if (text.len == 0) return;
+
+            var cx: u16 = x;
+            const baseline: u16 = y + @as(u16, @intCast(@max(0, fnt.ascent)));
+            var i: usize = 0;
+            while (i < text.len) {
+                const decoded = font_mod.decodeUtf8(text[i..]);
+                i += decoded.len;
+
+                if (decoded.codepoint) |cp| {
+                    if (fnt.getGlyph(cp)) |g| {
+                        // Destination top-left with glyph offsets
+                        const dx: i32 = @as(i32, cx) + g.x_off;
+                        const dy: i32 = @as(i32, baseline) + g.y_off;
+
+                        // Render alpha-blended pixels
+                        var gy: u16 = 0;
+                        while (gy < g.h) : (gy += 1) {
+                            const py = dy + gy;
+                            if (py < 0 or py >= H) continue;
+                            var gx: u16 = 0;
+                            while (gx < g.w) : (gx += 1) {
+                                const px = dx + gx;
+                                if (px < 0 or px >= W) continue;
+                                const alpha = g.bitmap[@as(usize, gy) * g.w + @as(usize, gx)];
+                                if (alpha > 32) {
+                                    const dst_idx = @as(usize, @intCast(py)) * W + @as(usize, @intCast(px));
+                                    if (alpha > 200) {
+                                        self.buf[dst_idx] = color;
+                                    } else {
+                                        // Simple alpha blend for RGB565
+                                        self.buf[dst_idx] = blendRgb565(self.buf[dst_idx], color, alpha);
+                                    }
+                                }
+                            }
+                        }
+                        cx += g.advance;
+                        if (cx >= W) break;
+                    }
+                }
+            }
+
+            // Mark dirty
+            if (cx > x) {
+                const text_w = cx - x;
+                const text_h = fnt.lineHeight();
+                self.dirty.mark(.{ .x = x, .y = y, .w = text_w, .h = @min(text_h, if (y < H) H - y else 0) });
+            }
+        }
+
+        /// Alpha-blend two RGB565 colors
+        fn blendRgb565(bg: Color, fg: Color, alpha: u8) Color {
+            if (Color != u16) return fg; // only RGB565 supported
+            const a: u32 = alpha;
+            const inv_a: u32 = 255 - a;
+            // Extract components
+            const bg_r = (bg >> 11) & 0x1F;
+            const bg_g = (bg >> 5) & 0x3F;
+            const bg_b = bg & 0x1F;
+            const fg_r = (fg >> 11) & 0x1F;
+            const fg_g = (fg >> 5) & 0x3F;
+            const fg_b = fg & 0x1F;
+            // Blend
+            const r: u16 = @intCast((fg_r * a + bg_r * inv_a) / 255);
+            const g: u16 = @intCast((fg_g * a + bg_g * inv_a) / 255);
+            const b: u16 = @intCast((fg_b * a + bg_b * inv_a) / 255);
+            return (r << 11) | (g << 5) | b;
         }
 
         // ================================================================

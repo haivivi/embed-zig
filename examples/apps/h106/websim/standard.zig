@@ -18,6 +18,7 @@ pub const FsDriver = websim.EmbedFs(&.{
     .{ .path = "/assets/menu_item2.rgb565", .data = @embedFile("../assets/menu_item2.rgb565") },
     .{ .path = "/assets/menu_item3.rgb565", .data = @embedFile("../assets/menu_item3.rgb565") },
     .{ .path = "/assets/menu_item4.rgb565", .data = @embedFile("../assets/menu_item4.rgb565") },
+    .{ .path = "/fonts/NotoSansSC-Bold.ttf", .data = @embedFile("../assets/NotoSansSC-Bold.ttf") },
 });
 
 pub const fs_spec = struct {
