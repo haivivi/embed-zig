@@ -435,7 +435,7 @@ pub fn run(_: anytype) void {
         addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
     });
 
-    const role: enum { server, client } = if (addr[2] == 0x11) .server else .client;
+    const role: enum { server, client } = if (std.mem.eql(u8, platform.board_name_str, "BK7258")) .server else .client;
     log.info("Role: {s}", .{if (role == .server) "SERVER" else "CLIENT"});
     log.info("", .{});
 

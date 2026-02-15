@@ -587,7 +587,7 @@ pub fn run(_: anytype) void {
         addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
     });
 
-    const is_server = addr[2] == 0x11;
+    const is_server = std.mem.eql(u8, platform.board_name_str, "BK7258");
     log.info("Role: {s}", .{if (is_server) "SERVER" else "CLIENT"});
 
     if (is_server) {
