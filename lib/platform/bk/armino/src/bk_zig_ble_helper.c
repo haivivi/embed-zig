@@ -1,23 +1,27 @@
 /**
- * bk_zig_ble_helper.c — BLE HCI transport for Zig
+ * bk_zig_ble_helper.c — BLE HCI transport for Zig (AP side, IPC to CP)
  *
- * Ring buffer + semaphore pattern (same as ESP bt_helper.c).
- * Receives HCI events/ACL from BLE controller via callbacks,
- * buffers them in a ring buffer for Zig to read via poll/recv.
+ * BK7258 architecture: BLE controller runs on CP core.
+ * AP accesses HCI through IPC (bt_ipc_hci_send_cmd / bt_ipc_register_hci_send_callback).
  *
- * BK7258 BLE runs on CP core, HCI goes through IPC.
+ * Ring buffer + semaphore pattern for async receive from CP.
  */
 
 #include <string.h>
 #include <os/os.h>
 #include <components/log.h>
-#include <components/bluetooth/bk_ble.h>
-#include <components/bluetooth/bk_ble_types.h>
 #include <components/bluetooth/bk_dm_bluetooth.h>
+
+/* AP-side IPC interface to CP BLE controller */
+extern void bt_ipc_init(void);
+extern void bt_ipc_hci_send_cmd(uint16_t opcode, uint8_t *data, uint16_t len);
+extern void bt_ipc_hci_send_acl_data(uint16_t hdl_flags, uint8_t *data, uint16_t len);
+typedef void (*bt_hci_send_cb_t)(uint8_t *buf, uint16_t len);
+extern void bt_ipc_register_hci_send_callback(bt_hci_send_cb_t cb);
 
 #define TAG "zig_ble"
 
-/* Ring buffer for HCI packets from controller */
+/* Ring buffer for HCI packets from CP controller */
 #define HCI_BUF_SIZE 4096
 static uint8_t s_ring_buf[HCI_BUF_SIZE];
 static volatile uint32_t s_ring_head = 0;
@@ -26,7 +30,7 @@ static beken_semaphore_t s_data_sem = NULL;
 static int s_initialized = 0;
 
 static uint32_t ring_used(void) {
-    return (s_ring_head - s_ring_tail) % HCI_BUF_SIZE;
+    return (s_ring_head - s_ring_tail + HCI_BUF_SIZE) % HCI_BUF_SIZE;
 }
 
 static uint32_t ring_free(void) {
@@ -35,7 +39,7 @@ static uint32_t ring_free(void) {
 
 static void ring_write(const uint8_t *data, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) {
-        s_ring_buf[s_ring_head % HCI_BUF_SIZE] = data[i];
+        s_ring_buf[s_ring_head] = data[i];
         s_ring_head = (s_ring_head + 1) % HCI_BUF_SIZE;
     }
 }
@@ -44,21 +48,30 @@ static uint32_t ring_read(uint8_t *data, uint32_t max_len) {
     uint32_t avail = ring_used();
     uint32_t to_read = (avail < max_len) ? avail : max_len;
     for (uint32_t i = 0; i < to_read; i++) {
-        data[i] = s_ring_buf[s_ring_tail % HCI_BUF_SIZE];
+        data[i] = s_ring_buf[s_ring_tail];
         s_ring_tail = (s_ring_tail + 1) % HCI_BUF_SIZE;
     }
     return to_read;
 }
 
-/* Store a packet with: [indicator][len_hi][len_lo][payload...] */
-static void store_packet(uint8_t indicator, const uint8_t *buf, uint16_t len) {
-    uint32_t total = 3 + len; /* indicator + 2-byte len + payload */
+/**
+ * IPC callback: CP sends HCI data to AP.
+ * Format from IPC: [indicator_byte][hci_data...]
+ * indicator: 0x04=event, 0x02=ACL data
+ *
+ * We store: [len_hi][len_lo][indicator][hci_data...]
+ */
+static void hci_from_controller_cb(uint8_t *buf, uint16_t len) {
+    if (len == 0 || !s_initialized) return;
+
+    uint32_t total = 2 + len; /* 2-byte length prefix + data */
     if (ring_free() < total) {
         BK_LOGW(TAG, "HCI ring full, dropping %d bytes\r\n", len);
         return;
     }
-    uint8_t hdr[3] = { indicator, (uint8_t)(len >> 8), (uint8_t)(len & 0xFF) };
-    ring_write(hdr, 3);
+
+    uint8_t hdr[2] = { (uint8_t)(len >> 8), (uint8_t)(len & 0xFF) };
+    ring_write(hdr, 2);
     ring_write(buf, len);
 
     if (s_data_sem) {
@@ -66,21 +79,8 @@ static void store_packet(uint8_t indicator, const uint8_t *buf, uint16_t len) {
     }
 }
 
-/* HCI Event callback from controller */
-static ble_err_t hci_evt_callback(uint8_t *buf, uint16_t len) {
-    store_packet(0x04, buf, len); /* 0x04 = HCI Event */
-    return 0;
-}
-
-/* HCI ACL Data callback from controller */
-static ble_err_t hci_acl_callback(uint8_t *buf, uint16_t len) {
-    store_packet(0x02, buf, len); /* 0x02 = HCI ACL Data */
-    return 0;
-}
-
 /**
- * Initialize BLE controller and register HCI callbacks.
- * @return 0 on success
+ * Initialize BLE and register HCI callback on AP side.
  */
 int bk_zig_ble_init(void) {
     if (s_initialized) return 0;
@@ -91,7 +91,7 @@ int bk_zig_ble_init(void) {
         return -1;
     }
 
-    /* Initialize Bluetooth stack */
+    /* Initialize Bluetooth (enables IPC to CP) */
     ret = bk_bluetooth_init();
     if (ret != 0) {
         BK_LOGE(TAG, "bk_bluetooth_init failed: %d\r\n", ret);
@@ -99,25 +99,17 @@ int bk_zig_ble_init(void) {
         return -2;
     }
 
-    /* Register HCI receive callbacks */
-    ret = bk_ble_reg_hci_recv_callback(hci_evt_callback, hci_acl_callback);
-    if (ret != 0) {
-        BK_LOGE(TAG, "reg_hci_recv_callback failed: %d\r\n", ret);
-        return -3;
-    }
+    /* Register to receive HCI data from CP */
+    bt_ipc_register_hci_send_callback(hci_from_controller_cb);
 
     s_initialized = 1;
-    BK_LOGI(TAG, "BLE HCI initialized\r\n");
+    BK_LOGI(TAG, "BLE HCI initialized (AP→CP IPC)\r\n");
     return 0;
 }
 
-/**
- * Deinitialize BLE.
- */
 void bk_zig_ble_deinit(void) {
     if (!s_initialized) return;
-    /* Note: Armino may not support full BLE deinit.
-     * Clear our state only. */
+    bt_ipc_register_hci_send_callback(NULL);
     s_initialized = 0;
     if (s_data_sem) {
         rtos_deinit_semaphore(&s_data_sem);
@@ -128,63 +120,59 @@ void bk_zig_ble_deinit(void) {
 }
 
 /**
- * Send HCI command to controller.
- * @param buf HCI command payload (without indicator byte)
- * @param len Length
- * @return 0 on success
+ * Send HCI command to CP controller.
+ * buf format: [0x01][opcode_lo][opcode_hi][param_len][params...]
  */
 int bk_zig_ble_send_cmd(const uint8_t *buf, unsigned int len) {
-    return bk_ble_hci_cmd_to_controller((uint8_t *)buf, len);
+    if (len < 3) return -1; /* Need at least opcode + param_len */
+    /* buf[0]=opcode_lo, buf[1]=opcode_hi, buf[2]=param_len, buf[3..]=params */
+    uint16_t opcode = ((uint16_t)buf[1] << 8) | buf[0];
+    uint8_t param_len = buf[2];
+    bt_ipc_hci_send_cmd(opcode, (uint8_t *)(buf + 3), param_len);
+    return 0;
 }
 
 /**
- * Send HCI ACL data to controller.
- * @param buf ACL data payload (without indicator byte)
- * @param len Length
- * @return 0 on success
+ * Send HCI ACL data to CP controller.
+ * buf format: [handle_lo][handle_hi][len_lo][len_hi][data...]
  */
 int bk_zig_ble_send_acl(const uint8_t *buf, unsigned int len) {
-    return bk_ble_hci_acl_to_controller((uint8_t *)buf, len);
+    if (len < 4) return -1;
+    uint16_t hdl_flags = ((uint16_t)buf[1] << 8) | buf[0];
+    uint16_t data_len = ((uint16_t)buf[3] << 8) | buf[2];
+    bt_ipc_hci_send_acl_data(hdl_flags, (uint8_t *)(buf + 4), data_len);
+    return 0;
 }
 
 /**
  * Receive an HCI packet from the ring buffer.
- * Returns: number of bytes read (including indicator), or 0 if empty.
- * Format: [indicator][payload...]
+ * Returns: number of bytes read (including indicator byte), or 0 if empty.
+ * Output format: [indicator][hci_payload...]
  */
 unsigned int bk_zig_ble_recv(uint8_t *buf, unsigned int max_len) {
-    if (ring_used() < 3) return 0; /* Need at least header */
+    if (ring_used() < 2) return 0;
 
-    /* Peek at the header */
-    uint8_t hdr[3];
+    /* Peek length header */
     uint32_t saved_tail = s_ring_tail;
-    ring_read(hdr, 3);
+    uint8_t hdr[2];
+    ring_read(hdr, 2);
 
-    uint16_t payload_len = ((uint16_t)hdr[1] << 8) | hdr[2];
-    uint32_t total = 1 + payload_len; /* indicator + payload */
+    uint16_t pkt_len = ((uint16_t)hdr[0] << 8) | hdr[1];
 
-    if (total > max_len) {
-        /* Not enough space — restore tail and return 0 */
+    if (pkt_len > max_len) {
         s_ring_tail = saved_tail;
         return 0;
     }
 
-    if (ring_used() < payload_len) {
-        /* Incomplete packet (shouldn't happen) — restore */
+    if (ring_used() < pkt_len) {
         s_ring_tail = saved_tail;
         return 0;
     }
 
-    buf[0] = hdr[0]; /* indicator */
-    ring_read(buf + 1, payload_len);
-    return total;
+    ring_read(buf, pkt_len);
+    return pkt_len;
 }
 
-/**
- * Wait for data to be available.
- * @param timeout_ms -1=forever, 0=poll, >0=wait ms
- * @return 1 if data available, 0 if timeout
- */
 int bk_zig_ble_wait_for_data(int timeout_ms) {
     if (ring_used() > 0) return 1;
     if (!s_data_sem) return 0;
@@ -198,9 +186,6 @@ int bk_zig_ble_wait_for_data(int timeout_ms) {
     return (ret == 0) ? 1 : 0;
 }
 
-/**
- * Check if send is possible (always true for BK — IPC handles flow control).
- */
 int bk_zig_ble_can_send(void) {
     return s_initialized ? 1 : 0;
 }

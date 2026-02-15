@@ -1,17 +1,19 @@
-//! Platform Configuration - HCI Test
+//! Platform Configuration - HCI Test (Cross-platform)
 //!
-//! Minimal platform for BLE HCI smoke testing
+//! Provides: log, time, ble (init/send/recv/waitForData), isRunning
 
-const hal = @import("hal");
-const hw = @import("esp/esp32s3_devkit.zig");
+const build_options = @import("build_options");
 
-const spec = struct {
-    pub const meta = .{ .id = hw.Hardware.name };
-
-    // Required primitives
-    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
-    pub const log = hw.log;
-    pub const time = hw.time;
+const hw = switch (build_options.board) {
+    .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
+    else => @compileError("unsupported board for hci_test"),
 };
 
-pub const Board = hal.Board(spec);
+pub const log = hw.log;
+pub const time = hw.time;
+pub const ble = hw.ble;
+
+pub fn isRunning() bool {
+    return hw.isRunning();
+}
