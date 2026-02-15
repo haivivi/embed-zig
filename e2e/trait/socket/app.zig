@@ -30,6 +30,7 @@ fn testTcpEcho() !void {
         log.err("[e2e] FAIL: trait/socket/tcp — server tcp() failed: {}", .{err});
         return error.TcpServerFailed;
     };
+    errdefer server.close();
 
     server.bind(localhost, 0) catch |err| {
         log.err("[e2e] FAIL: trait/socket/tcp — bind failed: {}", .{err});
