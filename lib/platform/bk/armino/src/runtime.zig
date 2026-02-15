@@ -32,6 +32,7 @@ extern fn bk_zig_cond_wait(handle: ?*anyopaque, timeout_ms: c_uint) c_int;
 extern fn bk_zig_spawn(name: [*:0]const u8, func: *const fn (?*anyopaque) callconv(.c) void, arg: ?*anyopaque, stack_size: c_uint, priority: c_uint) c_int;
 extern fn bk_zig_sram_malloc(size: c_uint) ?[*]u8;
 extern fn bk_zig_free(ptr: ?*anyopaque) void;
+extern fn rtos_delete_thread(thread: ?*anyopaque) void;
 
 fn sramFree(ptr: ?*anyopaque) void {
     bk_zig_free(ptr);
@@ -209,7 +210,7 @@ pub const Thread = struct {
     done_sem: ?*anyopaque,
 
     pub const SpawnConfig = struct {
-        stack_size: usize = 8192,
+        stack_size: usize = 16384, // 16KB default (8KB too small for deep call chains like x_proto)
         priority: u8 = 4,
         core: i8 = -1,
     };
@@ -225,26 +226,21 @@ pub const Thread = struct {
 
         const Wrapper = struct {
             fn entry(raw: ?*anyopaque) callconv(.c) void {
-                log.info("[Thread] entry start, ctx={*}", .{raw});
                 const ctx: *Context = @ptrCast(@alignCast(raw));
                 const sem = ctx.done_sem;
                 const a = ctx.args;
                 sramFree(raw);
-                log.info("[Thread] calling func...", .{});
                 @call(.auto, func, a);
-                log.info("[Thread] func returned, signaling sem", .{});
                 if (sem) |s| bk_zig_cond_signal(s);
+                // FreeRTOS: task MUST delete itself when function returns
+                rtos_delete_thread(null);
             }
         };
 
         const sem = bk_zig_cond_create();
 
-        log.info("[Thread.spawn] ctx_size={}, stack={}", .{ @sizeOf(Context), config.stack_size });
-
-        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse {
-            log.err("[Thread.spawn] sram_malloc failed for {} bytes", .{@sizeOf(Context)});
+        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse
             return error.SpawnFailed;
-        };
         const ctx: *Context = @ptrCast(@alignCast(ctx_mem));
         ctx.* = .{ .args = args, .done_sem = sem };
 
@@ -256,13 +252,11 @@ pub const Thread = struct {
             config.priority,
         );
         if (ret != 0) {
-            log.err("[Thread.spawn] bk_zig_spawn failed: {}", .{ret});
             sramFree(@ptrCast(ctx));
             if (sem) |s| bk_zig_cond_destroy(s);
             return error.SpawnFailed;
         }
 
-        log.info("[Thread.spawn] OK, ctx={*}", .{ctx_mem});
         return .{ .done_sem = sem };
     }
 

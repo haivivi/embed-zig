@@ -92,9 +92,18 @@ int bk_zig_spawn(const char *name,
                  unsigned int priority)
 {
     beken_thread_t handle = NULL;
-    int ret = rtos_create_thread(&handle, priority, name,
+    int ret;
+
+    /* Use PSRAM stack for large tasks (saves SRAM) */
+    if (stack_size >= 4096) {
+        ret = rtos_create_psram_thread(&handle, priority, name,
+                                       (beken_thread_function_t)func,
+                                       stack_size, arg);
+    } else {
+        ret = rtos_create_thread(&handle, priority, name,
                                  (beken_thread_function_t)func,
                                  stack_size, arg);
+    }
     return (ret == kNoErr) ? 0 : -1;
 }
 

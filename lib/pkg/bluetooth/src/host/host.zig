@@ -363,7 +363,18 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         /// 4. LE Set Event Mask (enable connection + PHY + DLE events)
         /// 5. Initialize acl_credits
         /// 6. Spawn readLoop + writeLoop
-        pub fn start(self: *Self, _: anytype) !void {
+        /// Start options
+        pub const StartOptions = struct {
+            /// Enable async GATT handler dispatch (spawns task per write/read).
+            /// Set false on memory-constrained platforms (BK7258 SRAM).
+            async_gatt: bool = true,
+        };
+
+        pub fn start(self: *Self, opts: anytype) !void {
+            const start_opts: StartOptions = if (@hasField(@TypeOf(opts), "async_gatt"))
+                .{ .async_gatt = opts.async_gatt }
+            else
+                .{};
             // --- 1. HCI Reset ---
             {
                 var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
@@ -411,11 +422,10 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             self.acl_credits = Credits.init(self.acl_max_slots);
             self.cmd_credits = Credits.init(1); // reset to 1 for writeLoop
 
-            // --- 7. Enable async GATT handler dispatch ---
-            // Must happen after self is at its final memory location.
-            // Handler tasks are spawned via wg.go() and send responses through
-            // sendAttResponse callback → tx_queue → writeLoop → HCI.
-            self.gatt.enableAsync(&self.wg, self.allocator, sendAttResponse, @ptrCast(self));
+            // --- 7. Enable async GATT handler dispatch (optional) ---
+            if (start_opts.async_gatt) {
+                self.gatt.enableAsync(&self.wg, self.allocator, sendAttResponse, @ptrCast(self));
+            }
 
             // --- 8. Spawn loops ---
             self.cancel.reset();
