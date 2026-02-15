@@ -1,20 +1,21 @@
-//! BK board for e2e trait/kvs
+//! BK board for e2e trait/kvs — wraps EasyFlash KVS as NVS-compatible interface
 const bk = @import("bk");
+const KvsInner = bk.impl.kvs.KvsDriver;
+
 pub const log = bk.impl.log.scoped("e2e");
 
-/// KVS wrapper matching ESP NVS interface for e2e tests
 pub const Nvs = struct {
-    const KvsInner = bk.impl.KvsDriver;
+    pub const NvsError = error{ KvsError, ReadFailed, WriteFailed, NotFound };
+
     inner: KvsInner,
 
-    pub const NvsError = error{ KvsError, ReadFailed, WriteFailed };
-
     pub fn flashInit() NvsError!void {
-        // BK EasyFlash auto-initializes — no-op
+        // BK EasyFlash auto-initializes at boot — no-op
     }
 
-    pub fn open(namespace: [:0]const u8) NvsError!Nvs {
-        const inner = try KvsInner.open(namespace);
+    pub fn open(_: [:0]const u8) NvsError!Nvs {
+        // BK EasyFlash is global, no namespace
+        const inner = KvsInner.init() catch return error.KvsError;
         return .{ .inner = inner };
     }
 
@@ -23,14 +24,14 @@ pub const Nvs = struct {
     }
 
     pub fn setU32(self: *Nvs, key: [:0]const u8, value: u32) NvsError!void {
-        return self.inner.setU32(key, value);
+        self.inner.setU32(key, value) catch return error.WriteFailed;
     }
 
     pub fn getU32(self: *Nvs, key: [:0]const u8) NvsError!u32 {
-        return self.inner.getU32(key);
+        return self.inner.getU32(key) catch return error.NotFound;
     }
 
     pub fn commit(self: *Nvs) NvsError!void {
-        return self.inner.commit();
+        self.inner.commit() catch return error.WriteFailed;
     }
 };
