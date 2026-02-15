@@ -205,7 +205,6 @@ pub const Thread = struct {
         stack_size: usize = 8192,
         priority: u8 = 4,
         core: i8 = -1,
-        allocator: std.mem.Allocator = std.heap.page_allocator,
     };
 
     pub fn spawn(config: SpawnConfig, comptime func: anytype, args: anytype) !Thread {
