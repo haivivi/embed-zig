@@ -1,7 +1,103 @@
-load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+# e2e: trait/wifi — ESP platform test (manual, requires hardware + WiFi)
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app", "esp_sdkconfig")
+load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
+load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
+load("//bazel/esp/sdkconfig:log.bzl", "esp_log")
+load("//bazel/esp/sdkconfig:psram.bzl", "esp_psram")
+load("//bazel/esp/sdkconfig:wifi.bzl", "esp_wifi")
+load("//bazel/esp/sdkconfig:lwip.bzl", "esp_lwip")
+load("//bazel/esp/sdkconfig:crypto.bzl", "esp_crypto")
+load("//bazel/esp/sdkconfig:newlib.bzl", "esp_newlib")
+load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/zig:defs.bzl", "zig_module")
 load("//bazel:env.bzl", "make_env_file")
+
 package(default_visibility = ["//visibility:public"])
+
+# =============================================================================
+# SDK Configuration
+# =============================================================================
+
+esp_core(
+    name = "core",
+    idf_target = "esp32s3",
+    cpu_freq_mhz = 240,
+    flash_size_mb = 8,
+    flash_mode = "qio",
+    flash_freq = "80m",
+)
+
+esp_freertos(
+    name = "freertos",
+    hz = 1000,
+    main_task_stack_size = 4096,
+    task_wdt_timeout_s = 30,
+    task_wdt_check_idle_cpu0 = True,
+    task_wdt_check_idle_cpu1 = False,
+)
+
+esp_log(
+    name = "log",
+    default_level = "info",
+)
+
+esp_psram(
+    name = "psram_xip",
+    chip = "esp32s3",
+    mode = "oct",
+    speed = "80m",
+    xip_from_psram = True,
+)
+
+esp_wifi(
+    name = "wifi",
+    static_rx_buffer_num = 16,
+    dynamic_rx_buffer_num = 64,
+    rx_ba_win = 32,
+    tx_ba_win = 6,
+)
+
+esp_lwip(
+    name = "lwip",
+    tcpip_task_stack_size = 8192,
+    max_sockets = 10,
+    max_active_tcp = 16,
+    tcp_snd_buf_default = 65535,
+    tcp_wnd_default = 65535,
+    tcp_recvmbox_size = 64,
+)
+
+esp_crypto(
+    name = "no_mbedtls",
+    disable_mbedtls = True,
+)
+
+esp_newlib(
+    name = "newlib_nano",
+    nano_format = True,
+)
+
+esp_sdkconfig(
+    name = "sdkconfig",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram_xip",
+    wifi = ":wifi",
+    lwip = ":lwip",
+    crypto = ":no_mbedtls",
+    newlib = ":newlib_nano",
+)
+
+esp_app(
+    name = "app_config",
+    run_in_psram = 131072,
+)
+
+# =============================================================================
+# Build
+# =============================================================================
 
 make_env_file(
     name = "env",
@@ -38,8 +134,8 @@ esp_zig_app(
         "//lib/pkg/async/waitgroup",
         "//lib/pkg/async/channel",
     ],
-    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
-    app_config = "//examples/esp:app",
+    sdkconfig = ":sdkconfig",
+    app_config = ":app_config",
     env = ":env",
     tags = ["manual"],
 )

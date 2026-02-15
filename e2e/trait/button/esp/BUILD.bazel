@@ -1,6 +1,65 @@
-load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+# e2e: trait/button — ESP platform test (manual, requires hardware)
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app", "esp_sdkconfig")
+load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
+load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
+load("//bazel/esp/sdkconfig:log.bzl", "esp_log")
+load("//bazel/esp/sdkconfig:psram.bzl", "esp_psram")
+load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/zig:defs.bzl", "zig_module")
+
 package(default_visibility = ["//visibility:public"])
+
+# =============================================================================
+# SDK Configuration
+# =============================================================================
+
+esp_core(
+    name = "core",
+    idf_target = "esp32s3",
+    cpu_freq_mhz = 240,
+    flash_size_mb = 8,
+    flash_mode = "qio",
+    flash_freq = "80m",
+)
+
+esp_freertos(
+    name = "freertos",
+    hz = 1000,
+    main_task_stack_size = 4096,
+    task_wdt_timeout_s = 30,
+    task_wdt_check_idle_cpu0 = True,
+    task_wdt_check_idle_cpu1 = False,
+)
+
+esp_log(
+    name = "log",
+    default_level = "info",
+)
+
+esp_psram(
+    name = "psram",
+    chip = "esp32s3",
+    mode = "oct",
+    speed = "80m",
+)
+
+esp_sdkconfig(
+    name = "sdkconfig",
+    core = ":core",
+    freertos = ":freertos",
+    log = ":log",
+    psram = ":psram",
+)
+
+esp_app(
+    name = "app_config",
+    run_in_psram = 131072,
+)
+
+# =============================================================================
+# Build
+# =============================================================================
 
 esp_modules()
 
@@ -14,8 +73,8 @@ esp_zig_app(
     boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["driver"],
     deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],
-    sdkconfig = "//examples/esp:esp32s3",
-    app_config = "//examples/esp:app",
+    sdkconfig = ":sdkconfig",
+    app_config = ":app_config",
     tags = ["manual"],
 )
 
