@@ -6,16 +6,23 @@
 //!   const dns = @import("dns");
 //!   const crypto = @import("crypto");
 //!
-//!   // Create resolver with platform socket (UDP/TCP only)
-//!   const Resolver = dns.Resolver(Socket);
+//!   // Create resolver with platform socket (UDP/TCP only, no custom resolution)
+//!   const Resolver = dns.Resolver(Socket, void);
 //!   var resolver = Resolver{
 //!       .server = .{ 223, 5, 5, 5 },  // AliDNS
 //!       .protocol = .udp,
 //!   };
 //!
+//!   // Create resolver with custom domain resolver (e.g. zgrnet FakeIP)
+//!   const Resolver = dns.Resolver(Socket, MyDomainResolver);
+//!   var resolver = Resolver{
+//!       .server = .{ 223, 5, 5, 5 },
+//!       .custom_resolver = &my_resolver,
+//!   };
+//!
 //!   // Create resolver with TLS support (UDP/TCP/HTTPS)
 //!   // Socket: platform socket type, Crypto: crypto suite (includes Rng)
-//!   const ResolverTls = dns.ResolverWithTls(Socket, crypto.Suite);
+//!   const ResolverTls = dns.ResolverWithTls(Socket, crypto.Suite, Rt, void);
 //!   var resolver_tls = ResolverTls{
 //!       .server = .{ 223, 5, 5, 5 },
 //!       .protocol = .https,
@@ -51,9 +58,12 @@ pub const Protocol = enum {
 
 /// DNS Resolver - generic over socket type (UDP/TCP only)
 ///
+/// - `DomainResolver`: custom domain resolver consulted before upstream DNS.
+///   Pass `void` to disable (zero overhead, backward compatible).
+///
 /// For DoH support, use `ResolverWithTls` instead.
-pub fn Resolver(comptime Socket: type) type {
-    return ResolverImplWithCrypto(Socket, void, void);
+pub fn Resolver(comptime Socket: type, comptime DomainResolver: type) type {
+    return ResolverImplWithCrypto(Socket, void, void, DomainResolver);
 }
 
 /// DNS Resolver with TLS support (UDP/TCP/HTTPS)
@@ -62,17 +72,23 @@ pub fn Resolver(comptime Socket: type) type {
 /// - `Socket`: platform socket type (must implement socket trait)
 /// - `Crypto`: crypto suite (must include Rng, e.g., crypto.Suite or esp.impl.crypto.Suite)
 /// - `Rt`: Runtime providing Mutex (for TLS thread safety)
+/// - `DomainResolver`: custom domain resolver consulted before upstream DNS.
+///   Pass `void` to disable (zero overhead, backward compatible).
 ///
 /// If Crypto has x509.CaStore, the resolver will support certificate verification
 /// via the ca_store field.
-pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
-    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto);
+pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt: type, comptime DomainResolver: type) type {
+    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto, DomainResolver);
 }
 
 /// Internal resolver implementation (with optional Crypto type for CaStore)
-fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type) type {
+fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type, comptime DomainResolver: type) type {
     const socket = trait.socket.from(Socket);
     const has_tls = TlsClient != void;
+    const has_custom_resolver = DomainResolver != void;
+
+    // Validate DomainResolver at comptime via trait
+    const ValidatedResolver = trait.dns.from(DomainResolver);
 
     // Get CaStore type from Crypto if available (same logic as tls.Client)
     const CaStore = if (Crypto != void and @hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
@@ -106,10 +122,22 @@ fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, compt
         /// If null and skip_cert_verify is false, verification may fail
         ca_store: if (CaStore != void) ?CaStore else void = if (CaStore != void) null else {},
 
+        /// Custom domain resolver (consulted before upstream DNS)
+        /// Only present when DomainResolver != void
+        custom_resolver: if (has_custom_resolver) ?*const ValidatedResolver else void =
+            if (has_custom_resolver) null else {},
+
         const Self = @This();
 
         /// Resolve hostname to IPv4 address
         pub fn resolve(self: *const Self, hostname: []const u8) DnsError!Ipv4Address {
+            // Consult custom resolver first (comptime eliminated when DomainResolver = void)
+            if (has_custom_resolver) {
+                if (self.custom_resolver) |r| {
+                    if (r.resolve(hostname)) |ip| return ip;
+                }
+            }
+
             return switch (self.protocol) {
                 .udp => self.resolveUdp(hostname),
                 .tcp => self.resolveTcp(hostname),
