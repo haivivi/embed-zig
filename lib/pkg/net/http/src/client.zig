@@ -7,7 +7,7 @@
 //! Usage examples:
 //!
 //!   // Full featured: HTTP + HTTPS + DNS (recommended)
-//!   const Client = http.HttpClient(Socket, Crypto, Rt);
+//!   const Client = http.HttpClient(Socket, Crypto, Rt, void);
 //!   var client = Client{ .allocator = allocator };
 //!   const resp = try client.get("https://example.com/api", &buffer);
 //!
@@ -113,11 +113,11 @@ pub const ClientError = error{
 /// - Rt: Runtime providing Mutex (for TLS thread safety). Use std_impl.runtime or esp.idf.runtime.
 ///
 /// Example:
-///   const Client = http.HttpClient(idf.net.socket.Socket, esp.impl.crypto.Suite, Rt);
+///   const Client = http.HttpClient(idf.net.socket.Socket, esp.impl.crypto.Suite, Rt, void);
 ///   var client = Client{ .allocator = idf.heap.psram };
 ///   const resp = try client.get("https://example.com/api", &buffer);
-pub fn HttpClient(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
-    return HttpClientImpl(trait.socket.from(Socket), Crypto, Rt);
+pub fn HttpClient(comptime Socket: type, comptime Crypto: type, comptime Rt: type, comptime DomainResolver: type) type {
+    return HttpClientImpl(trait.socket.from(Socket), Crypto, Rt, DomainResolver);
 }
 
 /// HTTP Client - HTTP only, no TLS, no DNS resolver
@@ -130,10 +130,11 @@ pub fn Client(comptime Socket: type) type {
 // HttpClient Implementation (Full-featured with built-in TLS and DNS)
 // =============================================================================
 
-fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
+fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: type, comptime DomainResolver: type) type {
     // Built-in TLS and DNS types
     const TlsClient = tls.Client(Socket, Crypto, Rt);
-    const DnsResolver = dns.Resolver(Socket, void);
+    const DnsResolver = dns.Resolver(Socket, DomainResolver);
+    const has_custom_resolver = DomainResolver != void;
     // Get CaStore from Crypto if available
     const CaStore = if (@hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
         Crypto.x509.CaStore
@@ -160,6 +161,10 @@ fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: typ
 
         /// User-Agent header
         user_agent: []const u8 = "zig-http/0.1",
+
+        /// Custom domain resolver (only present when DomainResolver != void)
+        custom_resolver: if (has_custom_resolver) ?*const DomainResolver else void =
+            if (has_custom_resolver) null else {},
 
         const Self = @This();
 
@@ -234,6 +239,9 @@ fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: typ
                 .protocol = .udp,
                 .timeout_ms = self.dns_timeout_ms,
             };
+            if (has_custom_resolver) {
+                resolver.custom_resolver = self.custom_resolver;
+            }
 
             return resolver.resolve(host) catch null;
         }

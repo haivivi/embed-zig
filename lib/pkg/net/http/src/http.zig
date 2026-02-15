@@ -10,7 +10,7 @@
 //! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!
 //! // Create full-featured client with built-in TLS and DNS
-//! const Client = http.HttpClient(Socket, crypto.Suite, Rt);
+//! const Client = http.HttpClient(Socket, crypto.Suite, Rt, void);
 //! var client = Client{
 //!     .allocator = allocator,
 //!     .dns_server = .{ 223, 5, 5, 5 },  // AliDNS
@@ -36,6 +36,7 @@ pub const client = @import("client.zig");
 /// - Socket: Platform socket type
 /// - Crypto: Crypto suite (must include Rng)
 /// - Rt: Runtime providing Mutex (for TLS thread safety)
+/// - DomainResolver: Custom domain resolver (void to disable)
 pub const HttpClient = client.HttpClient;
 
 /// HTTP-only Client (no TLS, no DNS resolver)
