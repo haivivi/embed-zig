@@ -22,6 +22,8 @@ extern fn bk_zig_socket_set_recv_timeout(fd: c_int, ms: u32) c_int;
 extern fn bk_zig_socket_set_send_timeout(fd: c_int, ms: u32) c_int;
 extern fn bk_zig_socket_set_reuse_addr(fd: c_int, enable: c_int) c_int;
 extern fn bk_zig_socket_set_nodelay(fd: c_int, enable: c_int) c_int;
+extern fn bk_zig_socket_set_nonblocking(fd: c_int, enable: c_int) c_int;
+extern fn bk_zig_socket_get_bound_port(fd: c_int) c_int;
 
 // ============================================================================
 // Types (identical to ESP)
@@ -188,8 +190,9 @@ pub const Socket = struct {
     }
 
     pub fn getBoundPort(self: *Self) SocketError!u16 {
-        _ = self;
-        return error.BindFailed; // TODO: implement via getsockname
+        const port = bk_zig_socket_get_bound_port(self.fd);
+        if (port < 0) return error.BindFailed;
+        return @intCast(port);
     }
 
     pub fn listen(self: *Self, backlog: u32) SocketError!void {
@@ -233,9 +236,8 @@ pub const Socket = struct {
     }
 
     pub fn setNonBlocking(self: *Self, non_blocking: bool) SocketError!void {
-        _ = self;
-        _ = non_blocking;
-        // TODO: implement via fcntl F_SETFL O_NONBLOCK
+        if (bk_zig_socket_set_nonblocking(self.fd, if (non_blocking) 1 else 0) < 0)
+            return error.CreateFailed;
     }
 
     pub fn getFd(self: *Self) c_int {

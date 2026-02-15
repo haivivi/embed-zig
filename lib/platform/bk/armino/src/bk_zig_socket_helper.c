@@ -129,6 +129,22 @@ int bk_zig_socket_set_nodelay(int fd, int enable) {
 }
 
 /* ========================================================================
+ * Non-blocking / query
+ * ======================================================================== */
+
+int bk_zig_socket_set_nonblocking(int fd, int enable) {
+    unsigned long val = enable ? 1 : 0;
+    return ioctlsocket(fd, FIONBIO, &val);
+}
+
+int bk_zig_socket_get_bound_port(int fd) {
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if (getsockname(fd, (struct sockaddr *)&addr, &len) != 0) return -1;
+    return ntohs(addr.sin_port);
+}
+
+/* ========================================================================
  * Error handling
  * ======================================================================== */
 

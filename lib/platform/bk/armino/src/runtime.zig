@@ -166,7 +166,7 @@ pub const Options = struct {
     stack_size: u32 = 8192,
     priority: u8 = 4,
     core: i8 = -1,
-    allocator: std.mem.Allocator = std.heap.page_allocator, // placeholder, overridden by caller
+    // No allocator field — BK uses C-backed psram/sram allocators, not std.heap
 };
 
 const SpawnCtx = struct {
