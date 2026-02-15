@@ -118,6 +118,12 @@ filegroup(
     srcs = ["src/bk_zig_ble_helper.c"],
 )
 
+# Temperature sensor (internal MCU temp via bk_sensor)
+filegroup(
+    name = "c_helpers_temp",
+    srcs = ["src/bk_zig_temp_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

@@ -283,6 +283,12 @@ pub const OpusEncoder = impl.codec.OpusEncoder;
 pub const OpusDecoder = impl.codec.OpusDecoder;
 
 // ============================================================================
+// Temperature Sensor (internal MCU temp via SARADC)
+// ============================================================================
+
+pub const TempSensorDriver = impl.TempSensorDriver;
+
+// ============================================================================
 // Default GPIO assignments (BK7258 dev board)
 // ============================================================================
 

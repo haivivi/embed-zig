@@ -53,6 +53,9 @@ pub const Timer = timer.Timer;
 pub const hci = @import("hci.zig");
 pub const HciDriver = hci.HciDriver;
 
+pub const temp_sensor = @import("temp_sensor.zig");
+pub const TempSensorDriver = temp_sensor.TempSensorDriver;
+
 pub const codec = struct {
     pub const opus = @import("codec/opus.zig");
     pub const OpusEncoder = opus.OpusEncoder;
