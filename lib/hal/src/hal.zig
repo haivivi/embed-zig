@@ -97,6 +97,8 @@ pub const kvs = @import("kvs.zig");
 pub const mic = @import("mic.zig");
 /// Mono Speaker module (hal.mono_speaker.from, hal.mono_speaker.is)
 pub const mono_speaker = @import("mono_speaker.zig");
+/// Virtual File System module (hal.fs.from, hal.fs.is)
+pub const fs = trait.fs;
 /// Switch module (hal.switch_.from, hal.switch_.is)
 pub const switch_ = @import("switch.zig");
 /// IMU module (hal.imu.from, hal.imu.is)
