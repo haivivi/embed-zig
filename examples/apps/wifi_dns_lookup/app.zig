@@ -15,7 +15,7 @@ const heap = esp.idf.heap;
 const BUILD_TAG = "wifi_dns_doh_test_v3_cert_verify";
 
 /// DNS Resolver (UDP/TCP only)
-const Resolver = dns.Resolver(Board.socket);
+const Resolver = dns.Resolver(Board.socket, void);
 
 /// DoH Resolver with TLS support (uses mbedTLS crypto suite)
 const DoHResolver = platform.DnsResolver;

@@ -133,7 +133,7 @@ pub fn Client(comptime Socket: type) type {
 fn HttpClientImpl(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
     // Built-in TLS and DNS types
     const TlsClient = tls.Client(Socket, Crypto, Rt);
-    const DnsResolver = dns.Resolver(Socket);
+    const DnsResolver = dns.Resolver(Socket, void);
     // Get CaStore from Crypto if available
     const CaStore = if (@hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
         Crypto.x509.CaStore

@@ -48,7 +48,6 @@ pub const spawner = @import("spawner.zig");
 pub const system = @import("system.zig");
 pub const codec = @import("codec.zig");
 pub const io = @import("io.zig");
-pub const dns = @import("dns.zig");
 
 // Socket helpers
 pub const Ipv4Address = socket.Ipv4Address;
@@ -75,5 +74,4 @@ test {
     _ = system;
     _ = codec;
     _ = io;
-    _ = dns;
 }

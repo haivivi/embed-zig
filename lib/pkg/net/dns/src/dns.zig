@@ -81,14 +81,40 @@ pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt
     return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto, DomainResolver);
 }
 
+/// Validate DomainResolver interface at comptime.
+///
+/// A valid DomainResolver must have:
+///   fn resolve(*const Self, []const u8) ?[4]u8
+///
+/// Pass `void` to disable custom resolution (zero overhead).
+fn validateDomainResolver(comptime Impl: type) type {
+    if (Impl == void) return void;
+
+    comptime {
+        if (!@hasDecl(Impl, "resolve")) {
+            @compileError("DomainResolver must have fn resolve(*const @This(), []const u8) ?[4]u8");
+        }
+        const resolve_fn = @typeInfo(@TypeOf(Impl.resolve)).@"fn";
+        if (resolve_fn.params.len != 2) {
+            @compileError("DomainResolver.resolve must take (self, host) — 2 parameters");
+        }
+        if (resolve_fn.return_type) |ret| {
+            if (ret != ?[4]u8) {
+                @compileError("DomainResolver.resolve must return ?[4]u8");
+            }
+        }
+    }
+    return Impl;
+}
+
 /// Internal resolver implementation (with optional Crypto type for CaStore)
 fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type, comptime DomainResolver: type) type {
     const socket = trait.socket.from(Socket);
     const has_tls = TlsClient != void;
     const has_custom_resolver = DomainResolver != void;
 
-    // Validate DomainResolver at comptime via trait
-    const ValidatedResolver = trait.dns.from(DomainResolver);
+    // Validate DomainResolver at comptime
+    const ValidatedResolver = validateDomainResolver(DomainResolver);
 
     // Get CaStore type from Crypto if available (same logic as tls.Client)
     const CaStore = if (Crypto != void and @hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
