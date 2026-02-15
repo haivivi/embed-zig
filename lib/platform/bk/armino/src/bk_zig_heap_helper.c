@@ -86,3 +86,12 @@ unsigned int bk_zig_psram_get_free(void) {
 unsigned int bk_zig_psram_get_min_free(void) {
     return rtos_get_psram_minimum_free_heap_size();
 }
+
+/* ======== Stack statistics ======== */
+
+#include <FreeRTOS.h>
+#include <task.h>
+
+unsigned int bk_zig_stack_high_water(void) {
+    return uxTaskGetStackHighWaterMark(xTaskGetCurrentTaskHandle());
+}

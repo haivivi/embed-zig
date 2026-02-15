@@ -150,3 +150,76 @@ pub fn getPsramStats() MemStats {
 /// Aliases matching ESP naming convention
 pub const getInternalStats = getSramStats;
 pub const getDefaultStats = getSramStats;
+
+// ============================================================================
+// Stack Statistics
+// ============================================================================
+
+extern fn bk_zig_stack_high_water() c_uint;
+
+pub const StackStats = struct {
+    total: usize,
+    high_water: usize,
+    used: usize,
+    free_now: usize,
+};
+
+/// Get current task's stack statistics
+pub fn getCurrentTaskStackStats(stack_size: usize) StackStats {
+    const high_water: usize = bk_zig_stack_high_water();
+    return .{
+        .total = stack_size,
+        .high_water = high_water,
+        .used = stack_size -| high_water,
+        .free_now = high_water,
+    };
+}
+
+// ============================================================================
+// System Memory Report
+// ============================================================================
+
+pub const SystemMemoryReport = struct {
+    sram: MemStats,
+    psram: MemStats,
+    stack: StackStats,
+
+    pub fn print(self: SystemMemoryReport, log: anytype) void {
+        log.info("=== Memory Report ===", .{});
+        log.info("SRAM:  {d}KB free / {d}KB total (min: {d}KB, peak used: {d}KB)", .{
+            self.sram.free / 1024,
+            self.sram.total / 1024,
+            self.sram.min_free / 1024,
+            (self.sram.total -| self.sram.min_free) / 1024,
+        });
+        if (self.psram.total > 0) {
+            log.info("PSRAM: {d}KB free / {d}KB total (min: {d}KB, peak used: {d}KB)", .{
+                self.psram.free / 1024,
+                self.psram.total / 1024,
+                self.psram.min_free / 1024,
+                (self.psram.total -| self.psram.min_free) / 1024,
+            });
+        }
+        log.info("Stack: ~{d} bytes used / {d} bytes (high water: {d})", .{
+            self.stack.used,
+            self.stack.total,
+            self.stack.high_water,
+        });
+    }
+};
+
+/// Get comprehensive system memory report
+pub fn getSystemReport(stack_size: usize) SystemMemoryReport {
+    return .{
+        .sram = getSramStats(),
+        .psram = getPsramStats(),
+        .stack = getCurrentTaskStackStats(stack_size),
+    };
+}
+
+/// Print memory report with default log
+pub fn printReport(stack_size: usize) void {
+    const report = getSystemReport(stack_size);
+    const log = @import("std").log;
+    report.print(log);
+}
