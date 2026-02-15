@@ -657,53 +657,40 @@ test "validateDomainResolver: valid resolver" {
     try std.testing.expectEqual(@as(?[4]u8, null), resolver.resolve("www.google.com"));
 }
 
-test "Resolver with void DomainResolver has no custom_resolver field" {
-    const MockSocket = struct {
-        pub fn udp() !@This() { return .{}; }
-        pub fn tcp() !@This() { return .{}; }
-        pub fn close(_: *@This()) void {}
-        pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
-        pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
-        pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
-        pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
-        pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
-        pub fn setRecvTimeout(_: *@This(), _: u32) void {}
-        pub fn setSendTimeout(_: *@This(), _: u32) void {}
-        pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
-        pub fn getFd(_: *const @This()) std.posix.fd_t { return 0; }
-        pub fn setNonBlocking(_: *@This(), _: bool) void {}
-        pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
-        pub fn recvFromWithAddr(_: *@This(), _: []u8) !struct { len: usize, addr: [4]u8, port: u16 } {
-            return .{ .len = 0, .addr = .{ 0, 0, 0, 0 }, .port = 0 };
-        }
-    };
+const TestMockSocket = struct {
+    pub fn udp() !@This() { return .{}; }
+    pub fn tcp() !@This() { return .{}; }
+    pub fn close(_: *@This()) void {}
+    pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
+    pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
+    pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
+    pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
+    pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
+    pub fn setRecvTimeout(_: *@This(), _: u32) void {}
+    pub fn setSendTimeout(_: *@This(), _: u32) void {}
+    pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
+    pub fn getFd(_: *@This()) i32 { return 0; }
+    pub fn setNonBlocking(_: *@This(), _: bool) !void {}
+    pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
+    pub fn getBoundPort(_: *@This()) !u16 { return 0; }
+    pub fn recvFromWithAddr(_: *@This(), _: []u8) !trait.socket.RecvFromResult {
+        return .{ .len = 0, .src_addr = .{ 0, 0, 0, 0 }, .src_port = 0 };
+    }
+};
 
-    const R = Resolver(MockSocket, void);
-    // Verify custom_resolver field does not exist (is void)
-    try std.testing.expect(!@hasField(R, "custom_resolver"));
+test "Resolver with void DomainResolver: custom_resolver is void (zero overhead)" {
+    const R = Resolver(TestMockSocket, void);
+    const fields = @typeInfo(R).@"struct".fields;
+    comptime {
+        for (fields) |f| {
+            if (std.mem.eql(u8, f.name, "custom_resolver")) {
+                if (f.type != void) @compileError("expected void field");
+            }
+        }
+    }
 }
 
 test "Resolver with DomainResolver has custom_resolver field" {
-    const MockSocket = struct {
-        pub fn udp() !@This() { return .{}; }
-        pub fn tcp() !@This() { return .{}; }
-        pub fn close(_: *@This()) void {}
-        pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
-        pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
-        pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
-        pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
-        pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
-        pub fn setRecvTimeout(_: *@This(), _: u32) void {}
-        pub fn setSendTimeout(_: *@This(), _: u32) void {}
-        pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
-        pub fn getFd(_: *const @This()) std.posix.fd_t { return 0; }
-        pub fn setNonBlocking(_: *@This(), _: bool) void {}
-        pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
-        pub fn recvFromWithAddr(_: *@This(), _: []u8) !struct { len: usize, addr: [4]u8, port: u16 } {
-            return .{ .len = 0, .addr = .{ 0, 0, 0, 0 }, .port = 0 };
-        }
-    };
-
     const MockResolver = struct {
         pub fn resolve(_: *const @This(), host: []const u8) ?[4]u8 {
             if (std.mem.endsWith(u8, host, ".zigor.net")) {
@@ -713,7 +700,6 @@ test "Resolver with DomainResolver has custom_resolver field" {
         }
     };
 
-    const R = Resolver(MockSocket, MockResolver);
-    // Verify custom_resolver field exists
+    const R = Resolver(TestMockSocket, MockResolver);
     try std.testing.expect(@hasField(R, "custom_resolver"));
 }
