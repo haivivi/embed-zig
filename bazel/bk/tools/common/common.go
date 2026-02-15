@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -135,7 +136,7 @@ func FindFileWithPath(root, name, pathContains string) string {
 			return nil
 		}
 		if !info.IsDir() && info.Name() == name {
-			if pathContains == "" || containsStr(path, pathContains) {
+			if pathContains == "" || strings.Contains(path, pathContains) {
 				if result == "" {
 					result = path
 				}
@@ -154,8 +155,8 @@ func FindFileWithPathExclude(root, name, pathContains, pathExcludes string) stri
 			return nil
 		}
 		if !info.IsDir() && info.Name() == name {
-			if (pathContains == "" || containsStr(path, pathContains)) &&
-				(pathExcludes == "" || !containsStr(path, pathExcludes)) {
+			if (pathContains == "" || strings.Contains(path, pathContains)) &&
+				(pathExcludes == "" || !strings.Contains(path, pathExcludes)) {
 				if result == "" {
 					result = path
 				}
@@ -166,19 +167,6 @@ func FindFileWithPathExclude(root, name, pathContains, pathExcludes string) stri
 	return result
 }
 
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && searchStr(s, substr)
-}
-
-func searchStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 // ReplaceInFile performs a string replacement in a file.
 func ReplaceInFile(path, old, new string) error {
 	data, err := os.ReadFile(path)
@@ -186,36 +174,18 @@ func ReplaceInFile(path, old, new string) error {
 		return err
 	}
 	content := string(data)
-	if !containsStr(content, old) {
+	if !strings.Contains(content, old) {
 		return nil // nothing to replace
 	}
-	updated := replaceAll(content, old, new)
+	updated := strings.ReplaceAll(content, old, new)
 	return os.WriteFile(path, []byte(updated), 0644)
 }
 
-func replaceAll(s, old, new string) string {
-	if old == new || old == "" {
-		return s
+// FileSize returns the file size in bytes, or 0 if stat fails.
+func FileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
 	}
-	var result []byte
-	for {
-		i := indexOf(s, old)
-		if i < 0 {
-			result = append(result, s...)
-			break
-		}
-		result = append(result, s[:i]...)
-		result = append(result, new...)
-		s = s[i+len(old):]
-	}
-	return string(result)
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
+	return info.Size()
 }

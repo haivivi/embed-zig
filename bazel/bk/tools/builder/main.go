@@ -212,8 +212,7 @@ func compileZigLib(cfg *Config, name, appZig, bkZig, outDir, workDir string) err
 		return fmt.Errorf("no .a produced for %s", name)
 	}
 
-	info, _ := os.Stat(lib)
-	fmt.Printf("%s %s lib: %s (%d bytes)\n", prefix, name, lib, info.Size())
+	fmt.Printf("%s %s lib: %s (%d bytes)\n", prefix, name, lib, common.FileSize(lib))
 	return nil
 }
 
@@ -338,7 +337,9 @@ func generateBuildZig(cfg *Config, name, rootZig, outDir string) error {
 
 	// AP: build_options, app, env modules
 	if name == "bk_zig_ap" {
-		generateBuildOptions(outDir)
+		if err := generateBuildOptions(outDir); err != nil {
+			return err
+		}
 		b.WriteString(fmt.Sprintf("    const build_options_mod = b.createModule(.{\n"))
 		b.WriteString(fmt.Sprintf("        .root_source_file = .{ .cwd_relative = \"%s/build_options.zig\" },\n", outDir))
 		b.WriteString("        .target = target,\n")
@@ -404,7 +405,7 @@ func generateBuildZig(cfg *Config, name, rootZig, outDir string) error {
 }
 
 // generateBuildOptions creates build_options.zig.
-func generateBuildOptions(outDir string) {
+func generateBuildOptions(outDir string) error {
 	content := `pub const Board = enum {
     bk7258,
     // ESP boards (needed for platform.zig switch exhaustiveness)
@@ -416,7 +417,7 @@ func generateBuildOptions(outDir string) {
 };
 pub const board: Board = .bk7258;
 `
-	os.WriteFile(filepath.Join(outDir, "build_options.zig"), []byte(content), 0644)
+	return os.WriteFile(filepath.Join(outDir, "build_options.zig"), []byte(content), 0644)
 }
 
 // generateArminoProject creates the Armino project skeleton.
@@ -436,21 +437,33 @@ func generateArminoProject(cfg *Config, workDir, apLib, cpLib string) error {
 	if cfg.PartCSV != "" {
 		fullPartCSV := filepath.Join(cfg.ExecRoot, cfg.PartCSV)
 		if common.FileExists(fullPartCSV) {
-			common.CopyFile(fullPartCSV, filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv"))
+			if err := common.CopyFile(fullPartCSV, filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv")); err != nil {
+				return fmt.Errorf("copy partition table: %w", err)
+			}
 			fmt.Printf("%s Custom partition table from Bazel\n", prefix)
 		} else {
-			common.CopyFile(filepath.Join(base, "partitions/bk7258/auto_partitions.csv"), filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv"))
+			if err := common.CopyFile(filepath.Join(base, "partitions/bk7258/auto_partitions.csv"), filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv")); err != nil {
+				return fmt.Errorf("copy partition table: %w", err)
+			}
 		}
 	} else {
-		common.CopyFile(filepath.Join(base, "partitions/bk7258/auto_partitions.csv"), filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv"))
+		if err := common.CopyFile(filepath.Join(base, "partitions/bk7258/auto_partitions.csv"), filepath.Join(projectDir, "partitions/bk7258/auto_partitions.csv")); err != nil {
+			return fmt.Errorf("copy partition table: %w", err)
+		}
 	}
-	common.CopyFile(filepath.Join(base, "partitions/bk7258/ram_regions.csv"), filepath.Join(projectDir, "partitions/bk7258/ram_regions.csv"))
+	if err := common.CopyFile(filepath.Join(base, "partitions/bk7258/ram_regions.csv"), filepath.Join(projectDir, "partitions/bk7258/ram_regions.csv")); err != nil {
+		return fmt.Errorf("copy ram_regions: %w", err)
+	}
 
 	// Configs
 	os.MkdirAll(filepath.Join(projectDir, "ap/config/bk7258_ap"), 0755)
 	os.MkdirAll(filepath.Join(projectDir, "cp/config/bk7258"), 0755)
-	common.CopyFile(filepath.Join(base, "ap/config/bk7258_ap/config"), filepath.Join(projectDir, "ap/config/bk7258_ap/config"))
-	common.CopyFile(filepath.Join(base, "cp/config/bk7258/config"), filepath.Join(projectDir, "cp/config/bk7258/config"))
+	if err := common.CopyFile(filepath.Join(base, "ap/config/bk7258_ap/config"), filepath.Join(projectDir, "ap/config/bk7258_ap/config")); err != nil {
+		return fmt.Errorf("copy AP config: %w", err)
+	}
+	if err := common.CopyFile(filepath.Join(base, "cp/config/bk7258/config"), filepath.Join(projectDir, "cp/config/bk7258/config")); err != nil {
+		return fmt.Errorf("copy CP config: %w", err)
+	}
 	common.CopyFileIfExists(filepath.Join(base, "ap/config/bk7258_ap/usr_gpio_cfg.h"), filepath.Join(projectDir, "ap/config/bk7258_ap/usr_gpio_cfg.h"))
 	common.CopyFileIfExists(filepath.Join(base, "cp/config/bk7258/usr_gpio_cfg.h"), filepath.Join(projectDir, "cp/config/bk7258/usr_gpio_cfg.h"))
 
@@ -499,8 +512,12 @@ project(app)
 `), 0644)
 
 	// CP component
-	common.CopyFile(cpLib, filepath.Join(projectDir, "cp/libbk_zig_cp.a"))
-	common.CopyFile(filepath.Join(cfg.ExecRoot, "lib/platform/bk/armino/src/bk_zig_helper.c"), filepath.Join(projectDir, "cp/bk_zig_helper.c"))
+	if err := common.CopyFile(cpLib, filepath.Join(projectDir, "cp/libbk_zig_cp.a")); err != nil {
+		return fmt.Errorf("copy CP lib: %w", err)
+	}
+	if err := common.CopyFile(filepath.Join(cfg.ExecRoot, "lib/platform/bk/armino/src/bk_zig_helper.c"), filepath.Join(projectDir, "cp/bk_zig_helper.c")); err != nil {
+		return fmt.Errorf("copy CP helper: %w", err)
+	}
 	os.WriteFile(filepath.Join(projectDir, "cp/cp_main.c"), []byte(cpMainC()), 0644)
 	os.WriteFile(filepath.Join(projectDir, "cp/CMakeLists.txt"), []byte(cpCMake()), 0644)
 
@@ -519,23 +536,29 @@ func generateAPComponent(cfg *Config, projectDir, apLib string) error {
 	if cfg.CHelpers != "" {
 		for _, helper := range strings.Fields(cfg.CHelpers) {
 			bn := filepath.Base(helper)
-			common.CopyFile(filepath.Join(cfg.ExecRoot, helper), filepath.Join(projectDir, "ap", bn))
+			if err := common.CopyFile(filepath.Join(cfg.ExecRoot, helper), filepath.Join(projectDir, "ap", bn)); err != nil {
+				return fmt.Errorf("copy C helper %s: %w", bn, err)
+			}
 			cHelperSrcs = append(cHelperSrcs, bn)
 		}
 	}
 
 	// Copy AP lib
-	common.CopyFile(apLib, filepath.Join(projectDir, "ap/libbk_zig_ap.a"))
+	if err := common.CopyFile(apLib, filepath.Join(projectDir, "ap/libbk_zig_ap.a")); err != nil {
+		return fmt.Errorf("copy AP lib: %w", err)
+	}
 
 	// Copy static libs
 	var staticLibCMake string
 	if cfg.StaticLibs != "" {
 		for _, slib := range strings.Fields(cfg.StaticLibs) {
 			bn := filepath.Base(slib)
-			common.CopyFile(filepath.Join(cfg.ExecRoot, slib), filepath.Join(projectDir, "ap", bn))
+			srcPath := filepath.Join(cfg.ExecRoot, slib)
+			if err := common.CopyFile(srcPath, filepath.Join(projectDir, "ap", bn)); err != nil {
+				return fmt.Errorf("copy static lib %s: %w", bn, err)
+			}
 			staticLibCMake += " ${CMAKE_CURRENT_SOURCE_DIR}/" + bn
-			info, _ := os.Stat(filepath.Join(cfg.ExecRoot, slib))
-			fmt.Printf("%s Static lib: %s (%d bytes)\n", prefix, bn, info.Size())
+			fmt.Printf("%s Static lib: %s (%d bytes)\n", prefix, bn, common.FileSize(srcPath))
 		}
 	}
 
@@ -626,8 +649,7 @@ func runArminoBuild(cfg *Config, workDir string) error {
 	fmt.Printf("%s Package contents:\n", prefix)
 	entries, _ := os.ReadDir(packageDir)
 	for _, e := range entries {
-		info, _ := e.Info()
-		fmt.Printf("%s   %s (%d bytes)\n", prefix, e.Name(), info.Size())
+		fmt.Printf("%s   %s (%d bytes)\n", prefix, e.Name(), common.FileSize(filepath.Join(packageDir, e.Name())))
 	}
 
 	// Find AP and CP binaries
@@ -636,35 +658,39 @@ func runArminoBuild(cfg *Config, workDir string) error {
 	cpBin := common.FindFileWithPathExclude(buildBase, "app.bin", "bk7258", "bk7258_ap")
 
 	if apBin != "" {
-		info, _ := os.Stat(apBin)
-		fmt.Printf("%s AP binary: %s (%d bytes)\n", prefix, apBin, info.Size())
+		fmt.Printf("%s AP binary: %s (%d bytes)\n", prefix, apBin, common.FileSize(apBin))
 	}
 	if cpBin != "" {
-		info, _ := os.Stat(cpBin)
-		fmt.Printf("%s CP binary: %s (%d bytes)\n", prefix, cpBin, info.Size())
+		fmt.Printf("%s CP binary: %s (%d bytes)\n", prefix, cpBin, common.FileSize(cpBin))
 	}
 
 	// Copy outputs
-	common.CopyFile(allApp, cfg.BinOut)
+	if err := common.CopyFile(allApp, cfg.BinOut); err != nil {
+		return fmt.Errorf("copy all-app.bin: %w", err)
+	}
 
 	if apBin != "" && common.FileExists(apBin) {
-		common.CopyFile(apBin, cfg.ApBinOut)
-		info, _ := os.Stat(cfg.ApBinOut)
-		fmt.Printf("%s AP-only: %s (%d bytes)\n", prefix, cfg.ApBinOut, info.Size())
+		if err := common.CopyFile(apBin, cfg.ApBinOut); err != nil {
+			return fmt.Errorf("copy AP bin: %w", err)
+		}
+		fmt.Printf("%s AP-only: %s (%d bytes)\n", prefix, cfg.ApBinOut, common.FileSize(cfg.ApBinOut))
 	} else {
-		common.CopyFile(allApp, cfg.ApBinOut)
+		if err := common.CopyFile(allApp, cfg.ApBinOut); err != nil {
+			return fmt.Errorf("copy AP fallback bin: %w", err)
+		}
 	}
 
 	// Copy partitions
 	partCSV := filepath.Join(filepath.Join(buildDir, "bk7258", cfg.ProjectName, "partitions"), "partitions.csv")
 	if common.FileExists(partCSV) {
-		common.CopyFile(partCSV, cfg.PartOut)
+		if err := common.CopyFile(partCSV, cfg.PartOut); err != nil {
+			return fmt.Errorf("copy partitions: %w", err)
+		}
 	} else {
 		os.WriteFile(cfg.PartOut, []byte("Name,Offset\n"), 0644)
 	}
 
-	info, _ := os.Stat(cfg.BinOut)
-	fmt.Printf("%s Output: %s (%d bytes)\n", prefix, cfg.BinOut, info.Size())
+	fmt.Printf("%s Output: %s (%d bytes)\n", prefix, cfg.BinOut, common.FileSize(cfg.BinOut))
 	return nil
 }
 
