@@ -64,7 +64,7 @@ compile_zig_lib() {
 const app = @import("app");
 const env_module = @import("env");
 const impl = @import("bk");
-pub const std_options = @import("std").Options{ .logFn = impl.impl.stdLogFn };
+pub const std_options = @import("std").Options{ .logFn = impl.impl.stdLogFn, .page_size_min = 4096, .page_size_max = 4096 };
 export fn zig_main() callconv(.c) void {
     app.run(env_module.env);
 }

@@ -6,7 +6,7 @@ const idf = esp.idf;
 
 pub const Runtime = idf.runtime;
 pub const HciDriver = esp.impl.hci.HciDriver;
-pub const heap = idf.heap;
+pub const heap = idf.heap.psram;
 pub const log = std.log.scoped(.app);
 pub const board_name_str = "ESP32-S3";
 
