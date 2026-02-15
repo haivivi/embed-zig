@@ -2,75 +2,377 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>H106 — WebSim</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H106 — WebSim Native</title>
     <style>
-:root { --bg:#0f1117;--surface:#1a1d27;--border:#2d3245;--text:#e1e4ed;--text-dim:#7a7f96;--accent:#6c8cff;--green:#4ade80;--mono:'SF Mono','Fira Code',monospace;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;--radius:12px; }
-* { margin:0;padding:0;box-sizing:border-box; }
-body { background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px; }
-.header { display:flex;align-items:center;justify-content:space-between;width:100%;max-width:540px;margin-bottom:16px; }
-.header h1 { font-size:18px;font-weight:600;color:var(--text-dim); }
-.header .accent { color:var(--accent); }
-.status { font-size:12px;font-family:var(--mono);padding:4px 10px;border-radius:20px;background:var(--surface);border:1px solid var(--border);color:var(--text-dim); }
-.status.running { color:var(--green);border-color:rgba(74,222,128,0.3); }
-.game-area { display:flex;gap:20px;align-items:flex-start; }
-.display-wrap { background:#000;border:2px solid #333;border-radius:8px;padding:4px;box-shadow:0 0 30px rgba(108,140,255,0.08); }
-canvas { display:block;image-rendering:pixelated; }
-.controls { display:flex;flex-direction:column;gap:8px;padding-top:10px; }
-.btn-row { display:flex;gap:8px;justify-content:center; }
-.hw-button { appearance:none;border:none;background:#222;border-radius:6px;padding:0;cursor:pointer;width:64px;height:36px;transition:transform 0.05s ease;user-select:none; }
+/* WebSim — H106 board theme (from lib/platform/websim/boards/h106/web/style.css) */
+:root {
+    --bg: #0f1117; --surface: #1a1d27; --surface-2: #232733; --border: #2d3245;
+    --text: #e1e4ed; --text-dim: #7a7f96; --accent: #6c8cff; --green: #4ade80;
+    --red: #f87171; --yellow: #fbbf24; --radius: 16px; --radius-sm: 10px;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:var(--font);
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:40px 20px; }
+.sim-container { width:100%; max-width:560px; }
+.sim-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; padding:0 4px; }
+.sim-header h1 { font-size:18px; font-weight:600; letter-spacing:-0.02em; color:var(--text-dim); }
+.sim-header .accent { color:var(--accent); }
+.header-right { display:flex; align-items:center; gap:8px; }
+.rec-screen-btn { appearance:none; border:1px solid var(--border); background:transparent;
+    color:var(--text-dim); font-family:var(--mono); font-size:11px; padding:4px 10px; border-radius:20px; cursor:pointer; }
+.rec-screen-btn:hover { border-color:var(--red); color:var(--red); }
+.rec-screen-btn.recording { background:var(--red); border-color:var(--red); color:#fff; animation:rec-blink 1s infinite; }
+@keyframes rec-blink { 0%,100%{opacity:1} 50%{opacity:0.6} }
+.status { font-size:12px; font-family:var(--mono); padding:4px 10px; border-radius:20px;
+    background:var(--surface); border:1px solid var(--border); color:var(--text-dim); }
+.status.running { color:var(--green); border-color:rgba(74,222,128,0.3); }
+.device { display:flex; gap:16px; margin-bottom:16px; }
+.face { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:20px 16px; display:flex; flex-direction:column; align-items:center; gap:20px; position:relative; }
+.face-label { position:absolute; top:8px; left:12px; font-size:9px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.12em; color:var(--text-dim); opacity:0.5; }
+.front { max-width:180px; justify-content:center; }
+.rec-dome-wrap { position:relative; width:120px; height:150px; display:flex; align-items:center; justify-content:center; }
+#ledGlowCanvas { position:absolute; inset:0; width:100%; height:100%; z-index:0; border-radius:50%/50%; }
+.led-strip { display:none; }
+.rec-dome { position:absolute; inset:0; z-index:2; border:none; appearance:none; cursor:pointer; border-radius:50%/50%;
+    background:rgba(18,20,28,0.55); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,0.05);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -2px 4px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.4);
+    display:flex; align-items:flex-end; justify-content:center; padding-bottom:16px; transition:all 0.1s; user-select:none; }
+.rec-dome:hover { background:rgba(20,22,30,0.25); }
+.rec-dome:active,.rec-dome.pressed { background:rgba(150,30,30,0.3); border-color:rgba(248,113,113,0.3); }
+.rec-label { font-family:var(--mono); font-size:10px; font-weight:700; letter-spacing:0.15em; color:rgba(248,113,113,0.6); text-transform:uppercase; }
+.rec-dome:active .rec-label,.rec-dome.pressed .rec-label { color:rgba(248,113,113,1); }
+.back { gap:14px; }
+.screen-row { display:flex; align-items:center; gap:8px; width:100%; justify-content:center; }
+.side-btn { width:36px; height:72px; flex-shrink:0; }
+.side-btn .btn-inner { writing-mode:vertical-lr; text-orientation:mixed; font-size:9px; letter-spacing:0.1em; }
+.display-area { background:#000; border-radius:var(--radius-sm); overflow:hidden; border:2px solid var(--border); flex-shrink:0; line-height:0; }
+.display-area canvas { image-rendering:pixelated; width:200px; height:200px; }
+.key-row { display:flex; gap:8px; justify-content:center; }
+.key-btn { width:72px; height:36px; }
+.hw-button { appearance:none; border:none; background:var(--surface-2); border-radius:var(--radius-sm);
+    padding:0; cursor:pointer; position:relative; transition:transform 0.05s; user-select:none; }
 .hw-button:active,.hw-button.pressed { transform:translateY(1px); }
-.btn-inner { display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:6px;background:linear-gradient(180deg,#444 0%,#333 100%);border:1px solid #555;border-bottom:2px solid #222;font-family:var(--mono);font-size:11px;font-weight:700;color:#ccc; }
-.hw-button:active .btn-inner,.hw-button.pressed .btn-inner { background:linear-gradient(180deg,#333 0%,#444 100%);border-bottom:1px solid #222;color:var(--accent); }
-.key-hint { font-size:9px;color:var(--text-dim);text-align:center;margin-top:4px;line-height:1.5; }
-.log-panel { width:100%;max-width:540px;margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden; }
-.log-header { padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase; }
-.log-content { padding:8px 12px;font-family:var(--mono);font-size:11px;line-height:1.5;max-height:120px;overflow-y:auto;color:var(--text-dim); }
-.log-line.info { color:var(--green); }
+.btn-inner { display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:0 10px;
+    border-radius:var(--radius-sm); background:linear-gradient(180deg,#3a3f52 0%,#2d3245 100%);
+    border:1px solid var(--border); border-bottom:2px solid #1a1d27;
+    font-family:var(--mono); font-size:11px; font-weight:600; color:var(--text); letter-spacing:0.04em;
+    transition:all 0.05s; white-space:nowrap; }
+.hw-button:active .btn-inner,.hw-button.pressed .btn-inner { background:linear-gradient(180deg,#2d3245 0%,#3a3f52 100%);
+    border-bottom:1px solid #1a1d27; color:var(--accent); }
+.hw-button:hover .btn-inner { border-color:var(--accent); }
+.power-btn { width:44px; height:44px; border-radius:50%; }
+.power-btn .btn-inner { border-radius:50%; font-size:16px; padding:0; }
+.log-panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.log-header { display:flex; align-items:center; justify-content:space-between; padding:10px 16px;
+    border-bottom:1px solid var(--border); font-size:12px; font-weight:600; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:0.05em; }
+.log-actions { display:flex; gap:6px; }
+.log-btn { appearance:none; border:1px solid var(--border); background:transparent; color:var(--text-dim);
+    font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer; font-family:var(--font); }
+.log-btn:hover { border-color:var(--accent); color:var(--accent); }
+.log-btn.active { border-color:var(--green); color:var(--green); }
+.log-content { padding:12px 16px; font-family:var(--mono); font-size:12px; line-height:1.6;
+    height:120px; overflow-y:auto; color:var(--text-dim); }
+.log-content .log-line { white-space:pre; }
+.log-content .log-line.info { color:var(--green); }
+.log-content .log-line.error { color:var(--red); }
+.log-content .log-line.warn { color:var(--yellow); }
+.log-content::-webkit-scrollbar { width:6px; }
+.log-content::-webkit-scrollbar-track { background:transparent; }
+.log-content::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+.error-wrap { width:100%; max-width:560px; margin:8px auto 0; }
+.error-panel { border-color:rgba(248,113,113,0.3); }
+.error-panel .log-header { color:var(--red); }
+.error-panel .log-content { height:80px; }
     </style>
 </head>
 <body>
-    <header class="header">
-        <h1>H106 <span class="accent">WebSim</span></h1>
-        <span class="status" id="status">Loading...</span>
-    </header>
-    <div class="game-area">
-        <div class="display-wrap">
-            <canvas id="displayCanvas" width="240" height="240" style="width:240px;height:240px;"></canvas>
+    <div class="sim-container" id="simContainer">
+        <header class="sim-header">
+            <h1>H106 <span class="accent">WebSim</span></h1>
+            <div class="header-right">
+                <button class="rec-screen-btn" id="screenRecBtn">&#9679; Rec</button>
+                <span class="status" id="status">Loading...</span>
+            </div>
+        </header>
+
+        <div class="device" id="deviceFrame">
+            <!-- Front face: LED glow under frosted REC dome -->
+            <div class="face front">
+                <div class="face-label">Front</div>
+                <div class="rec-dome-wrap">
+                    <canvas id="ledGlowCanvas" width="120" height="150"></canvas>
+                    <div class="led-strip" id="ledContainer"></div>
+                    <button class="rec-dome adc-btn" data-adc="2000" data-name="rec">
+                        <span class="rec-label">REC</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Back face: screen + nav keys -->
+            <div class="face back">
+                <div class="face-label">Back</div>
+
+                <div class="screen-row">
+                    <button class="hw-button side-btn adc-btn" data-adc="500" data-name="vol-">
+                        <span class="btn-inner">VOL-</span>
+                    </button>
+                    <div class="display-area" id="displayArea">
+                        <canvas id="displayCanvas" width="240" height="240"></canvas>
+                    </div>
+                    <button class="hw-button side-btn adc-btn" data-adc="200" data-name="vol+">
+                        <span class="btn-inner">VOL+</span>
+                    </button>
+                </div>
+
+                <div class="key-row">
+                    <button class="hw-button key-btn adc-btn" data-adc="1400" data-name="back">
+                        <span class="btn-inner">BACK</span>
+                    </button>
+                    <button class="hw-button key-btn power-btn" id="btnPower">
+                        <span class="btn-inner">&#9211;</span>
+                    </button>
+                    <button class="hw-button key-btn adc-btn" data-adc="1700" data-name="confirm">
+                        <span class="btn-inner">OK</span>
+                    </button>
+                </div>
+
+                <div class="key-row">
+                    <button class="hw-button key-btn adc-btn" data-adc="800" data-name="left">
+                        <span class="btn-inner">&larr;</span>
+                    </button>
+                    <button class="hw-button key-btn adc-btn" data-adc="1100" data-name="right">
+                        <span class="btn-inner">&rarr;</span>
+                    </button>
+                </div>
+            </div>
         </div>
-        <div class="controls">
-            <div class="btn-row">
-                <button class="hw-button adc-btn" data-adc="200"><span class="btn-inner">VOL+</span></button>
-                <button class="hw-button adc-btn" data-adc="500"><span class="btn-inner">VOL-</span></button>
+
+        <div class="log-panel">
+            <div class="log-header">
+                <span>Console</span>
+                <div class="log-actions">
+                    <button class="log-btn" id="logAutoScroll">&#8615; Auto</button>
+                    <button class="log-btn" id="logCopy">Copy</button>
+                    <button class="log-btn" id="logClear">Clear</button>
+                </div>
             </div>
-            <div class="btn-row">
-                <button class="hw-button adc-btn" data-adc="800"><span class="btn-inner">&larr;</span></button>
-                <button class="hw-button adc-btn" data-adc="1700"><span class="btn-inner">OK</span></button>
-                <button class="hw-button adc-btn" data-adc="1100"><span class="btn-inner">&rarr;</span></button>
-            </div>
-            <div class="btn-row">
-                <button class="hw-button adc-btn" data-adc="1400"><span class="btn-inner">BACK</span></button>
-            </div>
-            <div class="key-hint">&larr;&rarr; navigate &middot; Enter OK<br>&uarr;&darr; scroll &middot; Esc back</div>
+            <div class="log-content" id="logContent"></div>
         </div>
     </div>
-    <div class="log-panel">
-        <div class="log-header">Console</div>
-        <div class="log-content" id="logContent"></div>
+
+    <div class="error-wrap">
+        <div class="log-panel error-panel" id="errorPanel" style="display:none">
+            <div class="log-header"><span>Errors</span></div>
+            <div class="log-content" id="errorContent"></div>
+        </div>
     </div>
+
     <script>
-const App=(()=>{let running=false,canvasCtx=null,imageData=null;
-function initDisplay(){const c=document.getElementById('displayCanvas');if(!c)return;canvasCtx=c.getContext('2d');imageData=canvasCtx.createImageData(c.width,c.height);}
-async function updateDisplay(){if(!canvasCtx)return;try{const b64=await zigGetDisplayFrame();if(!b64||b64.length===0)return;const raw=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));const cv=document.getElementById('displayCanvas');const w=cv.width,h=cv.height,rgba=imageData.data;for(let i=0;i<w*h;i++){const lo=raw[i*2],hi=raw[i*2+1],rgb565=(hi<<8)|lo;rgba[i*4]=((rgb565>>11)&0x1F)*255/31|0;rgba[i*4+1]=((rgb565>>5)&0x3F)*255/63|0;rgba[i*4+2]=(rgb565&0x1F)*255/31|0;rgba[i*4+3]=255;}canvasCtx.putImageData(imageData,0,0);}catch(e){}}
-function updateLog(state){if(!state.log_dirty)return;const el=document.getElementById('logContent');if(!el||!state.logs)return;el.innerHTML=state.logs.map(l=>{let cls='log-line';if(l.startsWith('[INFO]'))cls+=' info';return'<div class="'+cls+'">'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</div>';}).join('');el.scrollTop=el.scrollHeight;}
-function initInput(){const btns=document.querySelectorAll('.adc-btn');let active=null;
-function setAdc(btn,pressed){if(pressed){if(active&&active!==btn)active.classList.remove('pressed');active=btn;btn.classList.add('pressed');zigSetAdcValue(parseInt(btn.dataset.adc));}else{if(active===btn)active=null;btn.classList.remove('pressed');zigSetAdcValue(4095);}}
-btns.forEach(btn=>{btn.addEventListener('mousedown',e=>{e.preventDefault();setAdc(btn,true);});btn.addEventListener('mouseup',()=>setAdc(btn,false));btn.addEventListener('mouseleave',()=>{if(active===btn)setAdc(btn,false);});});
-const keyMap={'ArrowLeft':800,'ArrowRight':1100,'Enter':1700,'Escape':1400,'ArrowUp':200,'ArrowDown':500};
-document.addEventListener('keydown',e=>{if(e.repeat)return;const v=keyMap[e.code];if(v!==undefined){e.preventDefault();zigSetAdcValue(v);btns.forEach(b=>{if(parseInt(b.dataset.adc)===v)b.classList.add('pressed');});}});
-document.addEventListener('keyup',e=>{const v=keyMap[e.code];if(v!==undefined){e.preventDefault();zigSetAdcValue(4095);btns.forEach(b=>{if(parseInt(b.dataset.adc)===v)b.classList.remove('pressed');});}});}
-async function frame(){if(!running)return;try{const state=await zigGetState();if(state)updateLog(state);await updateDisplay();}catch(e){}requestAnimationFrame(frame);}
-return{start(){initDisplay();initInput();running=true;document.getElementById('status').textContent='Running';document.getElementById('status').classList.add('running');requestAnimationFrame(frame);}};})();
-App.start();
+    window.addEventListener('error', e => {
+        const p = document.getElementById('errorPanel'), c = document.getElementById('errorContent');
+        p.style.display = ''; c.innerHTML += '<div class="log-line error">' + e.message + '</div>';
+    });
+
+    const App = (() => {
+        let running = false, canvasCtx = null, imageData = null, logAutoScroll = true;
+
+        // ======== Display ========
+        function initDisplay() {
+            const cv = document.getElementById('displayCanvas');
+            if (!cv) return;
+            canvasCtx = cv.getContext('2d');
+            imageData = canvasCtx.createImageData(cv.width, cv.height);
+        }
+
+        async function updateDisplay() {
+            if (!canvasCtx) return;
+            try {
+                const b64 = await zigGetDisplayFrame();
+                if (!b64 || b64.length === 0) return;
+                const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                const cv = document.getElementById('displayCanvas');
+                const w = cv.width, h = cv.height, rgba = imageData.data;
+                for (let i = 0; i < w * h; i++) {
+                    const lo = raw[i*2], hi = raw[i*2+1], rgb565 = (hi<<8)|lo;
+                    rgba[i*4]   = ((rgb565>>11)&0x1F)*255/31|0;
+                    rgba[i*4+1] = ((rgb565>>5)&0x3F)*255/63|0;
+                    rgba[i*4+2] = (rgb565&0x1F)*255/31|0;
+                    rgba[i*4+3] = 255;
+                }
+                canvasCtx.putImageData(imageData, 0, 0);
+            } catch(e) {}
+        }
+
+        // ======== LEDs ========
+        const LED_POS = [
+            {x:.50,y:.20},{x:.35,y:.35},{x:.65,y:.35},
+            {x:.22,y:.50},{x:.50,y:.50},{x:.78,y:.50},
+            {x:.35,y:.65},{x:.65,y:.65},{x:.50,y:.80},
+        ];
+        let glowCtx = null, glowCanvas = null;
+
+        function initGlow() {
+            glowCanvas = document.getElementById('ledGlowCanvas');
+            if (glowCanvas) glowCtx = glowCanvas.getContext('2d');
+        }
+
+        function updateLEDs(state) {
+            if (!glowCtx || !state.leds) return;
+            const w = glowCanvas.width, h = glowCanvas.height;
+            glowCtx.clearRect(0, 0, w, h);
+            const count = Math.min(state.led_count || 0, LED_POS.length);
+            for (let i = 0; i < count; i++) {
+                const packed = state.leds[i];
+                if (!packed) continue;
+                const r=(packed>>16)&0xFF, g=(packed>>8)&0xFF, b=packed&0xFF;
+                const pos = LED_POS[i], cx = pos.x*w, cy = pos.y*h, radius = w*0.35;
+                const grad = glowCtx.createRadialGradient(cx,cy,0,cx,cy,radius);
+                grad.addColorStop(0, `rgba(${r},${g},${b},0.9)`);
+                grad.addColorStop(0.15, `rgba(${r},${g},${b},0.5)`);
+                grad.addColorStop(0.5, `rgba(${r},${g},${b},0.15)`);
+                grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                glowCtx.fillStyle = grad;
+                glowCtx.fillRect(0,0,w,h);
+            }
+        }
+
+        // ======== Log ========
+        function updateLog(state) {
+            if (!state.log_dirty) return;
+            const el = document.getElementById('logContent');
+            if (!el || !state.logs) return;
+            el.innerHTML = state.logs.map(l => {
+                let cls = 'log-line';
+                if (l.startsWith('[INFO]')) cls += ' info';
+                else if (l.startsWith('[ERROR]')) cls += ' error';
+                else if (l.startsWith('[WARN]')) cls += ' warn';
+                return '<div class="'+cls+'">'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</div>';
+            }).join('');
+            if (logAutoScroll) el.scrollTop = el.scrollHeight;
+        }
+
+        function initLog() {
+            const el = document.getElementById('logClear');
+            const content = document.getElementById('logContent');
+            if (el) el.addEventListener('click', () => { if (content) content.innerHTML = ''; });
+
+            const copyBtn = document.getElementById('logCopy');
+            if (copyBtn && content) copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(content.innerText).then(() => {
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1000);
+                });
+            });
+
+            const scrollBtn = document.getElementById('logAutoScroll');
+            if (scrollBtn) {
+                scrollBtn.classList.add('active');
+                scrollBtn.addEventListener('click', () => {
+                    logAutoScroll = !logAutoScroll;
+                    scrollBtn.classList.toggle('active', logAutoScroll);
+                    scrollBtn.textContent = logAutoScroll ? '\u21A7 Auto' : '\u21A7 Off';
+                });
+            }
+        }
+
+        // ======== Input ========
+        function initInput() {
+            const btns = document.querySelectorAll('.adc-btn');
+            let active = null;
+            function setAdc(btn, pressed) {
+                if (pressed) {
+                    if (active && active !== btn) active.classList.remove('pressed');
+                    active = btn; btn.classList.add('pressed');
+                    zigSetAdcValue(parseInt(btn.dataset.adc));
+                } else {
+                    if (active === btn) active = null;
+                    btn.classList.remove('pressed');
+                    zigSetAdcValue(4095);
+                }
+            }
+            btns.forEach(btn => {
+                btn.addEventListener('mousedown', e => { e.preventDefault(); setAdc(btn, true); });
+                btn.addEventListener('mouseup', () => setAdc(btn, false));
+                btn.addEventListener('mouseleave', () => { if (active === btn) setAdc(btn, false); });
+                btn.addEventListener('touchstart', e => { e.preventDefault(); setAdc(btn, true); });
+                btn.addEventListener('touchend', () => setAdc(btn, false));
+            });
+
+            const btnPower = document.getElementById('btnPower');
+            if (btnPower) {
+                btnPower.addEventListener('mousedown', e => { e.preventDefault(); btnPower.classList.add('pressed'); zigPowerPress(); });
+                btnPower.addEventListener('mouseup', () => { btnPower.classList.remove('pressed'); zigPowerRelease(); });
+                btnPower.addEventListener('mouseleave', () => { if (btnPower.classList.contains('pressed')) { btnPower.classList.remove('pressed'); zigPowerRelease(); }});
+            }
+
+            // Keyboard
+            const keyMap = {'ArrowUp':200,'ArrowDown':500,'ArrowLeft':800,'ArrowRight':1100,
+                            'Escape':1400,'Enter':1700,'KeyR':2000};
+            document.addEventListener('keydown', e => {
+                if (e.repeat) return;
+                const v = keyMap[e.code];
+                if (v !== undefined) { e.preventDefault(); zigSetAdcValue(v);
+                    btns.forEach(b => { if (parseInt(b.dataset.adc)===v) b.classList.add('pressed'); });
+                }
+                if (e.code === 'Space' && btnPower) { e.preventDefault(); btnPower.classList.add('pressed'); zigPowerPress(); }
+            });
+            document.addEventListener('keyup', e => {
+                const v = keyMap[e.code];
+                if (v !== undefined) { e.preventDefault(); zigSetAdcValue(4095);
+                    btns.forEach(b => { if (parseInt(b.dataset.adc)===v) b.classList.remove('pressed'); });
+                }
+                if (e.code === 'Space' && btnPower) { e.preventDefault(); btnPower.classList.remove('pressed'); zigPowerRelease(); }
+            });
+        }
+
+        // ======== Recording ========
+        function initRecorder() {
+            const btn = document.getElementById('screenRecBtn');
+            if (!btn) return;
+            let isRec = false;
+            btn.addEventListener('click', async () => {
+                if (!isRec) {
+                    try { await zigStartRecording(); isRec = true; btn.textContent = '\u25A0 Stop'; btn.classList.add('recording');
+                        document.getElementById('simContainer').classList.add('recording');
+                    } catch(e) {}
+                } else {
+                    try { await zigStopRecording(); } catch(e) {}
+                    isRec = false; btn.textContent = '\u25CF Rec'; btn.classList.remove('recording');
+                    document.getElementById('simContainer').classList.remove('recording');
+                }
+            });
+        }
+
+        // ======== Main Loop ========
+        async function frame() {
+            if (!running) return;
+            try {
+                const state = await zigGetState();
+                if (state) { updateLEDs(state); updateLog(state); }
+                await updateDisplay();
+            } catch(e) {}
+            requestAnimationFrame(frame);
+        }
+
+        return {
+            start() {
+                initDisplay(); initGlow(); initLog(); initInput(); initRecorder();
+                running = true;
+                document.getElementById('status').textContent = 'Running';
+                document.getElementById('status').classList.add('running');
+                requestAnimationFrame(frame);
+            }
+        };
+    })();
+
+    App.start();
     </script>
 </body>
 </html>
