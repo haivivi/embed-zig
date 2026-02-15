@@ -30,17 +30,19 @@ fn testTcpEcho() !void {
         log.err("[e2e] FAIL: trait/socket/tcp — server tcp() failed: {}", .{err});
         return error.TcpServerFailed;
     };
-    errdefer server.close();
 
     server.bind(localhost, 0) catch |err| {
+        server.close();
         log.err("[e2e] FAIL: trait/socket/tcp — bind failed: {}", .{err});
         return error.TcpBindFailed;
     };
     const port = server.getBoundPort() catch |err| {
+        server.close();
         log.err("[e2e] FAIL: trait/socket/tcp — getBoundPort failed: {}", .{err});
         return error.TcpGetPortFailed;
     };
     server.listen() catch |err| {
+        server.close();
         log.err("[e2e] FAIL: trait/socket/tcp — listen failed: {}", .{err});
         return error.TcpListenFailed;
     };

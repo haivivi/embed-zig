@@ -53,7 +53,7 @@ pub fn encrypt(
         ciphertext.ptr,
         tag,
     );
-    _ = ret;
+    if (ret != 0) @panic("chachapoly_encrypt failed");
 }
 
 /// Decrypt ciphertext and verify authentication tag
