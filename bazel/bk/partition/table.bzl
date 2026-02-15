@@ -79,12 +79,8 @@ def _bk_partition_table_impl(ctx):
     for e in auto_entries:
         size_bytes = _parse_size(e.size)
 
-        if e.type == "code":
-            # Code partitions: 4K alignment for offset
-            current_offset = _align_up(current_offset, 4096)
-        else:
-            # Data partitions: 4K alignment
-            current_offset = _align_up(current_offset, 4096)
+        # All partitions: 4K alignment for offset
+        current_offset = _align_up(current_offset, 4096)
 
         calculated.append({
             "name": e.name,
