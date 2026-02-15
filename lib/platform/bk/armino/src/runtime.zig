@@ -13,6 +13,7 @@
 //! ```
 
 const std = @import("std");
+const log = std.log.scoped(.bk_rt);
 
 // ============================================================================
 // C Helper bindings
@@ -224,19 +225,26 @@ pub const Thread = struct {
 
         const Wrapper = struct {
             fn entry(raw: ?*anyopaque) callconv(.c) void {
+                log.info("[Thread] entry start, ctx={*}", .{raw});
                 const ctx: *Context = @ptrCast(@alignCast(raw));
                 const sem = ctx.done_sem;
                 const a = ctx.args;
                 sramFree(raw);
+                log.info("[Thread] calling func...", .{});
                 @call(.auto, func, a);
+                log.info("[Thread] func returned, signaling sem", .{});
                 if (sem) |s| bk_zig_cond_signal(s);
             }
         };
 
         const sem = bk_zig_cond_create();
 
-        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse
+        log.info("[Thread.spawn] ctx_size={}, stack={}", .{ @sizeOf(Context), config.stack_size });
+
+        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse {
+            log.err("[Thread.spawn] sram_malloc failed for {} bytes", .{@sizeOf(Context)});
             return error.SpawnFailed;
+        };
         const ctx: *Context = @ptrCast(@alignCast(ctx_mem));
         ctx.* = .{ .args = args, .done_sem = sem };
 
@@ -248,11 +256,13 @@ pub const Thread = struct {
             config.priority,
         );
         if (ret != 0) {
+            log.err("[Thread.spawn] bk_zig_spawn failed: {}", .{ret});
             sramFree(@ptrCast(ctx));
             if (sem) |s| bk_zig_cond_destroy(s);
             return error.SpawnFailed;
         }
 
+        log.info("[Thread.spawn] OK, ctx={*}", .{ctx_mem});
         return .{ .done_sem = sem };
     }
 

@@ -4,7 +4,7 @@
  * BK7258 architecture: BLE controller runs on CP core.
  * AP accesses HCI through IPC (bt_ipc_hci_send_cmd / bt_ipc_register_hci_send_callback).
  *
- * Ring buffer + semaphore pattern for async receive from CP.
+ * Ring buffer (32KB) + semaphore + mutex for thread-safe async receive.
  */
 
 #include <string.h>
@@ -21,13 +21,15 @@ extern void bt_ipc_register_hci_send_callback(bt_hci_send_cb_t cb);
 
 #define TAG "zig_ble"
 
-/* Ring buffer for HCI packets from CP controller */
-#define HCI_BUF_SIZE 4096
+/* Ring buffer for HCI packets from CP controller — 32KB for sustained ACL */
+#define HCI_BUF_SIZE (32 * 1024)
 static uint8_t s_ring_buf[HCI_BUF_SIZE];
 static volatile uint32_t s_ring_head = 0;
 static volatile uint32_t s_ring_tail = 0;
 static beken_semaphore_t s_data_sem = NULL;
+static beken_mutex_t s_ring_mutex = NULL;
 static int s_initialized = 0;
+static uint32_t s_drop_count = 0;
 
 static uint32_t ring_used(void) {
     return (s_ring_head - s_ring_tail + HCI_BUF_SIZE) % HCI_BUF_SIZE;
@@ -37,14 +39,14 @@ static uint32_t ring_free(void) {
     return HCI_BUF_SIZE - 1 - ring_used();
 }
 
-static void ring_write(const uint8_t *data, uint32_t len) {
+static void ring_write_unlocked(const uint8_t *data, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) {
         s_ring_buf[s_ring_head] = data[i];
         s_ring_head = (s_ring_head + 1) % HCI_BUF_SIZE;
     }
 }
 
-static uint32_t ring_read(uint8_t *data, uint32_t max_len) {
+static uint32_t ring_read_unlocked(uint8_t *data, uint32_t max_len) {
     uint32_t avail = ring_used();
     uint32_t to_read = (avail < max_len) ? avail : max_len;
     for (uint32_t i = 0; i < to_read; i++) {
@@ -56,23 +58,33 @@ static uint32_t ring_read(uint8_t *data, uint32_t max_len) {
 
 /**
  * IPC callback: CP sends HCI data to AP.
- * Format from IPC: [indicator_byte][hci_data...]
- * indicator: 0x04=event, 0x02=ACL data
- *
+ * Format: [indicator_byte][hci_data...]
  * We store: [len_hi][len_lo][indicator][hci_data...]
+ *
+ * NOTE: This may be called from IPC interrupt context on BK7258.
  */
 static void hci_from_controller_cb(uint8_t *buf, uint16_t len) {
     if (len == 0 || !s_initialized) return;
 
-    uint32_t total = 2 + len; /* 2-byte length prefix + data */
+    /* Lock mutex (safe from task context; if ISR, use critical section) */
+    if (s_ring_mutex) rtos_lock_mutex(&s_ring_mutex);
+
+    uint32_t total = 2 + len;
     if (ring_free() < total) {
-        BK_LOGW(TAG, "HCI ring full, dropping %d bytes\r\n", len);
+        s_drop_count++;
+        if ((s_drop_count % 100) == 1) {
+            BK_LOGW(TAG, "HCI ring full! dropped=%d, used=%d/%d\r\n",
+                     s_drop_count, ring_used(), HCI_BUF_SIZE);
+        }
+        if (s_ring_mutex) rtos_unlock_mutex(&s_ring_mutex);
         return;
     }
 
     uint8_t hdr[2] = { (uint8_t)(len >> 8), (uint8_t)(len & 0xFF) };
-    ring_write(hdr, 2);
-    ring_write(buf, len);
+    ring_write_unlocked(hdr, 2);
+    ring_write_unlocked(buf, len);
+
+    if (s_ring_mutex) rtos_unlock_mutex(&s_ring_mutex);
 
     if (s_data_sem) {
         rtos_set_semaphore(&s_data_sem);
@@ -80,30 +92,37 @@ static void hci_from_controller_cb(uint8_t *buf, uint16_t len) {
 }
 
 /**
- * Initialize BLE and register HCI callback on AP side.
+ * Initialize BLE and register HCI callback.
  */
 int bk_zig_ble_init(void) {
     if (s_initialized) return 0;
 
-    int ret = rtos_init_semaphore(&s_data_sem, 128);
+    int ret = rtos_init_semaphore(&s_data_sem, 256);
     if (ret != 0) {
         BK_LOGE(TAG, "sem init failed: %d\r\n", ret);
         return -1;
     }
 
-    /* Initialize Bluetooth (enables IPC to CP) */
+    ret = rtos_init_mutex(&s_ring_mutex);
+    if (ret != 0) {
+        BK_LOGE(TAG, "mutex init failed: %d\r\n", ret);
+        rtos_deinit_semaphore(&s_data_sem);
+        return -1;
+    }
+
     ret = bk_bluetooth_init();
     if (ret != 0) {
         BK_LOGE(TAG, "bk_bluetooth_init failed: %d\r\n", ret);
         rtos_deinit_semaphore(&s_data_sem);
+        rtos_deinit_mutex(&s_ring_mutex);
         return -2;
     }
 
-    /* Register to receive HCI data from CP */
     bt_ipc_register_hci_send_callback(hci_from_controller_cb);
 
     s_initialized = 1;
-    BK_LOGI(TAG, "BLE HCI initialized (AP→CP IPC)\r\n");
+    s_drop_count = 0;
+    BK_LOGI(TAG, "BLE HCI initialized (AP->CP IPC, ring=%dKB)\r\n", HCI_BUF_SIZE / 1024);
     return 0;
 }
 
@@ -111,21 +130,21 @@ void bk_zig_ble_deinit(void) {
     if (!s_initialized) return;
     bt_ipc_register_hci_send_callback(NULL);
     s_initialized = 0;
-    if (s_data_sem) {
-        rtos_deinit_semaphore(&s_data_sem);
-        s_data_sem = NULL;
-    }
+    if (s_data_sem) { rtos_deinit_semaphore(&s_data_sem); s_data_sem = NULL; }
+    if (s_ring_mutex) { rtos_deinit_mutex(&s_ring_mutex); s_ring_mutex = NULL; }
     s_ring_head = 0;
     s_ring_tail = 0;
+    if (s_drop_count > 0) {
+        BK_LOGW(TAG, "Total HCI drops: %d\r\n", s_drop_count);
+    }
 }
 
 /**
  * Send HCI command to CP controller.
- * buf format: [0x01][opcode_lo][opcode_hi][param_len][params...]
+ * buf format: [opcode_lo][opcode_hi][param_len][params...]
  */
 int bk_zig_ble_send_cmd(const uint8_t *buf, unsigned int len) {
-    if (len < 3) return -1; /* Need at least opcode + param_len */
-    /* buf[0]=opcode_lo, buf[1]=opcode_hi, buf[2]=param_len, buf[3..]=params */
+    if (len < 3) return -1;
     uint16_t opcode = ((uint16_t)buf[1] << 8) | buf[0];
     uint8_t param_len = buf[2];
     bt_ipc_hci_send_cmd(opcode, (uint8_t *)(buf + 3), param_len);
@@ -145,35 +164,41 @@ int bk_zig_ble_send_acl(const uint8_t *buf, unsigned int len) {
 }
 
 /**
- * Receive an HCI packet from the ring buffer.
- * Returns: number of bytes read (including indicator byte), or 0 if empty.
- * Output format: [indicator][hci_payload...]
+ * Receive an HCI packet from the ring buffer (thread-safe).
+ * Returns: bytes read (indicator + payload), or 0 if empty.
  */
 unsigned int bk_zig_ble_recv(uint8_t *buf, unsigned int max_len) {
-    if (ring_used() < 2) return 0;
+    if (s_ring_mutex) rtos_lock_mutex(&s_ring_mutex);
+
+    if (ring_used() < 2) {
+        if (s_ring_mutex) rtos_unlock_mutex(&s_ring_mutex);
+        return 0;
+    }
 
     /* Peek length header */
     uint32_t saved_tail = s_ring_tail;
     uint8_t hdr[2];
-    ring_read(hdr, 2);
+    ring_read_unlocked(hdr, 2);
 
     uint16_t pkt_len = ((uint16_t)hdr[0] << 8) | hdr[1];
 
-    if (pkt_len > max_len) {
+    if (pkt_len > max_len || ring_used() < pkt_len) {
+        /* Can't read — restore tail */
         s_ring_tail = saved_tail;
+        if (s_ring_mutex) rtos_unlock_mutex(&s_ring_mutex);
         return 0;
     }
 
-    if (ring_used() < pkt_len) {
-        s_ring_tail = saved_tail;
-        return 0;
-    }
-
-    ring_read(buf, pkt_len);
+    ring_read_unlocked(buf, pkt_len);
+    if (s_ring_mutex) rtos_unlock_mutex(&s_ring_mutex);
     return pkt_len;
 }
 
+/**
+ * Wait for data with timeout.
+ */
 int bk_zig_ble_wait_for_data(int timeout_ms) {
+    /* Fast path: data already available */
     if (ring_used() > 0) return 1;
     if (!s_data_sem) return 0;
 
@@ -183,7 +208,8 @@ int bk_zig_ble_wait_for_data(int timeout_ms) {
     else ticks = timeout_ms;
 
     int ret = rtos_get_semaphore(&s_data_sem, ticks);
-    return (ret == 0) ? 1 : 0;
+    /* After semaphore, check ring again (could be spurious wakeup) */
+    return (ret == 0 && ring_used() > 0) ? 1 : 0;
 }
 
 int bk_zig_ble_can_send(void) {
