@@ -237,15 +237,16 @@ pub const HkdfSha256 = struct {
 };
 
 pub const HkdfSha384 = struct {
-    pub const prk_length = 48;
+    const Inner = std.crypto.kdf.hkdf.Hkdf(std.crypto.auth.hmac.sha2.HmacSha384);
+    pub const prk_length = Inner.prk_length; // 48
 
     pub fn extract(salt: ?[]const u8, ikm: []const u8) [prk_length]u8 {
-        return std.crypto.kdf.hkdf.HkdfSha384.extract(salt orelse &[_]u8{}, ikm);
+        return Inner.extract(salt orelse &[_]u8{}, ikm);
     }
 
     pub fn expand(prk: *const [prk_length]u8, ctx: []const u8, comptime len: usize) [len]u8 {
         var out: [len]u8 = undefined;
-        std.crypto.kdf.hkdf.HkdfSha384.expand(&out, ctx, prk.*);
+        Inner.expand(&out, ctx, prk.*);
         return out;
     }
 };

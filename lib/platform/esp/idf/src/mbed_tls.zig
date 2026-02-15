@@ -268,6 +268,7 @@ pub const x25519_helper = @import("mbed_tls/x25519.zig");
 pub const p256_helper = @import("mbed_tls/p256.zig");
 pub const p384_helper = @import("mbed_tls/p384.zig");
 pub const aes_gcm_helper = @import("mbed_tls/aes_gcm.zig");
+pub const chachapoly_helper = @import("mbed_tls/chachapoly.zig");
 pub const hkdf_helper = @import("mbed_tls/hkdf.zig");
 pub const rsa_helper = @import("mbed_tls/rsa.zig");
 pub const cert_helper = @import("mbed_tls/cert.zig");

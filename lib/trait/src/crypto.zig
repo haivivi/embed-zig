@@ -20,50 +20,66 @@ const std = @import("std");
 const rng_trait = @import("rng.zig");
 
 /// Crypto primitives configuration
-/// Enable only the primitives needed by your protocol
+///
+/// Required primitives default to `true` — these are the baseline that every
+/// platform must implement (hash, AEAD, key exchange, KDF, MAC, RNG).
+/// Optional primitives default to `false` — enable as needed.
+///
+/// To validate only a subset (e.g., TLS client needs fewer), set unwanted
+/// required fields to `false` explicitly.
 pub const Config = struct {
+    // ===== Required (platform baseline) =====
+
     // Hash functions
-    sha256: bool = false,
-    sha384: bool = false,
+    sha256: bool = true,
+    sha384: bool = true,
+
+    // AEAD (Authenticated Encryption with Associated Data)
+    aes_128_gcm: bool = true,
+    aes_256_gcm: bool = true,
+    chacha20_poly1305: bool = true,
+
+    // Key Exchange
+    x25519: bool = true,
+
+    // KDF (Key Derivation Functions)
+    hkdf_sha256: bool = true,
+    hkdf_sha384: bool = true,
+
+    // MAC (Message Authentication Code)
+    hmac_sha256: bool = true,
+    hmac_sha384: bool = true,
+
+    // Random Number Generator
+    rng: bool = true,
+
+    // ===== Optional (platform-specific) =====
+
+    // Additional hash functions
     sha512: bool = false,
     sha1: bool = false, // Legacy, for TLS 1.2
     blake2s: bool = false,
     blake2b: bool = false,
 
-    // AEAD (Authenticated Encryption with Associated Data)
-    aes_128_gcm: bool = false,
-    aes_256_gcm: bool = false,
-    chacha20_poly1305: bool = false,
-
-    // Key Exchange / ECC
-    x25519: bool = false,
+    // Additional key exchange / ECC
     p256: bool = false,
     p384: bool = false,
 
-    // KDF (Key Derivation Functions)
-    hkdf_sha256: bool = false,
-    hkdf_sha384: bool = false,
+    // Additional KDF / MAC
     hkdf_sha512: bool = false,
-
-    // MAC (Message Authentication Code)
-    hmac_sha256: bool = false,
-    hmac_sha384: bool = false,
     hmac_sha512: bool = false,
 
-    // Digital Signatures (optional)
+    // Digital Signatures
     ed25519: bool = false,
     ecdsa_p256: bool = false,
     ecdsa_p384: bool = false,
     rsa: bool = false, // Verify only
 
-    // X.509 Certificate (optional)
+    // X.509 Certificate
     x509: bool = false,
 
     // Certificate Store (for TLS certificate verification)
     cert_store: bool = false,
-
-    // Random Number Generator
-    rng: bool = false,
 };
 
 /// Validate crypto implementation and return the type

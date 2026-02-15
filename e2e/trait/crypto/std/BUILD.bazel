@@ -13,6 +13,6 @@ zig_test(
     name = "test",
     main = "//e2e/trait/crypto:app.zig",
     srcs = ["//e2e/trait/crypto:app_srcs"],
-    deps = [":board"],
+    deps = [":board", "//lib/trait"],
     tags = ["e2e"],
 )

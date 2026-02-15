@@ -253,21 +253,9 @@ pub fn Board(comptime spec: type) type {
         // Verify required: meta.id
         _ = @as([]const u8, spec.meta.id);
 
-        // Optional: crypto (validates via trait.crypto.from)
+        // Optional: crypto (validates via trait.crypto.from with default required set)
         if (@hasDecl(spec, "crypto")) {
-            _ = trait.crypto.from(spec.crypto, .{
-                .sha256 = true,
-                .sha384 = true,
-                .aes_128_gcm = true,
-                .aes_256_gcm = true,
-                .chacha20_poly1305 = true,
-                .x25519 = true,
-                .hkdf_sha256 = true,
-                .hkdf_sha384 = true,
-                .hmac_sha256 = true,
-                .hmac_sha384 = true,
-                .rng = true,
-            });
+            _ = trait.crypto.from(spec.crypto, .{});
         }
 
         // Optional: cert_store (just verify it's a type)
