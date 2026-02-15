@@ -16,6 +16,6 @@ bk_partition_table(name = "partitions", entries = [":part_bootloader", ":part_cp
 bk_modules()
 zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":bk"])
 filegroup(name = "srcs", srcs = ["//e2e/trait/spawner:app_srcs"] + glob(["*.zig"]))
-bk_zig_app(name = "app", ap = ":srcs", cp = "//lib/platform/bk/cp:base", deps = [":bk", ":board", "//lib/hal", "//lib/trait"], partition_table = ":partitions", c_helpers = ["//lib/platform/bk/armino:c_helpers_core"], tags = ["manual"])
+bk_zig_app(name = "app", ap = ":srcs", cp = "//lib/platform/bk/cp:base", deps = [":bk", ":board", "//lib/hal", "//lib/trait", "//lib/pkg/async/waitgroup"], partition_table = ":partitions", c_helpers = ["//lib/platform/bk/armino:c_helpers_core", "//lib/platform/bk/armino:c_helpers_runtime", "//lib/platform/bk/armino:c_helpers_heap"], tags = ["manual"])
 bk_flash(name = "flash", app = ":app")
 bk_monitor(name = "monitor")
