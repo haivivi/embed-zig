@@ -10,7 +10,7 @@
 //! ```zig
 //! const Time = trait.time.from(hw.time);
 //! Time.sleepMs(100);
-//! const now = Time.nowMs();
+//! const now = Time.getTimeMs();
 //! ```
 
 const std = @import("std");
@@ -22,11 +22,11 @@ pub fn is(comptime T: type) bool {
         .pointer => |p| p.child,
         else => T,
     };
-    if (!@hasDecl(BaseType, "sleepMs") or !@hasDecl(BaseType, "nowMs")) return false;
+    if (!@hasDecl(BaseType, "sleepMs") or !@hasDecl(BaseType, "getTimeMs")) return false;
     // Verify signatures
     const sleepMs_ok = @TypeOf(&BaseType.sleepMs) == *const fn (u32) void;
-    const nowMs_ok = @TypeOf(&BaseType.nowMs) == *const fn () u64;
-    return sleepMs_ok and nowMs_ok;
+    const getTimeMs_ok = @TypeOf(&BaseType.getTimeMs) == *const fn () u64;
+    return sleepMs_ok and getTimeMs_ok;
 }
 
 /// Time Interface - comptime validates and returns Impl
