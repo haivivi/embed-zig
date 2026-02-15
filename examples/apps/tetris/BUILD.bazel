@@ -1,13 +1,12 @@
-load("//bazel/websim:defs.bzl", "websim_app")
+load("//bazel/websim:defs.bzl", "websim_native_app")
 load("//bazel/zig:defs.bzl", "zig_test")
 
 package(default_visibility = ["//visibility:public"])
 
-websim_app(
-    name = "sim",
-    main = "wasm_main.zig",
-    srcs = glob(["**/*.zig"]),
-    web_shell = "//lib/platform/websim:web_h106",
+websim_native_app(
+    name = "native",
+    main = "main.zig",
+    srcs = glob(["**/*.zig"]) + ["native_shell.html"],
     deps = [
         "//lib/platform/websim",
         "//lib/hal",
@@ -17,8 +16,6 @@ websim_app(
 )
 
 # UI state machine tests — pure logic, no platform deps.
-# Layer 1: State transitions (dispatch event → assert state)
-# Layer 2: Render verification (given state → assert pixels)
 zig_test(
     name = "ui_test",
     main = "ui_test.zig",
