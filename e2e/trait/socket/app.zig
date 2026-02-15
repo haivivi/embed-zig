@@ -30,7 +30,6 @@ fn testTcpEcho() !void {
         log.err("[e2e] FAIL: trait/socket/tcp — server tcp() failed: {}", .{err});
         return error.TcpServerFailed;
     };
-    defer server.close();
 
     server.bind(localhost, 0) catch |err| {
         log.err("[e2e] FAIL: trait/socket/tcp — bind failed: {}", .{err});
@@ -55,7 +54,9 @@ fn testTcpEcho() !void {
             _ = client.send(buf[0..n]) catch {};
         }
     }.run, .{&server});
+    // join AFTER server.close in defer stack (LIFO: close unblocks accept, then join)
     defer thread.join();
+    defer server.close();
 
     // Client: connect + send + recv
     var client = Socket.tcp() catch |err| {

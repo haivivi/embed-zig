@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 zig_library(
     name = "board",
     main = "board.zig",
-    srcs = ["board.zig"],
+    srcs = glob(["*.zig"]),
     module_name = "board",
     deps = ["//third_party/opus:opus_float"],
 )

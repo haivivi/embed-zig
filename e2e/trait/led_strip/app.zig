@@ -8,7 +8,6 @@
 const platform = @import("platform.zig");
 const log = platform.log;
 const LedDriver = platform.LedDriver;
-const hal = @import("hal");
 
 fn runTests() !void {
     log.info("[e2e] START: hal/led_strip", .{});
