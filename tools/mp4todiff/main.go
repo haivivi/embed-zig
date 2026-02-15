@@ -1,36 +1,48 @@
-// mp4todiff converts MP4 video to frame-diff animation format.
+// mp4todiff converts MP4 video to compact frame-diff animation format.
 //
 // Usage:
-//   mp4todiff <input.mp4> <output.anim>
+//   mp4todiff [options] <input.mp4> <output.anim>
 //
-// Requires ffmpeg in PATH.
+// Options:
+//   -fps N        Target fps (default: 15, skip frames)
+//   -scale N      Downscale factor (default: 2, e.g. 240→120)
+//   -colors N     Palette size (default: 256, max 256)
+//   -threshold N  Diff threshold (default: 4)
 //
 // Output format:
-//   Header:
-//     [0:2]  u16 LE  width
-//     [2:4]  u16 LE  height
-//     [4:6]  u16 LE  frame_count
-//     [6:8]  u16 LE  fps (frames per second)
+//   Header (10 bytes):
+//     [0:2]  u16 LE  display_width (original, e.g. 240)
+//     [2:4]  u16 LE  display_height
+//     [4:6]  u16 LE  frame_width (scaled, e.g. 120)
+//     [6:8]  u16 LE  frame_height
+//     [8:10] u16 LE  frame_count
+//     [10]   u8      fps
+//     [11]   u8      scale factor
+//     [12:14] u16 LE palette_size
+//     [14:]  palette (palette_size * 2 bytes, RGB565 LE each)
 //   Per frame:
-//     [+0]   u16 LE  rect_count
+//     [+0]   u16 LE  rect_count (0 = identical to previous)
 //     Per rect:
-//       [+0] u16 LE  x
+//       [+0] u16 LE  x (in frame coords)
 //       [+2] u16 LE  y
 //       [+4] u16 LE  w
 //       [+6] u16 LE  h
-//       [+8] w*h*2   RGB565 LE pixels
-//
-// Frame 0 is always a full-screen rect. Subsequent frames only store
-// regions that changed from the previous frame (threshold-based diff).
+//       [+8] RLE data: palette-indexed pixels
+//            RLE: [count-1 (u8)] [palette_index (u8)]
+//            count 1-128 = literal run, repeat that index count times
+//   Frame 0 is always full-screen.
 
 package main
 
 import (
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	_ "image/png"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,192 +50,243 @@ import (
 	"strings"
 )
 
-const DIFF_THRESHOLD = 4 // RGB component difference threshold
-const BLOCK_SIZE = 8     // Dirty region granularity (8x8 blocks)
+const BLOCK_SIZE = 4
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <input.mp4> <output.anim>\n", os.Args[0])
+	targetFps := flag.Int("fps", 15, "Target FPS")
+	scale := flag.Int("scale", 2, "Downscale factor")
+	colors := flag.Int("colors", 128, "Palette size (max 256)")
+	threshold := flag.Int("threshold", 6, "Diff threshold")
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) != 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <input.mp4> <output.anim>\n", os.Args[0])
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
+	inPath, outPath := args[0], args[1]
 
-	inPath := os.Args[1]
-	outPath := os.Args[2]
-
-	// Create temp dir for frames
-	tmpDir, err := os.MkdirTemp("", "mp4todiff")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "mktemp: %v\n", err)
-		os.Exit(1)
-	}
+	tmpDir, _ := os.MkdirTemp("", "mp4todiff")
 	defer os.RemoveAll(tmpDir)
 
-	// Extract frames using ffmpeg
-	fmt.Fprintf(os.Stderr, "Extracting frames from %s...\n", inPath)
-	cmd := exec.Command("ffmpeg", "-i", inPath, "-vf", "format=rgb24", filepath.Join(tmpDir, "frame_%04d.png"))
+	// Extract frames at target fps
+	fmt.Fprintf(os.Stderr, "Extracting frames at %d fps, scale 1/%d...\n", *targetFps, *scale)
+	cmd := exec.Command("ffmpeg", "-i", inPath,
+		"-vf", fmt.Sprintf("fps=%d,scale=iw/%d:ih/%d:flags=area", *targetFps, *scale, *scale),
+		filepath.Join(tmpDir, "frame_%04d.png"))
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ffmpeg failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Read all frames
+	// Load frames
 	entries, _ := os.ReadDir(tmpDir)
-	var framePaths []string
+	var paths []string
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".png") {
-			framePaths = append(framePaths, filepath.Join(tmpDir, e.Name()))
+			paths = append(paths, filepath.Join(tmpDir, e.Name()))
 		}
 	}
-	sort.Strings(framePaths)
-
-	if len(framePaths) == 0 {
-		fmt.Fprintf(os.Stderr, "No frames extracted\n")
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		fmt.Fprintf(os.Stderr, "No frames\n")
 		os.Exit(1)
 	}
 
-	// Load first frame to get dimensions
-	firstFrame := loadFrame(framePaths[0])
-	w := firstFrame.Bounds().Dx()
-	h := firstFrame.Bounds().Dy()
-	fps := 30 // default
-	if len(framePaths) > 0 {
-		// Estimate from ffprobe if needed — use 30 as default
+	first := loadFrame(paths[0])
+	fw, fh := first.Bounds().Dx(), first.Bounds().Dy()
+	dw, dh := fw*(*scale), fh*(*scale) // display size
+
+	fmt.Fprintf(os.Stderr, "Display: %dx%d, Frame: %dx%d, %d frames\n", dw, dh, fw, fh, len(paths))
+
+	// Build global palette from all frames (median cut)
+	fmt.Fprintf(os.Stderr, "Building %d-color palette...\n", *colors)
+	palette := buildPalette(paths, *colors)
+
+	// Convert all frames to palette-indexed
+	frames := make([][]uint8, len(paths))
+	for i, p := range paths {
+		img := loadFrame(p)
+		frames[i] = quantize(img, palette, fw, fh)
 	}
 
-	fmt.Fprintf(os.Stderr, "%dx%d, %d frames, %d fps\n", w, h, len(framePaths), fps)
-
-	// Open output
-	out, err := os.Create(outPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "create output: %v\n", err)
-		os.Exit(1)
-	}
+	// Write output
+	out, _ := os.Create(outPath)
 	defer out.Close()
 
-	// Write header
-	hdr := make([]byte, 8)
-	binary.LittleEndian.PutUint16(hdr[0:2], uint16(w))
-	binary.LittleEndian.PutUint16(hdr[2:4], uint16(h))
-	binary.LittleEndian.PutUint16(hdr[4:6], uint16(len(framePaths)))
-	binary.LittleEndian.PutUint16(hdr[6:8], uint16(fps))
+	// Header
+	hdr := make([]byte, 14)
+	binary.LittleEndian.PutUint16(hdr[0:], uint16(dw))
+	binary.LittleEndian.PutUint16(hdr[2:], uint16(dh))
+	binary.LittleEndian.PutUint16(hdr[4:], uint16(fw))
+	binary.LittleEndian.PutUint16(hdr[6:], uint16(fh))
+	binary.LittleEndian.PutUint16(hdr[8:], uint16(len(frames)))
+	hdr[10] = uint8(*targetFps)
+	hdr[11] = uint8(*scale)
+	binary.LittleEndian.PutUint16(hdr[12:], uint16(len(palette)))
 	out.Write(hdr)
 
-	// Process frames
-	var prevFrame image.Image
-	totalPixels := 0
-	totalRects := 0
+	// Palette (RGB565)
+	for _, c := range palette {
+		var buf [2]byte
+		binary.LittleEndian.PutUint16(buf[:], c)
+		out.Write(buf[:])
+	}
 
-	for i, path := range framePaths {
-		frame := loadFrame(path)
-
+	// Frames
+	totalRLE := 0
+	for i, frame := range frames {
 		var rects []image.Rectangle
 		if i == 0 {
-			// First frame: full screen
-			rects = []image.Rectangle{{Min: image.Point{0, 0}, Max: image.Point{w, h}}}
+			rects = []image.Rectangle{{Max: image.Point{fw, fh}}}
 		} else {
-			rects = findDirtyRects(prevFrame, frame, w, h)
+			rects = findDirty(frames[i-1], frame, fw, fh, *threshold)
 		}
 
-		// Write frame
-		var rectCount [2]byte
-		binary.LittleEndian.PutUint16(rectCount[:], uint16(len(rects)))
-		out.Write(rectCount[:])
+		// rect count
+		var rc [2]byte
+		binary.LittleEndian.PutUint16(rc[:], uint16(len(rects)))
+		out.Write(rc[:])
 
 		for _, r := range rects {
-			rw := r.Dx()
-			rh := r.Dy()
+			var rh [8]byte
+			binary.LittleEndian.PutUint16(rh[0:], uint16(r.Min.X))
+			binary.LittleEndian.PutUint16(rh[2:], uint16(r.Min.Y))
+			binary.LittleEndian.PutUint16(rh[4:], uint16(r.Dx()))
+			binary.LittleEndian.PutUint16(rh[6:], uint16(r.Dy()))
+			out.Write(rh[:])
 
-			var rectHdr [8]byte
-			binary.LittleEndian.PutUint16(rectHdr[0:2], uint16(r.Min.X))
-			binary.LittleEndian.PutUint16(rectHdr[2:4], uint16(r.Min.Y))
-			binary.LittleEndian.PutUint16(rectHdr[4:6], uint16(rw))
-			binary.LittleEndian.PutUint16(rectHdr[6:8], uint16(rh))
-			out.Write(rectHdr[:])
-
-			// Write RGB565 pixels
-			buf := make([]byte, 2)
-			for y := r.Min.Y; y < r.Max.Y; y++ {
-				for x := r.Min.X; x < r.Max.X; x++ {
-					c := frame.At(x, y)
-					rr, gg, bb, _ := c.RGBA()
-					r8 := uint8(rr >> 8)
-					g8 := uint8(gg >> 8)
-					b8 := uint8(bb >> 8)
-					rgb565 := (uint16(r8>>3) << 11) | (uint16(g8>>2) << 5) | uint16(b8>>3)
-					binary.LittleEndian.PutUint16(buf, rgb565)
-					out.Write(buf)
-				}
-			}
-
-			totalPixels += rw * rh
-			totalRects++
-		}
-
-		prevFrame = frame
-
-		if (i+1)%20 == 0 || i == len(framePaths)-1 {
-			fmt.Fprintf(os.Stderr, "  frame %d/%d (%d rects)\n", i+1, len(framePaths), len(rects))
+			// RLE encode rect pixels
+			rle := rleEncode(frame, fw, r)
+			out.Write(rle)
+			totalRLE += len(rle)
 		}
 	}
 
-	// Stats
 	stat, _ := out.Stat()
-	fullSize := w * h * 2 * len(framePaths)
-	fmt.Fprintf(os.Stderr, "Output: %s\n", outPath)
-	fmt.Fprintf(os.Stderr, "  Size: %d bytes (%.1f KB)\n", stat.Size(), float64(stat.Size())/1024)
-	fmt.Fprintf(os.Stderr, "  Full-frame would be: %d bytes (%.1f KB)\n", fullSize, float64(fullSize)/1024)
-	fmt.Fprintf(os.Stderr, "  Compression: %.1f%%\n", (1-float64(stat.Size())/float64(fullSize))*100)
-	fmt.Fprintf(os.Stderr, "  Total rects: %d, avg pixels/rect: %d\n", totalRects, totalPixels/max(totalRects, 1))
+	rawSize := fw * fh * 2 * len(frames) // uncompressed RGB565
+	fmt.Fprintf(os.Stderr, "\nOutput: %s\n", outPath)
+	fmt.Fprintf(os.Stderr, "  %d bytes (%.1f KB)\n", stat.Size(), float64(stat.Size())/1024)
+	fmt.Fprintf(os.Stderr, "  Raw RGB565 would be: %.1f KB\n", float64(rawSize)/1024)
+	fmt.Fprintf(os.Stderr, "  Compression: %.1f%%\n", (1-float64(stat.Size())/float64(rawSize))*100)
 }
 
 func loadFrame(path string) image.Image {
-	f, err := os.Open(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "open %s: %v\n", path, err)
-		os.Exit(1)
-	}
+	f, _ := os.Open(path)
 	defer f.Close()
-	img, _, err := image.Decode(f)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "decode %s: %v\n", path, err)
-		os.Exit(1)
-	}
+	img, _, _ := image.Decode(f)
 	return img
 }
 
-func findDirtyRects(prev, curr image.Image, w, h int) []image.Rectangle {
-	// Mark dirty blocks
+// Simple palette builder: collect all colors, sort by frequency, pick top N
+func buildPalette(paths []string, n int) []uint16 {
+	freq := make(map[uint16]int)
+	// Sample every 4th frame to save time
+	for i := 0; i < len(paths); i += 4 {
+		img := loadFrame(paths[i])
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				r, g, bb, _ := img.At(x, y).RGBA()
+				// Quantize to reduced RGB565 (drop lowest bits for clustering)
+				r5 := uint16(uint8(r>>8) >> 3)
+				g6 := uint16(uint8(g>>8) >> 2)
+				b5 := uint16(uint8(bb>>8) >> 3)
+				rgb565 := (r5 << 11) | (g6 << 5) | b5
+				freq[rgb565]++
+			}
+		}
+	}
+
+	type entry struct {
+		color uint16
+		count int
+	}
+	var sorted []entry
+	for c, cnt := range freq {
+		sorted = append(sorted, entry{c, cnt})
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].count > sorted[j].count })
+
+	palette := make([]uint16, min(n, len(sorted)))
+	for i := range palette {
+		palette[i] = sorted[i].color
+	}
+	return palette
+}
+
+// Quantize image to palette indices
+func quantize(img image.Image, palette []uint16, w, h int) []uint8 {
+	result := make([]uint8, w*h)
+	b := img.Bounds()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r, g, bb, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
+			r5 := uint16(uint8(r>>8) >> 3)
+			g6 := uint16(uint8(g>>8) >> 2)
+			b5 := uint16(uint8(bb>>8) >> 3)
+			rgb565 := (r5 << 11) | (g6 << 5) | b5
+			result[y*w+x] = findNearest(palette, rgb565)
+		}
+	}
+	return result
+}
+
+func findNearest(palette []uint16, target uint16) uint8 {
+	bestIdx := 0
+	bestDist := math.MaxInt32
+	tr := int((target >> 11) & 0x1F)
+	tg := int((target >> 5) & 0x3F)
+	tb := int(target & 0x1F)
+	for i, c := range palette {
+		cr := int((c >> 11) & 0x1F)
+		cg := int((c >> 5) & 0x3F)
+		cb := int(c & 0x1F)
+		d := (tr-cr)*(tr-cr) + (tg-cg)*(tg-cg) + (tb-cb)*(tb-cb)
+		if d < bestDist {
+			bestDist = d
+			bestIdx = i
+			if d == 0 {
+				break
+			}
+		}
+	}
+	return uint8(bestIdx)
+}
+
+func findDirty(prev, curr []uint8, w, h, threshold int) []image.Rectangle {
+	_ = threshold
 	bw := (w + BLOCK_SIZE - 1) / BLOCK_SIZE
 	bh := (h + BLOCK_SIZE - 1) / BLOCK_SIZE
 	dirty := make([]bool, bw*bh)
 
 	for by := 0; by < bh; by++ {
 		for bx := 0; bx < bw; bx++ {
-			if isBlockDirty(prev, curr, bx*BLOCK_SIZE, by*BLOCK_SIZE, w, h) {
-				dirty[by*bw+bx] = true
+			for dy := 0; dy < BLOCK_SIZE && by*BLOCK_SIZE+dy < h; dy++ {
+				for dx := 0; dx < BLOCK_SIZE && bx*BLOCK_SIZE+dx < w; dx++ {
+					idx := (by*BLOCK_SIZE+dy)*w + bx*BLOCK_SIZE + dx
+					if prev[idx] != curr[idx] {
+						dirty[by*bw+bx] = true
+					}
+				}
 			}
 		}
 	}
 
-	// Merge adjacent dirty blocks into rectangles (simple row-merge)
+	// Merge into rectangles
 	var rects []image.Rectangle
 	visited := make([]bool, bw*bh)
-
 	for by := 0; by < bh; by++ {
 		for bx := 0; bx < bw; bx++ {
-			idx := by*bw + bx
-			if !dirty[idx] || visited[idx] {
+			if !dirty[by*bw+bx] || visited[by*bw+bx] {
 				continue
 			}
-
-			// Extend right
 			ex := bx
 			for ex < bw && dirty[by*bw+ex] && !visited[by*bw+ex] {
 				ex++
 			}
-
-			// Extend down
 			ey := by + 1
 		outer:
 			for ey < bh {
@@ -234,48 +297,58 @@ func findDirtyRects(prev, curr image.Image, w, h int) []image.Rectangle {
 				}
 				ey++
 			}
-
-			// Mark visited
 			for y := by; y < ey; y++ {
 				for x := bx; x < ex; x++ {
 					visited[y*bw+x] = true
 				}
 			}
-
-			r := image.Rect(
-				bx*BLOCK_SIZE, by*BLOCK_SIZE,
-				min(ex*BLOCK_SIZE, w), min(ey*BLOCK_SIZE, h),
-			)
-			rects = append(rects, r)
+			rects = append(rects, image.Rect(bx*BLOCK_SIZE, by*BLOCK_SIZE, min(ex*BLOCK_SIZE, w), min(ey*BLOCK_SIZE, h)))
 		}
 	}
-
 	return rects
 }
 
-func isBlockDirty(prev, curr image.Image, bx, by, w, h int) bool {
-	for y := by; y < min(by+BLOCK_SIZE, h); y++ {
-		for x := bx; x < min(bx+BLOCK_SIZE, w); x++ {
-			pr, pg, pb, _ := prev.At(x, y).RGBA()
-			cr, cg, cb, _ := curr.At(x, y).RGBA()
-			dr := absDiff(uint8(pr>>8), uint8(cr>>8))
-			dg := absDiff(uint8(pg>>8), uint8(cg>>8))
-			db := absDiff(uint8(pb>>8), uint8(cb>>8))
-			if dr > DIFF_THRESHOLD || dg > DIFF_THRESHOLD || db > DIFF_THRESHOLD {
-				return true
+// RLE encode: [count-1] [index] pairs. count 1-128.
+func rleEncode(frame []uint8, stride int, r image.Rectangle) []byte {
+	var out []byte
+	var runIdx uint8
+	var runLen int
+
+	flush := func() {
+		for runLen > 0 {
+			n := min(runLen, 128)
+			out = append(out, uint8(n-1), runIdx)
+			runLen -= n
+		}
+	}
+
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			idx := frame[y*stride+x]
+			if runLen == 0 {
+				runIdx = idx
+				runLen = 1
+			} else if idx == runIdx {
+				runLen++
+			} else {
+				flush()
+				runIdx = idx
+				runLen = 1
 			}
 		}
 	}
-	return false
+	flush()
+	return out
 }
 
-func absDiff(a, b uint8) uint8 {
-	if a > b {
-		return a - b
-	}
-	return b - a
+func toRGBA(img image.Image) *image.RGBA {
+	b := img.Bounds()
+	dst := image.NewRGBA(b)
+	draw.Draw(dst, b, img, b.Min, draw.Src)
+	return dst
 }
 
-func rgbToColor(r, g, b uint8) color.RGBA {
-	return color.RGBA{r, g, b, 255}
+func rgb565(c color.Color) uint16 {
+	r, g, b, _ := c.RGBA()
+	return (uint16(uint8(r>>8)>>3) << 11) | (uint16(uint8(g>>8)>>2) << 5) | uint16(uint8(b>>8)>>3)
 }
