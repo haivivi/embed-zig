@@ -237,7 +237,8 @@ test "render: player car in center lane" {
 test "render: player car moves with lane" {
     var fb = ui.FB.init(ui.BLACK);
     var state = ui.GameState{};
-    state.player_lane = 0; // left lane
+    state.player_lane = 0;
+    state.player_x = ui.LANE_X[0]; // animation completed
     const prev = state;
     ui.render(&fb, &state, &prev);
 

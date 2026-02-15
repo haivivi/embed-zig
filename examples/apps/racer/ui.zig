@@ -84,6 +84,7 @@ pub const Obstacle = struct {
 
 pub const GameState = struct {
     player_lane: u8 = 1, // 0=left, 1=center, 2=right
+    player_x: u16 = LANE_X[1], // actual pixel X — slides toward target lane
     obstacles: [MAX_OBSTACLES]Obstacle = [_]Obstacle{.{ .lane = 0, .y = -100, .active = false, .color_idx = 0 }} ** MAX_OBSTACLES,
     scroll_offset: u16 = 0, // road marking scroll
     speed: u16 = 2, // pixels per tick
@@ -96,6 +97,7 @@ pub const GameState = struct {
     crash_timer: u8 = 0, // frames of crash animation
     sound: SoundEvent = .none,
     last_milestone: u32 = 0,
+    prev_spawn_lane: u8 = 255, // last spawned lane (avoid same lane twice in a row)
 };
 
 pub const GameEvent = union(enum) {
@@ -144,13 +146,22 @@ fn tickUpdate(state: *GameState) void {
 
     if (state.phase == .crashed) {
         state.crash_timer += 1;
-        if (state.crash_timer >= 30) { // ~0.5s crash anim
+        if (state.crash_timer >= 30) {
             state.phase = .game_over;
         }
         return;
     }
 
     state.tick_count += 1;
+
+    // ---- Smooth lane slide animation ----
+    // player_x slides toward target lane at 6px/tick (~4 frames to cross)
+    const target_x = LANE_X[state.player_lane];
+    if (state.player_x < target_x) {
+        state.player_x = @min(target_x, state.player_x + 6);
+    } else if (state.player_x > target_x) {
+        state.player_x = if (target_x + 6 > state.player_x) target_x else state.player_x - 6;
+    }
 
     // Scroll road markings
     state.scroll_offset = (state.scroll_offset + state.speed) % (MARK_H + MARK_GAP);
@@ -168,8 +179,8 @@ fn tickUpdate(state: *GameState) void {
     // Score and distance
     state.distance += state.speed;
 
-    // Speed increases every 500 distance
-    const target_speed = 2 + @as(u16, @intCast(@min(state.distance / 500, 8)));
+    // Speed increases every 800 distance (slower ramp)
+    const target_speed = 2 + @as(u16, @intCast(@min(state.distance / 800, 6)));
     if (state.speed < target_speed) {
         state.speed = target_speed;
     }
@@ -181,24 +192,25 @@ fn tickUpdate(state: *GameState) void {
         state.sound = .milestone;
     }
 
-    // Spawn obstacles
+    // Spawn obstacles — generous spacing
     if (state.spawn_cooldown > 0) {
         state.spawn_cooldown -= 1;
     } else {
         spawnObstacle(state);
-        // Cooldown based on speed (faster = more frequent)
-        const base_cooldown = @as(u8, @intCast(@max(10, 40 -| state.speed * 3)));
-        state.spawn_cooldown = base_cooldown;
+        // Cooldown: at least ~3 car-lengths between obstacles
+        // min_gap = (CAR_H * 3) / speed ≈ 108/speed ticks
+        // At speed 2: cooldown=54, at speed 8: cooldown=14
+        const min_gap_pixels: u32 = CAR_H * 3 + OBS_H; // ~140px
+        const cooldown_ticks = @as(u8, @intCast(@min(120, @max(12, min_gap_pixels / state.speed))));
+        state.spawn_cooldown = cooldown_ticks;
     }
 
-    // Collision check
-    const player_x = LANE_X[state.player_lane];
+    // Collision check — use actual player_x (animated position)
     for (state.obstacles) |obs| {
         if (!obs.active) continue;
         const obs_x = LANE_X[obs.lane];
-        // AABB collision
         if (obs.y + OBS_H > CAR_Y and obs.y < CAR_Y + CAR_H and
-            obs_x + OBS_W > player_x and obs_x < player_x + CAR_W)
+            obs_x + OBS_W > state.player_x and obs_x < state.player_x + CAR_W)
         {
             state.phase = .crashed;
             state.crash_timer = 0;
@@ -213,8 +225,13 @@ fn spawnObstacle(state: *GameState) void {
     for (&state.obstacles) |*obs| {
         if (obs.active) continue;
 
-        const lane: u8 = @intCast(nextRng(state) % LANE_COUNT);
-        // Don't spawn in same lane as player if very close
+        // Pick a lane, avoiding same lane as previous spawn
+        var lane: u8 = @intCast(nextRng(state) % LANE_COUNT);
+        if (lane == state.prev_spawn_lane) {
+            lane = @intCast((lane + 1) % LANE_COUNT);
+        }
+        state.prev_spawn_lane = lane;
+
         obs.* = .{
             .lane = lane,
             .y = -@as(i16, OBS_H),
@@ -259,13 +276,12 @@ pub fn render(fb: *FB, state: *const GameState, prev: *const GameState) void {
         drawObstacle(fb, LANE_X[obs.lane], obs.y, OBS_COLORS[obs.color_idx]);
     }
 
-    // Player car
+    // Player car — uses animated player_x for smooth lane slide
     if (state.phase == .crashed) {
-        // Flash red/white during crash
         const flash = if (state.crash_timer % 4 < 2) CRASH_COLOR else WHITE;
-        drawCar(fb, LANE_X[state.player_lane], CAR_Y, flash, flash);
+        drawCar(fb, state.player_x, CAR_Y, flash, flash);
     } else if (state.phase != .game_over) {
-        drawCar(fb, LANE_X[state.player_lane], CAR_Y, PLAYER_COLOR, PLAYER_WIND);
+        drawCar(fb, state.player_x, CAR_Y, PLAYER_COLOR, PLAYER_WIND);
     }
 
     // HUD: score at top
