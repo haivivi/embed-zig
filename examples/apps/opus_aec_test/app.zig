@@ -254,7 +254,7 @@ pub fn run(_: anytype) void {
     metrics.* = Metrics{};
 
     // Spawn tasks
-    var wg = WG.init(alloc);
+    var wg = WG.init();
     defer wg.deinit();
 
     const mic_ctx = alloc.create(MicCtx) catch |err| {

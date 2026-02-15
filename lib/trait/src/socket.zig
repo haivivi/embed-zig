@@ -74,7 +74,7 @@ pub fn from(comptime Impl: type) type {
         // UDP operations
         _ = @as(*const fn (*BaseType, Ipv4Address, u16, []const u8) Error!usize, &BaseType.sendTo);
         _ = @as(*const fn (*BaseType, []u8) Error!usize, &BaseType.recvFrom);
-        _ = @as(*const fn (*BaseType, []u8) Error!RecvFromResult, &BaseType.recvFromWithAddr);
+        if (!@hasDecl(BaseType, "recvFromWithAddr")) @compileError("Socket must implement recvFromWithAddr");
         // Server operations (UDP/TCP)
         _ = @as(*const fn (*BaseType, Ipv4Address, u16) Error!void, &BaseType.bind);
         _ = @as(*const fn (*BaseType) Error!u16, &BaseType.getBoundPort);

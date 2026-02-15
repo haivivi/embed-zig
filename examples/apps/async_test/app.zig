@@ -74,7 +74,7 @@ const WaitGroupCtx = struct {
     completed: bool = false,
 };
 
-fn waitGroupTask(ctx: ?*anyopaque) void {
+fn waitGroupTask(ctx: *WaitGroupCtx) void {
     const wg_ctx: *WaitGroupCtx = @ptrCast(@alignCast(ctx));
     log.info("[WaitGroup #{}] Started, will sleep {}ms", .{ wg_ctx.id, wg_ctx.delay_ms });
     idf.time.sleepMs(wg_ctx.delay_ms);
@@ -85,7 +85,7 @@ fn waitGroupTask(ctx: ?*anyopaque) void {
 fn testWaitGroupSingle() !void {
     log.info("=== Test 2: WaitGroup single task ===", .{});
 
-    var wg = WG.init(heap.psram);
+    var wg = WG.init();
     defer wg.deinit();
 
     var ctx = WaitGroupCtx{ .id = 1, .delay_ms = 500 };
@@ -93,7 +93,7 @@ fn testWaitGroupSingle() !void {
     const start_time = idf.time.nowMs();
     log.info("Spawning WaitGroup task...", .{});
 
-    try wg.go("wg_task1", waitGroupTask, &ctx, .{
+    try wg.go(waitGroupTask, .{&ctx,
         .stack_size = 4096,
         .priority = 15,
         .allocator = heap.iram,
@@ -120,7 +120,7 @@ fn testWaitGroupSingle() !void {
 fn testWaitGroupMultiple() !void {
     log.info("=== Test 3: WaitGroup multiple tasks ===", .{});
 
-    var wg = WG.init(heap.psram);
+    var wg = WG.init();
     defer wg.deinit();
 
     var ctx1 = WaitGroupCtx{ .id = 1, .delay_ms = 300 };
@@ -131,17 +131,17 @@ fn testWaitGroupMultiple() !void {
     log.info("Spawning 3 WaitGroup tasks...", .{});
 
     // Spawn all tasks
-    try wg.go("wg_multi1", waitGroupTask, &ctx1, .{
+    try wg.go(waitGroupTask, .{&ctx1,
         .stack_size = 4096,
         .priority = 15,
         .allocator = heap.iram,
     });
-    try wg.go("wg_multi2", waitGroupTask, &ctx2, .{
+    try wg.go(waitGroupTask, .{&ctx2,
         .stack_size = 4096,
         .priority = 15,
         .allocator = heap.iram,
     });
-    try wg.go("wg_multi3", waitGroupTask, &ctx3, .{
+    try wg.go(waitGroupTask, .{&ctx3,
         .stack_size = 4096,
         .priority = 15,
         .allocator = heap.iram,

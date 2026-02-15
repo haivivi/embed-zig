@@ -292,7 +292,7 @@ fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []cons
         .use_notify = is_server,
     };
 
-    var wg = WG.init(heap.psram);
+    var wg = WG.init();
     defer wg.deinit();
 
     wg.go("tx-flood", txFloodTask, &flood, .{

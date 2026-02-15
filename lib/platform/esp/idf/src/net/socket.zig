@@ -11,13 +11,6 @@ const c = @cImport({
 
 pub const Ipv4Address = [4]u8;
 
-/// Result from recvFromWithAddr — matches trait.socket.RecvFromResult
-pub const RecvFromResult = struct {
-    len: usize,
-    src_addr: Ipv4Address,
-    src_port: u16,
-};
-
 /// Parse IPv4 address string (e.g., "192.168.1.1") to bytes
 pub fn parseIpv4(ip_str: []const u8) ?Ipv4Address {
     var buf: [16]u8 = undefined;
@@ -49,6 +42,8 @@ pub const SocketError = error{
     InvalidAddress,
     BindToDeviceFailed,
     Closed,
+    ListenFailed,
+    AcceptFailed,
 };
 
 pub const Socket = struct {
@@ -212,6 +207,12 @@ pub const Socket = struct {
     }
 
     /// Receive data with source address (for UDP security validation)
+    pub const RecvFromResult = struct {
+        len: usize,
+        src_addr: Ipv4Address,
+        src_port: u16,
+    };
+
     pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!RecvFromResult {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);

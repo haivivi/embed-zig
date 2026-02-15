@@ -1029,7 +1029,7 @@ test "GattServer async handler dispatch - concurrent requests" {
     }.send;
 
     // Enable async dispatch
-    var wg = WaitGroupT.init(std.testing.allocator);
+    var wg = WaitGroupT.init();
     defer wg.deinit();
 
     server.enableAsync(&wg, std.testing.allocator, trackingResponseFn, @ptrCast(&tracker));
@@ -1124,7 +1124,7 @@ test "GattServer async write handler receives data" {
         fn send(_: ?*anyopaque, _: u16, _: []const u8) void {}
     };
 
-    var wg = WaitGroupT.init(std.testing.allocator);
+    var wg = WaitGroupT.init();
     defer wg.deinit();
 
     server.enableAsync(&wg, std.testing.allocator, ResponseSink.send, null);
