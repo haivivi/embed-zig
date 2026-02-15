@@ -10,7 +10,7 @@
 //! ```zig
 //! const Time = trait.time.from(hw.time);
 //! Time.sleepMs(100);
-//! const now = Time.nowMs();
+//! const now = Time.getTimeMs();
 //! ```
 
 const std = @import("std");
@@ -22,11 +22,11 @@ pub fn is(comptime T: type) bool {
         .pointer => |p| p.child,
         else => T,
     };
-    if (!@hasDecl(BaseType, "sleepMs") or !@hasDecl(BaseType, "nowMs")) return false;
+    if (!@hasDecl(BaseType, "sleepMs") or !@hasDecl(BaseType, "getTimeMs")) return false;
     // Verify signatures
     const sleepMs_ok = @TypeOf(&BaseType.sleepMs) == *const fn (u32) void;
-    const nowMs_ok = @TypeOf(&BaseType.nowMs) == *const fn () u64;
-    return sleepMs_ok and nowMs_ok;
+    const getTimeMs_ok = @TypeOf(&BaseType.getTimeMs) == *const fn () u64;
+    return sleepMs_ok and getTimeMs_ok;
 }
 
 /// Time Interface - comptime validates and returns Impl
@@ -38,7 +38,7 @@ pub fn from(comptime Impl: type) type {
             else => Impl,
         };
         _ = @as(*const fn (u32) void, &BaseType.sleepMs);
-        _ = @as(*const fn () u64, &BaseType.nowMs);
+        _ = @as(*const fn () u64, &BaseType.getTimeMs);
     }
     return Impl;
 }
@@ -48,7 +48,7 @@ pub fn from(comptime Impl: type) type {
 test "Time() returns interface type" {
     const MockImpl = struct {
         pub fn sleepMs(_: u32) void {}
-        pub fn nowMs() u64 {
+        pub fn getTimeMs() u64 {
             return 12345;
         }
     };
@@ -58,6 +58,6 @@ test "Time() returns interface type" {
 
     // Can call methods
     TestTime.sleepMs(100);
-    const t = TestTime.nowMs();
+    const t = TestTime.getTimeMs();
     try std.testing.expectEqual(@as(u64, 12345), t);
 }

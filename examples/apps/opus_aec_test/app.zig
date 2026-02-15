@@ -68,8 +68,7 @@ const MicCtx = struct {
     drops: *u64,
 };
 
-fn micTask(raw: ?*anyopaque) void {
-    const ctx: *MicCtx = @ptrCast(@alignCast(raw));
+fn micTask(ctx: *MicCtx) void {
     log.info("[mic] task started", .{});
 
     var buf: [FRAME_SAMPLES]i16 = undefined;
@@ -134,8 +133,7 @@ const CodecCtx = struct {
     decoder: *opus.Decoder,
 };
 
-fn codecTask(raw: ?*anyopaque) void {
-    const ctx: *CodecCtx = @ptrCast(@alignCast(raw));
+fn codecTask(ctx: *CodecCtx) void {
     log.info("[codec] task started", .{});
 
     var opus_buf: [MAX_OPUS]u8 = undefined;
@@ -254,7 +252,7 @@ pub fn run(_: anytype) void {
     metrics.* = Metrics{};
 
     // Spawn tasks
-    var wg = WG.init(alloc);
+    var wg = WG.init();
     defer wg.deinit();
 
     const mic_ctx = alloc.create(MicCtx) catch |err| {
@@ -274,22 +272,14 @@ pub fn run(_: anytype) void {
         .encoder = &encoder, .decoder = &decoder,
     };
 
-    wg.go("mic", micTask, @ptrCast(mic_ctx), .{
-        .stack_size = 49152,
-        .priority = 15,
-        .allocator = heap.psram,
-    }) catch |err| {
+    wg.goWithConfig(.{ .stack_size = 49152 }, micTask, .{mic_ctx}) catch |err| {
         log.err("mic spawn: {}", .{err});
         return;
     };
 
     platform.time.sleepMs(50);
 
-    wg.go("codec", codecTask, @ptrCast(codec_ctx), .{
-        .stack_size = 49152,
-        .priority = 10,
-        .allocator = heap.psram,
-    }) catch |err| {
+    wg.goWithConfig(.{ .stack_size = 49152 }, codecTask, .{codec_ctx}) catch |err| {
         log.err("codec spawn: {}", .{err});
         return;
     };

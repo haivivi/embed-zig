@@ -1,8 +1,8 @@
 # TLS Integration Tests
 #
 # Run tests with Bazel:
-#   bazel test //lib/tls/test:tls_test           # Full integration test
-#   bazel run //lib/tls/test:tls_test_server     # Run server manually
+#   bazel test //lib/pkg/net/tls/test:tls_test           # Full integration test
+#   bazel run //lib/pkg/net/tls/test:tls_test_server    # Run server manually
 #
 # Test coverage:
 #   - TLS 1.2, TLS 1.3
@@ -37,8 +37,8 @@ sh_test(
     srcs = ["bazel_test.sh"],
     data = [
         ":server_sources",
-        "//lib/tls:tls_sources",
-        "//lib/crypto:crypto_sources",
+        "//lib/pkg/net/tls:srcs",
+        "//lib/pkg/crypto:srcs",
         "//lib/trait:srcs",
     ],
     env = {
@@ -61,8 +61,8 @@ sh_test(
     name = "tls_unit_test",
     srcs = ["bazel_unit_test.sh"],
     data = [
-        "//lib/tls:tls_sources",
-        "//lib/crypto:crypto_sources", 
+        "//lib/pkg/net/tls:srcs",
+        "//lib/pkg/crypto:srcs",
         "//lib/trait:srcs",
         "@zig_toolchain//:zig_files",
     ],

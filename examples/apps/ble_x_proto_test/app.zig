@@ -576,7 +576,7 @@ pub fn run(_: anytype) void {
     var host = BleHost.init(&hci_driver, heap.psram);
     defer host.deinit();
 
-    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.psram }) catch |err| {
+    host.start() catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };

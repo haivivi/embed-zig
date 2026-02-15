@@ -39,4 +39,4 @@ pub const Board = hal.Board(spec);
 
 /// DNS Resolver using mbedTLS crypto suite for DoH
 /// Uses ESP hardware RNG via Crypto.Rng
-pub const DnsResolver = dns.ResolverWithTls(hw.socket, hw.crypto);
+pub const DnsResolver = dns.ResolverWithTls(hw.socket, hw.crypto, hw.Rt);

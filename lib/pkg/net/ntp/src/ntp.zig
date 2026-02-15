@@ -140,7 +140,7 @@ pub const ServerLists = struct {
 pub fn Client(comptime Socket: type) type {
     const socket = trait.socket.from(Socket);
     // Check if socket supports source address retrieval for enhanced security
-    const has_addr_recv = trait.socket.hasRecvFromWithAddr(Socket);
+    const has_addr_recv = @hasDecl(Socket, "recvFromWithAddr");
 
     return struct {
         const Self = @This();

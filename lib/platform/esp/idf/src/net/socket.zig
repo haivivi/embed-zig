@@ -42,6 +42,8 @@ pub const SocketError = error{
     InvalidAddress,
     BindToDeviceFailed,
     Closed,
+    ListenFailed,
+    AcceptFailed,
 };
 
 pub const Socket = struct {
@@ -205,7 +207,13 @@ pub const Socket = struct {
     }
 
     /// Receive data with source address (for UDP security validation)
-    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!@import("trait").socket.RecvFromResult {
+    pub const RecvFromResult = struct {
+        len: usize,
+        src_addr: Ipv4Address,
+        src_port: u16,
+    };
+
+    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!RecvFromResult {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
         const result = c.recvfrom(
