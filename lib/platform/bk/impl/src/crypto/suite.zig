@@ -147,11 +147,68 @@ pub const ChaCha20Poly1305 = struct {
     pub const nonce_length = 12;
     pub const tag_length = 16;
 
-    pub fn encryptStatic(_: []u8, _: *[16]u8, _: []const u8, _: []const u8, _: [12]u8, _: [32]u8) void {
-        @panic("ChaCha20-Poly1305 not available on BK7258");
+    // C helper externs (bk_zig_chacha_helper.c → mbedTLS)
+    extern fn bk_zig_chacha20poly1305_encrypt(
+        key: *const [32]u8,
+        nonce: *const [12]u8,
+        aad: [*]const u8,
+        aad_len: c_uint,
+        input: [*]const u8,
+        input_len: c_uint,
+        output: [*]u8,
+        tag: *[16]u8,
+    ) c_int;
+
+    extern fn bk_zig_chacha20poly1305_decrypt(
+        key: *const [32]u8,
+        nonce: *const [12]u8,
+        aad: [*]const u8,
+        aad_len: c_uint,
+        input: [*]const u8,
+        input_len: c_uint,
+        output: [*]u8,
+        tag: *const [16]u8,
+    ) c_int;
+
+    pub fn encryptStatic(
+        ciphertext: []u8,
+        tag: *[16]u8,
+        plaintext: []const u8,
+        aad: []const u8,
+        nonce: [12]u8,
+        key: [32]u8,
+    ) void {
+        _ = bk_zig_chacha20poly1305_encrypt(
+            &key,
+            &nonce,
+            aad.ptr,
+            @intCast(aad.len),
+            plaintext.ptr,
+            @intCast(plaintext.len),
+            ciphertext.ptr,
+            tag,
+        );
     }
-    pub fn decryptStatic(_: []u8, _: []const u8, _: [16]u8, _: []const u8, _: [12]u8, _: [32]u8) error{AuthenticationFailed}!void {
-        @panic("ChaCha20-Poly1305 not available on BK7258");
+
+    pub fn decryptStatic(
+        plaintext: []u8,
+        ciphertext: []const u8,
+        tag: [16]u8,
+        aad: []const u8,
+        nonce: [12]u8,
+        key: [32]u8,
+    ) error{AuthenticationFailed}!void {
+        const ret = bk_zig_chacha20poly1305_decrypt(
+            &key,
+            &nonce,
+            aad.ptr,
+            @intCast(aad.len),
+            ciphertext.ptr,
+            @intCast(ciphertext.len),
+            plaintext.ptr,
+            @as(*const [16]u8, &tag),
+        );
+        if (ret != 0) return error.AuthenticationFailed;
     }
 };
 

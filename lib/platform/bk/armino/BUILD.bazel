@@ -124,6 +124,12 @@ filegroup(
     srcs = ["src/bk_zig_temp_helper.c"],
 )
 
+# ChaCha20-Poly1305 AEAD (mbedTLS)
+filegroup(
+    name = "c_helpers_chacha",
+    srcs = ["src/bk_zig_chacha_helper.c"],
+)
+
 # All C sources
 filegroup(
     name = "c_srcs",

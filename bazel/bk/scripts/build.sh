@@ -289,11 +289,26 @@ fi
 # Enable CURVE25519 in mbedTLS config if crypto kconfig is present
 if grep -q "CONFIG_FULL_MBEDTLS=y" "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null; then
     MBED_CFG="$ARMINO_PATH/ap/components/psa_mbedtls/mbedtls_port/configs/mbedtls_psa_crypto_config.h"
-    if [ -f "$MBED_CFG" ] && grep -q "// #define MBEDTLS_ECP_DP_CURVE25519_ENABLED" "$MBED_CFG"; then
-        # Uncomment CURVE25519 in the mbedTLS config (in-place)
-        sed -i.bak 's|// #define MBEDTLS_ECP_DP_CURVE25519_ENABLED|#define MBEDTLS_ECP_DP_CURVE25519_ENABLED|' "$MBED_CFG"
+    if [ -f "$MBED_CFG" ]; then
+        # Enable CURVE25519
+        if grep -q "// #define MBEDTLS_ECP_DP_CURVE25519_ENABLED" "$MBED_CFG"; then
+            sed -i.bak 's|// #define MBEDTLS_ECP_DP_CURVE25519_ENABLED|#define MBEDTLS_ECP_DP_CURVE25519_ENABLED|' "$MBED_CFG"
+            echo "[bk_build] Enabled MBEDTLS_ECP_DP_CURVE25519_ENABLED"
+        fi
+        # Enable ChaCha20-Poly1305
+        if grep -q "// #define MBEDTLS_CHACHA20_C" "$MBED_CFG"; then
+            sed -i.bak 's|// #define MBEDTLS_CHACHA20_C|#define MBEDTLS_CHACHA20_C|' "$MBED_CFG"
+            echo "[bk_build] Enabled MBEDTLS_CHACHA20_C"
+        fi
+        if grep -q "// #define MBEDTLS_CHACHAPOLY_C" "$MBED_CFG"; then
+            sed -i.bak 's|// #define MBEDTLS_CHACHAPOLY_C|#define MBEDTLS_CHACHAPOLY_C|' "$MBED_CFG"
+            echo "[bk_build] Enabled MBEDTLS_CHACHAPOLY_C"
+        fi
+        if grep -q "// #define MBEDTLS_POLY1305_C" "$MBED_CFG"; then
+            sed -i.bak 's|// #define MBEDTLS_POLY1305_C|#define MBEDTLS_POLY1305_C|' "$MBED_CFG"
+            echo "[bk_build] Enabled MBEDTLS_POLY1305_C"
+        fi
         rm -f "$MBED_CFG.bak"
-        echo "[bk_build] Enabled MBEDTLS_ECP_DP_CURVE25519_ENABLED in mbedTLS config"
     fi
 fi
 

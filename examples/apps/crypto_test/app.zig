@@ -1,6 +1,7 @@
 //! Crypto Primitives Test — verifies each crypto operation independently
 //!
-//! Tests: RNG, SHA-256, HMAC-SHA256, AES-128-GCM, P256 keypair/ECDH
+//! Tests: RNG, SHA-256, HMAC-SHA256, AES-128-GCM, ChaCha20-Poly1305,
+//!        HKDF, P256 ECDH, X25519 ECDH
 
 const std = @import("std");
 const platform = @import("platform.zig");
@@ -195,6 +196,69 @@ fn testX25519() bool {
     return true;
 }
 
+fn testChaCha20Poly1305() bool {
+    log.info("[ChaCha20] Testing...", .{});
+
+    // Test vector: encrypt known plaintext, then decrypt and verify roundtrip
+    const key = [32]u8{
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+        0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+        0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    };
+    const nonce = [12]u8{ 0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47 };
+    const plaintext = "Ladies and Gentlemen of the cla";
+    const aad = "additional data";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [16]u8 = undefined;
+
+    // Encrypt
+    Crypto.ChaCha20Poly1305.encryptStatic(&ciphertext, &tag, plaintext, aad, nonce, key);
+
+    // Verify tag is not all zeros (basic sanity)
+    var tag_nonzero: u32 = 0;
+    for (tag) |b| {
+        if (b != 0) tag_nonzero += 1;
+    }
+    if (tag_nonzero < 4) {
+        log.err("[ChaCha20] encrypt FAIL: tag mostly zeros", .{});
+        return false;
+    }
+    log.info("[ChaCha20] encrypt PASS (tag has {} non-zero bytes)", .{tag_nonzero});
+
+    // Verify ciphertext differs from plaintext
+    if (std.mem.eql(u8, &ciphertext, plaintext)) {
+        log.err("[ChaCha20] encrypt FAIL: ciphertext == plaintext", .{});
+        return false;
+    }
+
+    // Decrypt
+    var decrypted: [plaintext.len]u8 = undefined;
+    Crypto.ChaCha20Poly1305.decryptStatic(&decrypted, &ciphertext, tag, aad, nonce, key) catch {
+        log.err("[ChaCha20] decrypt FAIL: auth failed", .{});
+        return false;
+    };
+
+    if (!std.mem.eql(u8, &decrypted, plaintext)) {
+        log.err("[ChaCha20] decrypt FAIL: data mismatch", .{});
+        return false;
+    }
+    log.info("[ChaCha20] decrypt PASS (roundtrip verified)", .{});
+
+    // Test tampered tag → must fail
+    var bad_tag = tag;
+    bad_tag[0] ^= 0xFF;
+    var bad_out: [plaintext.len]u8 = undefined;
+    if (Crypto.ChaCha20Poly1305.decryptStatic(&bad_out, &ciphertext, bad_tag, aad, nonce, key)) {
+        log.err("[ChaCha20] tamper FAIL: accepted bad tag!", .{});
+        return false;
+    } else |_| {
+        log.info("[ChaCha20] tamper PASS (rejected bad tag)", .{});
+    }
+
+    return true;
+}
+
 fn testHkdf() bool {
     log.info("[HKDF] Testing...", .{});
     // HKDF-SHA256 extract + expand
@@ -237,6 +301,8 @@ pub fn run(_: anytype) void {
     total += 1; if (testHmacSha256()) passed += 1;
     Board.time.sleepMs(100);
     total += 1; if (testAesGcm()) passed += 1;
+    Board.time.sleepMs(100);
+    total += 1; if (testChaCha20Poly1305()) passed += 1;
     Board.time.sleepMs(100);
     total += 1; if (testHkdf()) passed += 1;
     Board.time.sleepMs(100);

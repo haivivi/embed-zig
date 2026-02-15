@@ -44,6 +44,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_crypto",
         "//lib/platform/bk/armino:c_helpers_rsa",
+        "//lib/platform/bk/armino:c_helpers_chacha",
     ],
 )
 
