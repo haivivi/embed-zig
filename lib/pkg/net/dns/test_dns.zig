@@ -12,8 +12,8 @@ const print = std.debug.print;
 /// Use std_impl socket (implements trait.socket interface)
 const Socket = std_impl.socket.Socket;
 
-const Resolver = dns.Resolver(Socket);
-const ResolverWithTls = dns.ResolverWithTls(Socket, crypto_suite, std_impl.runtime);
+const Resolver = dns.Resolver(Socket, void);
+const ResolverWithTls = dns.ResolverWithTls(Socket, crypto_suite, std_impl.runtime, void);
 
 /// Build a minimal TLS 1.3 ClientHello
 fn buildMinimalClientHello(buf: []u8, hostname: []const u8) usize {

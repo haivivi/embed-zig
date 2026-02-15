@@ -6,16 +6,23 @@
 //!   const dns = @import("dns");
 //!   const crypto = @import("crypto");
 //!
-//!   // Create resolver with platform socket (UDP/TCP only)
-//!   const Resolver = dns.Resolver(Socket);
+//!   // Create resolver with platform socket (UDP/TCP only, no custom resolution)
+//!   const Resolver = dns.Resolver(Socket, void);
 //!   var resolver = Resolver{
 //!       .server = .{ 223, 5, 5, 5 },  // AliDNS
 //!       .protocol = .udp,
 //!   };
 //!
+//!   // Create resolver with custom domain resolver (e.g. zgrnet FakeIP)
+//!   const Resolver = dns.Resolver(Socket, MyDomainResolver);
+//!   var resolver = Resolver{
+//!       .server = .{ 223, 5, 5, 5 },
+//!       .custom_resolver = &my_resolver,
+//!   };
+//!
 //!   // Create resolver with TLS support (UDP/TCP/HTTPS)
 //!   // Socket: platform socket type, Crypto: crypto suite (includes Rng)
-//!   const ResolverTls = dns.ResolverWithTls(Socket, crypto.Suite);
+//!   const ResolverTls = dns.ResolverWithTls(Socket, crypto.Suite, Rt, void);
 //!   var resolver_tls = ResolverTls{
 //!       .server = .{ 223, 5, 5, 5 },
 //!       .protocol = .https,
@@ -51,9 +58,12 @@ pub const Protocol = enum {
 
 /// DNS Resolver - generic over socket type (UDP/TCP only)
 ///
+/// - `DomainResolver`: custom domain resolver consulted before upstream DNS.
+///   Pass `void` to disable (zero overhead, backward compatible).
+///
 /// For DoH support, use `ResolverWithTls` instead.
-pub fn Resolver(comptime Socket: type) type {
-    return ResolverImplWithCrypto(Socket, void, void);
+pub fn Resolver(comptime Socket: type, comptime DomainResolver: type) type {
+    return ResolverImplWithCrypto(Socket, void, void, DomainResolver);
 }
 
 /// DNS Resolver with TLS support (UDP/TCP/HTTPS)
@@ -62,17 +72,49 @@ pub fn Resolver(comptime Socket: type) type {
 /// - `Socket`: platform socket type (must implement socket trait)
 /// - `Crypto`: crypto suite (must include Rng, e.g., crypto.Suite or esp.impl.crypto.Suite)
 /// - `Rt`: Runtime providing Mutex (for TLS thread safety)
+/// - `DomainResolver`: custom domain resolver consulted before upstream DNS.
+///   Pass `void` to disable (zero overhead, backward compatible).
 ///
 /// If Crypto has x509.CaStore, the resolver will support certificate verification
 /// via the ca_store field.
-pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt: type) type {
-    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto);
+pub fn ResolverWithTls(comptime Socket: type, comptime Crypto: type, comptime Rt: type, comptime DomainResolver: type) type {
+    return ResolverImplWithCrypto(Socket, tls.Client(Socket, Crypto, Rt), Crypto, DomainResolver);
+}
+
+/// Validate DomainResolver interface at comptime.
+///
+/// A valid DomainResolver must have:
+///   fn resolve(*const Self, []const u8) ?[4]u8
+///
+/// Pass `void` to disable custom resolution (zero overhead).
+fn validateDomainResolver(comptime Impl: type) type {
+    if (Impl == void) return void;
+
+    comptime {
+        if (!@hasDecl(Impl, "resolve")) {
+            @compileError("DomainResolver must have fn resolve(*const @This(), []const u8) ?[4]u8");
+        }
+        const resolve_fn = @typeInfo(@TypeOf(Impl.resolve)).@"fn";
+        if (resolve_fn.params.len != 2) {
+            @compileError("DomainResolver.resolve must take (self, host) — 2 parameters");
+        }
+        if (resolve_fn.return_type) |ret| {
+            if (ret != ?[4]u8) {
+                @compileError("DomainResolver.resolve must return ?[4]u8");
+            }
+        }
+    }
+    return Impl;
 }
 
 /// Internal resolver implementation (with optional Crypto type for CaStore)
-fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type) type {
+fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, comptime Crypto: type, comptime DomainResolver: type) type {
     const socket = trait.socket.from(Socket);
     const has_tls = TlsClient != void;
+    const has_custom_resolver = DomainResolver != void;
+
+    // Validate DomainResolver at comptime
+    const ValidatedResolver = validateDomainResolver(DomainResolver);
 
     // Get CaStore type from Crypto if available (same logic as tls.Client)
     const CaStore = if (Crypto != void and @hasDecl(Crypto, "x509") and @hasDecl(Crypto.x509, "CaStore"))
@@ -106,10 +148,22 @@ fn ResolverImplWithCrypto(comptime Socket: type, comptime TlsClient: type, compt
         /// If null and skip_cert_verify is false, verification may fail
         ca_store: if (CaStore != void) ?CaStore else void = if (CaStore != void) null else {},
 
+        /// Custom domain resolver (consulted before upstream DNS)
+        /// Only present when DomainResolver != void
+        custom_resolver: if (has_custom_resolver) ?*const ValidatedResolver else void =
+            if (has_custom_resolver) null else {},
+
         const Self = @This();
 
         /// Resolve hostname to IPv4 address
         pub fn resolve(self: *const Self, hostname: []const u8) DnsError!Ipv4Address {
+            // Consult custom resolver first (comptime eliminated when DomainResolver = void)
+            if (has_custom_resolver) {
+                if (self.custom_resolver) |r| {
+                    if (r.resolve(hostname)) |ip| return ip;
+                }
+            }
+
             return switch (self.protocol) {
                 .udp => self.resolveUdp(hostname),
                 .tcp => self.resolveTcp(hostname),
@@ -572,4 +626,80 @@ test "findHttpBody" {
 
     // No body separator
     try std.testing.expect(findHttpBody("incomplete") == null);
+}
+
+// ============================================================================
+// DomainResolver Tests
+// ============================================================================
+
+test "validateDomainResolver: void is valid" {
+    const V = validateDomainResolver(void);
+    try std.testing.expect(V == void);
+}
+
+test "validateDomainResolver: valid resolver" {
+    const MockResolver = struct {
+        suffix: []const u8,
+
+        pub fn resolve(self: *const @This(), host: []const u8) ?[4]u8 {
+            if (std.mem.endsWith(u8, host, self.suffix)) {
+                return .{ 10, 0, 0, 1 };
+            }
+            return null;
+        }
+    };
+
+    const Validated = validateDomainResolver(MockResolver);
+    try std.testing.expect(Validated == MockResolver);
+
+    const resolver = MockResolver{ .suffix = ".zigor.net" };
+    try std.testing.expectEqual(@as(?[4]u8, .{ 10, 0, 0, 1 }), resolver.resolve("abc.host.zigor.net"));
+    try std.testing.expectEqual(@as(?[4]u8, null), resolver.resolve("www.google.com"));
+}
+
+const TestMockSocket = struct {
+    pub fn udp() !@This() { return .{}; }
+    pub fn tcp() !@This() { return .{}; }
+    pub fn close(_: *@This()) void {}
+    pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
+    pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
+    pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
+    pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
+    pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
+    pub fn setRecvTimeout(_: *@This(), _: u32) void {}
+    pub fn setSendTimeout(_: *@This(), _: u32) void {}
+    pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
+    pub fn getFd(_: *@This()) i32 { return 0; }
+    pub fn setNonBlocking(_: *@This(), _: bool) !void {}
+    pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
+    pub fn getBoundPort(_: *@This()) !u16 { return 0; }
+    pub fn recvFromWithAddr(_: *@This(), _: []u8) !trait.socket.RecvFromResult {
+        return .{ .len = 0, .src_addr = .{ 0, 0, 0, 0 }, .src_port = 0 };
+    }
+};
+
+test "Resolver with void DomainResolver: custom_resolver is void (zero overhead)" {
+    const R = Resolver(TestMockSocket, void);
+    const fields = @typeInfo(R).@"struct".fields;
+    comptime {
+        for (fields) |f| {
+            if (std.mem.eql(u8, f.name, "custom_resolver")) {
+                if (f.type != void) @compileError("expected void field");
+            }
+        }
+    }
+}
+
+test "Resolver with DomainResolver has custom_resolver field" {
+    const MockResolver = struct {
+        pub fn resolve(_: *const @This(), host: []const u8) ?[4]u8 {
+            if (std.mem.endsWith(u8, host, ".zigor.net")) {
+                return .{ 10, 0, 0, 1 };
+            }
+            return null;
+        }
+    };
+
+    const R = Resolver(TestMockSocket, MockResolver);
+    try std.testing.expect(@hasField(R, "custom_resolver"));
 }

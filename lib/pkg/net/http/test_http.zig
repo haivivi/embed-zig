@@ -21,7 +21,7 @@ const print = std.debug.print;
 const Socket = std_impl.socket.Socket;
 
 /// Full-featured HTTP client with built-in TLS, DNS, and thread safety
-const HttpClient = http.HttpClient(Socket, crypto, std_impl.runtime);
+const HttpClient = http.HttpClient(Socket, crypto, std_impl.runtime, void);
 
 pub fn main() !void {
     print("\n=== HTTP Integration Test ===\n\n", .{});

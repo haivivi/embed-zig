@@ -178,7 +178,7 @@ pub fn run(env: anytype) void {
 
     // DNS resolve
     log.info("Resolving " ++ TEST_HOST ++ "...", .{});
-    var resolver = dns.Resolver(Socket){
+    var resolver = dns.Resolver(Socket, void){
         .server = .{ 223, 5, 5, 5 },
         .protocol = .udp,
         .timeout_ms = 5000,
