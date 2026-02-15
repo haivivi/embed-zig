@@ -627,3 +627,93 @@ test "findHttpBody" {
     // No body separator
     try std.testing.expect(findHttpBody("incomplete") == null);
 }
+
+// ============================================================================
+// DomainResolver Tests
+// ============================================================================
+
+test "validateDomainResolver: void is valid" {
+    const V = validateDomainResolver(void);
+    try std.testing.expect(V == void);
+}
+
+test "validateDomainResolver: valid resolver" {
+    const MockResolver = struct {
+        suffix: []const u8,
+
+        pub fn resolve(self: *const @This(), host: []const u8) ?[4]u8 {
+            if (std.mem.endsWith(u8, host, self.suffix)) {
+                return .{ 10, 0, 0, 1 };
+            }
+            return null;
+        }
+    };
+
+    const Validated = validateDomainResolver(MockResolver);
+    try std.testing.expect(Validated == MockResolver);
+
+    const resolver = MockResolver{ .suffix = ".zigor.net" };
+    try std.testing.expectEqual(@as(?[4]u8, .{ 10, 0, 0, 1 }), resolver.resolve("abc.host.zigor.net"));
+    try std.testing.expectEqual(@as(?[4]u8, null), resolver.resolve("www.google.com"));
+}
+
+test "Resolver with void DomainResolver has no custom_resolver field" {
+    const MockSocket = struct {
+        pub fn udp() !@This() { return .{}; }
+        pub fn tcp() !@This() { return .{}; }
+        pub fn close(_: *@This()) void {}
+        pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
+        pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
+        pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
+        pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
+        pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
+        pub fn setRecvTimeout(_: *@This(), _: u32) void {}
+        pub fn setSendTimeout(_: *@This(), _: u32) void {}
+        pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
+        pub fn getFd(_: *const @This()) std.posix.fd_t { return 0; }
+        pub fn setNonBlocking(_: *@This(), _: bool) void {}
+        pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
+        pub fn recvFromWithAddr(_: *@This(), _: []u8) !struct { len: usize, addr: [4]u8, port: u16 } {
+            return .{ .len = 0, .addr = .{ 0, 0, 0, 0 }, .port = 0 };
+        }
+    };
+
+    const R = Resolver(MockSocket, void);
+    // Verify custom_resolver field does not exist (is void)
+    try std.testing.expect(!@hasField(R, "custom_resolver"));
+}
+
+test "Resolver with DomainResolver has custom_resolver field" {
+    const MockSocket = struct {
+        pub fn udp() !@This() { return .{}; }
+        pub fn tcp() !@This() { return .{}; }
+        pub fn close(_: *@This()) void {}
+        pub fn connect(_: *@This(), _: [4]u8, _: u16) !void {}
+        pub fn send(_: *@This(), _: []const u8) !usize { return 0; }
+        pub fn recv(_: *@This(), _: []u8) !usize { return 0; }
+        pub fn sendTo(_: *@This(), _: [4]u8, _: u16, _: []const u8) !usize { return 0; }
+        pub fn recvFrom(_: *@This(), _: []u8) !usize { return 0; }
+        pub fn setRecvTimeout(_: *@This(), _: u32) void {}
+        pub fn setSendTimeout(_: *@This(), _: u32) void {}
+        pub fn setTcpNoDelay(_: *@This(), _: bool) void {}
+        pub fn getFd(_: *const @This()) std.posix.fd_t { return 0; }
+        pub fn setNonBlocking(_: *@This(), _: bool) void {}
+        pub fn bind(_: *@This(), _: [4]u8, _: u16) !void {}
+        pub fn recvFromWithAddr(_: *@This(), _: []u8) !struct { len: usize, addr: [4]u8, port: u16 } {
+            return .{ .len = 0, .addr = .{ 0, 0, 0, 0 }, .port = 0 };
+        }
+    };
+
+    const MockResolver = struct {
+        pub fn resolve(_: *const @This(), host: []const u8) ?[4]u8 {
+            if (std.mem.endsWith(u8, host, ".zigor.net")) {
+                return .{ 10, 0, 0, 1 };
+            }
+            return null;
+        }
+    };
+
+    const R = Resolver(MockSocket, MockResolver);
+    // Verify custom_resolver field exists
+    try std.testing.expect(@hasField(R, "custom_resolver"));
+}
