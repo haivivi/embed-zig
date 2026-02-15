@@ -15,9 +15,18 @@ pub fn loadRgb565(data: []const u8) Image {
 }
 
 /// Load an image from the VFS by path.
+/// Zero-copy if backend supports mmap (embed/flash), otherwise reads into buf.
 pub fn loadImageFromFs(fs: anytype, path: []const u8, buf: []u8) ?Image {
     var file = fs.open(path, .read) orelse return null;
     defer file.close();
+
+    // Zero-copy path: data points directly to flash/@embedFile
+    if (file.data) |data| {
+        if (data.len < 5) return null;
+        return loadRgb565(data);
+    }
+
+    // Streaming path: read into caller buffer
     const data = file.readAll(buf);
     if (data.len < 5) return null;
     return loadRgb565(data);

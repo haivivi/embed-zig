@@ -1,4 +1,4 @@
-//! H106 Demo — Platform Glue
+//! H106 Demo — Platform Glue (zero-copy asset loading)
 
 const ui = @import("ui.zig");
 const assets = @import("assets.zig");
@@ -19,14 +19,8 @@ var sim_spi: websim.SimSpi = undefined;
 var disp: Display = undefined;
 var ready: bool = false;
 
-// Asset buffers
-var bg_buf: [180 * 1024]u8 = undefined;
-var ultraman_buf: [180 * 1024]u8 = undefined;
-var menu_bufs: [5][80 * 1024]u8 = undefined;
-var btn_list_buf: [40 * 1024]u8 = undefined;
-var game_icon_bufs: [4][4 * 1024]u8 = undefined;
-var setting_icon_bufs: [9][4 * 1024]u8 = undefined;
-var font_buf: [2300 * 1024]u8 = undefined;
+// Only the flush tmp buffer needs RAM — everything else is zero-copy from flash
+var flush_tmp: [240 * 240]u16 = undefined;
 
 pub fn init() void {
     Board.log.info("H106 Demo starting", .{});
@@ -35,25 +29,29 @@ pub fn init() void {
     sim_spi = websim.SimSpi.init(&sim_dc);
     disp = Display.init(&sim_spi, &sim_dc);
 
-    Board.log.info("Loading assets...", .{});
+    Board.log.info("Loading assets (zero-copy)...", .{});
 
-    const bg = assets.loadImageFromFs(&board.fs, assets.PATH_BG, &bg_buf);
-    const ultra = assets.loadImageFromFs(&board.fs, assets.PATH_ULTRAMAN, &ultraman_buf);
+    // All assets loaded zero-copy — no RAM buffers needed.
+    // loadImageFromFs uses file.data (mmap) when available.
+    var dummy_buf: [8]u8 = undefined; // fallback for non-mmap (unused with EmbedFs)
+
+    const bg = assets.loadImageFromFs(&board.fs, assets.PATH_BG, &dummy_buf);
+    const ultra = assets.loadImageFromFs(&board.fs, assets.PATH_ULTRAMAN, &dummy_buf);
 
     var menus: [5]?state_lib.Image = undefined;
-    for (0..5) |i| menus[i] = assets.loadImageFromFs(&board.fs, assets.PATH_MENU_ITEMS[i], &menu_bufs[i]);
+    for (0..5) |i| menus[i] = assets.loadImageFromFs(&board.fs, assets.PATH_MENU_ITEMS[i], &dummy_buf);
 
-    const btn_list = assets.loadImageFromFs(&board.fs, assets.PATH_BTN_LIST_ITEM, &btn_list_buf);
+    const btn_list = assets.loadImageFromFs(&board.fs, assets.PATH_BTN_LIST_ITEM, &dummy_buf);
 
     var g_icons: [4]?state_lib.Image = undefined;
-    for (0..4) |i| g_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_GAME_ICONS[i], &game_icon_bufs[i]);
+    for (0..4) |i| g_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_GAME_ICONS[i], &dummy_buf);
 
     var s_icons: [9]?state_lib.Image = undefined;
-    for (0..9) |i| s_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_SETTING_ICONS[i], &setting_icon_bufs[i]);
+    for (0..9) |i| s_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_SETTING_ICONS[i], &dummy_buf);
 
     if (bg == null) { Board.log.err("Failed to load bg", .{}); return; }
 
-    // Font
+    // Font: also zero-copy — TtfFont.init just takes a data slice
     var font_data: ?[]const u8 = null;
     font_load: {
         var file = board.fs.open(assets.PATH_FONT, .read) orelse {
@@ -61,11 +59,15 @@ pub fn init() void {
             break :font_load;
         };
         defer file.close();
-        const data = file.readAll(&font_buf);
-        if (data.len > 0) font_data = data;
+        // Zero-copy: use file.data directly
+        if (file.data) |data| {
+            font_data = data;
+        } else {
+            Board.log.warn("Font requires mmap-capable VFS", .{});
+        }
     }
 
-    Board.log.info("Assets loaded", .{});
+    Board.log.info("Assets loaded (zero-copy from flash)", .{});
 
     ui.initAssets(bg.?, ultra, menus, btn_list, g_icons, s_icons, font_data);
 
@@ -102,9 +104,8 @@ pub fn step() void {
 }
 
 fn flushDisplay() void {
-    var tmp: [240 * 240]u16 = undefined;
     for (framebuf.getDirtyRects()) |rect| {
-        const pixels = framebuf.getRegion(rect, &tmp);
+        const pixels = framebuf.getRegion(rect, &flush_tmp);
         if (pixels.len == 0) continue;
         disp.flush(.{ .x1 = rect.x, .y1 = rect.y, .x2 = rect.x + rect.w - 1, .y2 = rect.y + rect.h - 1 }, @ptrCast(pixels.ptr));
     }

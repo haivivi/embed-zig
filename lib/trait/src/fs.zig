@@ -39,9 +39,17 @@ pub const FsError = error{
 
 /// File handle — returned by open(), used for read/write/close.
 ///
-/// Uses function pointers for runtime dispatch, allowing different
-/// file backends (embed, SPIFFS, partition) behind the same interface.
+/// Supports two access modes:
+/// - **Zero-copy** (mmap): `data` is non-null, points directly to backing store
+///   (flash mmap, @embedFile). No RAM copy needed. Use this when available.
+/// - **Streaming**: `data` is null, use read()/write() with caller buffer.
+///   For network downloads, OTA, etc.
 pub const File = struct {
+    /// Zero-copy data pointer — non-null for mmap-capable backends
+    /// (@embedFile, flash mmap). Points directly to backing store.
+    /// When non-null, read()/readAll() are unnecessary — use this directly.
+    data: ?[]const u8 = null,
+
     /// Opaque context pointer — points to backend-specific state.
     ctx: *anyopaque,
 
@@ -62,9 +70,9 @@ pub const File = struct {
         return f(self.ctx, buf);
     }
 
-    pub fn write(self: *File, data: []const u8) usize {
+    pub fn write(self: *File, buf: []const u8) usize {
         const f = self.writeFn orelse return 0;
-        return f(self.ctx, data);
+        return f(self.ctx, buf);
     }
 
     pub fn close(self: *File) void {
@@ -212,4 +220,43 @@ test "Fs with mock driver" {
     // Test open non-existent file
     const missing = vfs.open("/missing.txt", .read);
     try std.testing.expectEqual(@as(?File, null), missing);
+}
+
+test "Fs zero-copy (mmap) path" {
+    const MmapDriver = struct {
+        const Self = @This();
+        const file_data = "mmap content here";
+        var dummy: u8 = 0;
+
+        pub fn open(_: *Self, path: []const u8, mode: OpenMode) ?File {
+            _ = mode;
+            if (std.mem.eql(u8, path, "/data.bin")) {
+                return File{
+                    .data = file_data, // zero-copy
+                    .ctx = @ptrCast(&dummy),
+                    .closeFn = &noopClose,
+                    .size = file_data.len,
+                };
+            }
+            return null;
+        }
+
+        fn noopClose(_: *anyopaque) void {}
+    };
+
+    const fs_spec = struct {
+        pub const Driver = MmapDriver;
+        pub const meta = .{ .id = "fs.mmap" };
+    };
+
+    var driver = MmapDriver{};
+    var vfs = from(fs_spec).init(&driver);
+
+    var file = vfs.open("/data.bin", .read) orelse return error.TestUnexpectedResult;
+    defer file.close();
+
+    // Zero-copy: data available directly, no read() needed
+    try std.testing.expect(file.data != null);
+    try std.testing.expectEqualStrings("mmap content here", file.data.?);
+    try std.testing.expectEqual(@as(u32, 17), file.size);
 }
