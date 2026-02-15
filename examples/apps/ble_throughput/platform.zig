@@ -1,13 +1,24 @@
-//! Platform Configuration - BLE Throughput Test
+//! Platform Configuration — BLE Throughput Test (Cross-platform)
 
-const hal = @import("hal");
-const hw = @import("esp/esp32s3_devkit.zig");
+const std = @import("std");
+const build_options = @import("build_options");
 
-const spec = struct {
-    pub const meta = .{ .id = hw.Hardware.name };
-    pub const rtc = hal.rtc.reader.from(hw.rtc_spec);
-    pub const log = hw.log;
-    pub const time = hw.time;
-};
+const board_name = @tagName(build_options.board);
 
-pub const Board = hal.Board(spec);
+const hw = if (std.mem.eql(u8, board_name, "esp32s3_devkit"))
+    @import("esp/esp32s3_devkit.zig")
+else if (std.mem.eql(u8, board_name, "bk7258"))
+    @import("bk/bk7258.zig")
+else
+    @compileError("unsupported board for ble_throughput");
+
+pub const Runtime = hw.Runtime;
+pub const HciDriver = hw.HciDriver;
+pub const heap = hw.heap;
+pub const log = hw.log;
+pub const time = hw.time;
+pub const board_name_str = hw.board_name_str;
+
+pub fn isRunning() bool {
+    return hw.isRunning();
+}
