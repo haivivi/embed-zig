@@ -29,6 +29,8 @@ const drivers = struct {
     pub const Es7210 = audio_drivers.es7210.Es7210;
     pub const Es8311 = audio_drivers.es8311.Es8311;
     pub const Qmi8658 = imu_drivers.qmi8658.Qmi8658;
+    pub const Tca9554 = io_drivers.tca9554.Tca9554;
+    pub const Tca9554Pin = io_drivers.tca9554.Pin;
 };
 
 // ============================================================================
