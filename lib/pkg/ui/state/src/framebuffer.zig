@@ -133,6 +133,59 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
             if (h > 2 * t and w > t) self.fillRect(x + w - t, y + t, t, h - 2 * t, color);
         }
 
+        /// Fill a rounded rectangle. Clips to bounds.
+        pub fn fillRoundRect(self: *Self, x: u16, y: u16, w: u16, h: u16, radius: u8, color: Color) void {
+            if (w == 0 or h == 0) return;
+            const r: u16 = @min(radius, @min(w / 2, h / 2));
+            if (r == 0) {
+                self.fillRect(x, y, w, h, color);
+                return;
+            }
+            // Center rectangle (full width, excluding top/bottom radius rows)
+            self.fillRect(x, y + r, w, h - 2 * r, color);
+            // Top and bottom strips (excluding corners)
+            self.fillRect(x + r, y, w - 2 * r, r, color);
+            self.fillRect(x + r, y + h - r, w - 2 * r, r, color);
+            // Four rounded corners using midpoint circle algorithm
+            self.fillCorners(x, y, w, h, r, color);
+        }
+
+        fn fillCorners(self: *Self, x: u16, y: u16, w: u16, h: u16, r: u16, color: Color) void {
+            var cx: i32 = 0;
+            var cy: i32 = @intCast(r);
+            var d: i32 = 1 - @as(i32, @intCast(r));
+
+            while (cx <= cy) {
+                // Top-left corner
+                self.hlineClipped(x + r - @as(u16, @intCast(cy)), y + r - @as(u16, @intCast(cx)), @as(u16, @intCast(cy)) + 1, color);
+                self.hlineClipped(x + r - @as(u16, @intCast(cx)), y + r - @as(u16, @intCast(cy)), @as(u16, @intCast(cx)) + 1, color);
+                // Top-right corner
+                self.hlineClipped(x + w - r - 1, y + r - @as(u16, @intCast(cx)), @as(u16, @intCast(cy)) + 1, color);
+                self.hlineClipped(x + w - r - 1, y + r - @as(u16, @intCast(cy)), @as(u16, @intCast(cx)) + 1, color);
+                // Bottom-left corner
+                self.hlineClipped(x + r - @as(u16, @intCast(cy)), y + h - r - 1 + @as(u16, @intCast(cx)), @as(u16, @intCast(cy)) + 1, color);
+                self.hlineClipped(x + r - @as(u16, @intCast(cx)), y + h - r - 1 + @as(u16, @intCast(cy)), @as(u16, @intCast(cx)) + 1, color);
+                // Bottom-right corner
+                self.hlineClipped(x + w - r - 1, y + h - r - 1 + @as(u16, @intCast(cx)), @as(u16, @intCast(cy)) + 1, color);
+                self.hlineClipped(x + w - r - 1, y + h - r - 1 + @as(u16, @intCast(cy)), @as(u16, @intCast(cx)) + 1, color);
+
+                if (d < 0) {
+                    d += 2 * cx + 3;
+                } else {
+                    d += 2 * (cx - cy) + 5;
+                    cy -= 1;
+                }
+                cx += 1;
+            }
+        }
+
+        fn hlineClipped(self: *Self, x: u16, y: u16, len: u16, color: Color) void {
+            if (y >= H or x >= W) return;
+            const actual_len = @min(len, W - x);
+            const start = @as(usize, y) * W + @as(usize, x);
+            @memset(self.buf[start..][0..actual_len], color);
+        }
+
         /// Draw a horizontal line. Fast path (single memset).
         pub fn hline(self: *Self, x: u16, y: u16, len: u16, color: Color) void {
             self.fillRect(x, y, len, 1, color);
@@ -155,6 +208,13 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
 
         fn blitInternal(self: *Self, x: u16, y: u16, img: Image, transparent: ?Color) void {
             if (img.width == 0 or img.height == 0) return;
+
+            // Dispatch to alpha blit for 3bpp (RGBA5658) images
+            if (img.bytes_per_pixel == 3 and fmt == .rgb565) {
+                self.blitAlpha(x, y, img);
+                return;
+            }
+
             const clip = clipRect(x, y, img.width, img.height);
             if (clip.w == 0 or clip.h == 0) return;
 
@@ -171,6 +231,39 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                     }
                     const dst_idx = @as(usize, clip.y + row) * W + @as(usize, clip.x + col);
                     self.buf[dst_idx] = px;
+                }
+            }
+            self.dirty.mark(clip);
+        }
+
+        /// Blit a 3bpp RGBA5658 image with per-pixel alpha blending.
+        fn blitAlpha(self: *Self, x: u16, y: u16, img: Image) void {
+            const clip = clipRect(x, y, img.width, img.height);
+            if (clip.w == 0 or clip.h == 0) return;
+
+            const src_ox = clip.x - x;
+            const src_oy = clip.y - y;
+
+            var row: u16 = 0;
+            while (row < clip.h) : (row += 1) {
+                var col: u16 = 0;
+                while (col < clip.w) : (col += 1) {
+                    const sx = src_ox + col;
+                    const sy = src_oy + row;
+                    const offset = (@as(usize, sy) * @as(usize, img.width) + @as(usize, sx)) * 3;
+                    if (offset + 3 > img.data.len) continue;
+
+                    const alpha = img.data[offset + 2];
+                    if (alpha == 0) continue; // fully transparent
+
+                    const rgb565: u16 = @as(u16, img.data[offset]) | (@as(u16, img.data[offset + 1]) << 8);
+                    const dst_idx = @as(usize, clip.y + row) * W + @as(usize, clip.x + col);
+
+                    if (alpha >= 250) {
+                        self.buf[dst_idx] = rgb565;
+                    } else {
+                        self.buf[dst_idx] = blendRgb565(self.buf[dst_idx], rgb565, alpha);
+                    }
                 }
             }
             self.dirty.mark(clip);
@@ -251,12 +344,11 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                                 const px = dx + gx;
                                 if (px < 0 or px >= W) continue;
                                 const alpha = g.bitmap[@as(usize, gy) * g.w + @as(usize, gx)];
-                                if (alpha > 32) {
+                                if (alpha > 0) {
                                     const dst_idx = @as(usize, @intCast(py)) * W + @as(usize, @intCast(px));
-                                    if (alpha > 200) {
+                                    if (alpha >= 250) {
                                         self.buf[dst_idx] = color;
                                     } else {
-                                        // Simple alpha blend for RGB565
                                         self.buf[dst_idx] = blendRgb565(self.buf[dst_idx], color, alpha);
                                     }
                                 }

@@ -9,17 +9,18 @@ const ui_state = @import("ui_state");
 const Image = ui_state.Image;
 const trait_fs = @import("trait").fs;
 
-/// Parse an RGB565 binary file into an Image descriptor.
-/// Format: [0:2] width LE, [2:4] height LE, [4:] RGB565 pixels LE
+/// Parse an RGB565/RGBA5658 binary file into an Image descriptor.
+/// Format: [0:2] width LE, [2:4] height LE, [4] bpp (2 or 3), [5:] pixels
 pub fn loadRgb565(data: []const u8) Image {
-    if (data.len < 4) return .{ .width = 0, .height = 0, .data = &.{}, .bytes_per_pixel = 2 };
+    if (data.len < 5) return .{ .width = 0, .height = 0, .data = &.{}, .bytes_per_pixel = 2 };
     const w: u16 = @as(u16, data[0]) | (@as(u16, data[1]) << 8);
     const h: u16 = @as(u16, data[2]) | (@as(u16, data[3]) << 8);
+    const bpp: u8 = data[4];
     return .{
         .width = w,
         .height = h,
-        .data = data[4..],
-        .bytes_per_pixel = 2,
+        .data = data[5..],
+        .bytes_per_pixel = bpp,
     };
 }
 
