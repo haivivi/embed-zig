@@ -20,20 +20,22 @@
 //!   G9: Stress & Edge Cases (T56-T60)
 
 const std = @import("std");
-const esp = @import("esp");
 const bluetooth = @import("bluetooth");
 const cancellation = @import("cancellation");
 
-const idf = esp.idf;
-const heap = idf.heap;
+const platform = @import("platform.zig");
+const heap = platform.heap;
+const log = platform.log;
+const time = platform.time;
+
 const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const gatt = bluetooth.gatt_server;
 
 const gatt_client = bluetooth.gatt_client;
-const EspRt = idf.runtime;
-const HciDriver = esp.impl.hci.HciDriver;
+const PlatformRt = platform.Runtime;
+const HciDriver = platform.HciDriver;
 
 // ============================================================================
 // Service Table
@@ -54,8 +56,8 @@ const service_table = &[_]gatt.ServiceDef{
     }),
 };
 
-const BleHost = bluetooth.Host(EspRt, HciDriver, service_table);
-const GattType = gatt.GattServer(service_table);
+const BleHost = bluetooth.Host(PlatformRt, HciDriver, service_table);
+const GattType = gatt.GattServer(PlatformRt, service_table);
 
 const READ_H = GattType.getValueHandle(SVC_UUID, CHR_READ_UUID);
 const WRITE_H = GattType.getValueHandle(SVC_UUID, CHR_WRITE_UUID);
@@ -63,9 +65,7 @@ const NOTIFY_H = GattType.getValueHandle(SVC_UUID, CHR_NOTIFY_UUID);
 const NOTIFY_CCCD_H = NOTIFY_H + 1;
 const RW_H = GattType.getValueHandle(SVC_UUID, CHR_RW_UUID);
 
-const platform = @import("platform.zig");
-const Board = platform.Board;
-const log = Board.log;
+// log and time already imported from platform above
 
 const ADV_NAME = "ZigE2E";
 
@@ -183,7 +183,7 @@ fn runServerTests(host: *BleHost, conn: u16) void {
     // Periodically send notifications if enabled + check events
     var rounds: u32 = 0;
     while (rounds < 60) : (rounds += 1) {
-        idf.time.sleepMs(500);
+        time.sleepMs(500);
 
         while (host.tryNextEvent()) |evt| {
             switch (evt) {
@@ -265,7 +265,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     host.requestPhyUpdate(conn, 0x02, 0x02) catch {};
     if (drainUntil(host, 3000, .phy_updated)) pass("T08: PHY upgrade to 2M") else fail("T08: PHY upgrade");
 
-    idf.time.sleepMs(200);
+    time.sleepMs(200);
     if (host.getState() == .connected) pass("T09: Connected after PHY") else fail("T09: Connected after PHY");
     if (host.getAclCredits() > 0) pass("T10: ACL credits > 0") else fail("T10: ACL credits");
 
@@ -464,7 +464,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
         } else |_| fail("T41: CCCD subscribe");
     } else fail("T41: CCCD subscribe (no handle)");
 
-    idf.time.sleepMs(2000);
+    time.sleepMs(2000);
     while (host.tryNextEvent()) |_| {}
 
     if (notif_count >= 1) pass("T42: Notification received") else fail("T42: Notification received");
@@ -484,7 +484,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     } else fail("T46: CCCD unsubscribe (no handle)");
 
     const count_before = notif_count;
-    idf.time.sleepMs(1500);
+    time.sleepMs(1500);
     while (host.tryNextEvent()) |_| {}
     if (notif_count == count_before or notif_count <= count_before + 1)
         pass("T47: Notifications stopped after unsubscribe")
@@ -495,7 +495,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     notif_count = 0;
     if (d_notify_cccd_h > 0) {
         if (host.gattSubscribe(conn, d_notify_cccd_h)) {
-            idf.time.sleepMs(1500);
+            time.sleepMs(1500);
             while (host.tryNextEvent()) |_| {}
             if (notif_count >= 1) pass("T48: Re-subscribe works") else fail("T48: Re-subscribe");
         } else |_| fail("T48: Re-subscribe");
@@ -567,7 +567,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
 
     if (host.getState() == .connected) pass("T57: Connection alive") else fail("T57: Connection alive");
 
-    idf.time.sleepMs(500);
+    time.sleepMs(500);
     if (host.getAclCredits() > 0) pass("T58: ACL credits recovered") else fail("T58: ACL credits");
 
     // Unsubscribe before disconnect
@@ -577,7 +577,7 @@ fn runClientTests(host: *BleHost, conn: u16) void {
     pass("T59: Final unsubscribe");
 
     host.disconnect(conn, 0x13) catch {};
-    idf.time.sleepMs(500);
+    time.sleepMs(500);
     pass("T60: Clean disconnect");
 }
 
@@ -600,22 +600,22 @@ fn containsName(ad_data: []const u8, name: []const u8) bool {
 }
 
 fn drain(host: *BleHost, ms: u64) void {
-    const deadline = idf.time.nowMs() + ms;
-    while (idf.time.nowMs() < deadline) {
+    const deadline = time.nowMs() + ms;
+    while (time.nowMs() < deadline) {
         _ = host.tryNextEvent();
-        idf.time.sleepMs(10);
+        time.sleepMs(10);
     }
 }
 
 const EventTag = std.meta.Tag(gap.GapEvent);
 
 fn drainUntil(host: *BleHost, ms: u64, target: EventTag) bool {
-    const deadline = idf.time.nowMs() + ms;
-    while (idf.time.nowMs() < deadline) {
+    const deadline = time.nowMs() + ms;
+    while (time.nowMs() < deadline) {
         if (host.tryNextEvent()) |evt| {
             if (std.meta.activeTag(evt) == target) return true;
         } else {
-            idf.time.sleepMs(10);
+            time.sleepMs(10);
         }
     }
     return false;
@@ -630,24 +630,17 @@ pub fn run(_: anytype) void {
     log.info("BLE E2E Test Suite — 60 Tests", .{});
     log.info("==========================================", .{});
 
-    var board: Board = undefined;
-    board.init() catch |err| {
-        log.err("Board init failed: {}", .{err});
-        return;
-    };
-    defer board.deinit();
-
     var hci_driver = HciDriver.init() catch {
         log.err("HCI driver init failed", .{});
         return;
     };
     defer hci_driver.deinit();
 
-    var host = BleHost.init(&hci_driver, heap.psram);
+    var host = BleHost.init(&hci_driver, heap);
     defer host.deinit();
 
     // Use PSRAM for BLE task stacks — saves ~16KB Internal SRAM
-    host.start() catch |err| {
+    host.start(.{}) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };
@@ -668,20 +661,8 @@ pub fn run(_: anytype) void {
         .client => runClient(&host),
     }
 
-    // Memory report
     log.info("", .{});
-    log.info("=== Memory Footprint ===", .{});
-    const internal = heap.getInternalStats();
-    const psram_stats = heap.getPsramStats();
-    log.info("Internal SRAM: {} KB used / {} KB total (peak {} KB)", .{
-        internal.used / 1024, internal.total / 1024, (internal.total - internal.min_free) / 1024,
-    });
-    if (psram_stats.total > 0) {
-        log.info("PSRAM: {} KB used / {} KB total (peak {} KB)", .{
-            psram_stats.used / 1024, psram_stats.total / 1024, (psram_stats.total - psram_stats.min_free) / 1024,
-        });
-    }
-    log.info("========================", .{});
+    log.info("=== Test Complete ===", .{});
 
     log.info("", .{});
     log.info("==========================================", .{});
@@ -694,6 +675,6 @@ pub fn run(_: anytype) void {
     log.info("==========================================", .{});
 
     while (true) {
-        idf.time.sleepMs(5000);
+        time.sleepMs(5000);
     }
 }
