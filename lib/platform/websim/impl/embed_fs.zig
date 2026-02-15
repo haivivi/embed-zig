@@ -16,7 +16,7 @@
 //! };
 //! ```
 
-const trait_fs = @import("trait").fs;
+const trait_fs = @import("hal").trait.fs;
 
 /// A single embedded file entry.
 pub const Entry = struct {

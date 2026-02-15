@@ -24,6 +24,7 @@ const spec = struct {
     pub const time = websim.sal.time;
     pub const buttons = hal.button_group.from(hw.adc_button_spec, ButtonId);
     pub const button = hal.button.from(power_button_spec);
+    pub const vfs = hal.fs.from(hw.fs_spec);
 };
 
 pub const Board = hal.Board(spec);

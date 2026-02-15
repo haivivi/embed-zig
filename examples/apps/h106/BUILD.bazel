@@ -18,7 +18,7 @@ websim_native_app(
 zig_test(
     name = "ui_test",
     main = "ui_test.zig",
-    srcs = glob(["*.zig"]) + glob(["assets/*"]),
+    srcs = ["ui_test.zig", "ui.zig", "tetris.zig", "racer.zig"],
     deps = [
         "//lib/pkg/ui/state:ui_state",
     ],

@@ -1,6 +1,9 @@
 //! H106 Demo — Platform Glue
+//!
+//! Loads assets via board.fs (VFS), connects UI logic with hardware.
 
 const ui = @import("ui.zig");
+const assets = @import("assets.zig");
 const state_lib = @import("ui_state");
 const hal = @import("hal");
 const websim = @import("websim");
@@ -19,15 +22,44 @@ var sim_spi: websim.SimSpi = undefined;
 var disp: Display = undefined;
 var ready: bool = false;
 
+// Asset buffers — loaded once at init via VFS
+var bg_buf: [120 * 1024]u8 = undefined;
+var ultraman_buf: [120 * 1024]u8 = undefined;
+var menu_bufs: [5][52 * 1024]u8 = undefined;
+
 pub fn init() void {
     Board.log.info("H106 Demo starting", .{});
     board.init() catch { Board.log.err("Board init failed", .{}); return; };
+
+    // Display
     sim_spi = websim.SimSpi.init(&sim_dc);
     disp = Display.init(&sim_spi, &sim_dc);
+
+    // Load assets from VFS
+    Board.log.info("Loading assets via VFS...", .{});
+    const bg_img = assets.loadImageFromFs(&board.fs, assets.PATH_BG, &bg_buf);
+    const ultraman_img = assets.loadImageFromFs(&board.fs, assets.PATH_ULTRAMAN, &ultraman_buf);
+
+    var menu_imgs: [5]?state_lib.Image = undefined;
+    for (0..5) |i| {
+        menu_imgs[i] = assets.loadImageFromFs(&board.fs, assets.PATH_MENU_ITEMS[i], &menu_bufs[i]);
+    }
+
+    if (bg_img == null) {
+        Board.log.err("Failed to load background", .{});
+        return;
+    }
+    Board.log.info("Assets loaded", .{});
+
+    // Init UI with loaded assets
+    ui.initAssets(bg_img.?, ultraman_img, menu_imgs);
+
+    // Game
     store = ui.Store.init(.{}, ui.reduce);
     framebuf = ui.FB.init(ui.BLACK);
+
     ready = true;
-    Board.log.info("H106 Demo ready", .{});
+    Board.log.info("H106 Demo ready. LEFT/RIGHT=navigate OK=select BACK=back", .{});
 }
 
 pub fn step() void {
