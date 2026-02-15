@@ -18,7 +18,16 @@ source "$SCRIPT_DIR/common.sh"
 setup_armino_env
 
 WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
+LIBAEC_V1_BAK=""  # declared early so cleanup() can see it
+cleanup() {
+    # Restore libaec.a if we hid it (must run even on build failure)
+    if [ -n "$LIBAEC_V1_BAK" ] && [ -f "$LIBAEC_V1_BAK" ]; then
+        mv "$LIBAEC_V1_BAK" "$LIBAEC_V1"
+        echo "[bk_build] Restored libaec.a (v1) in cleanup"
+    fi
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
 
 PROJECT="$BK_PROJECT_NAME"
 echo "[bk_build] Project: $PROJECT"
@@ -486,7 +495,6 @@ tail -5 "$PROJECT_DIR/ap/config/bk7258_ap/config" 2>/dev/null | while IFS= read 
 
 # Temporarily hide libaec.a (v1) to prevent symbol conflict with v3
 LIBAEC_V1="$ARMINO_PATH/ap/components/bk_libs/bk7258_ap/libs/libaec.a"
-LIBAEC_V1_BAK=""
 if [ -f "$LIBAEC_V1" ] && echo "$BK_PRELINK_LIBS" | grep -q "libaec_v3"; then
     LIBAEC_V1_BAK="${LIBAEC_V1}.bak_zig"
     mv "$LIBAEC_V1" "$LIBAEC_V1_BAK"
@@ -542,11 +550,7 @@ else
 fi
 cp "$PARTITION_DIR/partitions.csv" "$BK_PARTITIONS_OUT" 2>/dev/null || echo "Name,Offset" > "$BK_PARTITIONS_OUT"
 
-# Restore libaec.a if we hid it
-if [ -n "$LIBAEC_V1_BAK" ] && [ -f "$LIBAEC_V1_BAK" ]; then
-    mv "$LIBAEC_V1_BAK" "$LIBAEC_V1"
-    echo "[bk_build] Restored libaec.a (v1)"
-fi
+# libaec.a restore is handled by trap cleanup() — no manual restore needed here
 
 echo "[bk_build] Output: $BK_BIN_OUT ($(wc -c < "$BK_BIN_OUT") bytes)"
 echo "[bk_build] Done!"
