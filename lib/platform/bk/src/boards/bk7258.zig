@@ -87,6 +87,7 @@ pub const net_spec = impl.net.net_spec;
 // ============================================================================
 
 pub const ButtonDriver = impl.ButtonDriver;
+pub const ButtonGroupDriver = impl.ButtonGroupDriver;
 
 // ============================================================================
 // Matrix Key Driver (3 GPIOs → 5 keys via matrix scan)

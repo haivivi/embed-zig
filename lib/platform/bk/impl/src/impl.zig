@@ -34,6 +34,9 @@ pub const audio_system = @import("audio_system.zig");
 pub const button = @import("button.zig");
 pub const ButtonDriver = button.ButtonDriver;
 
+pub const button_group = @import("button_group.zig");
+pub const ButtonGroupDriver = button_group.ButtonGroupDriver;
+
 pub const led = @import("led.zig");
 pub const PwmLedDriver = led.PwmLedDriver;
 
