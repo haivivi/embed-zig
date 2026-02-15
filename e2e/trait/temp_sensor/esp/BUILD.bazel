@@ -11,7 +11,7 @@ filegroup(name = "srcs", srcs = ["//e2e/trait/temp_sensor:app_srcs"] + glob(["*.
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["driver", "esp_adc", "esp_driver_tsens"],
     force_link = ["temperature_sensor_install"],
     deps = [":idf", ":esp", ":board", "//lib/hal", "//lib/trait"],

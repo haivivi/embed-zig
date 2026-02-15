@@ -17,7 +17,7 @@ filegroup(name = "srcs", srcs = ["//e2e/trait/wifi:app_srcs"] + glob(["*.zig"]))
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip"],
     force_link = [
         "${WIFI_FORCE_LINK}",

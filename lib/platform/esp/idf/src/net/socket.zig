@@ -42,6 +42,8 @@ pub const SocketError = error{
     InvalidAddress,
     BindToDeviceFailed,
     Closed,
+    ListenFailed,
+    AcceptFailed,
 };
 
 pub const Socket = struct {
@@ -247,6 +249,21 @@ pub const Socket = struct {
         var sa = sockaddrIn(ip, port);
         const result = c.bind(self.fd, @ptrCast(&sa), @sizeOf(c.sockaddr_in));
         if (result < 0) return error.BindFailed;
+    }
+
+    /// Listen for incoming connections (TCP server)
+    pub fn listen(self: *Self) SocketError!void {
+        const result = c.listen(self.fd, 128);
+        if (result < 0) return error.ListenFailed;
+    }
+
+    /// Accept an incoming connection (TCP server)
+    pub fn accept(self: *Self) SocketError!Self {
+        var sa: c.sockaddr_in = undefined;
+        var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
+        const client_fd = c.accept(self.fd, @ptrCast(&sa), &sa_len);
+        if (client_fd < 0) return error.AcceptFailed;
+        return .{ .fd = client_fd };
     }
 
     /// Get the port that socket is bound to

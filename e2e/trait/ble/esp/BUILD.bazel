@@ -11,7 +11,7 @@ filegroup(name = "srcs", srcs = ["//e2e/trait/ble:app_srcs"] + glob(["*.zig"]))
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["freertos", "bt"],
     force_link = ["${BT_FORCE_LINK}"],
     extra_cmake = ["include(${_ESP_LIB}/platform/esp/idf/src/bt/bt.cmake)"],

@@ -77,6 +77,7 @@ def esp_modules():
         srcs = [Label("//lib/platform/esp/idf:zig_srcs")],
         c_srcs = [Label("//lib/platform/esp/idf:c_srcs")],
         link_libc = True,
+        deps = [Label("//lib/trait")],  # net/socket.zig uses @import("trait").socket.RecvFromResult
     )
     zig_module(
         name = "impl",

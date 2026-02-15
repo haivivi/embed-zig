@@ -23,7 +23,7 @@ filegroup(
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["freertos"],
     deps = [
         ":idf",

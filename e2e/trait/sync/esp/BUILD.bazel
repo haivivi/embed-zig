@@ -11,7 +11,7 @@ filegroup(name = "srcs", srcs = ["//e2e/trait/sync:app_srcs"] + glob(["*.zig"]))
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    boards = ["esp32s3_devkit", "korvo2_v3"],
+    boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["freertos"],
     deps = [
         ":idf", ":esp", ":board",
