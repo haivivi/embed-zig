@@ -445,13 +445,19 @@ test "crypto trait validation - mock implementation" {
         };
     };
 
-    // This should compile without errors
+    // This should compile without errors.
+    // Explicitly disable required primitives not present in this mock.
     const Validated = from(MockCrypto, .{
         .sha256 = true,
+        .sha384 = false,
         .aes_128_gcm = true,
+        .aes_256_gcm = false,
+        .chacha20_poly1305 = false,
         .x25519 = true,
         .hkdf_sha256 = true,
+        .hkdf_sha384 = false,
         .hmac_sha256 = true,
+        .hmac_sha384 = false,
         .rng = true,
     });
 
@@ -478,5 +484,18 @@ test "rng validation via crypto trait" {
     };
 
     // Should compile - Rng is validated via rng_trait.from()
-    _ = from(MockCryptoWithRng, .{ .rng = true });
+    // Disable all other required primitives since this mock only has Rng.
+    _ = from(MockCryptoWithRng, .{
+        .sha256 = false,
+        .sha384 = false,
+        .aes_128_gcm = false,
+        .aes_256_gcm = false,
+        .chacha20_poly1305 = false,
+        .x25519 = false,
+        .hkdf_sha256 = false,
+        .hkdf_sha384 = false,
+        .hmac_sha256 = false,
+        .hmac_sha384 = false,
+        .rng = true,
+    });
 }
