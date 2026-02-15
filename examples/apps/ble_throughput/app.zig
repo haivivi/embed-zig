@@ -293,7 +293,7 @@ fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []cons
     var wg = WG.init();
     defer wg.deinit();
 
-    wg.go(txFloodTask, .{&flood}) catch {
+    wg.goWithConfig(.{ .stack_size = 8192 }, txFloodTask, .{&flood}) catch {
         log.err("Failed to spawn TX task", .{});
         return;
     };
