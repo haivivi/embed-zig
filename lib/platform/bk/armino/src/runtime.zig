@@ -28,7 +28,13 @@ extern fn bk_zig_cond_destroy(handle: ?*anyopaque) void;
 extern fn bk_zig_cond_signal(handle: ?*anyopaque) void;
 extern fn bk_zig_cond_wait(handle: ?*anyopaque, timeout_ms: c_uint) c_int;
 
-extern fn bk_zig_spawn(name: [*:0]const u8, func: *const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque, stack_size: c_uint, priority: c_uint) c_int;
+extern fn bk_zig_spawn(name: [*:0]const u8, func: *const fn (?*anyopaque) callconv(.c) void, arg: ?*anyopaque, stack_size: c_uint, priority: c_uint) c_int;
+extern fn bk_zig_sram_malloc(size: c_uint) ?[*]u8;
+extern fn bk_zig_free(ptr: ?*anyopaque) void;
+
+fn sramFree(ptr: ?*anyopaque) void {
+    bk_zig_free(ptr);
+}
 
 extern fn bk_zig_now_ms() u64;
 extern fn bk_zig_sleep_ms(ms: c_uint) void;
@@ -166,7 +172,7 @@ const SpawnCtx = struct {
     ctx: ?*anyopaque,
 };
 
-fn spawnWrapper(raw_ctx: ?*anyopaque) callconv(.C) void {
+fn spawnWrapper(raw_ctx: ?*anyopaque) callconv(.c) void {
     const spawn_ctx: *SpawnCtx = @ptrCast(@alignCast(raw_ctx));
     const func = spawn_ctx.func;
     const ctx = spawn_ctx.ctx;
@@ -207,12 +213,47 @@ pub const Thread = struct {
         core: i8 = -1,
     };
 
+    /// Spawn a thread with comptime function + args tuple.
+    /// Context is heap-allocated, freed after function returns.
     pub fn spawn(config: SpawnConfig, comptime func: anytype, args: anytype) !Thread {
-        _ = config;
-        _ = func;
-        _ = args;
-        // TODO: implement joinable thread for BK
-        return error.SpawnFailed;
+        const ArgsType = @TypeOf(args);
+        const Context = struct {
+            args: ArgsType,
+            done_sem: ?*anyopaque,
+        };
+
+        const Wrapper = struct {
+            fn entry(raw: ?*anyopaque) callconv(.c) void {
+                const ctx: *Context = @ptrCast(@alignCast(raw));
+                const sem = ctx.done_sem;
+                const a = ctx.args;
+                sramFree(raw);
+                @call(.auto, func, a);
+                if (sem) |s| bk_zig_cond_signal(s);
+            }
+        };
+
+        const sem = bk_zig_cond_create();
+
+        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse
+            return error.SpawnFailed;
+        const ctx: *Context = @ptrCast(@alignCast(ctx_mem));
+        ctx.* = .{ .args = args, .done_sem = sem };
+
+        const ret = bk_zig_spawn(
+            "zig-thr",
+            Wrapper.entry,
+            @ptrCast(ctx),
+            @intCast(config.stack_size),
+            config.priority,
+        );
+        if (ret != 0) {
+            sramFree(@ptrCast(ctx));
+            if (sem) |s| bk_zig_cond_destroy(s);
+            return error.SpawnFailed;
+        }
+
+        return .{ .done_sem = sem };
     }
 
     pub fn join(self: Thread) void {
