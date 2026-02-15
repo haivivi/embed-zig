@@ -261,8 +261,9 @@ pub const Thread = struct {
     };
 
     /// Context for joinable thread wrapper
+    const ThreadFn = *const fn (*const anyopaque) void;
     const ThreadCtx = struct {
-        func_ptr: *const anyopaque,
+        func_ptr: ThreadFn,
         args_ptr: *const anyopaque,
         cleanup_fn: *const fn (?*anyopaque, std.mem.Allocator) void,
         done_sem: c.SemaphoreHandle_t,
@@ -281,10 +282,8 @@ pub const Thread = struct {
         const args_ptr = thread_ctx.args_ptr;
         const cleanup_fn = thread_ctx.cleanup_fn;
         
-        // Call user function (type-erased, will be cast back by spawn)
-        const FnType = *const fn (*const anyopaque) void;
-        const func: FnType = @ptrCast(func_ptr);
-        func(args_ptr);
+        // Call user function
+        func_ptr(args_ptr);
         
         // Free args (Fix #3: args_copy memory leak)
         cleanup_fn(@constCast(args_ptr), allocator);
@@ -341,7 +340,7 @@ pub const Thread = struct {
         };
         
         thread_ctx.* = .{
-            .func_ptr = @ptrCast(&Wrapper.call),
+            .func_ptr = &Wrapper.call,
             .args_ptr = @ptrCast(args_copy),
             .cleanup_fn = &Wrapper.cleanup,
             .done_sem = done_sem,

@@ -89,7 +89,7 @@ pub const net = @import("net.zig");
 pub const DnsResolver = net.DnsResolver;
 pub const http = @import("http.zig");
 pub const HttpClient = http.HttpClient;
-pub const socket = @import("socket.zig");
+pub const socket = @import("net/socket.zig");
 pub const Socket = socket.Socket;
 pub const mbed_tls = @import("mbed_tls.zig");
 
