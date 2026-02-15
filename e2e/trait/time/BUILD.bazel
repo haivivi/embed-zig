@@ -1,0 +1,14 @@
+# e2e: trait/time — shared app sources
+#
+# app.zig + platform.zig are IDENTICAL for all platforms.
+# The "board" module is injected by each platform's BUILD via deps.
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)

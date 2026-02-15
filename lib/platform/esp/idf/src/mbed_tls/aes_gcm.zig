@@ -64,7 +64,7 @@ pub const Aes128 = struct {
             ciphertext.ptr,
             tag,
         );
-        _ = ret; // Should always succeed
+        if (ret != 0) @panic("aes_gcm_encrypt failed");
     }
 
     /// Decrypt ciphertext and verify authentication tag
@@ -125,7 +125,7 @@ pub const Aes256 = struct {
             ciphertext.ptr,
             tag,
         );
-        _ = ret; // Should always succeed
+        if (ret != 0) @panic("aes_gcm_encrypt failed");
     }
 
     /// Decrypt ciphertext and verify authentication tag

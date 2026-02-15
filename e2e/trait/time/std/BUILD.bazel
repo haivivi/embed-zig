@@ -1,0 +1,26 @@
+# e2e: trait/time — std platform test (CI-mandatory)
+#
+# The "board" zig_library provides @import("board") to platform.zig.
+# Same app.zig + platform.zig as all other platforms.
+#
+# Run: bazel test //e2e/trait/time/std:test
+
+load("//bazel/zig:defs.bzl", "zig_library", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    module_name = "board",
+    deps = ["//lib/platform/std"],
+)
+
+zig_test(
+    name = "test",
+    main = "//e2e/trait/time:app.zig",
+    srcs = ["//e2e/trait/time:app_srcs"],
+    deps = [":board"],
+    tags = ["e2e"],
+)

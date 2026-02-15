@@ -257,6 +257,21 @@ pub const Socket = struct {
         if (result < 0) return error.BindFailed;
     }
 
+    /// Listen for incoming connections (TCP server)
+    pub fn listen(self: *Self) SocketError!void {
+        const result = c.listen(self.fd, 128);
+        if (result < 0) return error.ListenFailed;
+    }
+
+    /// Accept an incoming connection (TCP server)
+    pub fn accept(self: *Self) SocketError!Self {
+        var sa: c.sockaddr_in = undefined;
+        var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
+        const client_fd = c.accept(self.fd, @ptrCast(&sa), &sa_len);
+        if (client_fd < 0) return error.AcceptFailed;
+        return .{ .fd = client_fd };
+    }
+
     /// Get the port that socket is bound to
     pub fn getBoundPort(self: *Self) SocketError!u16 {
         var sa: c.sockaddr_in = undefined;

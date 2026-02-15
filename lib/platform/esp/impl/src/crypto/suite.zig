@@ -243,33 +243,37 @@ pub const Aes256Gcm = struct {
 // AEAD - ChaCha20-Poly1305 (DISABLED to reduce binary size)
 // ============================================================================
 
-/// ChaCha20-Poly1305 stub - disabled to reduce binary size
-/// Only AES-GCM cipher suites are supported in this minimal build.
+/// ChaCha20-Poly1305 AEAD using mbedTLS (software implementation)
 pub const ChaCha20Poly1305 = struct {
     pub const key_length = 32;
     pub const nonce_length = 12;
     pub const tag_length = 16;
 
+    const chachapoly = idf.mbed_tls.chachapoly_helper;
+
     pub fn encryptStatic(
-        _: []u8,
-        _: *[tag_length]u8,
-        _: []const u8,
-        _: []const u8,
-        _: [nonce_length]u8,
-        _: [key_length]u8,
+        ciphertext: []u8,
+        tag: *[tag_length]u8,
+        plaintext: []const u8,
+        aad: []const u8,
+        nonce: [nonce_length]u8,
+        key: [key_length]u8,
     ) void {
-        @panic("ChaCha20-Poly1305 disabled in minimal build");
+        chachapoly.encrypt(ciphertext, tag, plaintext, aad, nonce, key);
     }
 
     pub fn decryptStatic(
-        _: []u8,
-        _: []const u8,
-        _: [tag_length]u8,
-        _: []const u8,
-        _: [nonce_length]u8,
-        _: [key_length]u8,
+        plaintext: []u8,
+        ciphertext: []const u8,
+        tag: [tag_length]u8,
+        aad: []const u8,
+        nonce: [nonce_length]u8,
+        key: [key_length]u8,
     ) error{AuthenticationFailed}!void {
-        @panic("ChaCha20-Poly1305 disabled in minimal build");
+        chachapoly.decrypt(plaintext, ciphertext, tag, aad, nonce, key) catch |err| switch (err) {
+            error.AuthenticationFailed => return error.AuthenticationFailed,
+            error.CryptoError => return error.AuthenticationFailed,
+        };
     }
 };
 

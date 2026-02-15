@@ -1,0 +1,25 @@
+# e2e — Platform Conformance Tests
+#
+# Usage:
+#   bazel test //e2e/...                          # all std tests (CI)
+#   bazel test //e2e/trait/time/std:test           # single test
+
+package(default_visibility = ["//visibility:public"])
+
+# Aggregate all std platform tests (CI-mandatory)
+test_suite(
+    name = "std",
+    tests = [
+        "//e2e/trait/time/std:test",
+        "//e2e/trait/log/std:test",
+        "//e2e/trait/sync/std:test",
+        "//e2e/trait/rng/std:test",
+        "//e2e/trait/socket/std:test",
+        "//e2e/trait/crypto/std:test",
+        "//e2e/trait/system/std:test",
+        "//e2e/trait/spawner/std:test",
+        "//e2e/trait/io/std:test",
+        "//e2e/trait/codec/std:test",
+        "//e2e/trait/rtc/std:test",
+    ],
+)

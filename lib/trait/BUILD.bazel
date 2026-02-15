@@ -2,6 +2,6 @@ load("//bazel/zig:defs.bzl", "zig_package")
 
 package(default_visibility = ["//visibility:public"])
 
-zig_package(name = "trait")
+zig_package(name = "trait", test_deps = ["//lib/pkg/crypto"])
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))

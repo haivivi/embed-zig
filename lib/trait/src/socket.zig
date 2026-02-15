@@ -78,6 +78,8 @@ pub fn from(comptime Impl: type) type {
         // Server operations (UDP/TCP)
         _ = @as(*const fn (*BaseType, Ipv4Address, u16) Error!void, &BaseType.bind);
         _ = @as(*const fn (*BaseType) Error!u16, &BaseType.getBoundPort);
+        _ = @as(*const fn (*BaseType) Error!void, &BaseType.listen);
+        _ = @as(*const fn (*BaseType) Error!BaseType, &BaseType.accept);
         // Async IO support
         _ = @as(*const fn (*BaseType) i32, &BaseType.getFd);
         _ = @as(*const fn (*BaseType, bool) Error!void, &BaseType.setNonBlocking);

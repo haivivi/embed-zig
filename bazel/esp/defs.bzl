@@ -77,6 +77,7 @@ def esp_modules():
         srcs = [Label("//lib/platform/esp/idf:zig_srcs")],
         c_srcs = [Label("//lib/platform/esp/idf:c_srcs")],
         link_libc = True,
+        deps = [Label("//lib/trait")],  # net/socket.zig uses @import("trait").socket.RecvFromResult
     )
     zig_module(
         name = "impl",
@@ -410,6 +411,57 @@ esp_configure = rule(
 )
 
 # =============================================================================
+# sdkconfig / requires compatibility checks
+# =============================================================================
+
+# Known incompatible combinations:
+# { "requires_component": ("sdkconfig_key_that_must_exist", "error message") }
+_REQUIRES_SDKCONFIG_CHECKS = {
+    "mbedtls": (
+        "CONFIG_MBEDTLS_HARDWARE_SHA",
+        "requires mbedtls but sdkconfig has no crypto config." +
+        " Without crypto = :mbedtls_full, hardware SHA is enabled by default" +
+        " which causes DMA errors when SHA context is on PSRAM stack." +
+        " Fix: add crypto = :mbedtls_full to your esp_sdkconfig.",
+    ),
+}
+
+def _validate_requires_sdkconfig(ctx, sdkconfig_file):
+    """Check that requires components have matching sdkconfig configuration.
+    
+    Returns a validation File that must be added to the main build action inputs,
+    or None if no checks needed. This ensures Bazel runs the check before building.
+    """
+    if not sdkconfig_file:
+        return None
+    
+    checks_needed = []
+    for req in ctx.attr.requires:
+        if req in _REQUIRES_SDKCONFIG_CHECKS:
+            key, msg = _REQUIRES_SDKCONFIG_CHECKS[req]
+            checks_needed.append((req, key, msg))
+    
+    if not checks_needed:
+        return None
+    
+    # Generate a shell script that validates sdkconfig content
+    check_cmds = []
+    for req, key, msg in checks_needed:
+        cmd = "if ! grep -q '{}' '{}'; then echo 'ERROR: esp_zig_app \"{}\" {}' >&2; exit 1; fi".format(
+            key, sdkconfig_file.path, ctx.label.name, msg.replace("\n", " "),
+        )
+        check_cmds.append(cmd)
+    
+    validation_file = ctx.actions.declare_file(ctx.attr.name + "_sdkconfig_validated")
+    ctx.actions.run_shell(
+        inputs = [sdkconfig_file],
+        outputs = [validation_file],
+        command = " && ".join(check_cmds) + " && echo ok > " + validation_file.path,
+    )
+    
+    return validation_file
+
+# =============================================================================
 # esp_zig_app - Build ESP-IDF project from app (generates shell automatically)
 # =============================================================================
 
@@ -506,6 +558,11 @@ def _esp_zig_app_impl(ctx):
         app_config_files = ctx.attr.app_config.files.to_list()
         if app_config_files:
             app_config_file = app_config_files[0]
+    
+    # =========================================================================
+    # Validate: requires vs sdkconfig compatibility
+    # =========================================================================
+    sdkconfig_validation = _validate_requires_sdkconfig(ctx, sdkconfig_file)
     
     # Copy commands for CMake / C helper files only (NOT Zig sources)
     cmake_copy_commands = _generate_copy_commands_preserve_structure(cmake_files)
@@ -968,7 +1025,8 @@ exec "{builder}"
     # Collect all inputs — Zig sources via exec-root paths (no copying needed)
     env_files = [env_file] if env_file else []
     app_cfg_files = [app_config_file] if app_config_file else []
-    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + builder_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + [build_script]
+    validation_files = [sdkconfig_validation] if sdkconfig_validation else []
+    inputs = app_files + cmake_files + zig_files + lib_files + all_dep_files + builder_files + sdkconfig_files + env_files + app_cfg_files + partition_files + static_lib_files + validation_files + [build_script]
     
     ctx.actions.run_shell(
         command = build_script.path,

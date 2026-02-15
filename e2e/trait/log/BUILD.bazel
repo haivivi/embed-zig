@@ -1,0 +1,11 @@
+# e2e: trait/log — shared app sources
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)
