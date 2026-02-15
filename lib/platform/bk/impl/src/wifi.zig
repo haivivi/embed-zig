@@ -63,6 +63,19 @@ pub const WifiDriver = struct {
         return self.connected;
     }
 
+    pub fn getIpAddress(self: *const Self) ?[4]u8 {
+        if (self.connected) {
+            const ip = armino.wifi.getIpAddress();
+            return .{
+                @truncate(ip & 0xFF),
+                @truncate((ip >> 8) & 0xFF),
+                @truncate((ip >> 16) & 0xFF),
+                @truncate((ip >> 24) & 0xFF),
+            };
+        }
+        return null;
+    }
+
     /// Poll events via shared dispatcher (avoids dual-poll from same C queue).
     /// Detects connection_failed from rapid disconnects (armino quirk).
     pub fn pollEvent(self: *Self) ?WifiEvent {

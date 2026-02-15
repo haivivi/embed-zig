@@ -195,20 +195,16 @@ pub const Socket = struct {
         return @intCast(port);
     }
 
-    pub fn listen(self: *Self, backlog: u32) SocketError!void {
-        if (bk_zig_socket_listen(self.fd, @intCast(backlog)) < 0) return error.ListenFailed;
+    pub fn listen(self: *Self) SocketError!void {
+        if (bk_zig_socket_listen(self.fd, 128) < 0) return error.ListenFailed;
     }
 
-    pub fn accept(self: *Self) SocketError!struct { socket: Socket, addr: Ipv4Address, port: u16 } {
-        var ip_be: u32 = 0;
-        var port: u16 = 0;
-        const fd = bk_zig_socket_accept(self.fd, &ip_be, &port);
+    pub fn accept(self: *Self) SocketError!Self {
+        var _ip_be: u32 = 0;
+        var _port: u16 = 0;
+        const fd = bk_zig_socket_accept(self.fd, &_ip_be, &_port);
         if (fd < 0) return error.AcceptFailed;
-        return .{
-            .socket = .{ .fd = fd },
-            .addr = beToIpv4(ip_be),
-            .port = port,
-        };
+        return .{ .fd = fd };
     }
 
     pub fn setReuseAddr(self: *Self, enable: bool) void {

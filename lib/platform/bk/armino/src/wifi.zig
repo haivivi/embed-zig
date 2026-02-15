@@ -9,6 +9,7 @@ extern fn bk_zig_wifi_poll_event(out_type: *c_int, out_ip: *[4]u8, out_dns: *[4]
 extern fn bk_zig_wifi_scan_start() c_int;
 extern fn bk_zig_wifi_scan_get_results(out_count: *c_int) c_int;
 extern fn bk_zig_wifi_scan_get_ap_flat(index: c_int, out: *ScanApFlat) c_int;
+extern fn bk_zig_netif_get_ip4(ip_out: *[4]u8, dns_out: *[4]u8) c_int;
 
 /// Flat struct matching C bk_zig_scan_ap_flat_t (packed, no alignment gaps)
 const ScanApFlat = extern struct {
@@ -82,6 +83,13 @@ pub const ScanAp = struct {
         return self.ssid[0..len];
     }
 };
+
+pub fn getIpAddress() u32 {
+    var ip: [4]u8 = .{ 0, 0, 0, 0 };
+    var dns: [4]u8 = .{ 0, 0, 0, 0 };
+    _ = bk_zig_netif_get_ip4(&ip, &dns);
+    return @as(u32, ip[0]) | (@as(u32, ip[1]) << 8) | (@as(u32, ip[2]) << 16) | (@as(u32, ip[3]) << 24);
+}
 
 pub fn scanStart() !void {
     if (bk_zig_wifi_scan_start() != 0) return error.ScanFailed;

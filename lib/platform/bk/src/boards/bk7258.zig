@@ -31,6 +31,7 @@ pub const time = struct {
     pub fn nowMs() u64 {
         return impl.Time.nowMs();
     }
+    pub const getTimeMs = nowMs;
 };
 
 pub fn isRunning() bool {
