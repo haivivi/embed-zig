@@ -22,7 +22,7 @@ const BUILD_TAG = "https_speed_test_v2_esp_bundle";
 const CaStore = Board.crypto.x509.CaStore;
 
 /// DNS Resolver for hostname lookup
-const DnsResolver = dns.Resolver(Board.socket);
+const DnsResolver = dns.Resolver(Board.socket, void);
 
 /// Application state machine
 const AppState = enum {
