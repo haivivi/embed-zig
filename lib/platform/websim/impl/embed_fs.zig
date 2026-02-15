@@ -79,7 +79,8 @@ pub fn EmbedFs(comptime entries: []const Entry) type {
 
         fn allocSlot(self: *Self) ?usize {
             for (0..MAX_OPEN) |i| {
-                if (!self.ctx_active[i]) return i;
+                // Slot is free if never used or closed (data reset to empty)
+                if (!self.ctx_active[i] or self.ctx_slots[i].data.len == 0) return i;
             }
             return null;
         }
@@ -97,10 +98,7 @@ pub fn EmbedFs(comptime entries: []const Entry) type {
         fn closeFn(ctx: *anyopaque) void {
             const rctx: *ReadCtx = @ptrCast(@alignCast(ctx));
             rctx.pos = 0;
-            rctx.data = &.{};
-            // Note: ctx_active flag is not cleared here because we
-            // don't have a back-reference to the slot index.
-            // Slots are reused when data is empty.
+            rctx.data = &.{}; // allocSlot checks data.len == 0 to reuse
         }
 
         fn eql(a: []const u8, b: []const u8) bool {
