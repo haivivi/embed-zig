@@ -38,7 +38,7 @@ pub fn from(comptime Impl: type) type {
             else => Impl,
         };
         _ = @as(*const fn (u32) void, &BaseType.sleepMs);
-        _ = @as(*const fn () u64, &BaseType.nowMs);
+        _ = @as(*const fn () u64, &BaseType.getTimeMs);
     }
     return Impl;
 }
@@ -48,7 +48,7 @@ pub fn from(comptime Impl: type) type {
 test "Time() returns interface type" {
     const MockImpl = struct {
         pub fn sleepMs(_: u32) void {}
-        pub fn nowMs() u64 {
+        pub fn getTimeMs() u64 {
             return 12345;
         }
     };
@@ -58,6 +58,6 @@ test "Time() returns interface type" {
 
     // Can call methods
     TestTime.sleepMs(100);
-    const t = TestTime.nowMs();
+    const t = TestTime.getTimeMs();
     try std.testing.expectEqual(@as(u64, 12345), t);
 }

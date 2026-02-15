@@ -427,7 +427,7 @@ pub fn run(_: anytype) void {
     defer host.deinit();
 
     // Use PSRAM for BLE task stacks — saves ~16KB Internal SRAM
-    host.start(.{ .stack_size = 8192, .priority = 20, .allocator = heap.psram }) catch |err| {
+    host.start() catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };

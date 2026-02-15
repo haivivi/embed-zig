@@ -43,7 +43,7 @@
 //! ```zig
 //! var host = Host(Rt, HciDriver, &my_services).init(&hci_driver, allocator);
 //! host.gatt.addService(...);
-//! try host.start(opts);  // HCI Reset + Read Buffer Size + spawn loops
+//! try host.start();  // HCI Reset + Read Buffer Size + spawn loops
 //! while (host.nextEvent()) |event| { ... }
 //! host.stop();
 //! ```
@@ -312,7 +312,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         /// 4. LE Set Event Mask (enable connection + PHY + DLE events)
         /// 5. Initialize acl_credits
         /// 6. Spawn readLoop + writeLoop
-        pub fn start(self: *Self, opts: Rt.Options) !void {
+        pub fn start(self: *Self) !void {
             // --- 1. HCI Reset ---
             {
                 var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
@@ -1128,7 +1128,7 @@ test "Host start reads buffer size and initializes credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start(.{});
+    try host.start();
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     // Should have read buffer size
@@ -1159,7 +1159,7 @@ test "Host writeLoop respects ACL credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start(.{});
+    try host.start();
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     const written_before = hci_driver.written_count.load(.acquire);
@@ -1190,7 +1190,7 @@ test "Host NCP event releases credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start(.{});
+    try host.start();
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     // Send enough data to consume some credits

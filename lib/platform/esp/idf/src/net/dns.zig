@@ -30,7 +30,7 @@ pub const buildQuery = dns_lib.buildQuery;
 pub const parseResponse = dns_lib.parseResponse;
 
 const http = @import("../http.zig");
-const socket_mod = @import("../socket.zig");
+const socket_mod = @import("socket.zig");
 
 /// Base DNS resolver using LWIP socket (for UDP/TCP)
 const BaseDnsResolver = dns_lib.Resolver(socket_mod.Socket);
