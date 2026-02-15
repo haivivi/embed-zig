@@ -11,21 +11,29 @@ fn newStoreWith(initial: ui.AppState) ui.Store { return ui.Store.init(initial, u
 // Layer 1: Navigation State Machine
 // ============================================================================
 
-test "initial: desktop" {
+test "initial: startup" {
     const s = newStore().getState();
-    try testing.expectEqual(ui.Page.desktop, s.page);
+    try testing.expectEqual(ui.Page.startup, s.page);
     try testing.expectEqual(@as(?ui.Transition, null), s.transition);
 }
 
-test "desktop → menu" {
+test "startup: skip with confirm → desktop" {
     var store = newStore();
+    store.dispatch(.confirm);
+    try testing.expectEqual(ui.Page.desktop, store.getState().page);
+}
+
+test "desktop → menu" {
+    var s = ui.AppState{}; s.page = .desktop;
+    var store = newStoreWith(s);
     store.dispatch(.right);
     try testing.expect(store.getState().transition != null);
     try testing.expectEqual(ui.Page.menu, store.getState().transition.?.to);
 }
 
 test "transition completes" {
-    var store = newStore();
+    var s = ui.AppState{}; s.page = .desktop;
+    var store = newStoreWith(s);
     store.dispatch(.right);
     for (0..14) |_| store.dispatch(.tick);
     try testing.expectEqual(ui.Page.menu, store.getState().page);

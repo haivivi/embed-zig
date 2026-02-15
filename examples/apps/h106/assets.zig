@@ -37,6 +37,7 @@ pub fn loadImageFromFs(fs: anytype, path: []const u8, buf: []u8) ?Image {
 // ============================================================================
 
 pub const PATH_FONT = "/fonts/NotoSansSC-Bold.ttf";
+pub const PATH_STARTUP_ANIM = "/anim/startup.anim";
 pub const PATH_BG = "/assets/bg.rgb565";
 pub const PATH_ULTRAMAN = "/assets/ultraman.rgb565";
 

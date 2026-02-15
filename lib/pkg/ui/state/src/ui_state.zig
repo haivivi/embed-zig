@@ -72,6 +72,11 @@ pub const Image = @import("image.zig").Image;
 pub const Rect = @import("dirty.zig").Rect;
 pub const DirtyTracker = @import("dirty.zig").DirtyTracker;
 
+// Animation
+pub const AnimPlayer = @import("anim.zig").AnimPlayer;
+pub const AnimFrame = @import("anim.zig").AnimFrame;
+pub const blitAnimFrame = @import("anim.zig").blitAnimFrame;
+
 // ============================================================================
 // Tests — pull in all sub-module tests
 // ============================================================================
@@ -84,4 +89,5 @@ test {
     _ = @import("framebuffer.zig");
     _ = @import("font.zig");
     _ = @import("image.zig");
+    _ = @import("anim.zig");
 }

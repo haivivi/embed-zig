@@ -23,6 +23,8 @@ pub const DIM_WHITE: u16 = 0x7BEF; // opa=125/255 white on black ≈ 0x7BEF
 // Runtime Assets
 // ============================================================================
 
+var startup_player: ?state_lib.AnimPlayer = null;
+var startup_frame_timer: u32 = 0;
 var bg_img: ?Image = null;
 var ultraman_img: ?Image = null;
 var menu_imgs: [5]?Image = [_]?Image{null} ** 5;
@@ -32,6 +34,13 @@ var setting_icons: [9]?Image = [_]?Image{null} ** 9;
 var font_24: ?state_lib.TtfFont = null;
 var font_20: ?state_lib.TtfFont = null;
 var font_16: ?state_lib.TtfFont = null;
+
+/// Initialize startup animation from .anim file data (zero-copy)
+pub fn initStartupAnim(anim_data: ?[]const u8) void {
+    if (anim_data) |data| {
+        startup_player = state_lib.AnimPlayer.init(data);
+    }
+}
 
 pub fn initAssets(
     bg: Image, ultraman: ?Image, menus: [5]?Image,
@@ -55,7 +64,7 @@ pub fn initAssets(
 // State
 // ============================================================================
 
-pub const Page = enum { desktop, menu, game_list, game_tetris, game_racer, settings };
+pub const Page = enum { startup, desktop, menu, game_list, game_tetris, game_racer, settings };
 
 pub const Transition = struct {
     from: Page, to: Page, start_tick: u32, duration: u32, direction: Dir,
@@ -63,7 +72,7 @@ pub const Transition = struct {
 };
 
 pub const AppState = struct {
-    page: Page = .desktop,
+    page: Page = .startup,
     transition: ?Transition = null,
     tick: u32 = 0,
     menu_index: u8 = 0,
@@ -92,6 +101,16 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
         return;
     }
     switch (state.page) {
+        .startup => switch (event) {
+            .tick => {
+                // Animation advances in render(); when done, auto-transition
+                if (startup_player != null and startup_player.?.isDone()) {
+                    state.page = .desktop;
+                }
+            },
+            .confirm, .back => state.page = .desktop, // skip animation
+            else => {},
+        },
         .desktop => switch (event) { .right, .confirm => nav(state, .menu, .left), else => {} },
         .menu => switch (event) {
             .left => if (state.menu_index > 0) { state.menu_index -= 1; } else nav(state, .desktop, .right),
@@ -172,12 +191,31 @@ pub fn render(fb: *FB, state: *const AppState) void {
 
 fn renderPage(fb: *FB, state: *const AppState, page: Page, xo: i16) void {
     switch (page) {
+        .startup => renderStartup(fb),
         .desktop => renderDesktop(fb, xo),
         .menu => renderMenu(fb, state, xo),
         .game_list => renderGameList(fb, state, xo),
         .settings => renderSettings(fb, state, xo),
         .game_tetris => if (xo == 0) { const e = tetris.GameState{}; tetris.render(fb, &state.tetris, &e); } else fillOff(fb, xo, BLACK),
         .game_racer => if (xo == 0) { const e = racer.GameState{}; racer.render(fb, &state.racer, &e); } else fillOff(fb, xo, BLACK),
+    }
+}
+
+fn renderStartup(fb: *FB) void {
+    if (startup_player) |*player| {
+        // Advance frame based on frame timer
+        // We advance one animation frame per (60/fps) ticks
+        const ticks_per_frame = @max(1, 60 / @as(u32, @max(1, player.header.fps)));
+        startup_frame_timer += 1;
+        if (startup_frame_timer >= ticks_per_frame) {
+            startup_frame_timer = 0;
+            if (player.nextFrame()) |frame| {
+                state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, player.header.scale);
+            }
+        }
+    } else {
+        // No animation — show black
+        fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
     }
 }
 

@@ -37,6 +37,8 @@ pub const FsDriver = websim.EmbedFs(&.{
     .{ .path = "/assets/listicon_8.rgb565", .data = @embedFile("../assets/listicon_8.rgb565") },
     // Font
     .{ .path = "/fonts/NotoSansSC-Bold.ttf", .data = @embedFile("../assets/NotoSansSC-Bold.ttf") },
+    // Startup animation
+    .{ .path = "/anim/startup.anim", .data = @embedFile("../assets/tiga_startup.anim") },
 });
 
 pub const fs_spec = struct {

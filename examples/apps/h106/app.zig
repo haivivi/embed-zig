@@ -67,8 +67,17 @@ pub fn init() void {
         }
     }
 
+    // Startup animation
+    var anim_data: ?[]const u8 = null;
+    anim_load: {
+        var file = board.fs.open(assets.PATH_STARTUP_ANIM, .read) orelse break :anim_load;
+        defer file.close();
+        if (file.data) |data| anim_data = data;
+    }
+
     Board.log.info("Assets loaded (zero-copy from flash)", .{});
 
+    ui.initStartupAnim(anim_data);
     ui.initAssets(bg.?, ultra, menus, btn_list, g_icons, s_icons, font_data);
 
     store = ui.Store.init(.{}, ui.reduce);
