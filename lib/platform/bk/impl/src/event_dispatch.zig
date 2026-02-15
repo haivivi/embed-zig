@@ -11,6 +11,20 @@ const net_impl = @import("net.zig");
 var pending_wifi: ?wifi_impl.WifiEvent = null;
 var pending_net: ?net_impl.NetEvent = null;
 
+// Callback mode: when set, net events go directly to callback instead of pending_net
+var net_callback: ?net_impl.NetDriver.CallbackType = null;
+var net_callback_ctx: ?*anyopaque = null;
+
+pub fn setNetCallback(cb: net_impl.NetDriver.CallbackType, ctx: ?*anyopaque) void {
+    net_callback = cb;
+    net_callback_ctx = ctx;
+}
+
+pub fn clearNetCallback() void {
+    net_callback = null;
+    net_callback_ctx = null;
+}
+
 /// Poll the armino C-side event queue once and dispatch
 fn dispatch() void {
     const event = armino.wifi.popEvent() orelse return;
@@ -25,7 +39,7 @@ fn dispatch() void {
             pending_wifi = .{ .scan_done = .{ .count = 0, .success = true } };
         },
         .got_ip => |ip_info| {
-            pending_net = .{
+            const net_event: net_impl.NetEvent = .{
                 .dhcp_bound = .{
                     .ip = ip_info.ip,
                     .netmask = .{ 255, 255, 255, 0 },
@@ -35,9 +49,19 @@ fn dispatch() void {
                     .lease_time = 0,
                 },
             };
+            if (net_callback) |cb| {
+                cb(net_callback_ctx, net_event);
+            } else {
+                pending_net = net_event;
+            }
         },
         .dhcp_timeout => {
-            pending_net = .{ .ip_lost = .{} };
+            const net_event: net_impl.NetEvent = .{ .ip_lost = .{} };
+            if (net_callback) |cb| {
+                cb(net_callback_ctx, net_event);
+            } else {
+                pending_net = net_event;
+            }
         },
     }
 }

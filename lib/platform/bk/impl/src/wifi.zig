@@ -60,6 +60,9 @@ pub const WifiDriver = struct {
     }
 
     pub fn isConnected(self: *const Self) bool {
+        // On BK, events are polled from a C queue — calling pollEvent here
+        // ensures connected state stays fresh (ESP uses ISR-driven callbacks)
+        _ = @constCast(self).pollEvent();
         return self.connected;
     }
 

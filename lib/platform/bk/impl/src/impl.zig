@@ -25,6 +25,7 @@ pub const WifiDriver = wifi.WifiDriver;
 
 pub const net = @import("net.zig");
 pub const NetDriver = net.NetDriver;
+pub const NetEvent = net.NetEvent;
 
 pub const kvs = @import("kvs.zig");
 pub const KvsDriver = kvs.KvsDriver;

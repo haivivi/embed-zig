@@ -7,4 +7,5 @@ pub const time = struct {
 };
 pub const WifiDriver = bk.impl.WifiDriver;
 pub const NetDriver = bk.impl.NetDriver;
+pub const NetEvent = bk.impl.NetEvent;
 pub const Mutex = bk.armino.runtime.Mutex;
