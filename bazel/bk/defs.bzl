@@ -23,7 +23,7 @@ Build:
 """
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel/zig:defs.bzl", "ZigModuleInfo", "build_module_args", "encode_module", "decode_module", "zig_module")
+load("//bazel/zig:defs.bzl", "ZigModuleInfo", "zig_module")
 
 _SCRIPTS_LABEL = Label("//bazel/bk:scripts")
 

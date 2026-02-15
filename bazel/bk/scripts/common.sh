@@ -2,12 +2,12 @@
 # Common functions for BK7258 Bazel build scripts
 
 # Setup Armino SDK environment
-# Requires ARMINO_PATH (set via .bazelrc.user: build --action_env=ARMINO_PATH)
+# Requires ARMINO_PATH (set via .bazelrc.user: build --//bazel:armino_path=/path/to/bk_avdk_smp)
 setup_armino_env() {
     if [ -z "$ARMINO_PATH" ]; then
         echo "[bk] Error: ARMINO_PATH not set"
         echo "[bk] Add to .bazelrc.user:"
-        echo "[bk]   build --action_env=ARMINO_PATH=/path/to/bk_avdk_smp"
+        echo "[bk]   build --//bazel:armino_path=/path/to/bk_avdk_smp"
         exit 1
     fi
 

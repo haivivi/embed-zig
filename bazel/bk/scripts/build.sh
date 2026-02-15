@@ -59,6 +59,7 @@ compile_zig_lib() {
                     [ -z "$key" ] && continue
                     [[ "$key" == \#* ]] && continue
                     local field=$(echo "$key" | tr '[:upper:]' '[:lower:]')
+                    value=$(echo "$value" | sed 's/\\/\\\\/g')
                     echo "    ${field}: []const u8 = \"${value}\","
                 done < "$E/$BK_ENV_FILE"
             fi
