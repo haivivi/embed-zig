@@ -155,7 +155,8 @@ test "dispatchBatch applies multiple events" {
     store.dispatchBatch(&events);
 
     try testing.expect(store.isDirty());
-    try testing.expectEqual(@as(u32, 12), store.getState().count);
+    // increment(+1) + increment(+1) + add(10) + decrement(-1) = 11
+    try testing.expectEqual(@as(u32, 11), store.getState().count);
 }
 
 test "dispatchBatch with empty slice does not mark dirty" {

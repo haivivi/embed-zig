@@ -191,7 +191,7 @@ test "BitmapFont.getGlyph returns null for unknown" {
 test "BitmapFont.textWidth" {
     try testing.expectEqual(@as(u16, 12), test_font.textWidth("ABC"));
     try testing.expectEqual(@as(u16, 4), test_font.textWidth("A"));
-    try testing.expectEqual(@as(u16, 8), test_font.textWidth("AZ")); // Z unknown, A counted
+    try testing.expectEqual(@as(u16, 4), test_font.textWidth("AZ")); // Z unknown → skipped, only A counted
     try testing.expectEqual(@as(u16, 0), test_font.textWidth(""));
     try testing.expectEqual(@as(u16, 0), test_font.textWidth("XYZ")); // all unknown
 }

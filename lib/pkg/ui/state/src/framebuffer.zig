@@ -166,10 +166,7 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 while (col < clip.w) : (col += 1) {
                     const px = img.getPixelTyped(Color, src_offset_x + col, src_offset_y + row);
                     if (transparent) |t| {
-                        if (px == t) {
-                            col += 1;
-                            continue;
-                        }
+                        if (px == t) continue;
                     }
                     const dst_idx = @as(usize, clip.y + row) * W + @as(usize, clip.x + col);
                     self.buf[dst_idx] = px;
