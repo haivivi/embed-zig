@@ -343,10 +343,13 @@ fn drawCar(fb: *FB, x: u16, y: u16, body: u16, windshield: u16) void {
 }
 
 fn drawObstacle(fb: *FB, x: u16, y_raw: i16, color: u16) void {
-    if (y_raw + OBS_H <= 0) return;
+    // Off-screen checks
+    if (y_raw + @as(i16, OBS_H) <= 0) return; // above screen
+    if (y_raw >= SCREEN_H) return; // below screen
+
     const y: u16 = if (y_raw < 0) 0 else @intCast(y_raw);
     const h: u16 = if (y_raw < 0)
-        @intCast(OBS_H - @as(u16, @intCast(-y_raw)))
+        @intCast(@as(i16, OBS_H) + y_raw) // OBS_H + negative y_raw = visible portion
     else
         @min(OBS_H, SCREEN_H - y);
     if (h == 0) return;
@@ -358,7 +361,7 @@ fn drawObstacle(fb: *FB, x: u16, y_raw: i16, color: u16) void {
         fb.fillRect(x, y, OBS_W, 1, BLACK);
         if (y + h < SCREEN_H) fb.fillRect(x, y + h - 1, OBS_W, 1, BLACK);
         fb.fillRect(x, y, 1, h, BLACK);
-        fb.fillRect(x + OBS_W - 1, y, 1, h, BLACK);
+        if (x + OBS_W > 0) fb.fillRect(x + OBS_W - 1, y, 1, h, BLACK);
     }
 }
 
