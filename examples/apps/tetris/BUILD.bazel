@@ -1,4 +1,5 @@
 load("//bazel/websim:defs.bzl", "websim_app")
+load("//bazel/zig:defs.bzl", "zig_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,5 +13,17 @@ websim_app(
         "//lib/hal",
         "//lib/pkg/ui/state:ui_state",
         "//lib/pkg/display",
+    ],
+)
+
+# UI state machine tests — pure logic, no platform deps.
+# Layer 1: State transitions (dispatch event → assert state)
+# Layer 2: Render verification (given state → assert pixels)
+zig_test(
+    name = "ui_test",
+    main = "ui_test.zig",
+    srcs = ["ui_test.zig", "ui.zig"],
+    deps = [
+        "//lib/pkg/ui/state:ui_state",
     ],
 )
