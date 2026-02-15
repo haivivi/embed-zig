@@ -272,14 +272,14 @@ pub fn run(_: anytype) void {
         .encoder = &encoder, .decoder = &decoder,
     };
 
-    wg.go(micTask, .{mic_ctx}) catch |err| {
+    wg.goWithConfig(.{ .stack_size = 49152 }, micTask, .{mic_ctx}) catch |err| {
         log.err("mic spawn: {}", .{err});
         return;
     };
 
     platform.time.sleepMs(50);
 
-    wg.go(codecTask, .{codec_ctx}) catch |err| {
+    wg.goWithConfig(.{ .stack_size = 49152 }, codecTask, .{codec_ctx}) catch |err| {
         log.err("codec spawn: {}", .{err});
         return;
     };
