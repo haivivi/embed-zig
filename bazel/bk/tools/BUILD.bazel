@@ -1,0 +1,3 @@
+# BK7258 Go tools
+
+package(default_visibility = ["//visibility:public"])

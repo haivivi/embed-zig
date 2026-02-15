@@ -25,8 +25,6 @@ Build:
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//bazel/zig:defs.bzl", "ZigModuleInfo", "zig_module")
 
-_SCRIPTS_LABEL = Label("//bazel/bk:scripts")
-
 # =============================================================================
 # bk_modules — Create standard BK platform zig_module targets
 # =============================================================================
@@ -92,12 +90,9 @@ def _bk_zig_app_impl(ctx):
             zig_bin = f
             break
 
-    # Get script files
-    script_files = ctx.attr._scripts.files.to_list()
-    build_sh = None
-    for f in script_files:
-        if f.basename == "build.sh":
-            build_sh = f
+    # Get Go builder binary
+    builder_files = ctx.attr._builder.files.to_list()
+    builder_bin = builder_files[0]
 
     # Get C helper files
     c_helper_files = []
@@ -129,7 +124,7 @@ def _bk_zig_app_impl(ctx):
 
     # Find bk.zig root from deps + collect all module info
     bk_zig = None
-    module_entries = []  # "name:root_path:inc_dirs" triples for build.sh
+    module_entries = []  # "name:root_path:inc_dirs" triples for builder
     for info in dep_infos:
         if info.module_name == "bk":
             bk_zig = info.root_source
@@ -143,10 +138,10 @@ def _bk_zig_app_impl(ctx):
     for src in ctx.attr.static_libs:
         static_lib_files.extend(src.files.to_list())
 
-    # C helper paths (space-separated for build.sh)
+    # C helper paths (space-separated for builder)
     c_helper_paths = " ".join([f.path for f in c_helper_files])
 
-    # Create wrapper script
+    # Create wrapper script that sets env vars and calls Go builder
     wrapper = ctx.actions.declare_file("{}_build.sh".format(ctx.label.name))
 
     script_content = """#!/bin/bash
@@ -175,7 +170,7 @@ export BK_AP_STACK_SIZE="{ap_stack_size}"
 export BK_RUN_IN_PSRAM="{run_in_psram}"
 export BK_PRELINK_LIBS="{prelink_libs}"
 export BK_STATIC_LIBS="{static_libs}"
-exec bash "$E/{build_sh}"
+exec "$E/{builder}"
 """.format(
         project_name = project_name,
         bin_out = bin_file.path,
@@ -200,7 +195,7 @@ exec bash "$E/{build_sh}"
         run_in_psram = str(ctx.attr.run_in_psram),
         prelink_libs = " ".join(ctx.attr.prelink_libs),
         static_libs = " ".join([f.path for f in static_lib_files]),
-        build_sh = build_sh.path if build_sh else "",
+        builder = builder_bin.path,
     )
 
     # Add env file to inputs
@@ -221,7 +216,7 @@ exec bash "$E/{build_sh}"
 
     # All inputs
     partition_files = [ctx.file.partition_table] if ctx.file.partition_table else []
-    inputs = ap_files + cp_files + zig_files + all_dep_files + script_files + c_helper_files + kconfig_files + env_files + partition_files + static_lib_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + c_helper_files + kconfig_files + env_files + partition_files + static_lib_files + builder_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -316,8 +311,11 @@ bk_zig_app = rule(
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_builder": attr.label(
+            default = Label("//bazel/bk/tools/builder"),
+            executable = True,
+            cfg = "exec",
+            doc = "Go binary that runs the BK7258 build",
         ),
         "_armino_path": attr.label(
             default = Label("//bazel:armino_path"),
@@ -350,7 +348,10 @@ def _bk_flash_impl(ctx):
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
     baud = ctx.attr._baud[BuildSettingInfo].value if ctx.attr._baud and BuildSettingInfo in ctx.attr._baud else "115200"
     bk_loader = ctx.attr._bk_loader_path[BuildSettingInfo].value if ctx.attr._bk_loader_path and BuildSettingInfo in ctx.attr._bk_loader_path else ""
-    script_files = ctx.attr._scripts.files.to_list()
+
+    # Get the flasher Go binary
+    flasher_files = ctx.attr._flasher.files.to_list()
+    flasher_bin = flasher_files[0]
 
     flash_script = ctx.actions.declare_file("{}_flash.sh".format(ctx.label.name))
 
@@ -363,68 +364,22 @@ if [ ! -d "$RUNFILES" ]; then
     RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 fi
 
-# Parse CLI args
-APP_ONLY=0
-for arg in "$@"; do
-    case $arg in
-        --app-only) APP_ONLY=1 ;;
-    esac
-done
+export BK_PORT_CONFIG="{port}"
+export BK_BAUD="{baud}"
+export BK_LOADER="{bk_loader}"
+export BK_BIN="$RUNFILES/{bin}"
+export BK_AP_BIN="$RUNFILES/{ap_bin}"
+export BK_PARTITIONS="$RUNFILES/{partitions}"
 
-BK_LOADER="{bk_loader}"
-source "$RUNFILES/{common_sh}"
-if [ -z "$BK_LOADER" ] || [ ! -x "$BK_LOADER" ]; then
-    find_bk_loader
-fi
-detect_bk_port "{port}" "bk_flash" || exit 1
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[bk_flash] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-if [ "$APP_ONLY" = "1" ] && [ -f "$RUNFILES/{ap_bin}" ] && [ -f "$RUNFILES/{partitions}" ]; then
-    # App-only flash: only AP partition at its offset
-    # WARNING: BK bootloader may verify full image CRC — app-only may cause boot loop.
-    # Use only when CP hasn't changed and you know it works.
-    AP_OFFSET=$(grep "primary_ap_app" "$RUNFILES/{partitions}" | cut -d',' -f2)
-    if [ -z "$AP_OFFSET" ]; then
-        echo "[bk_flash] Error: cannot find primary_ap_app offset in partition table"
-        exit 1
-    fi
-    echo "[bk_flash] APP-ONLY (experimental): flashing AP to $PORT at offset $AP_OFFSET ({baud} baud)"
-    echo "[bk_flash] WARNING: if device boot-loops, use full flash (without --app-only)"
-    "$BK_LOADER" download \\
-        -p "$PORT" \\
-        -b {baud} \\
-        --reset_baudrate {baud} \\
-        --reset_type 1 \\
-        -i "$RUNFILES/{ap_bin}" \\
-        -s "$AP_OFFSET" \\
-        --reboot
-else
-    # Full flash: all-app.bin (bootloader + CP + AP)
-    echo "[bk_flash] Flashing all-app.bin to $PORT ({baud} baud)"
-    "$BK_LOADER" download \\
-        -p "$PORT" \\
-        -b {baud} \\
-        --reset_baudrate {baud} \\
-        --reset_type 1 \\
-        -i "$RUNFILES/{bin}" \\
-        --reboot
-fi
-
-echo "[bk_flash] Done!"
+exec "$RUNFILES/{flasher}" "$@"
 """.format(
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
         baud = baud,
         bk_loader = bk_loader,
         bin = bin_file.short_path,
         ap_bin = ap_bin_file.short_path if ap_bin_file else "",
         partitions = partition_file.short_path if partition_file else "",
+        flasher = flasher_bin.short_path,
     )
 
     ctx.actions.write(
@@ -433,7 +388,7 @@ echo "[bk_flash] Done!"
         is_executable = True,
     )
 
-    all_files = [bin_file] + script_files
+    all_files = [bin_file] + flasher_files
     if ap_bin_file:
         all_files.append(ap_bin_file)
     if partition_file:
@@ -463,8 +418,10 @@ bk_flash = rule(
         "_bk_loader_path": attr.label(
             default = Label("//bazel:bk_loader_path"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_flasher": attr.label(
+            default = Label("//bazel/bk/tools/flasher"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Flash all-app.bin to BK7258 via bk_loader",
@@ -478,12 +435,17 @@ def _bk_monitor_impl(ctx):
     """Monitor serial output from BK7258."""
 
     port = ctx.attr._port[BuildSettingInfo].value if ctx.attr._port and BuildSettingInfo in ctx.attr._port else ""
-    script_files = ctx.attr._scripts.files.to_list()
+
+    # Get the monitor Go binary
+    monitor_files = ctx.attr._monitor.files.to_list()
+    monitor_bin = monitor_files[0]
 
     monitor_script = ctx.actions.declare_file("{}_monitor.sh".format(ctx.label.name))
 
     script_content = """#!/bin/bash
 set -e
+
+export BK_PORT_CONFIG="{port}"
 
 # Resolve runfiles directory
 RUNFILES="${{BASH_SOURCE[0]}}.runfiles/_main"
@@ -491,43 +453,10 @@ if [ ! -d "$RUNFILES" ]; then
     RUNFILES="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 fi
 
-source "$RUNFILES/{common_sh}"
-detect_bk_port "{port}" "bk_monitor" || exit 1
-
-# Kill any process using the port
-if lsof "$PORT" >/dev/null 2>&1; then
-    echo "[bk_monitor] Killing process using $PORT..."
-    lsof -t "$PORT" | xargs kill 2>/dev/null || true
-    sleep 0.5
-fi
-
-echo "[bk_monitor] Board: BK7258"
-echo "[bk_monitor] Monitoring $PORT at 115200 baud..."
-echo "[bk_monitor] Press Ctrl+C to exit"
-
-python3 -c "
-import serial, sys
-try:
-    ser = serial.Serial('$PORT', 115200, timeout=0.5)
-    ser.setDTR(False)
-    ser.setRTS(False)
-    print('Connected to $PORT at 115200 baud')
-    print('Waiting for data... (press RST on device if needed)')
-    print('---')
-    while True:
-        data = ser.read(ser.in_waiting or 1)
-        if data:
-            sys.stdout.write(data.decode('utf-8', errors='replace'))
-            sys.stdout.flush()
-except KeyboardInterrupt:
-    print('\\n--- Monitor stopped ---')
-except Exception as e:
-    print(f'Error: {{e}}')
-    sys.exit(1)
-"
+exec "$RUNFILES/{monitor}" "$@"
 """.format(
-        common_sh = [f for f in script_files if f.basename == "common.sh"][0].short_path,
         port = port,
+        monitor = monitor_bin.short_path,
     )
 
     ctx.actions.write(
@@ -539,7 +468,7 @@ except Exception as e:
     return [
         DefaultInfo(
             executable = monitor_script,
-            runfiles = ctx.runfiles(files = script_files),
+            runfiles = ctx.runfiles(files = monitor_files),
         ),
     ]
 
@@ -550,8 +479,10 @@ bk_monitor = rule(
         "_port": attr.label(
             default = Label("//bazel:port"),
         ),
-        "_scripts": attr.label(
-            default = _SCRIPTS_LABEL,
+        "_monitor": attr.label(
+            default = Label("//bazel/bk/tools/monitor"),
+            executable = True,
+            cfg = "exec",
         ),
     },
     doc = "Monitor serial output from BK7258",
