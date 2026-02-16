@@ -48,7 +48,7 @@ bk_zig_app(
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_heap",
     ],
-    tags = ["manual"],
+    tags = ["bk", "conformance", "manual"],
 )
 bk_flash(name = "flash", app = ":app")
 bk_monitor(name = "monitor")

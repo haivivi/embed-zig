@@ -86,7 +86,7 @@ esp_zig_app(
     extra_c_sources = ["MBED_TLS_C_SOURCES"],
     sdkconfig = ":sdkconfig",
     app_config = ":app_config",
-    tags = ["manual"],
+    tags = ["esp", "conformance", "manual"],
 )
 
 esp_flash(name = "flash", app = ":app")

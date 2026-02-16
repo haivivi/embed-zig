@@ -14,5 +14,5 @@ zig_test(
     main = "//e2e/trait/codec:app.zig",
     srcs = ["//e2e/trait/codec:app_srcs"],
     deps = [":board"],
-    tags = ["e2e"],
+    tags = ["std", "conformance"],
 )

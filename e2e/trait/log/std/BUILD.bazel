@@ -16,5 +16,5 @@ zig_test(
     main = "//e2e/trait/log:app.zig",
     srcs = ["//e2e/trait/log:app_srcs"],
     deps = [":board"],
-    tags = ["e2e"],
+    tags = ["std", "conformance"],
 )

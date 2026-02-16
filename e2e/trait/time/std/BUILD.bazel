@@ -22,5 +22,5 @@ zig_test(
     main = "//e2e/trait/time:app.zig",
     srcs = ["//e2e/trait/time:app_srcs"],
     deps = [":board"],
-    tags = ["e2e"],
+    tags = ["std", "conformance"],
 )
