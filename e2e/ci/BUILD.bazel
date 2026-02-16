@@ -59,6 +59,21 @@ esp_board_build(name = "benchmark_ble_throughput_esp32s3_devkit", target = "//e2
 esp_board_build(name = "benchmark_ble_x_proto_esp32s3_devkit", target = "//e2e/benchmark/ble_x_proto/esp:app", board = "esp32s3_devkit")
 
 # =============================================================================
+# E2E Tests — BK7258
+# =============================================================================
+
+alias(name = "tier1_net_event_bk7258", actual = "//e2e/tier1_net_event/bk:app")
+alias(name = "tier1_wifi_scan_bk7258", actual = "//e2e/tier1_wifi_scan/bk:app")
+alias(name = "tier3_ble_bk7258", actual = "//e2e/tier3_ble/bk:app")
+alias(name = "tier3_hci_bk7258", actual = "//e2e/tier3_hci/bk:app")
+alias(name = "benchmark_http_speed_bk7258", actual = "//e2e/benchmark/http_speed/bk:app")
+alias(name = "benchmark_tcp_speed_bk7258", actual = "//e2e/benchmark/tcp_speed/bk:app")
+alias(name = "benchmark_https_speed_bk7258", actual = "//e2e/benchmark/https_speed/bk:app")
+alias(name = "benchmark_tls_speed_bk7258", actual = "//e2e/benchmark/tls_speed/bk:app")
+alias(name = "benchmark_ble_throughput_bk7258", actual = "//e2e/benchmark/ble_throughput/bk:app")
+alias(name = "benchmark_ble_x_proto_bk7258", actual = "//e2e/benchmark/ble_x_proto/bk:app")
+
+# =============================================================================
 # Example Demos — ESP cross-compile
 # =============================================================================
 
@@ -113,6 +128,19 @@ esp_board_build(name = "timer_callback_esp32s3_devkit", target = "//examples/app
 esp_board_build(name = "wifi_dns_lookup_esp32s3_devkit", target = "//examples/apps/wifi_dns_lookup/esp:app", board = "esp32s3_devkit")
 
 # =============================================================================
+# Example Demos — BK7258
+# =============================================================================
+
+alias(name = "gpio_button_bk7258", actual = "//examples/apps/gpio_button/bk:app")
+alias(name = "pwm_fade_bk7258", actual = "//examples/apps/pwm_fade/bk:app")
+alias(name = "speaker_test_bk7258", actual = "//examples/apps/speaker_test/bk:app")
+alias(name = "wifi_dns_lookup_bk7258", actual = "//examples/apps/wifi_dns_lookup/bk:app")
+alias(name = "ntp_test_bk7258", actual = "//examples/apps/ntp_test/bk:app")
+alias(name = "hello_bk_bk7258", actual = "//examples/apps/hello_bk/bk:app")
+alias(name = "nvs_storage_bk7258", actual = "//examples/apps/nvs_storage/bk:app")
+alias(name = "aec_test_bk7258", actual = "//examples/apps/aec_test/bk:app")
+
+# =============================================================================
 # Aggregate targets
 # =============================================================================
 
@@ -135,6 +163,17 @@ filegroup(
         ":benchmark_tls_speed_esp32s3_devkit",
         ":benchmark_ble_throughput_esp32s3_devkit",
         ":benchmark_ble_x_proto_esp32s3_devkit",
+        # BK7258
+        ":tier1_net_event_bk7258",
+        ":tier1_wifi_scan_bk7258",
+        ":tier3_ble_bk7258",
+        ":tier3_hci_bk7258",
+        ":benchmark_http_speed_bk7258",
+        ":benchmark_tcp_speed_bk7258",
+        ":benchmark_https_speed_bk7258",
+        ":benchmark_tls_speed_bk7258",
+        ":benchmark_ble_throughput_bk7258",
+        ":benchmark_ble_x_proto_bk7258",
     ],
 )
 
@@ -166,6 +205,15 @@ filegroup(
         ":temperature_sensor_esp32s3_devkit",
         ":timer_callback_esp32s3_devkit",
         ":wifi_dns_lookup_esp32s3_devkit",
+        # BK7258
+        ":gpio_button_bk7258",
+        ":pwm_fade_bk7258",
+        ":speaker_test_bk7258",
+        ":wifi_dns_lookup_bk7258",
+        ":ntp_test_bk7258",
+        ":hello_bk_bk7258",
+        ":nvs_storage_bk7258",
+        ":aec_test_bk7258",
     ],
 )
 

@@ -8,7 +8,7 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/ble_x_proto_test:app_srcs"] + glob(["**/*"]),
+    srcs = ["//e2e/benchmark/ble_x_proto:app_srcs"] + glob(["**/*"]),
 )
 
 bk_ble(name = "ble")

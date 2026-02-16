@@ -1,7 +1,5 @@
-load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_config")
-load("//bazel/bk/kconfig:lwip.bzl", "bk_lwip_fast")
+load("//bazel/bk/kconfig:defs.bzl", "bk_ble", "bk_config")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -9,17 +7,14 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/http_speed_test:app_srcs"] + glob(["**/*"]),
+    srcs = ["//e2e/tier3_hci:app_srcs"] + glob(["**/*"]),
 )
 
-make_env_file(
-    name = "env",
-    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER_IP", "TEST_SERVER_PORT"],
-    defaults = {"TEST_SERVER_PORT": "8080"},
-)
+# Enable BLE on AP core
+bk_ble(name = "ble")
+bk_config(name = "kconfig", modules = [":ble"])
 
-
-# Partition table (BK7258, 8MB flash — all offsets explicit)
+# Partition table
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
 bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")
 bk_partition_entry(name = "part_ap", partition_name = "primary_ap_app", type = "code", partition_size = "1156K")
@@ -36,24 +31,19 @@ bk_partition_table(
                ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"],
 )
 
-bk_lwip_fast(name = "lwip_fast")
-bk_config(name = "kconfig", modules = [":lwip_fast"])
-
 bk_modules()
 
 bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/bluetooth"],
     partition_table = ":partitions",
-    env = ":env",
     kconfig_ap = ":kconfig",
-    run_in_psram = 131072,  # 128KB PSRAM stack
+    requires = ["bk_bluetooth"],
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
-        "//lib/platform/bk/armino:c_helpers_wifi",
-        "//lib/platform/bk/armino:c_helpers_socket",
+        "//lib/platform/bk/armino:c_helpers_ble",
     ],
 )
 

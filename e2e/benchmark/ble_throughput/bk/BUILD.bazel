@@ -1,5 +1,6 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
 load("//bazel/bk/kconfig:defs.bzl", "bk_ble", "bk_config")
+load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -7,14 +8,13 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/hci_test:app_srcs"] + glob(["**/*"]),
+    srcs = ["//e2e/benchmark/ble_throughput:app_srcs"] + glob(["**/*"]),
 )
 
-# Enable BLE on AP core
 bk_ble(name = "ble")
-bk_config(name = "kconfig", modules = [":ble"])
+bk_crypto(name = "crypto")
+bk_config(name = "kconfig", modules = [":ble", ":crypto"])
 
-# Partition table
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
 bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")
 bk_partition_entry(name = "part_ap", partition_name = "primary_ap_app", type = "code", partition_size = "1156K")
@@ -37,13 +37,17 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/bluetooth"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/bluetooth",
+            "//lib/pkg/async/waitgroup", "//lib/pkg/async/channel", "//lib/pkg/async/cancellation"],
     partition_table = ":partitions",
     kconfig_ap = ":kconfig",
+    run_in_psram = 131072,
     requires = ["bk_bluetooth"],
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_ble",
+        "//lib/platform/bk/armino:c_helpers_heap",
+        "//lib/platform/bk/armino:c_helpers_runtime",
     ],
 )
 

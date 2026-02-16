@@ -1,6 +1,8 @@
+load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_ble", "bk_config")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
 load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
+load("//bazel/bk/kconfig:lwip.bzl", "bk_lwip_fast")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -8,13 +10,20 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/ble_throughput:app_srcs"] + glob(["**/*"]),
+    srcs = ["//e2e/benchmark/tls_speed:app_srcs"] + glob(["**/*"]),
 )
 
-bk_ble(name = "ble")
-bk_crypto(name = "crypto")
-bk_config(name = "kconfig", modules = [":ble", ":crypto"])
+make_env_file(
+    name = "env",
+    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER", "TLS_PORT"],
+    defaults = {"TLS_PORT": "8443"},
+)
 
+bk_crypto(name = "crypto")
+bk_lwip_fast(name = "lwip_fast")
+bk_config(name = "kconfig", modules = [":crypto", ":lwip_fast"])
+
+# Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
 bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")
 bk_partition_entry(name = "part_ap", partition_name = "primary_ap_app", type = "code", partition_size = "1156K")
@@ -37,15 +46,20 @@ bk_zig_app(
     name = "app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
-    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/bluetooth",
-            "//lib/pkg/async/waitgroup", "//lib/pkg/async/channel", "//lib/pkg/async/cancellation"],
+    deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/tls"],
+    env = ":env",
     partition_table = ":partitions",
     kconfig_ap = ":kconfig",
-    run_in_psram = 131072,
-    requires = ["bk_bluetooth"],
+    requires = ["psa_mbedtls"],
+    run_in_psram = 131072,  # 128KB PSRAM stack
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
-        "//lib/platform/bk/armino:c_helpers_ble",
+        "//lib/platform/bk/armino:c_helpers_wifi",
+        "//lib/platform/bk/armino:c_helpers_socket",
+        "//lib/platform/bk/armino:c_helpers_crypto",
+        "//lib/platform/bk/armino:c_helpers_chacha",
+        "//lib/platform/bk/armino:c_helpers_rsa",
+        "//lib/platform/bk/armino:c_helpers_x509",
         "//lib/platform/bk/armino:c_helpers_heap",
         "//lib/platform/bk/armino:c_helpers_runtime",
     ],

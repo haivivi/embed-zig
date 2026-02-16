@@ -1,4 +1,4 @@
-# Examples — demo apps only
+# Examples — demo apps and BK-platform apps
 #
 # Functional tests and benchmarks have been moved to //e2e/
 # See //e2e/ci/BUILD.bazel for unified CI targets.
@@ -9,14 +9,20 @@ filegroup(
     name = "all",
     srcs = [
         "//examples/apps/adc_button:app_srcs",
+        "//examples/apps/adc_piano:app_srcs",
         "//examples/apps/aec_test:app_srcs",
+        "//examples/apps/ble_adv_scan_test:app_srcs",
+        "//examples/apps/crypto_test:app_srcs",
         "//examples/apps/gpio_button:app_srcs",
+        "//examples/apps/hello_bk:app_srcs",
+        "//examples/apps/https_native_test:app_srcs",
         "//examples/apps/led_strip_anim:app_srcs",
         "//examples/apps/led_strip_flash:app_srcs",
         "//examples/apps/mqtt0_test:app_srcs",
         "//examples/apps/motion_test:app_srcs",
         "//examples/apps/ntp_test:app_srcs",
         "//examples/apps/nvs_storage:app_srcs",
+        "//examples/apps/opus_test:app_srcs",
         "//examples/apps/pwm_fade:app_srcs",
         "//examples/apps/speaker_test:app_srcs",
         "//examples/apps/temperature_sensor:app_srcs",

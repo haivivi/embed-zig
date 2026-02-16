@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "srcs",
-    srcs = ["//examples/apps/wifi_scan_test:app_srcs"] + glob(["**/*"]),
+    srcs = ["//e2e/tier1_wifi_scan:app_srcs"] + glob(["**/*"]),
 )
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
