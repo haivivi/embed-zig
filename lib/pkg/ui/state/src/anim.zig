@@ -50,7 +50,7 @@ pub const AnimRect = struct {
 };
 
 /// Maximum rects per frame
-const MAX_RECTS = 128;
+const MAX_RECTS = 192;
 /// Maximum pixels per frame decode buffer (must accommodate full frame + overlap from multiple rects)
 const MAX_FRAME_PIXELS = 160 * 160; // generous buffer for multi-rect frames
 
