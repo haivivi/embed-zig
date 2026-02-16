@@ -150,9 +150,10 @@ Functional tests and benchmarks have been moved to the `e2e/` directory.
 See `e2e/ci/BUILD.bazel` for CI targets.
 
 ```bash
-# Build all ESP e2e targets
-bazel build //e2e/ci:build_all_e2e_esp --config=ci
+# Run all std conformance tests (no hardware needed)
+bazel test //e2e/ci:test_std
 
-# Run native tests (no hardware needed)
-bazel build //e2e/ci:build_all_std
+# Build all ESP/BK e2e targets (cross-compile check)
+bazel build //e2e/ci:build_all_esp --config=ci
+bazel build //e2e/ci:build_all_bk
 ```

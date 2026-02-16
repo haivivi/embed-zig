@@ -1,9 +1,15 @@
-# Unified CI targets — compile all ESP targets + run all std tests
+# Unified CI targets
 #
-# Usage:
-#   bazel build //e2e/ci:build_all_esp --config=ci
-#   bazel build //e2e/ci:build_all_e2e_esp --config=ci
-#   bazel build //e2e/ci:build_all_examples_esp --config=ci
+# Build checks (compilation only, no execution):
+#   bazel build //e2e/ci:build_all_esp
+#   bazel build //e2e/ci:build_all_bk
+#   bazel build //e2e/ci:build_all_std
+#
+# Test execution (std platform, no hardware):
+#   bazel test //e2e/ci:test_std
+#
+# All-in-one:
+#   bazel build //e2e/ci:build_all
 
 load("//bazel/esp:transitions.bzl", "esp_board_build")
 
@@ -141,10 +147,10 @@ alias(name = "nvs_storage_bk7258", actual = "//examples/apps/nvs_storage/bk:app"
 alias(name = "aec_test_bk7258", actual = "//examples/apps/aec_test/bk:app")
 
 # =============================================================================
-# Aggregate targets
+# Aggregate: Build targets (compilation check, no execution)
 # =============================================================================
 
-# All e2e ESP targets
+# ESP — e2e tests + benchmarks
 filegroup(
     name = "build_all_e2e_esp",
     srcs = [
@@ -163,21 +169,10 @@ filegroup(
         ":benchmark_tls_speed_esp32s3_devkit",
         ":benchmark_ble_throughput_esp32s3_devkit",
         ":benchmark_ble_x_proto_esp32s3_devkit",
-        # BK7258
-        ":tier1_net_event_bk7258",
-        ":tier1_wifi_scan_bk7258",
-        ":tier3_ble_bk7258",
-        ":tier3_hci_bk7258",
-        ":benchmark_http_speed_bk7258",
-        ":benchmark_tcp_speed_bk7258",
-        ":benchmark_https_speed_bk7258",
-        ":benchmark_tls_speed_bk7258",
-        ":benchmark_ble_throughput_bk7258",
-        ":benchmark_ble_x_proto_bk7258",
     ],
 )
 
-# All example demo ESP targets
+# ESP — example demos
 filegroup(
     name = "build_all_examples_esp",
     srcs = [
@@ -205,15 +200,6 @@ filegroup(
         ":temperature_sensor_esp32s3_devkit",
         ":timer_callback_esp32s3_devkit",
         ":wifi_dns_lookup_esp32s3_devkit",
-        # BK7258
-        ":gpio_button_bk7258",
-        ":pwm_fade_bk7258",
-        ":speaker_test_bk7258",
-        ":wifi_dns_lookup_bk7258",
-        ":ntp_test_bk7258",
-        ":hello_bk_bk7258",
-        ":nvs_storage_bk7258",
-        ":aec_test_bk7258",
     ],
 )
 
@@ -226,12 +212,88 @@ filegroup(
     ],
 )
 
-# Std platform builds (no hardware needed, verify compilation on CI)
-# Note: these are zig_binary targets, use `bazel build` not `bazel test`.
-# For actual runnable tests, use `bazel test //e2e:std` (conformance test_suite).
+# BK7258 — e2e tests + benchmarks
+filegroup(
+    name = "build_all_e2e_bk",
+    srcs = [
+        ":tier1_net_event_bk7258",
+        ":tier1_wifi_scan_bk7258",
+        ":tier3_ble_bk7258",
+        ":tier3_hci_bk7258",
+        ":benchmark_http_speed_bk7258",
+        ":benchmark_tcp_speed_bk7258",
+        ":benchmark_https_speed_bk7258",
+        ":benchmark_tls_speed_bk7258",
+        ":benchmark_ble_throughput_bk7258",
+        ":benchmark_ble_x_proto_bk7258",
+    ],
+)
+
+# BK7258 — example demos
+filegroup(
+    name = "build_all_examples_bk",
+    srcs = [
+        ":gpio_button_bk7258",
+        ":pwm_fade_bk7258",
+        ":speaker_test_bk7258",
+        ":wifi_dns_lookup_bk7258",
+        ":ntp_test_bk7258",
+        ":hello_bk_bk7258",
+        ":nvs_storage_bk7258",
+        ":aec_test_bk7258",
+    ],
+)
+
+# All BK targets (e2e + examples)
+filegroup(
+    name = "build_all_bk",
+    srcs = [
+        ":build_all_e2e_bk",
+        ":build_all_examples_bk",
+    ],
+)
+
+# Std platform — compilation check for native binaries
 filegroup(
     name = "build_all_std",
     srcs = [
         "//e2e/tier2_opus_aec/native:test",
+    ],
+)
+
+# =============================================================================
+# Aggregate: Test targets (std platform, auto-run in CI)
+# =============================================================================
+
+# All std conformance tests — `bazel test //e2e/ci:test_std`
+test_suite(
+    name = "test_std",
+    tags = ["std"],
+    tests = [
+        "//e2e/trait/time/std:test",
+        "//e2e/trait/log/std:test",
+        "//e2e/trait/sync/std:test",
+        "//e2e/trait/rng/std:test",
+        "//e2e/trait/socket/std:test",
+        "//e2e/trait/crypto/std:test",
+        "//e2e/trait/system/std:test",
+        "//e2e/trait/spawner/std:test",
+        "//e2e/trait/io/std:test",
+        "//e2e/trait/codec/std:test",
+        "//e2e/trait/rtc/std:test",
+    ],
+)
+
+# =============================================================================
+# Aggregate: All platforms build check
+# =============================================================================
+
+# Everything — `bazel build //e2e/ci:build_all`
+filegroup(
+    name = "build_all",
+    srcs = [
+        ":build_all_esp",
+        ":build_all_bk",
+        ":build_all_std",
     ],
 )

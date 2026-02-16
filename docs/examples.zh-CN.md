@@ -150,9 +150,10 @@ WiFi 连接 + DNS 解析。
 CI 目标详见 `e2e/ci/BUILD.bazel`。
 
 ```bash
-# 编译所有 ESP e2e 目标
-bazel build //e2e/ci:build_all_e2e_esp --config=ci
+# 运行所有 std 一致性测试（无需硬件）
+bazel test //e2e/ci:test_std
 
-# 运行本地测试（无需硬件）
-bazel build //e2e/ci:build_all_std
+# 编译所有 ESP/BK e2e 目标（交叉编译检查）
+bazel build //e2e/ci:build_all_esp --config=ci
+bazel build //e2e/ci:build_all_bk
 ```
