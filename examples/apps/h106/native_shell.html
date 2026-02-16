@@ -333,18 +333,68 @@ body { background:var(--bg); color:var(--text); font-family:var(--font);
         }
 
         // ======== Recording ========
+        let _isRec = false, _recTimer = null, _recCanvas = null, _recCtx = null;
+
+        function _initRecCanvas() {
+            if (_recCanvas) return;
+            _recCanvas = document.createElement('canvas');
+            _recCanvas.width = 960; _recCanvas.height = 720;
+            _recCtx = _recCanvas.getContext('2d');
+        }
+
+        async function _captureFrame() {
+            _initRecCanvas();
+            const target = document.querySelector('.sim-container') || document.body;
+            const html = target.outerHTML;
+            const styles = Array.from(document.querySelectorAll('style')).map(s => s.outerHTML).join('');
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720">
+                <foreignObject width="100%" height="100%">
+                    <div xmlns="http://www.w3.org/1999/xhtml" style="width:960px;height:720px;background:#0f1117;">
+                        ${styles}${html}
+                    </div>
+                </foreignObject></svg>`;
+            const blob = new Blob([svg], {type:'image/svg+xml;charset=utf-8'});
+            const url = URL.createObjectURL(blob);
+            return new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => {
+                    _recCtx.fillStyle = '#0f1117';
+                    _recCtx.fillRect(0,0,960,720);
+                    _recCtx.drawImage(img,0,0,960,720);
+                    URL.revokeObjectURL(url);
+                    const d = _recCtx.getImageData(0,0,960,720).data;
+                    let bin = ''; for (let i=0;i<d.length;i++) bin += String.fromCharCode(d[i]);
+                    resolve(btoa(bin));
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+                img.src = url;
+            });
+        }
+
+        async function _recordLoop() {
+            if (!_isRec) return;
+            const b64 = await _captureFrame();
+            if (b64 && _isRec) { try { await zigRecordFrame(b64); } catch(e) {} }
+            if (_isRec) _recTimer = setTimeout(_recordLoop, 33);
+        }
+
         function initRecorder() {
             const btn = document.getElementById('screenRecBtn');
             if (!btn) return;
-            let isRec = false;
             btn.addEventListener('click', async () => {
-                if (!isRec) {
-                    try { await zigStartRecording(); isRec = true; btn.textContent = '\u25A0 Stop'; btn.classList.add('recording');
+                if (!_isRec) {
+                    try {
+                        await zigStartRecording();
+                        _isRec = true;
+                        btn.textContent = '\u25A0 Stop'; btn.classList.add('recording');
                         document.getElementById('simContainer').classList.add('recording');
+                        _recordLoop();
                     } catch(e) {}
                 } else {
+                    _isRec = false;
+                    if (_recTimer) { clearTimeout(_recTimer); _recTimer = null; }
                     try { await zigStopRecording(); } catch(e) {}
-                    isRec = false; btn.textContent = '\u25CF Rec'; btn.classList.remove('recording');
+                    btn.textContent = '\u25CF Rec'; btn.classList.remove('recording');
                     document.getElementById('simContainer').classList.remove('recording');
                 }
             });
