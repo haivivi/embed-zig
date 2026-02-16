@@ -22,13 +22,15 @@ func main() {
 	fmt.Printf("%s Monitoring %s at 115200 baud...\n", prefix, port)
 	fmt.Println(prefix + " Press Ctrl+C to exit")
 
-	pythonCode := fmt.Sprintf(`
+	// Pass port via sys.argv to avoid string injection in Python code
+	pythonCode := `
 import serial, sys
+port = sys.argv[1]
 try:
-    ser = serial.Serial('%s', 115200, timeout=0.5)
+    ser = serial.Serial(port, 115200, timeout=0.5)
     ser.setDTR(False)
     ser.setRTS(False)
-    print('Connected to %s at 115200 baud')
+    print(f'Connected to {port} at 115200 baud')
     print('Waiting for data... (press RST on device if needed)')
     print('---')
     while True:
@@ -41,9 +43,9 @@ except KeyboardInterrupt:
 except Exception as e:
     print(f'Error: {e}')
     sys.exit(1)
-`, port, port)
+`
 
-	cmd := exec.Command("python3", "-c", pythonCode)
+	cmd := exec.Command("python3", "-c", pythonCode, port)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

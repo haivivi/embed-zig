@@ -38,6 +38,10 @@ type Config struct {
 	ExecRoot    string
 	ZigBin      string
 	ArminoPath  string
+
+	// Internal: mbedTLS config backup/restore (set during generateArminoProject)
+	mbedCfgBackup   string
+	mbedCfgOriginal string
 }
 
 func main() {
@@ -141,6 +145,16 @@ func build(cfg *Config) error {
 	// Step 2: Generate Armino project
 	if err := generateArminoProject(cfg, workDir, apLib, cpLib); err != nil {
 		return err
+	}
+
+	// Restore mbedTLS config after build (must run even on failure)
+	if cfg.mbedCfgBackup != "" {
+		defer func() {
+			if err := common.CopyFile(cfg.mbedCfgBackup, cfg.mbedCfgOriginal); err == nil {
+				os.Remove(cfg.mbedCfgBackup)
+				fmt.Printf("%s Restored mbedtls_psa_crypto_config.h\n", prefix)
+			}
+		}()
 	}
 
 	// Step 3: Build with Armino
@@ -477,10 +491,16 @@ func generateArminoProject(cfg *Config, workDir, apLib, cpLib string) error {
 	}
 
 	// Enable mbedTLS features if FULL_MBEDTLS is set
+	// Backup SDK header before modification, restore after build (like libaec.a pattern)
 	apConfig := filepath.Join(projectDir, "ap/config/bk7258_ap/config")
 	if fileContains(apConfig, "CONFIG_FULL_MBEDTLS=y") {
 		mbedCfg := filepath.Join(cfg.ArminoPath, "ap/components/psa_mbedtls/mbedtls_port/configs/mbedtls_psa_crypto_config.h")
 		if common.FileExists(mbedCfg) {
+			mbedCfgBak := mbedCfg + ".bak_zig"
+			if err := common.CopyFile(mbedCfg, mbedCfgBak); err == nil {
+				cfg.mbedCfgBackup = mbedCfgBak
+				cfg.mbedCfgOriginal = mbedCfg
+			}
 			enableMbedTLSFeature(mbedCfg, "// #define MBEDTLS_ECP_DP_CURVE25519_ENABLED", "#define MBEDTLS_ECP_DP_CURVE25519_ENABLED", "MBEDTLS_ECP_DP_CURVE25519_ENABLED")
 			enableMbedTLSFeature(mbedCfg, "// #define MBEDTLS_CHACHA20_C", "#define MBEDTLS_CHACHA20_C", "MBEDTLS_CHACHA20_C")
 			enableMbedTLSFeature(mbedCfg, "// #define MBEDTLS_CHACHAPOLY_C", "#define MBEDTLS_CHACHAPOLY_C", "MBEDTLS_CHACHAPOLY_C")

@@ -113,21 +113,6 @@ func FileExists(path string) bool {
 	return err == nil
 }
 
-// FindFileRecursive finds the first file matching name under root directory.
-func FindFileRecursive(root, name string) string {
-	var result string
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !info.IsDir() && info.Name() == name && result == "" {
-			result = path
-		}
-		return nil
-	})
-	return result
-}
-
 // FindFileWithPath finds a file under root where the path contains the given substring.
 func FindFileWithPath(root, name, pathContains string) string {
 	var result string
