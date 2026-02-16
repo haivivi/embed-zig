@@ -14,7 +14,7 @@ Usage:
     )
 
 Run:
-    bazel run //examples/websim/gpio_button:serve
+    bazel run //examples/apps/lvgl:sim
 """
 
 load("//bazel/zig:defs.bzl", "ZigModuleInfo")

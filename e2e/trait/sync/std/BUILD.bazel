@@ -21,5 +21,5 @@ zig_test(
         "//lib/pkg/async/channel",
         "//lib/pkg/async/waitgroup",
     ],
-    tags = ["e2e"],
+    tags = ["std", "conformance"],
 )

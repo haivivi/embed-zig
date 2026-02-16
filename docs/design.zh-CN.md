@@ -328,4 +328,4 @@ pub fn Board(comptime spec: type) type {
 - 在 CI 上单元测试
 - 无硬件开发
 
-参见 `examples/raysim/` 的模拟示例。
+参见 `examples/apps/lvgl/` 的 WebSim 模拟示例。

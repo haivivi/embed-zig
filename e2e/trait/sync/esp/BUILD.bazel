@@ -80,7 +80,7 @@ esp_zig_app(
     ],
     sdkconfig = ":sdkconfig",
     app_config = ":app_config",
-    tags = ["manual"],
+    tags = ["esp", "conformance", "manual"],
 )
 
 esp_flash(name = "flash", app = ":app")

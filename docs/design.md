@@ -323,4 +323,4 @@ This enables:
 - Unit testing on CI
 - Development without hardware
 
-See `examples/raysim/` for simulation examples.
+See `examples/apps/lvgl/` for a WebSim simulation example.

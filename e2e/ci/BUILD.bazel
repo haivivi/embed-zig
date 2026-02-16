@@ -1,0 +1,304 @@
+# Unified CI targets
+#
+# Build checks (compilation only, no execution):
+#   bazel build //e2e/ci:build_all_esp
+#   bazel build //e2e/ci:build_all_bk
+#   bazel build //e2e/ci:build_all_std
+#
+# Test execution (std platform, no hardware):
+#   bazel test //e2e/ci:test_std
+#
+# All-in-one:
+#   bazel build //e2e/ci:build_all
+
+load("//bazel/esp:transitions.bzl", "esp_board_build")
+
+package(default_visibility = ["//visibility:public"])
+
+# =============================================================================
+# E2E Tests — ESP cross-compile
+# =============================================================================
+
+# --- tier0_sync: esp32s3_devkit ---
+esp_board_build(name = "tier0_sync_esp32s3_devkit", target = "//e2e/tier0_sync/esp:app", board = "esp32s3_devkit")
+
+# --- tier0_memory: esp32s3_devkit ---
+esp_board_build(name = "tier0_memory_esp32s3_devkit", target = "//e2e/tier0_memory/esp:app", board = "esp32s3_devkit")
+
+# --- tier0_timer: esp32s3_devkit ---
+esp_board_build(name = "tier0_timer_esp32s3_devkit", target = "//e2e/tier0_timer/esp:app", board = "esp32s3_devkit")
+
+# --- tier1_net_event: esp32s3_devkit (needs env) ---
+esp_board_build(name = "tier1_net_event_esp32s3_devkit", target = "//e2e/tier1_net_event/esp:app", board = "esp32s3_devkit")
+
+# --- tier1_tls_concurrent: esp32s3_devkit (needs env) ---
+esp_board_build(name = "tier1_tls_concurrent_esp32s3_devkit", target = "//e2e/tier1_tls_concurrent/esp:app", board = "esp32s3_devkit")
+
+# --- tier1_wifi_scan: esp32s3_devkit ---
+esp_board_build(name = "tier1_wifi_scan_esp32s3_devkit", target = "//e2e/tier1_wifi_scan/esp:app", board = "esp32s3_devkit")
+
+# --- tier2_opus_aec: lichuang_gocool ---
+esp_board_build(name = "tier2_opus_aec_lichuang_gocool", target = "//e2e/tier2_opus_aec/esp:app", board = "lichuang_gocool")
+
+# --- tier3_ble: esp32s3_devkit ---
+esp_board_build(name = "tier3_ble_esp32s3_devkit", target = "//e2e/tier3_ble/esp:app", board = "esp32s3_devkit")
+
+# --- tier3_hci: esp32s3_devkit ---
+esp_board_build(name = "tier3_hci_esp32s3_devkit", target = "//e2e/tier3_hci/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/http_speed: esp32s3_devkit (needs env) ---
+esp_board_build(name = "benchmark_http_speed_esp32s3_devkit", target = "//e2e/benchmark/http_speed/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/https_speed: esp32s3_devkit (needs env) ---
+esp_board_build(name = "benchmark_https_speed_esp32s3_devkit", target = "//e2e/benchmark/https_speed/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/tcp_speed: esp32s3_devkit (needs env) ---
+esp_board_build(name = "benchmark_tcp_speed_esp32s3_devkit", target = "//e2e/benchmark/tcp_speed/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/tls_speed: esp32s3_devkit (needs env) ---
+esp_board_build(name = "benchmark_tls_speed_esp32s3_devkit", target = "//e2e/benchmark/tls_speed/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/ble_throughput: esp32s3_devkit ---
+esp_board_build(name = "benchmark_ble_throughput_esp32s3_devkit", target = "//e2e/benchmark/ble_throughput/esp:app", board = "esp32s3_devkit")
+
+# --- benchmark/ble_x_proto: esp32s3_devkit ---
+esp_board_build(name = "benchmark_ble_x_proto_esp32s3_devkit", target = "//e2e/benchmark/ble_x_proto/esp:app", board = "esp32s3_devkit")
+
+# =============================================================================
+# E2E Tests — BK7258
+# =============================================================================
+
+alias(name = "tier1_net_event_bk7258", actual = "//e2e/tier1_net_event/bk:app")
+alias(name = "tier1_wifi_scan_bk7258", actual = "//e2e/tier1_wifi_scan/bk:app")
+alias(name = "tier3_ble_bk7258", actual = "//e2e/tier3_ble/bk:app")
+alias(name = "tier3_hci_bk7258", actual = "//e2e/tier3_hci/bk:app")
+alias(name = "benchmark_http_speed_bk7258", actual = "//e2e/benchmark/http_speed/bk:app")
+alias(name = "benchmark_tcp_speed_bk7258", actual = "//e2e/benchmark/tcp_speed/bk:app")
+alias(name = "benchmark_https_speed_bk7258", actual = "//e2e/benchmark/https_speed/bk:app")
+alias(name = "benchmark_tls_speed_bk7258", actual = "//e2e/benchmark/tls_speed/bk:app")
+alias(name = "benchmark_ble_throughput_bk7258", actual = "//e2e/benchmark/ble_throughput/bk:app")
+alias(name = "benchmark_ble_x_proto_bk7258", actual = "//e2e/benchmark/ble_x_proto/bk:app")
+
+# =============================================================================
+# Example Demos — ESP cross-compile
+# =============================================================================
+
+# --- adc_button: korvo2_v3 ---
+esp_board_build(name = "adc_button_korvo2_v3", target = "//examples/apps/adc_button/esp:app", board = "korvo2_v3")
+
+# --- aec_test: korvo2_v3, lichuang_szp, lichuang_gocool ---
+esp_board_build(name = "aec_test_korvo2_v3", target = "//examples/apps/aec_test/esp:app", board = "korvo2_v3")
+esp_board_build(name = "aec_test_lichuang_szp", target = "//examples/apps/aec_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "aec_test_lichuang_gocool", target = "//examples/apps/aec_test/esp:app", board = "lichuang_gocool")
+
+# --- gpio_button: esp32s3_devkit, lichuang_szp, lichuang_gocool ---
+esp_board_build(name = "gpio_button_esp32s3_devkit", target = "//examples/apps/gpio_button/esp:app", board = "esp32s3_devkit")
+# esp_board_build(name = "gpio_button_korvo2_v3", target = "//examples/apps/gpio_button/esp:app", board = "korvo2_v3")  # TODO: pre-existing board.zig error
+esp_board_build(name = "gpio_button_lichuang_szp", target = "//examples/apps/gpio_button/esp:app", board = "lichuang_szp")
+esp_board_build(name = "gpio_button_lichuang_gocool", target = "//examples/apps/gpio_button/esp:app", board = "lichuang_gocool")
+
+# --- led_strip_anim: esp32s3_devkit ---
+esp_board_build(name = "led_strip_anim_esp32s3_devkit", target = "//examples/apps/led_strip_anim/esp:app", board = "esp32s3_devkit")
+# esp_board_build(name = "led_strip_anim_korvo2_v3", target = "//examples/apps/led_strip_anim/esp:app", board = "korvo2_v3")  # TODO: pre-existing board.zig error
+
+# --- led_strip_flash: esp32s3_devkit ---
+esp_board_build(name = "led_strip_flash_esp32s3_devkit", target = "//examples/apps/led_strip_flash/esp:app", board = "esp32s3_devkit")
+# esp_board_build(name = "led_strip_flash_korvo2_v3", target = "//examples/apps/led_strip_flash/esp:app", board = "korvo2_v3")  # TODO: pre-existing board.zig error
+
+# --- motion_test: lichuang_szp, lichuang_gocool ---
+esp_board_build(name = "motion_test_lichuang_szp", target = "//examples/apps/motion_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "motion_test_lichuang_gocool", target = "//examples/apps/motion_test/esp:app", board = "lichuang_gocool")
+
+# --- ntp_test: esp32s3_devkit, korvo2_v3 (needs env) ---
+esp_board_build(name = "ntp_test_esp32s3_devkit", target = "//examples/apps/ntp_test/esp:app", board = "esp32s3_devkit")
+esp_board_build(name = "ntp_test_korvo2_v3", target = "//examples/apps/ntp_test/esp:app", board = "korvo2_v3")
+
+# --- nvs_storage: esp32s3_devkit ---
+esp_board_build(name = "nvs_storage_esp32s3_devkit", target = "//examples/apps/nvs_storage/esp:app", board = "esp32s3_devkit")
+
+# --- pwm_fade: esp32s3_devkit ---
+esp_board_build(name = "pwm_fade_esp32s3_devkit", target = "//examples/apps/pwm_fade/esp:app", board = "esp32s3_devkit")
+
+# --- speaker_test: korvo2_v3, lichuang_szp, lichuang_gocool ---
+esp_board_build(name = "speaker_test_korvo2_v3", target = "//examples/apps/speaker_test/esp:app", board = "korvo2_v3")
+esp_board_build(name = "speaker_test_lichuang_szp", target = "//examples/apps/speaker_test/esp:app", board = "lichuang_szp")
+esp_board_build(name = "speaker_test_lichuang_gocool", target = "//examples/apps/speaker_test/esp:app", board = "lichuang_gocool")
+
+# --- temperature_sensor: esp32s3_devkit ---
+esp_board_build(name = "temperature_sensor_esp32s3_devkit", target = "//examples/apps/temperature_sensor/esp:app", board = "esp32s3_devkit")
+
+# --- timer_callback: esp32s3_devkit ---
+esp_board_build(name = "timer_callback_esp32s3_devkit", target = "//examples/apps/timer_callback/esp:app", board = "esp32s3_devkit")
+
+# --- wifi_dns_lookup: esp32s3_devkit (needs env) ---
+esp_board_build(name = "wifi_dns_lookup_esp32s3_devkit", target = "//examples/apps/wifi_dns_lookup/esp:app", board = "esp32s3_devkit")
+
+# =============================================================================
+# Example Demos — BK7258
+# =============================================================================
+
+alias(name = "gpio_button_bk7258", actual = "//examples/apps/gpio_button/bk:app")
+alias(name = "pwm_fade_bk7258", actual = "//examples/apps/pwm_fade/bk:app")
+alias(name = "speaker_test_bk7258", actual = "//examples/apps/speaker_test/bk:app")
+alias(name = "wifi_dns_lookup_bk7258", actual = "//examples/apps/wifi_dns_lookup/bk:app")
+alias(name = "ntp_test_bk7258", actual = "//examples/apps/ntp_test/bk:app")
+alias(name = "hello_bk_bk7258", actual = "//examples/apps/hello_bk/bk:app")
+alias(name = "nvs_storage_bk7258", actual = "//examples/apps/nvs_storage/bk:app")
+alias(name = "aec_test_bk7258", actual = "//examples/apps/aec_test/bk:app")
+
+# =============================================================================
+# Aggregate: Build targets (compilation check, no execution)
+# =============================================================================
+
+# ESP — e2e tests + benchmarks
+filegroup(
+    name = "build_all_e2e_esp",
+    srcs = [
+        ":tier0_sync_esp32s3_devkit",
+        ":tier0_memory_esp32s3_devkit",
+        ":tier0_timer_esp32s3_devkit",
+        ":tier1_net_event_esp32s3_devkit",
+        ":tier1_tls_concurrent_esp32s3_devkit",
+        ":tier1_wifi_scan_esp32s3_devkit",
+        ":tier2_opus_aec_lichuang_gocool",
+        ":tier3_ble_esp32s3_devkit",
+        ":tier3_hci_esp32s3_devkit",
+        ":benchmark_http_speed_esp32s3_devkit",
+        ":benchmark_https_speed_esp32s3_devkit",
+        ":benchmark_tcp_speed_esp32s3_devkit",
+        ":benchmark_tls_speed_esp32s3_devkit",
+        ":benchmark_ble_throughput_esp32s3_devkit",
+        ":benchmark_ble_x_proto_esp32s3_devkit",
+    ],
+)
+
+# ESP — example demos
+filegroup(
+    name = "build_all_examples_esp",
+    srcs = [
+        ":adc_button_korvo2_v3",
+        ":aec_test_korvo2_v3",
+        ":aec_test_lichuang_szp",
+        ":aec_test_lichuang_gocool",
+        ":gpio_button_esp32s3_devkit",
+        # ":gpio_button_korvo2_v3",  # TODO: pre-existing board.zig error
+        ":gpio_button_lichuang_szp",
+        ":gpio_button_lichuang_gocool",
+        ":led_strip_anim_esp32s3_devkit",
+        # ":led_strip_anim_korvo2_v3",  # TODO: pre-existing board.zig error
+        ":led_strip_flash_esp32s3_devkit",
+        # ":led_strip_flash_korvo2_v3",  # TODO: pre-existing board.zig error
+        ":motion_test_lichuang_szp",
+        ":motion_test_lichuang_gocool",
+        ":ntp_test_esp32s3_devkit",
+        ":ntp_test_korvo2_v3",
+        ":nvs_storage_esp32s3_devkit",
+        ":pwm_fade_esp32s3_devkit",
+        ":speaker_test_korvo2_v3",
+        ":speaker_test_lichuang_szp",
+        ":speaker_test_lichuang_gocool",
+        ":temperature_sensor_esp32s3_devkit",
+        ":timer_callback_esp32s3_devkit",
+        ":wifi_dns_lookup_esp32s3_devkit",
+    ],
+)
+
+# All ESP targets (e2e + examples)
+filegroup(
+    name = "build_all_esp",
+    srcs = [
+        ":build_all_e2e_esp",
+        ":build_all_examples_esp",
+    ],
+)
+
+# BK7258 — e2e tests + benchmarks
+filegroup(
+    name = "build_all_e2e_bk",
+    srcs = [
+        ":tier1_net_event_bk7258",
+        ":tier1_wifi_scan_bk7258",
+        ":tier3_ble_bk7258",
+        ":tier3_hci_bk7258",
+        ":benchmark_http_speed_bk7258",
+        ":benchmark_tcp_speed_bk7258",
+        ":benchmark_https_speed_bk7258",
+        ":benchmark_tls_speed_bk7258",
+        ":benchmark_ble_throughput_bk7258",
+        ":benchmark_ble_x_proto_bk7258",
+    ],
+)
+
+# BK7258 — example demos
+filegroup(
+    name = "build_all_examples_bk",
+    srcs = [
+        ":gpio_button_bk7258",
+        ":pwm_fade_bk7258",
+        ":speaker_test_bk7258",
+        ":wifi_dns_lookup_bk7258",
+        ":ntp_test_bk7258",
+        ":hello_bk_bk7258",
+        ":nvs_storage_bk7258",
+        ":aec_test_bk7258",
+    ],
+)
+
+# All BK targets (e2e + examples)
+filegroup(
+    name = "build_all_bk",
+    srcs = [
+        ":build_all_e2e_bk",
+        ":build_all_examples_bk",
+    ],
+)
+
+# Std platform — compilation check for native binaries
+# (targets that build but aren't zig_test, so can't go in test_std)
+filegroup(
+    name = "build_all_std",
+    srcs = [
+        "//e2e/tier2_opus_aec/native:test",
+    ],
+)
+
+# =============================================================================
+# Aggregate: Test targets (std platform, auto-run in CI)
+# =============================================================================
+
+# All std tests — `bazel test //e2e/ci:test_std`
+# Includes conformance tests + tier tests with std support.
+test_suite(
+    name = "test_std",
+    tags = ["std"],
+    tests = [
+        # Conformance (trait verification)
+        "//e2e/trait/time/std:test",
+        "//e2e/trait/log/std:test",
+        "//e2e/trait/sync/std:test",
+        "//e2e/trait/rng/std:test",
+        "//e2e/trait/socket/std:test",
+        "//e2e/trait/crypto/std:test",
+        "//e2e/trait/system/std:test",
+        "//e2e/trait/spawner/std:test",
+        "//e2e/trait/io/std:test",
+        "//e2e/trait/codec/std:test",
+        "//e2e/trait/rtc/std:test",
+        # Tier 0 (async primitives)
+        "//e2e/tier0_timer/native:test",
+    ],
+)
+
+# =============================================================================
+# Aggregate: All platforms build check
+# =============================================================================
+
+# Everything — `bazel build //e2e/ci:build_all`
+filegroup(
+    name = "build_all",
+    srcs = [
+        ":build_all_esp",
+        ":build_all_bk",
+        ":build_all_std",
+    ],
+)

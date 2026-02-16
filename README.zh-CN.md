@@ -44,7 +44,7 @@ bazel run //examples/apps/led_strip_flash:flash --//bazel:port=/dev/ttyUSB0
 或者在模拟器中运行（无需硬件）：
 
 ```bash
-cd examples/raysim/gpio_button && zig build run
+bazel run //examples/apps/lvgl:sim
 ```
 
 ---

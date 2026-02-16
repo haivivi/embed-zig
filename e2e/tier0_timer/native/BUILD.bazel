@@ -1,0 +1,19 @@
+# Timer Test — std platform (software timer)
+#
+# Run:   bazel test //e2e/tier0_timer/native:test
+# Build: bazel build //e2e/tier0_timer/native:test
+
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "test",
+    main = "main.zig",
+    srcs = ["main.zig"],
+    deps = [
+        "//lib/platform/std",
+        "//lib/pkg/async/timer",
+    ],
+    tags = ["std", "e2e"],
+)

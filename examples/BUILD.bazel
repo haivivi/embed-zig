@@ -1,28 +1,32 @@
-# Examples
+# Examples — demo apps and BK-platform apps
+#
+# Functional tests and benchmarks have been moved to //e2e/
+# See //e2e/ci/BUILD.bazel for unified CI targets.
+
 package(default_visibility = ["//visibility:public"])
 
-# All examples that can be built in CI (excluding ESP hardware targets)
-# This includes native/desktop examples and library compilation checks
 filegroup(
     name = "all",
     srcs = [
-        # ESP examples - only check that they compile (not flash/run)
-        # These verify that the code compiles for xtensa target
-        "//examples/apps/async_test:app_srcs",
-        "//examples/apps/ble_e2e_test:app_srcs",
-        "//examples/apps/ble_throughput:app_srcs",
-        "//examples/apps/ble_x_proto_test:app_srcs",
-        "//examples/apps/http_speed_test:app_srcs",
-        "//examples/apps/https_speed_test:app_srcs",
+        "//examples/apps/adc_button:app_srcs",
+        "//examples/apps/adc_piano:app_srcs",
+        "//examples/apps/aec_test:app_srcs",
+        "//examples/apps/ble_adv_scan_test:app_srcs",
+        "//examples/apps/crypto_test:app_srcs",
+        "//examples/apps/gpio_button:app_srcs",
+        "//examples/apps/hello_bk:app_srcs",
+        "//examples/apps/https_native_test:app_srcs",
+        "//examples/apps/led_strip_anim:app_srcs",
+        "//examples/apps/led_strip_flash:app_srcs",
         "//examples/apps/mqtt0_test:app_srcs",
+        "//examples/apps/motion_test:app_srcs",
         "//examples/apps/ntp_test:app_srcs",
-        "//examples/apps/opus_aec_test:app_srcs",
+        "//examples/apps/nvs_storage:app_srcs",
+        "//examples/apps/opus_test:app_srcs",
+        "//examples/apps/pwm_fade:app_srcs",
         "//examples/apps/speaker_test:app_srcs",
-        "//examples/apps/timer_test:app_srcs",
-        "//examples/apps/tls_concurrent_test:app_srcs",
-        "//examples/apps/tls_speed_test:app_srcs",
+        "//examples/apps/temperature_sensor:app_srcs",
+        "//examples/apps/timer_callback:app_srcs",
         "//examples/apps/wifi_dns_lookup:app_srcs",
-        # Native examples - run on macOS/Linux
-        "//examples/apps/opus_aec_test/native:test",
     ],
 )

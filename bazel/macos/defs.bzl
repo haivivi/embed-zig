@@ -5,11 +5,11 @@ Usage:
 
     macos_run(
         name = "run",
-        project_dir = "examples/apps/tls_speed_test/macos",
+        project_dir = "e2e/benchmark/tls_speed/macos",
     )
 
 Run:
-    bazel run //examples/apps/tls_speed_test/macos:run
+    bazel run //e2e/benchmark/tls_speed/macos:run
 """
 
 def _shell_quote(s):

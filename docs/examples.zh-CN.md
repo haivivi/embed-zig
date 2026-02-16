@@ -30,11 +30,6 @@ bazel run //examples/apps/<名称>:flash --//bazel:port=/dev/ttyUSB0
   bazel run //examples/apps/gpio_button:flash --//bazel:port=/dev/ttyUSB1
   ```
 
-- **Zig / 桌面模拟器 (Raylib)**
-  ```bash
-  bazel run //examples/raysim/gpio_button:run
-  ```
-
 ## led_strip_flash
 
 RGB LED 灯带闪烁。
@@ -149,69 +144,16 @@ WiFi 连接 + DNS 解析。
       --action_env=WIFI_PASSWORD
   ```
 
-## http_speed_test
+## E2E 测试和性能基准
 
-HTTP 下载测速。
+功能测试和性能基准已迁移到 `e2e/` 目录。
+CI 目标详见 `e2e/ci/BUILD.bazel`。
 
-**首先，在电脑上启动测试服务器：**
 ```bash
-cd examples/apps/http_speed_test/server && python3 server.py
-# 或者: bazel run //examples/apps/http_speed_test/server:run
+# 运行所有 std 一致性测试（无需硬件）
+bazel test //e2e/ci:test_std
+
+# 编译所有 ESP/BK e2e 目标（交叉编译检查）
+bazel build //e2e/ci:build_all_esp --config=ci
+bazel build //e2e/ci:build_all_bk
 ```
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  WIFI_PASSWORD=密码 bazel build //examples/apps/http_speed_test:esp \
-      --define WIFI_SSID=网络名 \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-
-  WIFI_PASSWORD=密码 bazel run //examples/apps/http_speed_test:flash \
-      --//bazel:port=/dev/ttyUSB0 \
-      --define WIFI_SSID=网络名 \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-  ```
-
-## https_speed_test
-
-HTTPS 下载测速（带 TLS）。
-
-**首先，启动 HTTPS 测试服务器：**
-```bash
-cd examples/apps/https_speed_test/server && python3 server.py
-# 或者: bazel run //examples/apps/https_speed_test/server:run
-```
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  WIFI_PASSWORD=密码 bazel build //examples/apps/https_speed_test:esp \
-      --define WIFI_SSID=网络名 \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-
-  WIFI_PASSWORD=密码 bazel run //examples/apps/https_speed_test:flash \
-      --//bazel:port=/dev/ttyUSB0 \
-      --define WIFI_SSID=网络名 \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-  ```
-
-## memory_attr_test
-
-PSRAM/IRAM 内存分配测试。
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  bazel build //examples/apps/memory_attr_test:esp
-  bazel run //examples/apps/memory_attr_test:flash --//bazel:port=/dev/ttyUSB0
-  ```
-
-## ui_demo
-
-UI 组件演示（仅桌面模拟器）。
-
-- **Zig / 桌面模拟器 (Raylib)**
-  ```bash
-  bazel run //examples/raysim/ui_demo:run
-  ```

@@ -46,7 +46,7 @@ bazel run //examples/apps/led_strip_flash:flash --//bazel:port=/dev/ttyUSB0
 Or run in simulation (no hardware needed):
 
 ```bash
-cd examples/raysim/gpio_button && zig build run
+bazel run //examples/apps/lvgl:sim
 ```
 
 ---

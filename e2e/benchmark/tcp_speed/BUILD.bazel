@@ -1,0 +1,11 @@
+# Benchmark: TCP Speed Test (Echo Mode)
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)
