@@ -379,10 +379,12 @@ fn renderGameList(fb: *FB, state: *const AppState, xo: i16) void {
     blitBgOff(fb, xo);
     if (xo != 0) return;
 
+    renderHeader(fb);
+
     // List: 224x240, center, padRow=4, padTop=20, flexMain=center
-    // 4 items × (55+4) = 236px. Center vertically: top ≈ 20
+    // 4 items × (55+4) = 236px. Start below header
     const list_x: u16 = (SCREEN_W - 224) / 2; // = 8
-    const list_top: u16 = 20;
+    const list_top: u16 = 50; // below 54px header
 
     for (0..4) |i| {
         const y = list_top + @as(u16, @intCast(i)) * 59;
@@ -413,9 +415,11 @@ fn renderSettings(fb: *FB, state: *const AppState, xo: i16) void {
     blitBgOff(fb, xo);
     if (xo != 0) return;
 
-    // List: 224x240, center, padRow=4, padTop=8
+    renderHeader(fb);
+
+    // List: 224x240, center, padRow=4, padTop=8 (below header)
     const list_x: u16 = (SCREEN_W - 224) / 2;
-    const base_y: i32 = 8 - @as(i32, state.settings_scroll);
+    const base_y: i32 = 54 - @as(i32, state.settings_scroll); // start below header
 
     for (0..9) |i| {
         const iy: i32 = base_y + @as(i32, @intCast(i)) * 59;
