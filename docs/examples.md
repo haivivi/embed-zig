@@ -154,5 +154,5 @@ See `e2e/ci/BUILD.bazel` for CI targets.
 bazel build //e2e/ci:build_all_e2e_esp --config=ci
 
 # Run native tests (no hardware needed)
-bazel build //e2e/ci:test_all_std
+bazel build //e2e/ci:build_all_std
 ```

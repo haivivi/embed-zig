@@ -226,9 +226,11 @@ filegroup(
     ],
 )
 
-# Std platform tests (run on CI without hardware)
+# Std platform builds (no hardware needed, verify compilation on CI)
+# Note: these are zig_binary targets, use `bazel build` not `bazel test`.
+# For actual runnable tests, use `bazel test //e2e:std` (conformance test_suite).
 filegroup(
-    name = "test_all_std",
+    name = "build_all_std",
     srcs = [
         "//e2e/tier2_opus_aec/native:test",
     ],

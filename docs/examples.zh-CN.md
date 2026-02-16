@@ -154,5 +154,5 @@ CI 目标详见 `e2e/ci/BUILD.bazel`。
 bazel build //e2e/ci:build_all_e2e_esp --config=ci
 
 # 运行本地测试（无需硬件）
-bazel build //e2e/ci:test_all_std
+bazel build //e2e/ci:build_all_std
 ```
