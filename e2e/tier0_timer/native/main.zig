@@ -6,8 +6,8 @@
 const std = @import("std");
 const timer_pkg = @import("timer");
 
-const StdRt = @import("runtime");
-const Timer = timer_pkg.TimerService(StdRt);
+const std_impl = @import("std_impl");
+const Timer = timer_pkg.TimerService(std_impl.runtime);
 const TimerHandle = timer_pkg.TimerHandle;
 
 fn printLog(comptime fmt: []const u8, args: anytype) void {

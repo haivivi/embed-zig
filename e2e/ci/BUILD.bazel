@@ -254,6 +254,7 @@ filegroup(
 )
 
 # Std platform — compilation check for native binaries
+# (targets that build but aren't zig_test, so can't go in test_std)
 filegroup(
     name = "build_all_std",
     srcs = [
@@ -265,11 +266,13 @@ filegroup(
 # Aggregate: Test targets (std platform, auto-run in CI)
 # =============================================================================
 
-# All std conformance tests — `bazel test //e2e/ci:test_std`
+# All std tests — `bazel test //e2e/ci:test_std`
+# Includes conformance tests + tier tests with std support.
 test_suite(
     name = "test_std",
     tags = ["std"],
     tests = [
+        # Conformance (trait verification)
         "//e2e/trait/time/std:test",
         "//e2e/trait/log/std:test",
         "//e2e/trait/sync/std:test",
@@ -281,6 +284,8 @@ test_suite(
         "//e2e/trait/io/std:test",
         "//e2e/trait/codec/std:test",
         "//e2e/trait/rtc/std:test",
+        # Tier 0 (async primitives)
+        "//e2e/tier0_timer/native:test",
     ],
 )
 
