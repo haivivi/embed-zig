@@ -1,0 +1,8 @@
+# Tier 3: BLE 60-Test Suite
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
+)

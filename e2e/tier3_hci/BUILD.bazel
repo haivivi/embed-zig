@@ -1,0 +1,8 @@
+# Tier 3: HCI Smoke Test
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
+)

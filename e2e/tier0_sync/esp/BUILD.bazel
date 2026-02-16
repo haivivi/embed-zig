@@ -1,0 +1,40 @@
+# Async Test - ESP Platform
+# Tests cross-platform async framework (CancellationToken, WaitGroup, Channel)
+
+load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "//e2e/tier0_sync:app_srcs",
+    ] + glob(["**/*"]),
+)
+
+esp_modules()
+
+esp_zig_app(
+    name = "app",
+    app = ":srcs",
+    boards = ["esp32s3_devkit"],
+    requires = ["freertos"],
+    deps = [
+        ":idf",
+        ":esp",
+        "//lib/hal",
+        "//lib/trait",
+        "//lib/pkg/async/cancellation",
+        "//lib/pkg/async/waitgroup",
+        "//lib/pkg/drivers/audio",
+        "//lib/pkg/math",
+        "//lib/pkg/motion",
+    ],
+    sdkconfig = "//examples/esp:esp32s3",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "flash",
+    app = ":app",
+)
