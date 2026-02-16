@@ -37,6 +37,19 @@ pub fn loadImageFromFs(fs: anytype, path: []const u8, buf: []u8) ?Image {
 // ============================================================================
 
 pub const PATH_FONT = "/fonts/NotoSansSC-Bold.ttf";
+
+// Intro page
+pub const PATH_ICON_HAIVIVI = "/assets/icon_haivivi.rgb565";
+pub const PATH_INTRO_SETTING = "/assets/intro_setting.rgb565";
+pub const PATH_INTRO_LIST = "/assets/intro_list.rgb565";
+pub const PATH_INTRO_DEVICE = "/assets/intro_device.rgb565";
+pub const PATH_INTRO_ARROW = "/assets/intro_arrow.rgb565";
+
+pub const INTRO_LABELS = [3][]const u8{
+    "\xe5\xbc\x80\xe5\xa7\x8b\xe9\x85\x8d\xe5\xaf\xb9",       // 开始配对
+    "\xe4\xba\x86\xe8\xa7\xa3\xe8\xae\xbe\xe7\xbd\xae",       // 了解设置
+    "\xe4\xba\x86\xe8\xa7\xa3\xe8\xae\xbe\xe5\xa4\x87",       // 了解设备
+};
 pub const PATH_STARTUP_ANIM = "/anim/startup.anim";
 pub const PATH_BG = "/assets/bg.rgb565";
 pub const PATH_ULTRAMAN = "/assets/ultraman.rgb565";

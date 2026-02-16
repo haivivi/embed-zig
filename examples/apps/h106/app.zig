@@ -44,6 +44,11 @@ pub fn init() void {
     res.btn_list = assets.loadImageFromFs(&board.fs, assets.PATH_BTN_LIST_ITEM, &dummy);
     for (0..4) |i| res.game_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_GAME_ICONS[i], &dummy);
     for (0..9) |i| res.setting_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_SETTING_ICONS[i], &dummy);
+    res.icon_haivivi = assets.loadImageFromFs(&board.fs, assets.PATH_ICON_HAIVIVI, &dummy);
+    res.intro_setting = assets.loadImageFromFs(&board.fs, assets.PATH_INTRO_SETTING, &dummy);
+    res.intro_list = assets.loadImageFromFs(&board.fs, assets.PATH_INTRO_LIST, &dummy);
+    res.intro_device = assets.loadImageFromFs(&board.fs, assets.PATH_INTRO_DEVICE, &dummy);
+    res.intro_arrow = assets.loadImageFromFs(&board.fs, assets.PATH_INTRO_ARROW, &dummy);
 
     if (res.bg == null) { Board.log.err("Failed to load bg", .{}); return; }
 

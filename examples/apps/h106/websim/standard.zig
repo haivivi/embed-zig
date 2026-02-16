@@ -37,6 +37,12 @@ pub const FsDriver = websim.EmbedFs(&.{
     .{ .path = "/assets/listicon_8.rgb565", .data = @embedFile("../assets/listicon_8.rgb565") },
     // Font
     .{ .path = "/fonts/NotoSansSC-Bold.ttf", .data = @embedFile("../assets/NotoSansSC-Bold.ttf") },
+    // Intro page assets
+    .{ .path = "/assets/icon_haivivi.rgb565", .data = @embedFile("../assets/icon_haivivi.rgb565") },
+    .{ .path = "/assets/intro_setting.rgb565", .data = @embedFile("../assets/intro_setting.rgb565") },
+    .{ .path = "/assets/intro_list.rgb565", .data = @embedFile("../assets/intro_list.rgb565") },
+    .{ .path = "/assets/intro_device.rgb565", .data = @embedFile("../assets/intro_device.rgb565") },
+    .{ .path = "/assets/intro_arrow.rgb565", .data = @embedFile("../assets/intro_arrow.rgb565") },
     // Startup animation
     .{ .path = "/anim/startup.anim", .data = @embedFile("../assets/tiga_startup.anim") },
 });
