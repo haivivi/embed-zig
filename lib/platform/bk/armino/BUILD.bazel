@@ -1,0 +1,137 @@
+# Armino SDK low-level bindings — source files only
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["src/armino.zig"])
+
+# Zig source files
+filegroup(
+    name = "zig_srcs",
+    srcs = glob(["src/**/*.zig"]),
+)
+
+# Core C helper (log, time, rtos — works on both CP and AP)
+filegroup(
+    name = "c_helpers_core",
+    srcs = ["src/bk_zig_helper.c"],
+)
+
+# WiFi + Event + Netif helper
+filegroup(
+    name = "c_helpers_wifi",
+    srcs = ["src/bk_zig_wifi_helper.c"],
+)
+
+# Socket helper (LWIP)
+filegroup(
+    name = "c_helpers_socket",
+    srcs = ["src/bk_zig_socket_helper.c"],
+)
+
+# GPIO helper
+filegroup(
+    name = "c_helpers_gpio",
+    srcs = ["src/bk_zig_gpio_helper.c"],
+)
+
+# PWM helper
+filegroup(
+    name = "c_helpers_pwm",
+    srcs = ["src/bk_zig_pwm_helper.c"],
+)
+
+# Speaker helper (direct DAC+DMA, no pipeline)
+filegroup(
+    name = "c_helpers_speaker",
+    srcs = ["src/bk_zig_speaker_helper.c"],
+)
+
+# Mic helper (direct audio ADC+DMA)
+filegroup(
+    name = "c_helpers_mic",
+    srcs = ["src/bk_zig_mic_helper.c"],
+)
+
+# Crypto helper (mbedTLS: SHA, AES-GCM, HKDF, HMAC, P256, P384, RNG)
+filegroup(
+    name = "c_helpers_crypto",
+    srcs = ["src/bk_zig_crypto_helper.c"],
+)
+
+# KVS helper (EasyFlash V4)
+filegroup(
+    name = "c_helpers_kvs",
+    srcs = ["src/bk_zig_kvs_helper.c"],
+)
+
+# ADC helper (SARADC)
+filegroup(
+    name = "c_helpers_adc",
+    srcs = ["src/bk_zig_adc_helper.c"],
+)
+
+# Heap helper (PSRAM + SRAM allocator)
+filegroup(
+    name = "c_helpers_heap",
+    srcs = ["src/bk_zig_heap_helper.c"],
+)
+
+# AEC helper (wraps libaec.a calls in C for safe ABI)
+filegroup(
+    name = "c_helpers_aec",
+    srcs = ["src/bk_zig_aec_helper.c"],
+)
+
+# Runtime helper (Mutex, Condition, spawn for async packages)
+filegroup(
+    name = "c_helpers_runtime",
+    srcs = ["src/bk_zig_runtime_helper.c"],
+)
+
+# Native HTTPS test (mbedTLS direct — for speed comparison)
+filegroup(
+    name = "c_helpers_https_native",
+    srcs = ["src/bk_zig_https_native_helper.c"],
+)
+
+# X.509 certificate verification (mbedTLS x509_crt_*)
+filegroup(
+    name = "c_helpers_x509",
+    srcs = ["src/bk_zig_x509_helper.c"],
+)
+
+# RSA signature verification (PKCS1v1.5 + PSS via mbedTLS)
+filegroup(
+    name = "c_helpers_rsa",
+    srcs = ["src/bk_zig_rsa_helper.c"],
+)
+
+# Software timer (RTOS periodic + one-shot)
+filegroup(
+    name = "c_helpers_timer",
+    srcs = ["src/bk_zig_timer_helper.c"],
+)
+
+# BLE HCI transport (ring buffer + callbacks for BLE controller)
+filegroup(
+    name = "c_helpers_ble",
+    srcs = ["src/bk_zig_ble_helper.c"],
+)
+
+# Temperature sensor (internal MCU temp via bk_sensor)
+filegroup(
+    name = "c_helpers_temp",
+    srcs = ["src/bk_zig_temp_helper.c"],
+)
+
+# ChaCha20-Poly1305 AEAD (mbedTLS)
+filegroup(
+    name = "c_helpers_chacha",
+    srcs = ["src/bk_zig_chacha_helper.c"],
+)
+
+# All C sources
+filegroup(
+    name = "c_srcs",
+    srcs = glob(["src/**/*.c", "src/**/*.h"], allow_empty = True),
+)

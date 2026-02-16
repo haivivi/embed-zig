@@ -1,3 +1,5 @@
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 """Zig build rules for Bazel — invoke zig compiler directly, no build.zig.
 
 Rules:
@@ -733,6 +735,11 @@ def _zig_static_library_impl(ctx):
             target_args.extend(["-O", ctx.attr.optimize])
         for sysdir in ctx.attr.system_include_dirs:
             target_args.extend(["-isystem", sysdir])
+        # Dynamic sysroot from build setting (e.g., --//bazel:armino_path)
+        if ctx.attr.sysroot_path_setting and ctx.attr.sysroot_subdir:
+            base = ctx.attr.sysroot_path_setting[BuildSettingInfo].value
+            if base:
+                target_args.extend(["-isystem", base + "/" + ctx.attr.sysroot_subdir])
         # Match host compilation order (L425): pre_args (-I) → src_args (C files) → main -M → dep -M
         # C/ASM source files MUST come BEFORE -M module definitions (zig CLI requirement:
         # C sources are module-scoped, applied to the most recently defined -M module).
@@ -798,6 +805,13 @@ zig_static_library = rule(
         "system_include_dirs": attr.string_list(
             default = [],
             doc = "System include directories (-isystem) for cross-compilation (e.g., newlib headers for xtensa)",
+        ),
+        "sysroot_path_setting": attr.label(
+            doc = "Optional build setting (string_flag) providing a base path. Appended with sysroot_subdir to form an -isystem path.",
+        ),
+        "sysroot_subdir": attr.string(
+            default = "",
+            doc = "Subdirectory under sysroot_path_setting to use as -isystem (e.g., 'gcc-arm-none-eabi-10.3-2021.10/arm-none-eabi/include')",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",

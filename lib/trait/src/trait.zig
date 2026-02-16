@@ -9,7 +9,7 @@
 //! |----------|-----------|--------------------------------------|-----------------|
 //! | socket   | socket.zig| tcp, udp, connect, send, recv, ...   | http, dns       |
 //! | i2c      | i2c.zig   | write, writeRead                     | drivers         |
-//! | time     | time.zig  | sleepMs, getTimeMs                   | apps, SDK       |
+//! | time     | time.zig  | sleepMs, nowMs                   | apps, SDK       |
 //! | log      | log.zig   | info, err, warn, debug               | apps, SDK       |
 //! | rng      | rng.zig   | fill                                 | tls, crypto     |
 //!

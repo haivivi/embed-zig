@@ -43,7 +43,7 @@
 //! ```zig
 //! var host = Host(Rt, HciDriver, &my_services).init(&hci_driver, allocator);
 //! host.gatt.addService(...);
-//! try host.start();  // HCI Reset + Read Buffer Size + spawn loops
+//! try host.start(opts);  // HCI Reset + Read Buffer Size + spawn loops
 //! while (host.nextEvent()) |event| { ... }
 //! host.stop();
 //! ```
@@ -220,6 +220,55 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         };
 
         // ================================================================
+        // Fixed-capacity connection map (freestanding-compatible)
+        // ================================================================
+
+        const ConnMap = struct {
+            const MAX_CONNS = 8;
+            handles: [MAX_CONNS]u16 = .{0xFFFF} ** MAX_CONNS,
+            ptrs: [MAX_CONNS]?*ConnectionState = .{null} ** MAX_CONNS,
+            count: usize = 0,
+
+            fn init() ConnMap { return .{}; }
+            fn deinit(_: *ConnMap) void {}
+
+            fn get(self: *const ConnMap, handle: u16) ?*ConnectionState {
+                for (0..self.count) |i| {
+                    if (self.handles[i] == handle) return self.ptrs[i];
+                }
+                return null;
+            }
+            fn getPtr(self: *ConnMap, handle: u16) ?*ConnectionState { return self.get(handle); }
+            fn put(self: *ConnMap, handle: u16, conn: *ConnectionState) !void {
+                for (0..self.count) |i| {
+                    if (self.handles[i] == handle) { self.ptrs[i] = conn; return; }
+                }
+                if (self.count >= MAX_CONNS) return error.OutOfMemory;
+                self.handles[self.count] = handle;
+                self.ptrs[self.count] = conn;
+                self.count += 1;
+            }
+            fn orderedRemove(self: *ConnMap, handle: u16) ?*ConnectionState {
+                for (0..self.count) |i| {
+                    if (self.handles[i] == handle) {
+                        const val = self.ptrs[i];
+                        var j = i;
+                        while (j + 1 < self.count) : (j += 1) {
+                            self.handles[j] = self.handles[j + 1];
+                            self.ptrs[j] = self.ptrs[j + 1];
+                        }
+                        self.count -= 1;
+                        return val;
+                    }
+                }
+                return null;
+            }
+            fn values(self: *const ConnMap) []const ?*ConnectionState {
+                return self.ptrs[0..self.count];
+            }
+        };
+
+        // ================================================================
         // Core state
         // ================================================================
 
@@ -242,7 +291,7 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // Connection state map: conn_handle → ConnectionState
         // ================================================================
 
-        connections: std.AutoArrayHashMap(u16, *ConnectionState),
+        connections: ConnMap,
         allocator: std.mem.Allocator,
 
         // ================================================================
@@ -281,15 +330,17 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
                 .cmd_credits = Credits.init(1), // controller allows 1 command initially
                 .wg = WG.init(),
                 .cancel = cancellation.CancellationToken.init(),
-                .connections = std.AutoArrayHashMap(u16, *ConnectionState).init(allocator),
+                .connections = ConnMap.init(),
                 .allocator = allocator,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            for (self.connections.values()) |conn| {
-                conn.deinit();
-                self.allocator.destroy(conn);
+            for (self.connections.values()) |maybe_conn| {
+                if (maybe_conn) |conn| {
+                    conn.deinit();
+                    self.allocator.destroy(conn);
+                }
             }
             self.connections.deinit();
             self.cmd_credits.deinit();
@@ -312,7 +363,18 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         /// 4. LE Set Event Mask (enable connection + PHY + DLE events)
         /// 5. Initialize acl_credits
         /// 6. Spawn readLoop + writeLoop
-        pub fn start(self: *Self) !void {
+        /// Start options
+        pub const StartOptions = struct {
+            /// Enable async GATT handler dispatch (spawns task per write/read).
+            /// Set false on memory-constrained platforms (BK7258 SRAM).
+            async_gatt: bool = true,
+        };
+
+        pub fn start(self: *Self, opts: anytype) !void {
+            const start_opts: StartOptions = if (@hasField(@TypeOf(opts), "async_gatt"))
+                .{ .async_gatt = opts.async_gatt }
+            else
+                .{};
             // --- 1. HCI Reset ---
             {
                 var cmd_buf: [commands.MAX_CMD_LEN]u8 = undefined;
@@ -360,16 +422,15 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
             self.acl_credits = Credits.init(self.acl_max_slots);
             self.cmd_credits = Credits.init(1); // reset to 1 for writeLoop
 
-            // --- 7. Enable async GATT handler dispatch ---
-            // Must happen after self is at its final memory location.
-            // Handler tasks are spawned via wg.go() and send responses through
-            // sendAttResponse callback → tx_queue → writeLoop → HCI.
-            self.gatt.enableAsync(&self.wg, self.allocator, sendAttResponse, @ptrCast(self));
+            // --- 7. Enable async GATT handler dispatch (optional) ---
+            if (start_opts.async_gatt) {
+                self.gatt.enableAsync(&self.wg, self.allocator, sendAttResponse, @ptrCast(self));
+            }
 
             // --- 8. Spawn loops ---
             self.cancel.reset();
-            try self.wg.go(readLoopEntry, .{self});
-            try self.wg.go(writeLoopEntry, .{self});
+            try self.wg.go(readLoopEntry, .{@as(?*anyopaque, @ptrCast(self))});
+            try self.wg.go(writeLoopEntry, .{@as(?*anyopaque, @ptrCast(self))});
         }
 
         /// Stop the Host.
@@ -783,7 +844,8 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // readLoop
         // ================================================================
 
-        fn readLoopEntry(self: *Self) void {
+        fn readLoopEntry(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
             self.readLoop();
         }
 
@@ -1000,7 +1062,8 @@ pub fn Host(comptime Rt: type, comptime HciTransport: type, comptime service_tab
         // writeLoop — with HCI ACL flow control
         // ================================================================
 
-        fn writeLoopEntry(self: *Self) void {
+        fn writeLoopEntry(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
             self.writeLoop();
         }
 
@@ -1128,7 +1191,7 @@ test "Host start reads buffer size and initializes credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start();
+    try host.start(.{});
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     // Should have read buffer size
@@ -1159,7 +1222,7 @@ test "Host writeLoop respects ACL credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start();
+    try host.start(.{});
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     const written_before = hci_driver.written_count.load(.acquire);
@@ -1190,7 +1253,7 @@ test "Host NCP event releases credits" {
     var host = TestHost.init(&hci_driver, std.testing.allocator);
     defer host.deinit();
 
-    try host.start();
+    try host.start(.{});
     std.Thread.sleep(10 * std.time.ns_per_ms);
 
     // Send enough data to consume some credits

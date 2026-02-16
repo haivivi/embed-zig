@@ -27,4 +27,6 @@ pages/api/
 # Bazel output symlinks (top-level only)
 /bazel-*
 .bazelrc.user
+bk_flash_*.log
+Debug_bk_flash_*.log
 MODULE.bazel.lock

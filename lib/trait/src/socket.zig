@@ -87,6 +87,13 @@ pub fn from(comptime Impl: type) type {
     return Impl;
 }
 
+pub fn hasRecvFromWithAddr(comptime Impl: type) bool {
+    const BaseType = switch (@typeInfo(Impl)) {
+        .pointer => |p| p.child,
+        else => Impl,
+    };
+    return @hasDecl(BaseType, "recvFromWithAddr");
+}
 
 /// Parse IPv4 address string (e.g., "192.168.1.1")
 pub fn parseIpv4(str: []const u8) ?Ipv4Address {

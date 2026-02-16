@@ -1,0 +1,19 @@
+# BK platform — source files only
+#
+# This package does NOT compile as a standalone target.
+# Each app uses bk_modules() + bk_zig_app() to compile with app-specific config.
+
+package(default_visibility = ["//visibility:public"])
+
+# Root module source
+exports_files(["bk.zig"])
+
+# All Zig sources (bk + armino + impl + boards)
+filegroup(
+    name = "all_zig_srcs",
+    srcs = glob(["src/**/*.zig"]) + [
+        "bk.zig",
+        "//lib/platform/bk/armino:zig_srcs",
+        "//lib/platform/bk/impl:zig_srcs",
+    ],
+)

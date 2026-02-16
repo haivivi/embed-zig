@@ -49,3 +49,9 @@ pub const time = board.time;
 pub fn isRunning() bool {
     return board.isRunning();
 }
+
+// ============================================================================
+// Net Query (ESP-specific static functions for interface inspection)
+// ============================================================================
+
+pub const net_query = esp.impl.net;

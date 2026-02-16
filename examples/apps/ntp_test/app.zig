@@ -132,7 +132,7 @@ fn testNtpSync() void {
     log.info("--- Simple getTimeRace() API ---", .{});
     {
         var client = NtpClient{ .timeout_ms = 5000 };
-        const local_time: i64 = @intCast(Board.time.getTimeMs());
+        const local_time: i64 = @intCast(Board.time.nowMs());
 
         if (client.getTimeRace(local_time)) |time_ms| {
             var time_buf: [32]u8 = undefined;
@@ -149,12 +149,12 @@ fn testRaceQuery(servers: []const ntp.Ipv4Address) void {
     var client = NtpClient{ .timeout_ms = 5000 };
 
     // Record T1 (local monotonic time before query)
-    const t1 = Board.time.getTimeMs();
+    const t1 = Board.time.nowMs();
     const t1_signed: i64 = @intCast(t1);
 
     if (client.queryRace(t1_signed, servers)) |resp| {
         // Record T4 (local monotonic time after query)
-        const t4 = Board.time.getTimeMs();
+        const t4 = Board.time.nowMs();
         const t4_signed: i64 = @intCast(t4);
 
         // Calculate offset: ((T2 - T1) + (T3 - T4)) / 2

@@ -33,6 +33,7 @@ pub const socket = idf.socket.Socket;
 // ============================================================================
 
 pub const crypto = board.crypto;
+pub const allocator = esp.idf.heap.psram;
 
 // ============================================================================
 // Drivers
@@ -75,3 +76,4 @@ pub const env = struct {
     pub const test_server = @import("env").env.test_server;
     pub const tls_port = @import("env").env.tls_port;
 };
+pub const runtime = idf.runtime;

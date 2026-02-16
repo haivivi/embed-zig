@@ -9,13 +9,12 @@
 //!   cd tools/echo_server && go run main.go -tcp-port 9080
 
 const std = @import("std");
+const trait = @import("trait");
 
 const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
-
-const esp = @import("esp");
-const idf = esp.idf;
+const Socket = trait.socket.from(Board.socket);
 
 /// Test configuration
 const TestConfig = struct {
@@ -56,7 +55,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     log.info("", .{});
     log.info("=== Round {}/{} ===", .{ round + 1, config.rounds });
 
-    var sock = idf.net.socket.Socket.tcp() catch |err| {
+    var sock = Socket.tcp() catch |err| {
         log.err("Socket create failed: {}", .{err});
         return null;
     };
@@ -89,7 +88,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
     var total_sent: usize = 0;
     var total_recv: usize = 0;
 
-    const start_ms = Board.time.getTimeMs();
+    const start_ms = Board.time.nowMs();
 
     // Send and receive in chunks
     while (total_sent < config.total_bytes) {
@@ -119,7 +118,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
 
         // Progress every 256KB
         if (total_sent % (256 * 1024) == 0) {
-            const elapsed = Board.time.getTimeMs() - start_ms;
+            const elapsed = Board.time.nowMs() - start_ms;
             const speed = if (elapsed > 0) @as(u32, @intCast(@as(u64, total_sent + total_recv) * 1000 / elapsed / 1024)) else 0;
             log.info("Progress: {} KB sent, {} KB recv ({} KB/s)", .{
                 total_sent / 1024,
@@ -129,7 +128,7 @@ fn runSpeedTest(config: TestConfig, round: usize) ?u64 {
         }
     }
 
-    const end_ms = Board.time.getTimeMs();
+    const end_ms = Board.time.nowMs();
     const elapsed_ms = end_ms - start_ms;
 
     // Calculate throughput

@@ -68,7 +68,7 @@ pub const MqttRt = struct {
         pub fn sleepMs(ms: u32) void {
             idf.time.sleepMs(ms);
         }
-        pub fn getTimeMs() u64 {
+        pub fn nowMs() u64 {
             return idf.time.nowMs();
         }
     };

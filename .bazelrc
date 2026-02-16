@@ -36,6 +36,15 @@ build --action_env=ADF_PATH
 build --action_env=HOME
 
 # =============================================================================
+# BK (Beken) environment
+# =============================================================================
+
+# ARMINO_PATH and BK_LOADER_PATH are configured via build settings:
+#   --//bazel:armino_path=/path/to/bk_avdk_smp
+#   --//bazel:bk_loader_path=/path/to/bk_loader
+# Set these in .bazelrc.user
+
+# =============================================================================
 # Test options
 # =============================================================================
 

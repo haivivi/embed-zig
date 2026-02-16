@@ -283,7 +283,7 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
         tls12_named_group: NamedGroup,
 
         // Server certificate (for CertificateVerify validation)
-        server_cert_der: [2048]u8, // Max 2KB for leaf certificate
+        server_cert_der: [4096]u8, // Max 4KB for leaf certificate (CDN certs can be ~3KB)
         server_cert_der_len: u16,
 
         // Transcript hash
@@ -327,7 +327,7 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                 .tls12_server_pubkey = [_]u8{0} ** 97,
                 .tls12_server_pubkey_len = 0,
                 .tls12_named_group = .x25519,
-                .server_cert_der = [_]u8{0} ** 2048,
+                .server_cert_der = [_]u8{0} ** 4096,
                 .server_cert_der_len = 0,
                 .transcript_hash = TranscriptHash(Crypto).init(),
                 .records = record.RecordLayer(Socket, Crypto).init(socket),
@@ -610,6 +610,11 @@ pub fn ClientHandshake(comptime Socket: type, comptime Crypto: type) type {
                             },
                             .key_share => {
                                 const key_share = try extensions.parseKeyShareServer(ext_content);
+                                // DEBUG: log server's key_share group and length
+                                if (@import("builtin").mode == .ReleaseSmall) {
+                                    // In release mode, use Zig's log
+                                    @import("std").log.info("[TLS] server key_share: group=0x{x}, key_len={}", .{ @intFromEnum(key_share.group), key_share.key_exchange.len });
+                                }
                                 // Compute shared secret (TLS 1.3)
                                 if (self.key_exchange) |*kx| {
                                     const shared = try kx.computeSharedSecret(key_share.key_exchange);

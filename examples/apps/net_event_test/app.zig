@@ -15,7 +15,6 @@
 const std = @import("std");
 const platform = @import("platform.zig");
 const Board = platform.Board;
-const net_impl = platform.net_impl;
 const log = Board.log;
 
 // ============================================================================
@@ -225,7 +224,7 @@ pub fn run(env: anytype) void {
             }
         }
 
-        const now = Board.time.getTimeMs();
+        const now = Board.time.nowMs();
 
         // State machine
         switch (phase) {
@@ -299,98 +298,125 @@ pub fn run(env: anytype) void {
             },
 
             .phase2_test => {
-                var all_pass = true;
+                if (!platform.has_net_query) {
+                    // Platform doesn't support net query functions
+                    log.info("[TEST] Net query not available on this platform, testing WiFi only", .{});
 
-                // Test list()
-                log.info("[TEST] Testing list()...", .{});
-                const interfaces = net_impl.list();
-                log.info("[TEST]   Found {} interface(s)", .{interfaces.len});
-                for (interfaces) |iface| {
-                    const name_len = std.mem.indexOfScalar(u8, &iface, 0) orelse iface.len;
-                    log.info("[TEST]   - {s}", .{iface[0..name_len]});
-                }
-                if (interfaces.len >= 1) {
-                    log.info("[TEST] + list(): PASS (found {} interfaces)", .{interfaces.len});
+                    var all_pass = true;
+
+                    // Test wifi.isConnected()
+                    log.info("[TEST] Testing wifi.isConnected()...", .{});
+                    const connected = b.wifi.isConnected();
+                    log.info("[TEST]   isConnected: {}", .{connected});
+                    if (connected) {
+                        log.info("[TEST] + isConnected(): PASS", .{});
+                    } else {
+                        log.err("[TEST] x isConnected(): FAIL (should be true)", .{});
+                        all_pass = false;
+                    }
+
+                    if (all_pass) {
+                        log.info("[TEST] Phase 2: PASS", .{});
+                        results.phase2_query = .pass;
+                    } else {
+                        log.info("[TEST] Phase 2: FAIL", .{});
+                        results.phase2_query = .fail;
+                    }
                 } else {
-                    log.err("[TEST] x list(): FAIL (no interfaces found)", .{});
-                    all_pass = false;
-                }
+                    const net_q = platform.net_query;
+                    var all_pass = true;
 
-                // Test get() on first interface
-                if (interfaces.len > 0) {
-                    log.info("[TEST] Testing get()...", .{});
-                    if (net_impl.get(interfaces[0])) |info| {
-                        log.info("[TEST]   IP: {}.{}.{}.{}", .{ info.ip[0], info.ip[1], info.ip[2], info.ip[3] });
-                        log.info("[TEST]   Gateway: {}.{}.{}.{}", .{ info.gateway[0], info.gateway[1], info.gateway[2], info.gateway[3] });
-                        log.info("[TEST]   State: {}", .{info.state});
-                        log.info("[TEST]   DHCP: {}", .{info.dhcp});
-                        if (info.ip[0] != 0 or info.ip[1] != 0 or info.ip[2] != 0 or info.ip[3] != 0) {
-                            log.info("[TEST] + get(): PASS", .{});
+                    // Test list()
+                    log.info("[TEST] Testing list()...", .{});
+                    const interfaces = net_q.list();
+                    log.info("[TEST]   Found {} interface(s)", .{interfaces.len});
+                    for (interfaces) |iface| {
+                        const name_len = std.mem.indexOfScalar(u8, &iface, 0) orelse iface.len;
+                        log.info("[TEST]   - {s}", .{iface[0..name_len]});
+                    }
+                    if (interfaces.len >= 1) {
+                        log.info("[TEST] + list(): PASS (found {} interfaces)", .{interfaces.len});
+                    } else {
+                        log.err("[TEST] x list(): FAIL (no interfaces found)", .{});
+                        all_pass = false;
+                    }
+
+                    // Test get() on first interface
+                    if (interfaces.len > 0) {
+                        log.info("[TEST] Testing get()...", .{});
+                        if (net_q.get(interfaces[0])) |info| {
+                            log.info("[TEST]   IP: {}.{}.{}.{}", .{ info.ip[0], info.ip[1], info.ip[2], info.ip[3] });
+                            log.info("[TEST]   Gateway: {}.{}.{}.{}", .{ info.gateway[0], info.gateway[1], info.gateway[2], info.gateway[3] });
+                            log.info("[TEST]   State: {}", .{info.state});
+                            log.info("[TEST]   DHCP: {}", .{info.dhcp});
+                            if (info.ip[0] != 0 or info.ip[1] != 0 or info.ip[2] != 0 or info.ip[3] != 0) {
+                                log.info("[TEST] + get(): PASS", .{});
+                            } else {
+                                log.err("[TEST] x get(): FAIL (IP is 0.0.0.0)", .{});
+                                all_pass = false;
+                            }
                         } else {
-                            log.err("[TEST] x get(): FAIL (IP is 0.0.0.0)", .{});
+                            log.err("[TEST] x get(): FAIL (returned null)", .{});
+                            all_pass = false;
+                        }
+                    }
+
+                    // Test getDns()
+                    log.info("[TEST] Testing getDns()...", .{});
+                    const dns = net_q.getDns();
+                    log.info("[TEST]   Primary: {}.{}.{}.{}", .{ dns[0][0], dns[0][1], dns[0][2], dns[0][3] });
+                    log.info("[TEST]   Secondary: {}.{}.{}.{}", .{ dns[1][0], dns[1][1], dns[1][2], dns[1][3] });
+                    if (dns[0][0] != 0 or dns[0][1] != 0 or dns[0][2] != 0 or dns[0][3] != 0) {
+                        log.info("[TEST] + getDns(): PASS", .{});
+                    } else {
+                        log.err("[TEST] x getDns(): FAIL (DNS is 0.0.0.0)", .{});
+                        all_pass = false;
+                    }
+
+                    // Test wifi.isConnected()
+                    log.info("[TEST] Testing wifi.isConnected()...", .{});
+                    const connected = b.wifi.isConnected();
+                    log.info("[TEST]   isConnected: {}", .{connected});
+                    if (connected) {
+                        log.info("[TEST] + isConnected(): PASS", .{});
+                    } else {
+                        log.err("[TEST] x isConnected(): FAIL (should be true)", .{});
+                        all_pass = false;
+                    }
+
+                    // Test wifi.getRssi() (optional)
+                    log.info("[TEST] Testing wifi.getRssi()...", .{});
+                    if (b.wifi.getRssi()) |rssi| {
+                        log.info("[TEST]   RSSI: {} dBm", .{rssi});
+                        if (rssi < 0 and rssi > -100) {
+                            log.info("[TEST] + getRssi(): PASS", .{});
+                        } else {
+                            log.err("[TEST] x getRssi(): FAIL (invalid value)", .{});
                             all_pass = false;
                         }
                     } else {
-                        log.err("[TEST] x get(): FAIL (returned null)", .{});
-                        all_pass = false;
+                        log.info("[TEST]   RSSI: not available", .{});
+                        log.info("[TEST] ~ getRssi(): SKIP", .{});
                     }
-                }
 
-                // Test getDns()
-                log.info("[TEST] Testing getDns()...", .{});
-                const dns = net_impl.getDns();
-                log.info("[TEST]   Primary: {}.{}.{}.{}", .{ dns[0][0], dns[0][1], dns[0][2], dns[0][3] });
-                log.info("[TEST]   Secondary: {}.{}.{}.{}", .{ dns[1][0], dns[1][1], dns[1][2], dns[1][3] });
-                if (dns[0][0] != 0 or dns[0][1] != 0 or dns[0][2] != 0 or dns[0][3] != 0) {
-                    log.info("[TEST] + getDns(): PASS", .{});
-                } else {
-                    log.err("[TEST] x getDns(): FAIL (DNS is 0.0.0.0)", .{});
-                    all_pass = false;
-                }
-
-                // Test wifi.isConnected()
-                log.info("[TEST] Testing wifi.isConnected()...", .{});
-                const connected = b.wifi.isConnected();
-                log.info("[TEST]   isConnected: {}", .{connected});
-                if (connected) {
-                    log.info("[TEST] + isConnected(): PASS", .{});
-                } else {
-                    log.err("[TEST] x isConnected(): FAIL (should be true)", .{});
-                    all_pass = false;
-                }
-
-                // Test wifi.getRssi()
-                log.info("[TEST] Testing wifi.getRssi()...", .{});
-                if (b.wifi.getRssi()) |rssi| {
-                    log.info("[TEST]   RSSI: {} dBm", .{rssi});
-                    if (rssi < 0 and rssi > -100) {
-                        log.info("[TEST] + getRssi(): PASS", .{});
+                    // Test wifi.getState()
+                    log.info("[TEST] Testing wifi.getState()...", .{});
+                    const wstate = b.wifi.getState();
+                    log.info("[TEST]   State: {}", .{wstate});
+                    if (wstate == .connected) {
+                        log.info("[TEST] + getState(): PASS", .{});
                     } else {
-                        log.err("[TEST] x getRssi(): FAIL (invalid value)", .{});
+                        log.err("[TEST] x getState(): FAIL (should be connected)", .{});
                         all_pass = false;
                     }
-                } else {
-                    log.info("[TEST]   RSSI: not available", .{});
-                    log.info("[TEST] ~ getRssi(): SKIP", .{});
-                }
 
-                // Test wifi.getState()
-                log.info("[TEST] Testing wifi.getState()...", .{});
-                const state = b.wifi.getState();
-                log.info("[TEST]   State: {}", .{state});
-                if (state == .connected) {
-                    log.info("[TEST] + getState(): PASS", .{});
-                } else {
-                    log.err("[TEST] x getState(): FAIL (should be connected)", .{});
-                    all_pass = false;
-                }
-
-                if (all_pass) {
-                    log.info("[TEST] Phase 2: PASS", .{});
-                    results.phase2_query = .pass;
-                } else {
-                    log.info("[TEST] Phase 2: FAIL", .{});
-                    results.phase2_query = .fail;
+                    if (all_pass) {
+                        log.info("[TEST] Phase 2: PASS", .{});
+                        results.phase2_query = .pass;
+                    } else {
+                        log.info("[TEST] Phase 2: FAIL", .{});
+                        results.phase2_query = .fail;
+                    }
                 }
                 phase = .phase2_done;
             },

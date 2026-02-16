@@ -33,6 +33,7 @@ pub const socket = idf.socket.Socket;
 // ============================================================================
 
 pub const crypto = board.crypto;
+pub const allocator = esp.idf.heap.psram;
 
 // Certificate Store type for TLS verification
 pub const cert_store = crypto.x509.CaStore;
@@ -84,3 +85,4 @@ pub const env = struct {
     pub const wifi_password = @import("env").WIFI_PASSWORD;
     pub const test_server = @import("env").TEST_SERVER;
 };
+pub const runtime = idf.runtime;

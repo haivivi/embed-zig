@@ -200,7 +200,7 @@ pub const sal = struct {
             }
         }
 
-        pub fn getTimeMs() u64 {
+        pub fn nowMs() u64 {
             return shared.uptime();
         }
 

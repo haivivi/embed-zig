@@ -59,6 +59,7 @@ pub const net_spec = net.net_spec;
 
 /// Crypto implementation (mbedTLS-based)
 pub const crypto = impl.crypto.Suite;
+pub const runtime = idf.runtime;
 
 // ============================================================================
 // GPIO Definitions
@@ -90,7 +91,7 @@ pub const time = struct {
     pub fn sleepMs(ms: u32) void {
         idf.time.sleepMs(ms);
     }
-    pub fn getTimeMs() u64 {
+    pub fn nowMs() u64 {
         return idf.time.nowMs();
     }
 };

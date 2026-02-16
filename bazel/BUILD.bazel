@@ -41,3 +41,17 @@ string_flag(
     name = "websim",
     build_setting_default = "",
 )
+
+# BK Armino SDK path
+# Usage in .bazelrc.user: build --//bazel:armino_path=/Users/xxx/armino/bk_avdk_smp
+string_flag(
+    name = "armino_path",
+    build_setting_default = "",
+)
+
+# BK bk_loader tool path
+# Usage in .bazelrc.user: build --//bazel:bk_loader_path=/Users/xxx/armino/bk_loader/bk_loader
+string_flag(
+    name = "bk_loader_path",
+    build_setting_default = "",
+)

@@ -8,22 +8,22 @@
 //! Role auto-detected by BD_ADDR.
 
 const std = @import("std");
-const esp = @import("esp");
 const bluetooth = @import("bluetooth");
 const cancellation = @import("cancellation");
 const waitgroup = @import("waitgroup");
 
-const idf = esp.idf;
-const heap = idf.heap;
+const heap = platform.heap;
+const log = platform.log;
+const time = platform.time;
 const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
 const hci = bluetooth.hci;
 const gatt = bluetooth.gatt_server;
 
-const EspRt = idf.runtime;
-const WG = waitgroup.WaitGroup(EspRt);
-const HciDriver = esp.impl.hci.HciDriver;
+const PlatformRt = platform.Runtime;
+const WG = waitgroup.WaitGroup(PlatformRt);
+const HciDriver = platform.HciDriver;
 
 // ============================================================================
 // GATT Service Definition (comptime)
@@ -43,8 +43,8 @@ const service_table = &[_]gatt.ServiceDef{
     }),
 };
 
-const BleHost = bluetooth.Host(EspRt, HciDriver, service_table);
-const GattType = gatt.GattServer(service_table);
+const BleHost = bluetooth.Host(PlatformRt, HciDriver, service_table);
+const GattType = gatt.GattServer(PlatformRt, service_table);
 
 /// Comptime-resolved ATT handles
 const WRITE_VALUE_HANDLE = GattType.getValueHandle(SVC_UUID, CHR_WRITE_UUID);
@@ -53,8 +53,7 @@ const NOTIFY_VALUE_HANDLE = GattType.getValueHandle(SVC_UUID, CHR_NOTIFY_UUID);
 const NOTIFY_CCCD_HANDLE = NOTIFY_VALUE_HANDLE + 1;
 
 const platform = @import("platform.zig");
-const Board = platform.Board;
-const log = Board.log;
+
 
 // ============================================================================
 // Constants
@@ -206,7 +205,7 @@ fn runClient(host: *BleHost) void {
                 // Register write handler for RX counting (client also receives write responses)
                 host.gatt.handle(SVC_UUID, CHR_WRITE_UUID, writeHandler, null);
 
-                idf.time.sleepMs(200); // let CCCD write complete
+                time.sleepMs(200); // let CCCD write complete
 
                 runConnected(host, info.conn_handle, false); // client sends write commands
                 return;
@@ -243,8 +242,8 @@ fn runConnected(host: *BleHost, conn_handle: u16, is_server: bool) void {
 }
 
 fn drainEventsFor(host: *BleHost, ms: u64) void {
-    const deadline = idf.time.nowMs() + ms;
-    while (idf.time.nowMs() < deadline) {
+    const deadline = time.nowMs() + ms;
+    while (time.nowMs() < deadline) {
         if (host.tryNextEvent()) |evt| {
             switch (evt) {
                 .data_length_changed => |dl| log.info("DLE: TX={}/{}us RX={}/{}us", .{
@@ -256,7 +255,7 @@ fn drainEventsFor(host: *BleHost, ms: u64) void {
                 else => {},
             }
         } else {
-            idf.time.sleepMs(10);
+            time.sleepMs(10);
         }
     }
 }
@@ -294,19 +293,19 @@ fn runRound(host: *BleHost, conn_handle: u16, is_server: bool, phy_label: []cons
     var wg = WG.init();
     defer wg.deinit();
 
-    wg.go(txFloodTask, .{&flood}) catch {
+    wg.goWithConfig(.{ .stack_size = 8192 }, txFloodTask, .{&flood}) catch {
         log.err("Failed to spawn TX task", .{});
         return;
     };
 
-    const start_time = idf.time.nowMs();
+    const start_time = time.nowMs();
     var last_stats = start_time;
 
-    while (idf.time.nowMs() - start_time < ROUND_DURATION_MS) {
-        idf.time.sleepMs(100);
+    while (time.nowMs() - start_time < ROUND_DURATION_MS) {
+        time.sleepMs(100);
         while (host.tryNextEvent()) |_| {}
 
-        const now = idf.time.nowMs();
+        const now = time.nowMs();
         if (now - last_stats >= STATS_INTERVAL_MS) {
             const elapsed_s = @as(f32, @floatFromInt(now - start_time)) / 1000.0;
             const tx_b = flood.tx_bytes.load(.monotonic);
@@ -363,36 +362,7 @@ fn phyName(phy: u8) []const u8 {
 
 fn printMemoryReport() void {
     log.info("", .{});
-    log.info("=== Memory Footprint ===", .{});
-
-    const internal = heap.getInternalStats();
-    const psram_stats = heap.getPsramStats();
-
-    log.info("Internal SRAM:", .{});
-    log.info("  Total:      {} KB", .{internal.total / 1024});
-    log.info("  Free:       {} KB", .{internal.free / 1024});
-    log.info("  Used:       {} KB", .{internal.used / 1024});
-    log.info("  Min free:   {} KB (peak usage = {} KB)", .{
-        internal.min_free / 1024,
-        (internal.total - internal.min_free) / 1024,
-    });
-    log.info("  Largest blk: {} KB", .{internal.largest_block / 1024});
-
-    if (psram_stats.total > 0) {
-        log.info("PSRAM:", .{});
-        log.info("  Total:      {} KB", .{psram_stats.total / 1024});
-        log.info("  Free:       {} KB", .{psram_stats.free / 1024});
-        log.info("  Used:       {} KB", .{psram_stats.used / 1024});
-        log.info("  Min free:   {} KB (peak usage = {} KB)", .{
-            psram_stats.min_free / 1024,
-            (psram_stats.total - psram_stats.min_free) / 1024,
-        });
-    }
-
-    log.info("BLE Stack usage (Internal SRAM): ~{} KB", .{
-        (internal.total - internal.min_free) / 1024,
-    });
-    log.info("========================", .{});
+    log.info("=== Test Complete ===", .{});
 }
 
 // ============================================================================
@@ -404,12 +374,6 @@ pub fn run(_: anytype) void {
     log.info("BLE GATT Duplex Throughput (Host API)", .{});
     log.info("==========================================", .{});
 
-    var board: Board = undefined;
-    board.init() catch |err| {
-        log.err("Board init failed: {}", .{err});
-        return;
-    };
-    defer board.deinit();
 
     log.info("Initializing BLE controller...", .{});
     var hci_driver = HciDriver.init() catch {
@@ -418,11 +382,11 @@ pub fn run(_: anytype) void {
     };
     defer hci_driver.deinit();
 
-    var host = BleHost.init(&hci_driver, heap.psram);
+    var host = BleHost.init(&hci_driver, heap);
     defer host.deinit();
 
     // Use PSRAM for BLE task stacks — saves ~16KB Internal SRAM
-    host.start() catch |err| {
+    host.start(.{}) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };
@@ -435,7 +399,7 @@ pub fn run(_: anytype) void {
         addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
     });
 
-    const role: enum { server, client } = if (addr[2] == 0x11) .server else .client;
+    const role: enum { server, client } = if (std.mem.eql(u8, platform.board_name_str, "BK7258")) .server else .client;
     log.info("Role: {s}", .{if (role == .server) "SERVER" else "CLIENT"});
     log.info("", .{});
 
@@ -449,6 +413,6 @@ pub fn run(_: anytype) void {
 
     log.info("=== DONE ===", .{});
     while (true) {
-        idf.time.sleepMs(5000);
+        time.sleepMs(5000);
     }
 }

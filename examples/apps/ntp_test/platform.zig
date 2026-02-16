@@ -7,6 +7,8 @@ const build_options = @import("build_options");
 pub const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    .bk7258 => @import("bk/bk7258.zig"),
+    else => @compileError("unsupported board for ntp_test"),
 };
 
 const spec = struct {

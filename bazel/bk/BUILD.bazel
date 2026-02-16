@@ -1,0 +1,8 @@
+load("//bazel/bk:defs.bzl", "bk_monitor")
+
+package(default_visibility = ["//visibility:public"])
+
+# Serial monitor — bazel run //bazel/bk:monitor
+bk_monitor(
+    name = "monitor",
+)

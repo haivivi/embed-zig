@@ -79,6 +79,8 @@ pub const led_strip = @import("led_strip.zig");
 pub const button = @import("button.zig");
 /// Button Group module (hal.button_group.from, hal.button_group.is)
 pub const button_group = @import("button_group.zig");
+/// Button Matrix module (hal.button_matrix.from, hal.button_matrix.is)
+pub const button_matrix = @import("button_matrix.zig");
 /// WiFi module (hal.wifi.from, hal.wifi.is)
 pub const wifi = @import("wifi.zig");
 /// Net module (hal.net.from, hal.net.is)

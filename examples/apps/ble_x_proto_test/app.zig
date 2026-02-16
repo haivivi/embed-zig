@@ -13,15 +13,15 @@
 //!   3. Client→Server: client sends 900KB chunks, server WriteX receives
 
 const std = @import("std");
-const esp = @import("esp");
 const bluetooth = @import("bluetooth");
 const x_proto = @import("x_proto");
 const channel = @import("channel");
 const cancellation = @import("cancellation");
 const waitgroup = @import("waitgroup");
 
-const idf = esp.idf;
-const heap = idf.heap;
+const heap = platform.heap;
+const log = platform.log;
+const time = platform.time;
 const gap = bluetooth.gap;
 const att = bluetooth.att;
 const l2cap = bluetooth.l2cap;
@@ -29,12 +29,11 @@ const gatt = bluetooth.gatt_server;
 const gatt_client = bluetooth.gatt_client;
 const chunk = x_proto.chunk;
 
-const EspRt = idf.runtime;
-const HciDriver = esp.impl.hci.HciDriver;
+const PlatformRt = platform.Runtime;
+const HciDriver = platform.HciDriver;
 
 const platform = @import("platform.zig");
-const Board = platform.Board;
-const log = Board.log;
+
 
 // ============================================================================
 // GATT Service — single char for bidirectional x_proto
@@ -49,8 +48,8 @@ const service_table = &[_]gatt.ServiceDef{
     }),
 };
 
-const BleHost = bluetooth.Host(EspRt, HciDriver, service_table);
-const GattType = gatt.GattServer(service_table);
+const BleHost = bluetooth.Host(PlatformRt, HciDriver, service_table);
+const GattType = gatt.GattServer(PlatformRt, service_table);
 const VALUE_HANDLE = GattType.getValueHandle(SVC_UUID, CHR_UUID);
 const CCCD_HANDLE = VALUE_HANDLE + 1;
 
@@ -58,7 +57,7 @@ const CCCD_HANDLE = VALUE_HANDLE + 1;
 // Test Parameters
 // ============================================================================
 
-const TEST_DATA_SIZE = 900 * 1024; // 900 KB
+const TEST_DATA_SIZE = 100 * 1024; // 100 KB (reduced for BK PSRAM test)
 const TEST_MTU: u16 = 247; // optimal: fits in 1 ACL fragment (241 bytes/chunk)
 const ADV_NAME = "XProto";
 
@@ -77,10 +76,10 @@ const BleTransport = struct {
         data: [512]u8 = undefined,
         len: usize = 0,
     };
-    const RxChannel = channel.Channel(RxMsg, 16, EspRt);
+    const RxChannel = channel.Channel(RxMsg, 16, PlatformRt);
 
     fn create(host: *BleHost, conn_handle: u16, attr_handle: u16, use_notify: bool) !*BleTransport {
-        const t = try heap.psram.create(BleTransport);
+        const t = try heap.create(BleTransport);
         t.* = .{
             .host = host,
             .conn_handle = conn_handle,
@@ -94,7 +93,7 @@ const BleTransport = struct {
     fn destroy(self: *BleTransport) void {
         self.rx.close();
         self.rx.deinit();
-        heap.psram.destroy(self);
+        heap.destroy(self);
     }
 
     pub fn send(self: *BleTransport, data: []const u8) !void {
@@ -108,15 +107,15 @@ const BleTransport = struct {
     }
 
     pub fn recv(self: *BleTransport, buf: []u8, timeout_ms: u32) !?usize {
-        const deadline = idf.time.nowMs() + timeout_ms;
-        while (idf.time.nowMs() < deadline) {
+        const deadline = time.nowMs() + timeout_ms;
+        while (time.nowMs() < deadline) {
             if (self.rx.tryRecv()) |msg| {
                 const n = @min(msg.len, buf.len);
                 @memcpy(buf[0..n], msg.data[0..n]);
                 return n;
             }
             if (self.rx.isClosed()) return error.Closed;
-            idf.time.sleepMs(1);
+            time.sleepMs(1);
         }
         return null;
     }
@@ -151,7 +150,7 @@ fn onNotification(_: u16, _: u16, data: []const u8) void {
 // ============================================================================
 
 fn generateTestData() ![]u8 {
-    const data = try heap.psram.alloc(u8, TEST_DATA_SIZE);
+    const data = try heap.alloc(u8, TEST_DATA_SIZE);
     for (data, 0..) |*b, i| {
         b.* = @truncate(i);
     }
@@ -198,7 +197,7 @@ fn testServerReadX(host: *BleHost, conn: u16) void {
         log.err("Failed to allocate test data", .{});
         return;
     };
-    defer heap.psram.free(data);
+    defer heap.free(data);
 
     log.info("Data: {} KB, MTU: {}, chunks: {}", .{
         TEST_DATA_SIZE / 1024,
@@ -217,7 +216,7 @@ fn testServerReadX(host: *BleHost, conn: u16) void {
     }
 
     log.info("Waiting for client start magic...", .{});
-    const start = idf.time.nowMs();
+    const start = time.nowMs();
 
     var rx = x_proto.ReadX(BleTransport).init(transport, data, .{
         .mtu = TEST_MTU,
@@ -230,7 +229,7 @@ fn testServerReadX(host: *BleHost, conn: u16) void {
         return;
     };
 
-    const elapsed = idf.time.nowMs() - start;
+    const elapsed = time.nowMs() - start;
     const kbs = if (elapsed > 0) @as(f32, @floatFromInt(TEST_DATA_SIZE)) / 1024.0 / (@as(f32, @floatFromInt(elapsed)) / 1000.0) else 0;
     log.info("ReadX DONE: {} KB in {} ms = {d:.1} KB/s", .{
         TEST_DATA_SIZE / 1024, elapsed, kbs,
@@ -245,11 +244,11 @@ fn testServerWriteX(host: *BleHost, conn: u16) void {
     log.info("", .{});
     log.info("=== Test 2: WriteX (Client → Server) ===", .{});
 
-    const recv_buf = heap.psram.alloc(u8, TEST_DATA_SIZE + 4096) catch {
+    const recv_buf = heap.alloc(u8, TEST_DATA_SIZE + 4096) catch {
         log.err("Failed to allocate receive buffer", .{});
         return;
     };
-    defer heap.psram.free(recv_buf);
+    defer heap.free(recv_buf);
 
     const transport = BleTransport.create(host, conn, VALUE_HANDLE, true) catch {
         log.err("Transport create failed", .{});
@@ -262,7 +261,7 @@ fn testServerWriteX(host: *BleHost, conn: u16) void {
     }
 
     log.info("Waiting for client chunks...", .{});
-    const start = idf.time.nowMs();
+    const start = time.nowMs();
 
     var wx = x_proto.WriteX(BleTransport).init(transport, recv_buf, .{
         .mtu = TEST_MTU,
@@ -274,7 +273,7 @@ fn testServerWriteX(host: *BleHost, conn: u16) void {
         return;
     };
 
-    const elapsed = idf.time.nowMs() - start;
+    const elapsed = time.nowMs() - start;
     const data_len = result.data.len;
     const kbs = if (elapsed > 0) @as(f32, @floatFromInt(data_len)) / 1024.0 / (@as(f32, @floatFromInt(elapsed)) / 1000.0) else 0;
     log.info("WriteX DONE: {} KB in {} ms = {d:.1} KB/s", .{
@@ -296,11 +295,11 @@ fn testClientReadX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
     log.info("", .{});
     log.info("=== Test 1: ReadX Client (receive from server) ===", .{});
 
-    const recv_buf = heap.psram.alloc(u8, TEST_DATA_SIZE + 4096) catch {
+    const recv_buf = heap.alloc(u8, TEST_DATA_SIZE + 4096) catch {
         log.err("Failed to allocate receive buffer", .{});
         return;
     };
-    defer heap.psram.free(recv_buf);
+    defer heap.free(recv_buf);
 
     const transport = BleTransport.create(host, conn, remote_value_handle, false) catch {
         log.err("Transport create failed", .{});
@@ -320,7 +319,7 @@ fn testClientReadX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
     };
 
     // Receive chunks using WriteX (protocol is symmetric after start magic)
-    const start = idf.time.nowMs();
+    const start = time.nowMs();
 
     var wx = x_proto.WriteX(BleTransport).init(transport, recv_buf, .{
         .mtu = TEST_MTU,
@@ -332,7 +331,7 @@ fn testClientReadX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
         return;
     };
 
-    const elapsed = idf.time.nowMs() - start;
+    const elapsed = time.nowMs() - start;
     const data_len = result.data.len;
     const kbs = if (elapsed > 0) @as(f32, @floatFromInt(data_len)) / 1024.0 / (@as(f32, @floatFromInt(elapsed)) / 1000.0) else 0;
     log.info("ReadX Client DONE: {} KB in {} ms = {d:.1} KB/s", .{
@@ -358,7 +357,7 @@ fn testClientWriteX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
         log.err("Failed to allocate test data", .{});
         return;
     };
-    defer heap.psram.free(data);
+    defer heap.free(data);
 
     log.info("Data: {} KB, MTU: {}, chunks: {}", .{
         TEST_DATA_SIZE / 1024,
@@ -376,13 +375,13 @@ fn testClientWriteX(host: *BleHost, conn: u16, remote_value_handle: u16) void {
         g_client_transport = null;
     }
 
-    const start = idf.time.nowMs();
+    const start = time.nowMs();
     clientSendChunks(transport, data) catch |err| {
         log.err("WriteX client failed: {}", .{err});
         return;
     };
 
-    const elapsed = idf.time.nowMs() - start;
+    const elapsed = time.nowMs() - start;
     const kbs = if (elapsed > 0) @as(f32, @floatFromInt(TEST_DATA_SIZE)) / 1024.0 / (@as(f32, @floatFromInt(elapsed)) / 1000.0) else 0;
     log.info("WriteX Client DONE: {} KB in {} ms = {d:.1} KB/s", .{
         TEST_DATA_SIZE / 1024, elapsed, kbs,
@@ -534,8 +533,8 @@ fn containsName(ad_data: []const u8, name: []const u8) bool {
 }
 
 fn drain(host: *BleHost, ms: u64) void {
-    const deadline = idf.time.nowMs() + ms;
-    while (idf.time.nowMs() < deadline) {
+    const deadline = time.nowMs() + ms;
+    while (time.nowMs() < deadline) {
         if (host.tryNextEvent()) |evt| {
             switch (evt) {
                 .data_length_changed => |dl| log.info("DLE: TX={}/{} RX={}/{}", .{
@@ -545,7 +544,7 @@ fn drain(host: *BleHost, ms: u64) void {
                 else => {},
             }
         } else {
-            idf.time.sleepMs(10);
+            time.sleepMs(10);
         }
     }
 }
@@ -560,12 +559,6 @@ pub fn run(_: anytype) void {
     log.info("Data: {} KB, MTU: {}", .{ TEST_DATA_SIZE / 1024, TEST_MTU });
     log.info("==========================================", .{});
 
-    var board: Board = undefined;
-    board.init() catch |err| {
-        log.err("Board init failed: {}", .{err});
-        return;
-    };
-    defer board.deinit();
 
     var hci_driver = HciDriver.init() catch {
         log.err("HCI driver init failed", .{});
@@ -573,10 +566,10 @@ pub fn run(_: anytype) void {
     };
     defer hci_driver.deinit();
 
-    var host = BleHost.init(&hci_driver, heap.psram);
+    var host = BleHost.init(&hci_driver, heap);
     defer host.deinit();
 
-    host.start() catch |err| {
+    host.start(.{}) catch |err| {
         log.err("Host start failed: {}", .{err});
         return;
     };
@@ -587,7 +580,7 @@ pub fn run(_: anytype) void {
         addr[5], addr[4], addr[3], addr[2], addr[1], addr[0],
     });
 
-    const is_server = addr[2] == 0x11;
+    const is_server = std.mem.eql(u8, platform.board_name_str, "BK7258");
     log.info("Role: {s}", .{if (is_server) "SERVER" else "CLIENT"});
 
     if (is_server) {
@@ -598,7 +591,7 @@ pub fn run(_: anytype) void {
 
     log.info("", .{});
     log.info("=== ALL TESTS COMPLETE ===", .{});
-    while (true) idf.time.sleepMs(5000);
+    while (true) time.sleepMs(5000);
 }
 
 fn runServer(host: *BleHost) void {
@@ -629,7 +622,7 @@ fn runServer(host: *BleHost) void {
                 testServerReadX(host, info.conn_handle);
 
                 // Pause between tests
-                idf.time.sleepMs(3000);
+                time.sleepMs(3000);
 
                 // Test 2: WriteX (Client→Server)
                 testServerWriteX(host, info.conn_handle);
@@ -679,7 +672,7 @@ fn runClient(host: *BleHost) void {
                 } else |err| {
                     log.err("MTU exchange failed: {} (using default)", .{err});
                 }
-                idf.time.sleepMs(200);
+                time.sleepMs(200);
 
                 // Discover remote GATT handles (needed for cross-platform: ESP↔Mac)
                 const handles = discoverHandles(host, info.conn_handle) orelse {
@@ -690,13 +683,13 @@ fn runClient(host: *BleHost) void {
 
                 // Subscribe to notifications using discovered CCCD handle
                 host.gattSubscribe(info.conn_handle, handles.cccd) catch {};
-                idf.time.sleepMs(500);
+                time.sleepMs(500);
 
                 // Test 1: ReadX Client (receive from server)
                 testClientReadX(host, info.conn_handle, handles.value);
 
                 // Pause between tests
-                idf.time.sleepMs(3000);
+                time.sleepMs(3000);
 
                 // Test 2: WriteX Client (send to server)
                 testClientWriteX(host, info.conn_handle, handles.value);
