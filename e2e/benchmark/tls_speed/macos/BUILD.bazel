@@ -3,5 +3,5 @@ load("//bazel/macos:defs.bzl", "macos_run")
 macos_run(
     name = "run",
     srcs = glob(["**"]),
-    project_dir = "examples/apps/tls_speed_test/macos",
+    project_dir = "e2e/benchmark/tls_speed/macos",
 )

@@ -1,4 +1,4 @@
-# BLE X-Proto Throughput Test - Shared sources
+# Benchmark: BLE X-Proto Throughput
 
 package(default_visibility = ["//visibility:public"])
 

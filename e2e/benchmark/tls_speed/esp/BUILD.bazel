@@ -1,4 +1,4 @@
-# HTTPS Speed Test - ESP Platform (using pure Zig TLS + DNS)
+# TLS Speed Test - ESP Platform
 
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
@@ -8,14 +8,18 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "srcs",
     srcs = [
-        "//examples/apps/https_speed_test:app_srcs",
+        "//e2e/benchmark/tls_speed:app_srcs",
     ] + glob(["**/*"]),
 )
 
 # Environment from command line
+# Usage: bazel build ... --define WIFI_SSID=xxx --define WIFI_PASSWORD=xxx --define TEST_SERVER=192.168.x.x --define TLS_PORT=11301
 make_env_file(
     name = "env",
-    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER"],
+    defines = ["WIFI_SSID", "WIFI_PASSWORD", "TEST_SERVER", "TLS_PORT"],
+    defaults = {
+        "TLS_PORT": "11301",
+    },
 )
 
 esp_modules()
@@ -39,7 +43,7 @@ esp_zig_app(
     ],
     extra_c_sources = ["WIFI_C_SOURCES", "MBED_TLS_C_SOURCES", "NET_C_SOURCES", "EVENT_SRCS"],
     deps = [":idf", ":esp",
- "//lib/hal", "//lib/trait", "//lib/pkg/net/tls", "//lib/pkg/net/dns", "//lib/pkg/net/http", "//lib/pkg/motion", "//lib/pkg/math"],
+ "//lib/hal", "//lib/trait", "//lib/pkg/net/tls", "//lib/pkg/motion", "//lib/pkg/math"],
     sdkconfig = "//examples/esp:esp32s3_wifi_xip_mbedtls_fast",
     app_config = "//examples/esp:app",
     env = ":env",

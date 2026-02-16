@@ -1,4 +1,4 @@
-# TLS Speed Test - Echo Mode Throughput Measurement
+# Benchmark: TLS Speed Test (Echo Mode)
 
 package(default_visibility = ["//visibility:public"])
 

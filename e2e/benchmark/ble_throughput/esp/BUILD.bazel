@@ -9,7 +9,7 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "srcs",
     srcs = [
-        "//examples/apps/ble_throughput:app_srcs",
+        "//e2e/benchmark/ble_throughput:app_srcs",
     ] + glob(["**/*"]),
 )
 

@@ -1,4 +1,4 @@
-# HTTPS Speed Test App - Shared sources
+# Benchmark: BLE Full-Duplex Throughput
 
 package(default_visibility = ["//visibility:public"])
 

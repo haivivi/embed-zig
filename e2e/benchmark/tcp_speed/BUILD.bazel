@@ -1,4 +1,4 @@
-# TCP Speed Test - Echo Mode Throughput Measurement
+# Benchmark: TCP Speed Test (Echo Mode)
 
 package(default_visibility = ["//visibility:public"])
 
