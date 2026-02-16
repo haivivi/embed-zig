@@ -140,6 +140,32 @@ test "tetris input" {
     try testing.expectEqual(y0 + 1, store.getState().tetris.piece.y);
 }
 
+test "power: long hold → shutdown → off" {
+    var s = ui.AppState{}; s.page = .desktop;
+    var store = newStoreWith(s);
+    // Hold power for 180 ticks
+    for (0..180) |_| store.dispatch(.power_hold);
+    try testing.expectEqual(ui.Page.shutting_down, store.getState().page);
+    // Wait for shutdown animation
+    for (0..40) |_| store.dispatch(.tick);
+    try testing.expectEqual(ui.Page.off, store.getState().page);
+}
+
+test "power: off → long hold → startup" {
+    var s = ui.AppState{}; s.page = .off;
+    var store = newStoreWith(s);
+    for (0..180) |_| store.dispatch(.power_hold);
+    try testing.expectEqual(ui.Page.startup, store.getState().page);
+}
+
+test "power: short hold does nothing" {
+    var s = ui.AppState{}; s.page = .desktop;
+    var store = newStoreWith(s);
+    for (0..50) |_| store.dispatch(.power_hold);
+    store.dispatch(.power_release);
+    try testing.expectEqual(ui.Page.desktop, store.getState().page);
+}
+
 test "racer input" {
     var s = ui.AppState{}; s.page = .game_racer;
     var store = newStoreWith(s);

@@ -86,9 +86,23 @@ pub fn init() void {
     Board.log.info("H106 ready. RIGHT=menu, OK=select, ESC=back", .{});
 }
 
+var power_was_pressed: bool = false;
+
 pub fn step() void {
     if (!ready) return;
     board.buttons.poll();
+
+    // Power button: check held state each frame
+    const t = board.uptime();
+    _ = board.button.poll(t);
+    const power_pressed = board.button.isPressed();
+    if (power_pressed) {
+        store.dispatch(.power_hold);
+    } else if (power_was_pressed) {
+        store.dispatch(.power_release);
+    }
+    power_was_pressed = power_pressed;
+
     while (board.nextEvent()) |event| {
         switch (event) {
             .button => |btn| {

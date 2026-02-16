@@ -64,7 +64,7 @@ pub fn initAssets(
 // State
 // ============================================================================
 
-pub const Page = enum { startup, desktop, menu, game_list, game_tetris, game_racer, settings };
+pub const Page = enum { off, startup, desktop, menu, game_list, game_tetris, game_racer, settings, shutting_down };
 
 pub const Transition = struct {
     from: Page, to: Page, start_tick: u32, duration: u32, direction: Dir,
@@ -73,6 +73,8 @@ pub const Transition = struct {
 
 pub const AppState = struct {
     page: Page = .startup,
+    power_hold_ticks: u16 = 0, // power button hold counter
+    shutdown_tick: u32 = 0, // tick when shutdown animation started
     transition: ?Transition = null,
     tick: u32 = 0,
     menu_index: u8 = 0,
@@ -83,15 +85,62 @@ pub const AppState = struct {
     racer: racer.GameState = .{},
 };
 
-pub const AppEvent = union(enum) { tick, left, right, up, down, confirm, back };
+pub const AppEvent = union(enum) { tick, left, right, up, down, confirm, back, power_hold, power_release };
 pub const Store = state_lib.Store(AppState, AppEvent);
 
 // ============================================================================
 // Reducer
 // ============================================================================
 
+const POWER_HOLD_THRESHOLD: u16 = 180; // ~3s at 60fps
+const SHUTDOWN_DURATION: u32 = 36; // ~600ms at 60fps
+
 pub fn reduce(state: *AppState, event: AppEvent) void {
     state.tick += 1;
+
+    // Power hold tracking (works on any page except off)
+    if (state.page != .off and state.page != .shutting_down and state.page != .startup) {
+        switch (event) {
+            .power_hold => {
+                state.power_hold_ticks += 1;
+                if (state.power_hold_ticks >= POWER_HOLD_THRESHOLD) {
+                    state.page = .shutting_down;
+                    state.shutdown_tick = state.tick;
+                    state.power_hold_ticks = 0;
+                }
+                return;
+            },
+            .power_release => { state.power_hold_ticks = 0; return; },
+            else => {},
+        }
+    }
+
+    // Off state: long press to boot
+    if (state.page == .off) {
+        switch (event) {
+            .power_hold => {
+                state.power_hold_ticks += 1;
+                if (state.power_hold_ticks >= POWER_HOLD_THRESHOLD) {
+                    state.page = .startup;
+                    state.power_hold_ticks = 0;
+                    if (startup_player) |*p| p.reset();
+                    startup_frame_timer = 0;
+                }
+            },
+            .power_release => state.power_hold_ticks = 0,
+            else => {},
+        }
+        return;
+    }
+
+    // Shutdown animation
+    if (state.page == .shutting_down) {
+        if (state.tick >= state.shutdown_tick + SHUTDOWN_DURATION) {
+            state.page = .off;
+        }
+        return;
+    }
+
     if (state.transition) |t| {
         if (state.tick >= t.start_tick + t.duration) { state.page = t.to; state.transition = null; }
         if (event == .tick) {
@@ -103,12 +152,11 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
     switch (state.page) {
         .startup => switch (event) {
             .tick => {
-                // Animation advances in render(); when done, auto-transition
                 if (startup_player != null and startup_player.?.isDone()) {
                     state.page = .desktop;
                 }
             },
-            .confirm, .back => state.page = .desktop, // skip animation
+            .confirm, .back => state.page = .desktop,
             else => {},
         },
         .desktop => switch (event) { .right, .confirm => nav(state, .menu, .left), else => {} },
@@ -143,6 +191,7 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
             .up => tetris.reduce(&state.tetris, .hard_drop),
             .down => tetris.reduce(&state.tetris, .soft_drop),
             .tick => tetris.reduce(&state.tetris, .tick),
+            .power_hold, .power_release => {},
         },
         .game_racer => switch (event) {
             .back => nav(state, .game_list, .right),
@@ -151,6 +200,7 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
             .tick => racer.reduce(&state.racer, .tick),
             else => {},
         },
+        .off, .shutting_down => {}, // handled above (early return)
     }
 }
 
@@ -191,7 +241,9 @@ pub fn render(fb: *FB, state: *const AppState) void {
 
 fn renderPage(fb: *FB, state: *const AppState, page: Page, xo: i16) void {
     switch (page) {
+        .off => fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK),
         .startup => renderStartup(fb),
+        .shutting_down => renderShutdown(fb, state),
         .desktop => renderDesktop(fb, xo),
         .menu => renderMenu(fb, state, xo),
         .game_list => renderGameList(fb, state, xo),
@@ -217,6 +269,62 @@ fn renderStartup(fb: *FB) void {
         // No animation — show black
         fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
     }
+}
+
+fn renderShutdown(fb: *FB, state: *const AppState) void {
+    // Shutdown animation: white rectangle shrinks to center, fades out
+    // Timeline (matching LVGL power_anim.c):
+    //   0-370ms: height 240→0 (ease-in)    = 0-22 ticks
+    //   260-520ms: opacity 255→0 (ease-out) = 16-31 ticks
+    //   370-600ms: width 240→0 (ease-out)   = 22-36 ticks
+    fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
+
+    const elapsed = state.tick -| state.shutdown_tick;
+    const total: u32 = SHUTDOWN_DURATION;
+
+    // Phase 1: height shrinks (first 60%)
+    const h_progress = @min(@as(u32, 256), elapsed * 256 * 100 / (total * 62));
+    const h_ease = easeIn(@intCast(@min(h_progress, 256)));
+    const rect_h: u16 = @intCast(@as(u32, SCREEN_H) * (256 - h_ease) / 256);
+
+    // Phase 2: width shrinks (last 40%)
+    var rect_w: u16 = SCREEN_W;
+    if (elapsed > total * 62 / 100) {
+        const w_elapsed = elapsed - total * 62 / 100;
+        const w_progress = @min(@as(u32, 256), w_elapsed * 256 * 100 / (total * 38));
+        const w_ease = easeOut(@intCast(@min(w_progress, 256)));
+        rect_w = @intCast(@as(u32, SCREEN_W) * (256 - w_ease) / 256);
+    }
+
+    // Phase 3: opacity fades (middle 43%)
+    var alpha: u8 = 255;
+    if (elapsed > total * 43 / 100) {
+        const a_elapsed = elapsed - total * 43 / 100;
+        const a_progress = @min(@as(u32, 256), a_elapsed * 256 * 100 / (total * 43));
+        const a_ease = easeOut(@intCast(@min(a_progress, 256)));
+        alpha = @intCast(255 - (255 * a_ease / 256));
+    }
+
+    if (rect_w > 0 and rect_h > 0 and alpha > 0) {
+        const rx = (SCREEN_W - rect_w) / 2;
+        const ry = (SCREEN_H - rect_h) / 2;
+        // Blend white rectangle
+        if (alpha >= 250) {
+            fb.fillRect(rx, ry, rect_w, rect_h, WHITE);
+        } else {
+            // Alpha blend white on black = just scale white
+            const gray565: u16 = @as(u16, @as(u5, @intCast(@as(u32, alpha) * 31 / 255)));
+            const green: u16 = @as(u16, @as(u6, @intCast(@as(u32, alpha) * 63 / 255)));
+            const color: u16 = (gray565 << 11) | (green << 5) | gray565;
+            fb.fillRect(rx, ry, rect_w, rect_h, color);
+        }
+    }
+}
+
+/// Ease-in quadratic: t^2
+fn easeIn(t: u16) u16 {
+    const tv: u32 = t;
+    return @intCast(tv * tv / 256);
 }
 
 fn renderDesktop(fb: *FB, xo: i16) void {
