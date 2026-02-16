@@ -1,12 +1,22 @@
-# e2e — Platform Conformance Tests
+# e2e — End-to-end tests, platform conformance, and benchmarks
+#
+# Structure:
+#   trait/*      — Platform conformance tests (per-trait verification)
+#   tier0_*      — Tier 0: async primitives, memory, timers
+#   tier1_*      — Tier 1: network, TLS, WiFi
+#   tier2_*      — Tier 2: audio/codec pipelines
+#   tier3_*      — Tier 3: BLE, HCI
+#   benchmark/*  — Performance benchmarks
+#   ci/          — Aggregate CI targets
 #
 # Usage:
 #   bazel test //e2e/...                          # all std tests (CI)
-#   bazel test //e2e/trait/time/std:test           # single test
+#   bazel test //e2e/trait/time/std:test           # single trait test
+#   bazel build //e2e/ci:build_all_esp             # all ESP cross-compile
 
 package(default_visibility = ["//visibility:public"])
 
-# Aggregate all std platform tests (CI-mandatory)
+# Aggregate all std platform conformance tests (CI-mandatory)
 test_suite(
     name = "std",
     tests = [
