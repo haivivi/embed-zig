@@ -86,22 +86,23 @@ pub fn init() void {
     Board.log.info("H106 ready. RIGHT=menu, OK=select, ESC=back", .{});
 }
 
-var power_was_pressed: bool = false;
+var power_was_held: bool = false;
 
 pub fn step() void {
     if (!ready) return;
     board.buttons.poll();
 
-    // Power button: check held state each frame
+    // Power button: read raw pressed state directly from driver
+    // (bypass HAL debounce — we handle hold duration in the reducer)
     const t = board.uptime();
     _ = board.button.poll(t);
-    const power_pressed = board.button.isPressed();
-    if (power_pressed) {
+    const power_held = board.button.driver.isPressed();
+    if (power_held) {
         store.dispatch(.power_hold);
-    } else if (power_was_pressed) {
+    } else if (power_was_held) {
         store.dispatch(.power_release);
     }
-    power_was_pressed = power_pressed;
+    power_was_held = power_held;
 
     while (board.nextEvent()) |event| {
         switch (event) {
