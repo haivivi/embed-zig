@@ -454,8 +454,12 @@ def _websim_native_impl(ctx):
     zig_args.append(recorder_c.path)
 
     # Add minih264e and minimp4 implementation files
+    # Disable ubsan for these C files — minih264 has intentional shift patterns
+    # that trigger undefined behavior sanitizer (shift_out_of_bounds in NEON transform)
     recorder_impl_files = ctx.attr._recorder_impl_c.files.to_list()
     for impl_f in recorder_impl_files:
+        if impl_f.path.endswith(".c") or impl_f.path.endswith(".m"):
+            zig_args.extend(["-cflags", "-fno-sanitize=undefined", "--"])
         zig_args.append(impl_f.path)
 
     # Add transitive module definitions
