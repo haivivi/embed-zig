@@ -344,31 +344,20 @@ body { background:var(--bg); color:var(--text); font-family:var(--font);
 
         async function _captureFrame() {
             _initRecCanvas();
-            const target = document.querySelector('.sim-container') || document.body;
-            const html = target.outerHTML;
-            const styles = Array.from(document.querySelectorAll('style')).map(s => s.outerHTML).join('');
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720">
-                <foreignObject width="100%" height="100%">
-                    <div xmlns="http://www.w3.org/1999/xhtml" style="width:960px;height:720px;background:#0f1117;">
-                        ${styles}${html}
-                    </div>
-                </foreignObject></svg>`;
-            const blob = new Blob([svg], {type:'image/svg+xml;charset=utf-8'});
-            const url = URL.createObjectURL(blob);
-            return new Promise(resolve => {
-                const img = new Image();
-                img.onload = () => {
-                    _recCtx.fillStyle = '#0f1117';
-                    _recCtx.fillRect(0,0,960,720);
-                    _recCtx.drawImage(img,0,0,960,720);
-                    URL.revokeObjectURL(url);
-                    const d = _recCtx.getImageData(0,0,960,720).data;
-                    let bin = ''; for (let i=0;i<d.length;i++) bin += String.fromCharCode(d[i]);
-                    resolve(btoa(bin));
-                };
-                img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-                img.src = url;
-            });
+            // Capture the display canvas directly (no DOM screenshot — avoids SecurityError)
+            const src = document.getElementById('displayCanvas');
+            if (!src) return null;
+            _recCtx.fillStyle = '#0f1117';
+            _recCtx.fillRect(0, 0, 960, 720);
+            // Center the 240x240 display scaled up in the 960x720 recording area
+            const scale = Math.min(960 / src.width, 720 / src.height);
+            const sw = src.width * scale, sh = src.height * scale;
+            const sx = (960 - sw) / 2, sy = (720 - sh) / 2;
+            _recCtx.imageSmoothingEnabled = false;
+            _recCtx.drawImage(src, sx, sy, sw, sh);
+            const d = _recCtx.getImageData(0, 0, 960, 720).data;
+            let bin = ''; for (let i = 0; i < d.length; i++) bin += String.fromCharCode(d[i]);
+            return btoa(bin);
         }
 
         async function _recordLoop() {
