@@ -1,7 +1,8 @@
-//! H106 UI — 1:1 LVGL Layout Replica
+//! H106 UI — Redux State Machine (pure functions, zero global mutable state)
 //!
-//! Page state machine with pixel-accurate layout matching LVGL version.
-//! Assets loaded at runtime via VFS. Pure logic + rendering.
+//! All mutable state lives in AppState. Reducer is the only state modifier.
+//! Render is a pure function: f(state, resources) → pixels.
+//! Resources (images, fonts, animation data) are immutable after init.
 
 const state_lib = @import("ui_state");
 const assets_mod = @import("assets.zig");
@@ -13,55 +14,29 @@ pub const SCREEN_H: u16 = 240;
 pub const FB = state_lib.Framebuffer(SCREEN_W, SCREEN_H, .rgb565);
 const Image = state_lib.Image;
 
-// Colors (from theme.zig: globals_tiga.theme)
 pub const BLACK: u16 = 0x0000;
 pub const WHITE: u16 = 0xFFFF;
-pub const GRAY: u16 = 0x4208;
-pub const DIM_WHITE: u16 = 0x7BEF; // opa=125/255 white on black ≈ 0x7BEF
+pub const DIM_WHITE: u16 = 0x7BEF;
 
 // ============================================================================
-// Runtime Assets
+// Resources — immutable after init, passed explicitly to render
 // ============================================================================
 
-var startup_player: ?state_lib.AnimPlayer = null;
-var startup_frame_timer: u32 = 0;
-var bg_img: ?Image = null;
-var ultraman_img: ?Image = null;
-var menu_imgs: [5]?Image = [_]?Image{null} ** 5;
-var btn_list_img: ?Image = null;
-var game_icons: [4]?Image = [_]?Image{null} ** 4;
-var setting_icons: [9]?Image = [_]?Image{null} ** 9;
-var font_24: ?state_lib.TtfFont = null;
-var font_20: ?state_lib.TtfFont = null;
-var font_16: ?state_lib.TtfFont = null;
-
-/// Initialize startup animation from .anim file data (zero-copy)
-pub fn initStartupAnim(anim_data: ?[]const u8) void {
-    if (anim_data) |data| {
-        startup_player = state_lib.AnimPlayer.init(data);
-    }
-}
-
-pub fn initAssets(
-    bg: Image, ultraman: ?Image, menus: [5]?Image,
-    btn_list: ?Image, g_icons: [4]?Image, s_icons: [9]?Image,
-    ttf_data: ?[]const u8,
-) void {
-    bg_img = bg;
-    ultraman_img = ultraman;
-    menu_imgs = menus;
-    btn_list_img = btn_list;
-    game_icons = g_icons;
-    setting_icons = s_icons;
-    if (ttf_data) |d| {
-        font_24 = state_lib.TtfFont.init(d, 24.0);
-        font_20 = state_lib.TtfFont.init(d, 20.0);
-        font_16 = state_lib.TtfFont.init(d, 16.0);
-    }
-}
+pub const Resources = struct {
+    bg: ?Image = null,
+    ultraman: ?Image = null,
+    menu_icons: [5]?Image = [_]?Image{null} ** 5,
+    btn_list: ?Image = null,
+    game_icons: [4]?Image = [_]?Image{null} ** 4,
+    setting_icons: [9]?Image = [_]?Image{null} ** 9,
+    font_24: ?*state_lib.TtfFont = null,
+    font_20: ?*state_lib.TtfFont = null,
+    font_16: ?*state_lib.TtfFont = null,
+    anim_player: ?*state_lib.AnimPlayer = null,
+};
 
 // ============================================================================
-// State
+// State — ALL mutable state lives here
 // ============================================================================
 
 pub const Page = enum { off, startup, desktop, menu, game_list, game_tetris, game_racer, settings, shutting_down };
@@ -71,16 +46,26 @@ pub const Transition = struct {
     pub const Dir = enum { left, right };
 };
 
+const POWER_HOLD_THRESHOLD: u16 = 180;
+const SHUTDOWN_DURATION: u32 = 36;
+
 pub const AppState = struct {
     page: Page = .startup,
-    power_hold_ticks: u16 = 0, // power button hold counter
-    shutdown_tick: u32 = 0, // tick when shutdown animation started
     transition: ?Transition = null,
     tick: u32 = 0,
     menu_index: u8 = 0,
     game_index: u8 = 0,
     settings_index: u8 = 0,
-    settings_scroll: u16 = 0, // scroll offset for settings list
+    settings_scroll: u16 = 0,
+    power_hold_ticks: u16 = 0,
+    shutdown_tick: u32 = 0,
+
+    // Animation state — reducer controls frame advancement
+    anim_frame_index: u16 = 0,
+    anim_frame_timer: u16 = 0, // sub-frame counter for fps matching
+    anim_done: bool = false,
+
+    // Sub-page states
     tetris: tetris.GameState = .{},
     racer: racer.GameState = .{},
 };
@@ -89,16 +74,13 @@ pub const AppEvent = union(enum) { tick, left, right, up, down, confirm, back, p
 pub const Store = state_lib.Store(AppState, AppEvent);
 
 // ============================================================================
-// Reducer
+// Reducer — ONLY place that modifies state
 // ============================================================================
-
-const POWER_HOLD_THRESHOLD: u16 = 180; // ~3s at 60fps
-const SHUTDOWN_DURATION: u32 = 36; // ~600ms at 60fps
 
 pub fn reduce(state: *AppState, event: AppEvent) void {
     state.tick += 1;
 
-    // Power hold tracking (works on any page except off)
+    // Power hold (any page except off/shutting_down/startup)
     if (state.page != .off and state.page != .shutting_down and state.page != .startup) {
         switch (event) {
             .power_hold => {
@@ -115,7 +97,7 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
         }
     }
 
-    // Off state: long press to boot
+    // Off: long press to boot
     if (state.page == .off) {
         switch (event) {
             .power_hold => {
@@ -123,8 +105,9 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
                 if (state.power_hold_ticks >= POWER_HOLD_THRESHOLD) {
                     state.page = .startup;
                     state.power_hold_ticks = 0;
-                    if (startup_player) |*p| p.reset();
-                    startup_frame_timer = 0;
+                    state.anim_frame_index = 0;
+                    state.anim_frame_timer = 0;
+                    state.anim_done = false;
                 }
             },
             .power_release => state.power_hold_ticks = 0,
@@ -135,12 +118,11 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
 
     // Shutdown animation
     if (state.page == .shutting_down) {
-        if (state.tick >= state.shutdown_tick + SHUTDOWN_DURATION) {
-            state.page = .off;
-        }
+        if (state.tick >= state.shutdown_tick + SHUTDOWN_DURATION) state.page = .off;
         return;
     }
 
+    // Transition
     if (state.transition) |t| {
         if (state.tick >= t.start_tick + t.duration) { state.page = t.to; state.transition = null; }
         if (event == .tick) {
@@ -149,14 +131,23 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
         }
         return;
     }
+
     switch (state.page) {
         .startup => switch (event) {
             .tick => {
-                if (startup_player != null and startup_player.?.isDone()) {
-                    state.page = .desktop;
+                // Advance animation frame in reducer (not in render!)
+                if (!state.anim_done) {
+                    state.anim_frame_timer += 1;
+                    // 30fps anim in 60fps loop → advance every 2 ticks
+                    if (state.anim_frame_timer >= 2) {
+                        state.anim_frame_timer = 0;
+                        state.anim_frame_index += 1;
+                    }
                 }
+                // anim_done is set by render when player reports done
+                if (state.anim_done) state.page = .desktop;
             },
-            .confirm, .back => state.page = .desktop,
+            .confirm, .back => { state.page = .desktop; state.anim_done = true; },
             else => {},
         },
         .desktop => switch (event) { .right, .confirm => nav(state, .menu, .left), else => {} },
@@ -179,8 +170,8 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
             .back => nav(state, .menu, .right), else => {},
         },
         .settings => switch (event) {
-            .up, .left => if (state.settings_index > 0) { state.settings_index -= 1; updateSettingsScroll(state); },
-            .down, .right => if (state.settings_index < 8) { state.settings_index += 1; updateSettingsScroll(state); },
+            .up, .left => if (state.settings_index > 0) { state.settings_index -= 1; updateScroll(state); },
+            .down, .right => if (state.settings_index < 8) { state.settings_index += 1; updateScroll(state); },
             .back => nav(state, .menu, .right), else => {},
         },
         .game_tetris => switch (event) {
@@ -200,7 +191,7 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
             .tick => racer.reduce(&state.racer, .tick),
             else => {},
         },
-        .off, .shutting_down => {}, // handled above (early return)
+        .off, .shutting_down => {},
     }
 }
 
@@ -208,66 +199,60 @@ fn nav(state: *AppState, to: Page, dir: Transition.Dir) void {
     state.transition = .{ .from = state.page, .to = to, .start_tick = state.tick, .duration = 12, .direction = dir };
 }
 
-fn updateSettingsScroll(state: *AppState) void {
-    // Each item 55+4=59px. Visible ~4 items. Scroll to keep selected visible.
+fn updateScroll(state: *AppState) void {
     const item_h: u16 = 59;
-    const visible_h: u16 = SCREEN_H - 8; // padTop=8
-    const selected_top = @as(u16, state.settings_index) * item_h;
-    const selected_bottom = selected_top + 55;
-    if (selected_bottom > state.settings_scroll + visible_h) {
-        state.settings_scroll = selected_bottom - visible_h;
-    }
-    if (selected_top < state.settings_scroll) {
-        state.settings_scroll = selected_top;
-    }
+    const visible_h: u16 = SCREEN_H - 54;
+    const top = @as(u16, state.settings_index) * item_h;
+    const bottom = top + 55;
+    if (bottom > state.settings_scroll + visible_h) state.settings_scroll = bottom - visible_h;
+    if (top < state.settings_scroll) state.settings_scroll = top;
 }
 
 // ============================================================================
-// Render
+// Render — PURE FUNCTION of (state, resources) → pixels
+// No side effects. No global mutable state. No mutation of anything.
 // ============================================================================
 
-pub fn render(fb: *FB, state: *const AppState) void {
+pub fn render(fb: *FB, state: *const AppState, res: *const Resources) void {
     if (state.transition) |t| {
         const elapsed = state.tick -| t.start_tick;
         const p = @min(@as(u32, 256), elapsed * 256 / t.duration);
         const e = easeOut(@intCast(p));
         const off: i16 = @intCast(@as(u32, SCREEN_W) * e / 256);
         switch (t.direction) {
-            .left => { renderPage(fb, state, t.from, -off); renderPage(fb, state, t.to, @intCast(@as(i16, SCREEN_W) - off)); },
-            .right => { renderPage(fb, state, t.from, off); renderPage(fb, state, t.to, -(@as(i16, SCREEN_W) - off)); },
+            .left => { renderPage(fb, state, res, t.from, -off); renderPage(fb, state, res, t.to, @intCast(@as(i16, SCREEN_W) - off)); },
+            .right => { renderPage(fb, state, res, t.from, off); renderPage(fb, state, res, t.to, -(@as(i16, SCREEN_W) - off)); },
         }
-    } else renderPage(fb, state, state.page, 0);
+    } else renderPage(fb, state, res, state.page, 0);
 }
 
-fn renderPage(fb: *FB, state: *const AppState, page: Page, xo: i16) void {
+fn renderPage(fb: *FB, state: *const AppState, res: *const Resources, page: Page, xo: i16) void {
     switch (page) {
         .off => fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK),
-        .startup => renderStartup(fb),
+        .startup => renderStartup(fb, state, res),
         .shutting_down => renderShutdown(fb, state),
-        .desktop => renderDesktop(fb, xo),
-        .menu => renderMenu(fb, state, xo),
-        .game_list => renderGameList(fb, state, xo),
-        .settings => renderSettings(fb, state, xo),
+        .desktop => renderDesktop(fb, res, xo),
+        .menu => renderMenu(fb, state, res, xo),
+        .game_list => renderGameList(fb, state, res, xo),
+        .settings => renderSettings(fb, state, res, xo),
         .game_tetris => if (xo == 0) { const e = tetris.GameState{}; tetris.render(fb, &state.tetris, &e); } else fillOff(fb, xo, BLACK),
         .game_racer => if (xo == 0) { const e = racer.GameState{}; racer.render(fb, &state.racer, &e); } else fillOff(fb, xo, BLACK),
     }
 }
 
-fn renderStartup(fb: *FB) void {
-    if (startup_player) |*player| {
-        if (player.isDone()) return;
-
-        // Advance frame based on frame timer
-        // 30fps animation in 60fps render loop → advance every 2 ticks
-        const ticks_per_frame = @max(1, 60 / @as(u32, @max(1, player.header.fps)));
-        startup_frame_timer += 1;
-        if (startup_frame_timer >= ticks_per_frame) {
-            startup_frame_timer = 0;
-            if (player.nextFrame()) |frame| {
-                state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, player.header.scale);
-            } else if (!player.isDone()) {
-                // Parse error mid-animation — skip to done
-                player.frame_index = player.header.frame_count;
+fn renderStartup(fb: *FB, state: *const AppState, res: *const Resources) void {
+    // Pure: reads state.anim_frame_index, does NOT modify anything
+    if (res.anim_player) |player| {
+        // Seek to the frame indicated by state
+        var p = player.*;
+        p.reset();
+        var last_frame: ?state_lib.AnimFrame = null;
+        var i: u16 = 0;
+        while (i <= state.anim_frame_index and !p.isDone()) : (i += 1) {
+            if (p.nextFrame()) |frame| {
+                last_frame = frame;
+                // Blit each frame as we go (accumulates on framebuffer)
+                state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, p.header.scale);
             }
         }
     } else {
@@ -276,22 +261,12 @@ fn renderStartup(fb: *FB) void {
 }
 
 fn renderShutdown(fb: *FB, state: *const AppState) void {
-    // Shutdown animation: white rectangle shrinks to center, fades out
-    // Timeline (matching LVGL power_anim.c):
-    //   0-370ms: height 240→0 (ease-in)    = 0-22 ticks
-    //   260-520ms: opacity 255→0 (ease-out) = 16-31 ticks
-    //   370-600ms: width 240→0 (ease-out)   = 22-36 ticks
     fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
-
     const elapsed = state.tick -| state.shutdown_tick;
     const total: u32 = SHUTDOWN_DURATION;
-
-    // Phase 1: height shrinks (first 60%)
     const h_progress = @min(@as(u32, 256), elapsed * 256 * 100 / (total * 62));
     const h_ease = easeIn(@intCast(@min(h_progress, 256)));
     const rect_h: u16 = @intCast(@as(u32, SCREEN_H) * (256 - h_ease) / 256);
-
-    // Phase 2: width shrinks (last 40%)
     var rect_w: u16 = SCREEN_W;
     if (elapsed > total * 62 / 100) {
         const w_elapsed = elapsed - total * 62 / 100;
@@ -299,8 +274,6 @@ fn renderShutdown(fb: *FB, state: *const AppState) void {
         const w_ease = easeOut(@intCast(@min(w_progress, 256)));
         rect_w = @intCast(@as(u32, SCREEN_W) * (256 - w_ease) / 256);
     }
-
-    // Phase 3: opacity fades (middle 43%)
     var alpha: u8 = 255;
     if (elapsed > total * 43 / 100) {
         const a_elapsed = elapsed - total * 43 / 100;
@@ -308,198 +281,119 @@ fn renderShutdown(fb: *FB, state: *const AppState) void {
         const a_ease = easeOut(@intCast(@min(a_progress, 256)));
         alpha = @intCast(255 - (255 * a_ease / 256));
     }
-
     if (rect_w > 0 and rect_h > 0 and alpha > 0) {
         const rx = (SCREEN_W - rect_w) / 2;
         const ry = (SCREEN_H - rect_h) / 2;
-        // Blend white rectangle
         if (alpha >= 250) {
             fb.fillRect(rx, ry, rect_w, rect_h, WHITE);
         } else {
-            // Alpha blend white on black = just scale white
-            const gray565: u16 = @as(u16, @as(u5, @intCast(@as(u32, alpha) * 31 / 255)));
+            const g565: u16 = @as(u16, @as(u5, @intCast(@as(u32, alpha) * 31 / 255)));
             const green: u16 = @as(u16, @as(u6, @intCast(@as(u32, alpha) * 63 / 255)));
-            const color: u16 = (gray565 << 11) | (green << 5) | gray565;
-            fb.fillRect(rx, ry, rect_w, rect_h, color);
+            fb.fillRect(rx, ry, rect_w, rect_h, (g565 << 11) | (green << 5) | g565);
         }
     }
 }
 
-/// Ease-in quadratic: t^2
-fn easeIn(t: u16) u16 {
-    const tv: u32 = t;
-    return @intCast(tv * tv / 256);
-}
-
-fn renderDesktop(fb: *FB, xo: i16) void {
+fn renderDesktop(fb: *FB, res: *const Resources, xo: i16) void {
     if (xo == 0) {
-        // bg → ultraman → header (layered)
-        if (bg_img) |img| fb.blit(0, 0, img);
-        if (ultraman_img) |img| fb.blit(0, 0, img);
-        renderHeader(fb);
-    } else blitBgOff(fb, xo);
+        if (res.bg) |img| fb.blit(0, 0, img);
+        if (res.ultraman) |img| fb.blit(0, 0, img);
+        renderHeader(fb, res);
+    } else blitBgOff(fb, res, xo);
 }
 
-fn renderMenu(fb: *FB, state: *const AppState, xo: i16) void {
-    blitBgOff(fb, xo);
+fn renderMenu(fb: *FB, state: *const AppState, res: *const Resources, xo: i16) void {
+    blitBgOff(fb, res, xo);
     if (xo != 0) return;
-
-    // Menu icon: centered in 240x200 container at y=10, icon center y_off=-10
-    // → icon at x=(240-160)/2=40, y=10+(200-160)/2-10=20
-    if (menu_imgs[state.menu_index]) |img| fb.blit(40, 20, img);
-
-    // Title label: align=bottom_mid, y=-35 → y=240-35-24=181 (approx with font height)
-    if (font_24) |*f| {
+    if (res.menu_icons[state.menu_index]) |img| fb.blit(40, 20, img);
+    if (res.font_24) |f| {
         const label = assets_mod.MENU_LABELS[state.menu_index];
         const tw = f.textWidth(label);
         fb.drawTextTtf((SCREEN_W -| tw) / 2, 181, label, f, WHITE);
     }
-
-    // Dot indicators: 240x16 row at y=240-8-16=216, padColumn=10
-    // Active: 24x12 radius=6, opa=255. Inactive: 12x12 radius=6, opa=125
-    const dot_row_y: u16 = 216;
-    // Total width: calculate based on current selection
+    // Dots
     var total_w: u16 = 0;
     for (0..5) |i| { total_w += if (i == state.menu_index) @as(u16, 24) else @as(u16, 12); }
-    total_w += 4 * 10; // 4 gaps of padColumn=10
+    total_w += 4 * 10;
     var dx: u16 = (SCREEN_W - total_w) / 2;
     for (0..5) |i| {
         const active = (i == state.menu_index);
         const w: u16 = if (active) 24 else 12;
-        const h: u16 = 12;
-        const color: u16 = if (active) WHITE else DIM_WHITE;
-        fb.fillRoundRect(dx, dot_row_y + 2, w, h, 6, color);
+        fb.fillRoundRect(dx, 218, w, 12, 6, if (active) WHITE else DIM_WHITE);
         dx += w + 10;
     }
-
-    renderHeader(fb);
+    renderHeader(fb, res);
 }
 
-fn renderGameList(fb: *FB, state: *const AppState, xo: i16) void {
-    blitBgOff(fb, xo);
+fn renderGameList(fb: *FB, state: *const AppState, res: *const Resources, xo: i16) void {
+    blitBgOff(fb, res, xo);
     if (xo != 0) return;
-
-    renderHeader(fb);
-
-    // List: 224x240, center, padRow=4, padTop=20, flexMain=center
-    // 4 items × (55+4) = 236px. Start below header
-    const list_x: u16 = (SCREEN_W - 224) / 2; // = 8
-    const list_top: u16 = 50; // below 54px header
-
+    renderHeader(fb, res);
+    const lx: u16 = 8;
     for (0..4) |i| {
-        const y = list_top + @as(u16, @intCast(i)) * 59;
-        const selected = (i == state.game_index);
-
-        if (selected) {
-            // Selected: btn_list_item.png background (224x56)
-            if (btn_list_img) |img| fb.blit(list_x, y, img);
-        } else {
-            // Unselected: black bg with radius=4
-            fb.fillRoundRect(list_x, y, 224, 55, 4, BLACK);
-        }
-
-        // Icon (32x32): padLeft=16, vertically centered in 55px item
-        const icon_x = list_x + 16;
-        const icon_y = y + (55 - 32) / 2;
-        if (game_icons[i]) |icon| fb.blit(icon_x, icon_y, icon);
-
-        // Label: padColumn=12 from icon, font_24
-        if (font_24) |*f| {
-            const label_x = icon_x + 32 + 12;
-            fb.drawTextTtf(label_x, y + 14, assets_mod.GAME_LABELS[i], f, WHITE);
-        }
+        const y: u16 = 50 + @as(u16, @intCast(i)) * 59;
+        if (i == state.game_index) {
+            if (res.btn_list) |img| fb.blit(lx, y, img);
+        } else fb.fillRoundRect(lx, y, 224, 55, 4, BLACK);
+        if (res.game_icons[i]) |icon| fb.blit(lx + 16, y + 11, icon);
+        if (res.font_24) |f| fb.drawTextTtf(lx + 64, y + 14, assets_mod.GAME_LABELS[i], f, WHITE);
     }
 }
 
-fn renderSettings(fb: *FB, state: *const AppState, xo: i16) void {
-    blitBgOff(fb, xo);
+fn renderSettings(fb: *FB, state: *const AppState, res: *const Resources, xo: i16) void {
+    blitBgOff(fb, res, xo);
     if (xo != 0) return;
-
-    renderHeader(fb);
-
-    // List: 224x240, center, padRow=4, padTop=8 (below header)
-    const list_x: u16 = (SCREEN_W - 224) / 2;
-    const base_y: i32 = 54 - @as(i32, state.settings_scroll); // start below header
-
+    renderHeader(fb, res);
+    const lx: u16 = 8;
+    const base_y: i32 = 54 - @as(i32, state.settings_scroll);
     for (0..9) |i| {
         const iy: i32 = base_y + @as(i32, @intCast(i)) * 59;
-        if (iy + 55 < 0 or iy >= SCREEN_H) continue; // off screen
+        if (iy + 55 < 0 or iy >= SCREEN_H) continue;
         const y: u16 = if (iy < 0) 0 else @intCast(iy);
-        const selected = (i == state.settings_index);
-
-        if (selected) {
-            if (btn_list_img) |img| fb.blit(list_x, y, img);
-        } else {
-            fb.fillRoundRect(list_x, y, 224, 55, 4, BLACK);
-        }
-
-        // Icon: padLeft=16, padColumn=16
-        const icon_x = list_x + 16;
-        const icon_y = y + (55 - 32) / 2;
-        if (setting_icons[i]) |icon| fb.blit(icon_x, icon_y, icon);
-
-        // Label: font_20
-        if (font_20) |*f| {
-            const label_x = icon_x + 32 + 16;
-            fb.drawTextTtf(label_x, y + 16, assets_mod.SETTING_LABELS[i], f, WHITE);
-        }
+        if (i == state.settings_index) {
+            if (res.btn_list) |img| fb.blit(lx, y, img);
+        } else fb.fillRoundRect(lx, y, 224, 55, 4, BLACK);
+        if (res.setting_icons[i]) |icon| fb.blit(lx + 16, y + 11, icon);
+        if (res.font_20) |f| fb.drawTextTtf(lx + 64, y + 16, assets_mod.SETTING_LABELS[i], f, WHITE);
     }
 }
 
-fn renderHeader(fb: *FB) void {
-    // 240x54, padLeft=16, padRight=16, padTop=16, flex row space-between
-    // Time left, WiFi+Battery right
-    if (font_16) |*f| {
+fn renderHeader(fb: *FB, res: *const Resources) void {
+    if (res.font_16) |f| {
         fb.drawTextTtf(16, 16, "12:00", f, WHITE);
-        // WiFi + battery symbols (simple rectangles as placeholders)
-        // Real version uses FontAwesome glyphs — we draw simple icons
         drawWifiIcon(fb, 200, 18);
         drawBatteryIcon(fb, 218, 18);
     }
 }
 
 fn drawWifiIcon(fb: *FB, x: u16, y: u16) void {
-    // Simple WiFi arc approximation
-    fb.fillRect(x + 4, y + 8, 3, 3, WHITE); // dot
-    fb.hline(x + 2, y + 5, 7, WHITE); // arc 1
-    fb.hline(x, y + 2, 11, WHITE); // arc 2
+    fb.fillRect(x + 4, y + 8, 3, 3, WHITE);
+    fb.hline(x + 2, y + 5, 7, WHITE);
+    fb.hline(x, y + 2, 11, WHITE);
 }
 
 fn drawBatteryIcon(fb: *FB, x: u16, y: u16) void {
     fb.drawRect(x, y + 2, 14, 8, WHITE, 1);
-    fb.fillRect(x + 14, y + 4, 2, 4, WHITE); // terminal
-    fb.fillRect(x + 2, y + 4, 8, 4, WHITE); // charge level
+    fb.fillRect(x + 14, y + 4, 2, 4, WHITE);
+    fb.fillRect(x + 2, y + 4, 8, 4, WHITE);
 }
 
 // ============================================================================
-// Helpers
+// Helpers (pure, no state)
 // ============================================================================
 
-fn easeOut(t: u16) u16 {
-    const inv: u32 = 256 - t;
-    return @intCast(256 - (inv * inv / 256));
-}
+fn easeOut(t: u16) u16 { const inv: u32 = 256 - t; return @intCast(256 - (inv * inv / 256)); }
+fn easeIn(t: u16) u16 { const tv: u32 = t; return @intCast(tv * tv / 256); }
 
-fn blitBgOff(fb: *FB, xo: i16) void {
-    if (bg_img) |img| {
-        if (xo == 0) { fb.blit(0, 0, img); }
-        else if (xo > 0 and xo < SCREEN_W) {
-            fb.fillRect(0, 0, @intCast(xo), SCREEN_H, BLACK);
-            fb.blit(@intCast(xo), 0, img);
-        } else if (xo < 0 and xo > -@as(i16, SCREEN_W)) {
-            fb.blit(0, 0, img);
-            const gx: u16 = @intCast(@as(i16, SCREEN_W) + xo);
-            fb.fillRect(gx, 0, @intCast(-xo), SCREEN_H, BLACK);
-        }
+fn blitBgOff(fb: *FB, res: *const Resources, xo: i16) void {
+    if (res.bg) |img| {
+        if (xo == 0) fb.blit(0, 0, img)
+        else if (xo > 0 and xo < SCREEN_W) { fb.fillRect(0, 0, @intCast(xo), SCREEN_H, BLACK); fb.blit(@intCast(xo), 0, img); }
+        else if (xo < 0 and xo > -@as(i16, SCREEN_W)) { fb.blit(0, 0, img); fb.fillRect(@intCast(@as(i16, SCREEN_W) + xo), 0, @intCast(-xo), SCREEN_H, BLACK); }
     } else fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
 }
 
 fn fillOff(fb: *FB, xo: i16, color: u16) void {
     if (xo >= 0 and xo < SCREEN_W) fb.fillRect(@intCast(xo), 0, SCREEN_W -| @as(u16, @intCast(xo)), SCREEN_H, color)
     else if (xo < 0 and xo > -@as(i16, SCREEN_W)) fb.fillRect(0, 0, @intCast(@as(i16, SCREEN_W) + xo), SCREEN_H, color);
-}
-
-// Simple 5x7 text fallback (kept for non-TTF testing)
-pub fn drawTextSimple(fb: *FB, x: u16, y: u16, text: []const u8, color: u16) void {
-    _ = fb; _ = x; _ = y; _ = text; _ = color;
 }

@@ -1,4 +1,4 @@
-//! H106 Demo — Platform Glue (zero-copy asset loading)
+//! H106 Demo — Platform Glue (zero global mutable UI state)
 
 const ui = @import("ui.zig");
 const assets = @import("assets.zig");
@@ -19,7 +19,13 @@ var sim_spi: websim.SimSpi = undefined;
 var disp: Display = undefined;
 var ready: bool = false;
 
-// Only the flush tmp buffer needs RAM — everything else is zero-copy from flash
+// Resources — initialized once, immutable after init
+var res: ui.Resources = .{};
+var font_24_inst: state_lib.TtfFont = undefined;
+var font_20_inst: state_lib.TtfFont = undefined;
+var font_16_inst: state_lib.TtfFont = undefined;
+var anim_player_inst: state_lib.AnimPlayer = undefined;
+
 var flush_tmp: [240 * 240]u16 = undefined;
 
 pub fn init() void {
@@ -31,59 +37,42 @@ pub fn init() void {
 
     Board.log.info("Loading assets (zero-copy)...", .{});
 
-    // All assets loaded zero-copy — no RAM buffers needed.
-    // loadImageFromFs uses file.data (mmap) when available.
-    var dummy_buf: [8]u8 = undefined; // fallback for non-mmap (unused with EmbedFs)
+    var dummy: [8]u8 = undefined;
+    res.bg = assets.loadImageFromFs(&board.fs, assets.PATH_BG, &dummy);
+    res.ultraman = assets.loadImageFromFs(&board.fs, assets.PATH_ULTRAMAN, &dummy);
+    for (0..5) |i| res.menu_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_MENU_ITEMS[i], &dummy);
+    res.btn_list = assets.loadImageFromFs(&board.fs, assets.PATH_BTN_LIST_ITEM, &dummy);
+    for (0..4) |i| res.game_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_GAME_ICONS[i], &dummy);
+    for (0..9) |i| res.setting_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_SETTING_ICONS[i], &dummy);
 
-    const bg = assets.loadImageFromFs(&board.fs, assets.PATH_BG, &dummy_buf);
-    const ultra = assets.loadImageFromFs(&board.fs, assets.PATH_ULTRAMAN, &dummy_buf);
+    if (res.bg == null) { Board.log.err("Failed to load bg", .{}); return; }
 
-    var menus: [5]?state_lib.Image = undefined;
-    for (0..5) |i| menus[i] = assets.loadImageFromFs(&board.fs, assets.PATH_MENU_ITEMS[i], &dummy_buf);
-
-    const btn_list = assets.loadImageFromFs(&board.fs, assets.PATH_BTN_LIST_ITEM, &dummy_buf);
-
-    var g_icons: [4]?state_lib.Image = undefined;
-    for (0..4) |i| g_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_GAME_ICONS[i], &dummy_buf);
-
-    var s_icons: [9]?state_lib.Image = undefined;
-    for (0..9) |i| s_icons[i] = assets.loadImageFromFs(&board.fs, assets.PATH_SETTING_ICONS[i], &dummy_buf);
-
-    if (bg == null) { Board.log.err("Failed to load bg", .{}); return; }
-
-    // Font: also zero-copy — TtfFont.init just takes a data slice
-    var font_data: ?[]const u8 = null;
+    // Font (zero-copy)
     font_load: {
-        var file = board.fs.open(assets.PATH_FONT, .read) orelse {
-            Board.log.warn("Font not loaded", .{});
-            break :font_load;
-        };
+        var file = board.fs.open(assets.PATH_FONT, .read) orelse break :font_load;
         defer file.close();
-        // Zero-copy: use file.data directly
         if (file.data) |data| {
-            font_data = data;
-        } else {
-            Board.log.warn("Font requires mmap-capable VFS", .{});
+            if (state_lib.TtfFont.init(data, 24.0)) |f| { font_24_inst = f; res.font_24 = &font_24_inst; }
+            if (state_lib.TtfFont.init(data, 20.0)) |f| { font_20_inst = f; res.font_20 = &font_20_inst; }
+            if (state_lib.TtfFont.init(data, 16.0)) |f| { font_16_inst = f; res.font_16 = &font_16_inst; }
         }
     }
 
-    // Startup animation
-    var anim_data: ?[]const u8 = null;
+    // Animation (zero-copy)
     anim_load: {
         var file = board.fs.open(assets.PATH_STARTUP_ANIM, .read) orelse break :anim_load;
         defer file.close();
-        if (file.data) |data| anim_data = data;
+        if (file.data) |data| {
+            if (state_lib.AnimPlayer.init(data)) |p| { anim_player_inst = p; res.anim_player = &anim_player_inst; }
+        }
     }
 
-    Board.log.info("Assets loaded (zero-copy from flash)", .{});
-
-    ui.initStartupAnim(anim_data);
-    ui.initAssets(bg.?, ultra, menus, btn_list, g_icons, s_icons, font_data);
+    Board.log.info("Assets loaded", .{});
 
     store = ui.Store.init(.{}, ui.reduce);
-    framebuf = ui.FB.init(ui.BLACK);
+    framebuf = ui.FB.init(0);
     ready = true;
-    Board.log.info("H106 ready. RIGHT=menu, OK=select, ESC=back", .{});
+    Board.log.info("H106 ready", .{});
 }
 
 var power_was_held: bool = false;
@@ -92,16 +81,11 @@ pub fn step() void {
     if (!ready) return;
     board.buttons.poll();
 
-    // Power button: read raw pressed state directly from driver
-    // (bypass HAL debounce — we handle hold duration in the reducer)
     const t = board.uptime();
     _ = board.button.poll(t);
     const power_held = board.button.driver.isPressed();
-    if (power_held) {
-        store.dispatch(.power_hold);
-    } else if (power_was_held) {
-        store.dispatch(.power_release);
-    }
+    if (power_held) store.dispatch(.power_hold)
+    else if (power_was_held) store.dispatch(.power_release);
     power_was_held = power_held;
 
     while (board.nextEvent()) |event| {
@@ -119,9 +103,21 @@ pub fn step() void {
             else => {},
         }
     }
+
     store.dispatch(.tick);
+
+    // Check if animation reached the end (feedback from player to state)
+    if (store.getState().page == .startup and !store.getState().anim_done) {
+        if (res.anim_player) |player| {
+            if (store.getState().anim_frame_index >= player.header.frame_count) {
+                // Animation done — dispatch a tick to let reducer transition
+                store.dispatch(.tick);
+            }
+        }
+    }
+
     if (store.isDirty()) {
-        ui.render(&framebuf, store.getState());
+        ui.render(&framebuf, store.getState(), &res);
         flushDisplay();
         store.commitFrame();
     }

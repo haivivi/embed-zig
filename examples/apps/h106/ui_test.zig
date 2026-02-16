@@ -174,24 +174,25 @@ test "racer input" {
 }
 
 // ============================================================================
-// Layer 2: Render (no assets — just verify no crash)
+// Layer 2: Render — pure function of (state, resources)
 // ============================================================================
+
+const empty_res = ui.Resources{};
 
 test "render: desktop no crash" {
     var fb = ui.FB.init(ui.BLACK);
     var s = ui.AppState{}; s.page = .desktop;
-    ui.render(&fb, &s); // no assets → draws nothing, no crash
+    ui.render(&fb, &s, &empty_res);
 }
 
 test "render: menu dots" {
     var fb = ui.FB.init(ui.BLACK);
     var s = ui.AppState{}; s.page = .menu;
-    ui.render(&fb, &s);
-    // Dot area has white pixels (roundrect dots)
+    ui.render(&fb, &s, &empty_res);
     var found = false;
     for (212..228) |y| for (80..160) |x| {
         const px = fb.getPixel(@intCast(x), @intCast(y));
-        if (px == ui.WHITE or px == ui.DIM_WHITE) found = true;
+        if (px == 0xFFFF or px == 0x7BEF) found = true;
     };
     try testing.expect(found);
 }
@@ -199,20 +200,32 @@ test "render: menu dots" {
 test "render: game_list no crash" {
     var fb = ui.FB.init(ui.BLACK);
     var s = ui.AppState{}; s.page = .game_list;
-    for (0..4) |i| { s.game_index = @intCast(i); ui.render(&fb, &s); }
+    for (0..4) |i| { s.game_index = @intCast(i); ui.render(&fb, &s, &empty_res); }
 }
 
 test "render: settings no crash" {
     var fb = ui.FB.init(ui.BLACK);
     var s = ui.AppState{}; s.page = .settings;
-    for (0..9) |i| { s.settings_index = @intCast(i); ui.render(&fb, &s); }
+    for (0..9) |i| { s.settings_index = @intCast(i); ui.render(&fb, &s, &empty_res); }
 }
 
 test "render: transition no crash" {
     var fb = ui.FB.init(ui.BLACK);
     var s = ui.AppState{}; s.page = .desktop; s.tick = 5;
     s.transition = .{ .from = .desktop, .to = .menu, .start_tick = 1, .duration = 12, .direction = .left };
-    ui.render(&fb, &s);
+    ui.render(&fb, &s, &empty_res);
     s.transition.?.direction = .right;
-    ui.render(&fb, &s);
+    ui.render(&fb, &s, &empty_res);
+}
+
+test "render: is pure function (same state → same output)" {
+    var fb1 = ui.FB.init(ui.BLACK);
+    var fb2 = ui.FB.init(ui.BLACK);
+    var s = ui.AppState{}; s.page = .menu; s.menu_index = 2;
+    ui.render(&fb1, &s, &empty_res);
+    ui.render(&fb2, &s, &empty_res);
+    // Same state + same resources → same pixels
+    for (0..240) |y| for (0..240) |x| {
+        try testing.expectEqual(fb1.getPixel(@intCast(x), @intCast(y)), fb2.getPixel(@intCast(x), @intCast(y)));
+    };
 }
