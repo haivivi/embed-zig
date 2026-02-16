@@ -30,11 +30,6 @@ Button input with LED toggle.
   bazel run //examples/apps/gpio_button:flash --//bazel:port=/dev/ttyUSB1
   ```
 
-- **Zig / Desktop Simulator (Raylib)**
-  ```bash
-  bazel run //examples/raysim/gpio_button:run
-  ```
-
 ## led_strip_flash
 
 RGB LED strip blinking.
@@ -149,69 +144,15 @@ WiFi connection + DNS resolution.
       --action_env=WIFI_PASSWORD
   ```
 
-## http_speed_test
+## E2E Tests & Benchmarks
 
-HTTP download benchmark.
+Functional tests and benchmarks have been moved to the `e2e/` directory.
+See `e2e/ci/BUILD.bazel` for CI targets.
 
-**First, start the test server on your computer:**
 ```bash
-cd examples/apps/http_speed_test/server && python3 server.py
-# Or: bazel run //examples/apps/http_speed_test/server:run
+# Build all ESP e2e targets
+bazel build //e2e/ci:build_all_e2e_esp --config=ci
+
+# Run native tests (no hardware needed)
+bazel build //e2e/ci:test_all_std
 ```
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  WIFI_PASSWORD=secret bazel build //examples/apps/http_speed_test:esp \
-      --define WIFI_SSID=MyNetwork \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-
-  WIFI_PASSWORD=secret bazel run //examples/apps/http_speed_test:flash \
-      --//bazel:port=/dev/ttyUSB0 \
-      --define WIFI_SSID=MyNetwork \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-  ```
-
-## https_speed_test
-
-HTTPS download benchmark with TLS.
-
-**First, start the HTTPS test server:**
-```bash
-cd examples/apps/https_speed_test/server && python3 server.py
-# Or: bazel run //examples/apps/https_speed_test/server:run
-```
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  WIFI_PASSWORD=secret bazel build //examples/apps/https_speed_test:esp \
-      --define WIFI_SSID=MyNetwork \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-
-  WIFI_PASSWORD=secret bazel run //examples/apps/https_speed_test:flash \
-      --//bazel:port=/dev/ttyUSB0 \
-      --define WIFI_SSID=MyNetwork \
-      --define TEST_SERVER_IP=192.168.1.100 \
-      --action_env=WIFI_PASSWORD
-  ```
-
-## memory_attr_test
-
-PSRAM/IRAM memory placement test.
-
-- **Zig / ESP32-S3-DevKit**
-  ```bash
-  bazel build //examples/apps/memory_attr_test:esp
-  bazel run //examples/apps/memory_attr_test:flash --//bazel:port=/dev/ttyUSB0
-  ```
-
-## ui_demo
-
-UI components demo (desktop simulator only).
-
-- **Zig / Desktop Simulator (Raylib)**
-  ```bash
-  bazel run //examples/raysim/ui_demo:run
-  ```
