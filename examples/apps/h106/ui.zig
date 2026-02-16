@@ -255,18 +255,22 @@ fn renderPage(fb: *FB, state: *const AppState, page: Page, xo: i16) void {
 
 fn renderStartup(fb: *FB) void {
     if (startup_player) |*player| {
+        if (player.isDone()) return;
+
         // Advance frame based on frame timer
-        // We advance one animation frame per (60/fps) ticks
+        // 30fps animation in 60fps render loop → advance every 2 ticks
         const ticks_per_frame = @max(1, 60 / @as(u32, @max(1, player.header.fps)));
         startup_frame_timer += 1;
         if (startup_frame_timer >= ticks_per_frame) {
             startup_frame_timer = 0;
             if (player.nextFrame()) |frame| {
                 state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, player.header.scale);
+            } else if (!player.isDone()) {
+                // Parse error mid-animation — skip to done
+                player.frame_index = player.header.frame_count;
             }
         }
     } else {
-        // No animation — show black
         fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
     }
 }
