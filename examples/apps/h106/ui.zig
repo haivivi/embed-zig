@@ -330,19 +330,14 @@ fn renderPage(fb: *FB, state: *const AppState, res: *const Resources, page: Page
 }
 
 fn renderStartup(fb: *FB, state: *const AppState, res: *const Resources) void {
-    // Pure: reads state.anim_frame_index, does NOT modify anything
+    // Incremental: only decode frames that haven't been rendered yet.
+    // AnimPlayer tracks its position — we advance it to match state.anim_frame_index.
+    // Framebuffer persists between renders, so previous frames' pixels are already there.
     if (res.anim_player) |player| {
-        // Seek to the frame indicated by state
-        var p = player.*;
-        p.reset();
-        var last_frame: ?state_lib.AnimFrame = null;
-        var i: u16 = 0;
-        while (i <= state.anim_frame_index and !p.isDone()) : (i += 1) {
-            if (p.nextFrame()) |frame| {
-                last_frame = frame;
-                // Blit each frame as we go (accumulates on framebuffer)
-                state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, p.header.scale);
-            }
+        while (player.frame_index <= state.anim_frame_index and !player.isDone()) {
+            if (player.nextFrame()) |frame| {
+                state_lib.blitAnimFrame(SCREEN_W, SCREEN_H, .rgb565, fb, frame, player.header.scale);
+            } else break;
         }
     } else {
         fb.fillRect(0, 0, SCREEN_W, SCREEN_H, BLACK);
