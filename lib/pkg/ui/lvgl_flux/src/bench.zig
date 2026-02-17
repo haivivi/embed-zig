@@ -1,384 +1,367 @@
-//! LVGL Flux Sync Engine Benchmark
+//! LVGL Flux Sync Engine — Bandwidth Efficiency Benchmark
 //!
-//! Measures the overhead of the SyncEngine (state diff + binding dispatch)
-//! without actual LVGL widget operations. This isolates the Flux→LVGL
-//! bridge cost from LVGL's own rendering cost.
+//! Measures the SyncEngine's ability to detect which state fields changed
+//! and how that maps to LVGL widget invalidation (minimal dirty area).
 //!
-//! For framebuffer comparison, see lib/pkg/ui/state/src/bench.zig.
+//! Complements lib/pkg/ui/state/src/bench.zig which measures the framebuffer
+//! approach. Together they show the bandwidth difference between:
+//!   - Framebuffer: redraw everything → DirtyTracker merges regions → large flush
+//!   - LVGL Flux: diff state fields → invalidate only changed widgets → small flush
 //!
 //! Run:
-//!   bazel test //lib/pkg/ui/lvgl_flux:bench
+//!   bazel test //lib/pkg/ui/lvgl_flux:bench --test_output=all
 
 const std = @import("std");
 const lvgl_flux = @import("lvgl_flux.zig");
 const SyncEngine = lvgl_flux.SyncEngine;
 const ViewBinding = lvgl_flux.ViewBinding;
-const RenderStats = lvgl_flux.RenderStats;
 
 // ============================================================================
-// Benchmark harness (same as ui/state bench)
+// Display config (matches framebuffer bench)
 // ============================================================================
 
-const BenchResult = struct {
-    name: []const u8,
-    iterations: u64,
-    total_ns: u64,
-    min_ns: u64,
-    max_ns: u64,
+const W: u32 = 240;
+const H: u32 = 240;
+const BPP: u32 = 2;
+const TOTAL_BYTES: u32 = W * H * BPP;
 
-    fn avgNs(self: BenchResult) u64 {
-        return if (self.iterations > 0) self.total_ns / self.iterations else 0;
-    }
+// Widget bounding box areas (in bytes)
+const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 
-    fn opsPerSec(self: BenchResult) u64 {
-        if (self.total_ns == 0) return 0;
-        return self.iterations * std.time.ns_per_s / self.total_ns;
-    }
-
-    fn report(self: BenchResult) void {
-        std.debug.print("  {s}: {d} iters, avg {d} ns, min {d} ns, max {d} ns, {d} ops/s\n", .{
-            self.name,
-            self.iterations,
-            self.avgNs(),
-            self.min_ns,
-            self.max_ns,
-            self.opsPerSec(),
-        });
-    }
-};
-
-fn bench(name: []const u8, comptime warmup: u32, comptime iters: u32, comptime func: fn () void) BenchResult {
-    for (0..warmup) |_| func();
-
-    var total_ns: u64 = 0;
-    var min_ns: u64 = std.math.maxInt(u64);
-    var max_ns: u64 = 0;
-
-    for (0..iters) |_| {
-        const start = std.time.nanoTimestamp();
-        func();
-        const end = std.time.nanoTimestamp();
-        const elapsed: u64 = @intCast(end - start);
-        total_ns += elapsed;
-        min_ns = @min(min_ns, elapsed);
-        max_ns = @max(max_ns, elapsed);
-    }
-
-    return .{
-        .name = name,
-        .iterations = iters,
-        .total_ns = total_ns,
-        .min_ns = min_ns,
-        .max_ns = max_ns,
-    };
+fn rectBytes(r: Rect) u32 {
+    return @as(u32, r.w) * @as(u32, r.h) * BPP;
 }
 
 // ============================================================================
-// Simulated app state (matches the framebuffer bench scenario)
+// App state (realistic menu + game + settings UI)
 // ============================================================================
 
-const MenuState = struct {
-    page: enum(u8) { home, menu, game, settings } = .home,
-    selected: u8 = 0,
-    score: u32 = 0,
-    battery: u8 = 100,
-    wifi_connected: bool = false,
-    title: [16]u8 = .{0} ** 16,
-    menu_items: [8]bool = .{false} ** 8, // visible flags
+const AppState = struct {
+    // Status bar
     time_hour: u8 = 12,
     time_min: u8 = 30,
-    brightness: u8 = 80,
+    battery: u8 = 80,
+    wifi_on: bool = true,
+
+    // Navigation
+    page: enum(u8) { menu, settings, game } = .menu,
+
+    // Menu page
+    selected_item: u8 = 0,
+
+    // Settings page
+    brightness: u8 = 128,
+    volume: u8 = 200,
+    wifi_setting: bool = true,
+
+    // Game page
+    score: u32 = 0,
+    player_x: u16 = 110,
+    obstacle_y: [3]u16 = .{ 50, 100, 150 },
 };
 
 // ============================================================================
-// Binding sets (simulate different complexity levels)
+// Widget layout (known bounding boxes)
 // ============================================================================
 
-// 5 bindings — simple settings page
-const simple_bindings = [_]ViewBinding(MenuState){
-    // Title label
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return !std.mem.eql(u8, &s.title, &p.title);
-        }
-    }.f },
-    // Score label
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.score != p.score;
-        }
-    }.f },
-    // Battery icon
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.battery != p.battery;
-        }
-    }.f },
-    // WiFi icon
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.wifi_connected != p.wifi_connected;
-        }
-    }.f },
-    // Brightness slider
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.brightness != p.brightness;
-        }
-    }.f },
+const widget = struct {
+    const time_label = Rect{ .x = 8, .y = 8, .w = 40, .h = 8 };
+    const battery_bar = Rect{ .x = 200, .y = 8, .w = 30, .h = 8 };
+    const wifi_dot = Rect{ .x = 190, .y = 10, .w = 4, .h = 4 };
+    const content_area = Rect{ .x = 0, .y = 24, .w = 240, .h = 216 };
+    const menu_item_0 = Rect{ .x = 10, .y = 30, .w = 220, .h = 38 };
+    const menu_item_1 = Rect{ .x = 10, .y = 72, .w = 220, .h = 38 };
+    const menu_item_2 = Rect{ .x = 10, .y = 114, .w = 220, .h = 38 };
+    const menu_item_3 = Rect{ .x = 10, .y = 156, .w = 220, .h = 38 };
+    const menu_item_4 = Rect{ .x = 10, .y = 198, .w = 220, .h = 38 };
+    const brightness_bar = Rect{ .x = 120, .y = 52, .w = 100, .h = 6 };
+    const volume_bar = Rect{ .x = 120, .y = 72, .w = 100, .h = 6 };
+    const wifi_toggle = Rect{ .x = 120, .y = 92, .w = 40, .h = 8 };
+    const score_label = Rect{ .x = 8, .y = 6, .w = 88, .h = 8 };
+    const player_car = Rect{ .x = 0, .y = 180, .w = 240, .h = 45 }; // full row (position varies)
+    const obstacle_0 = Rect{ .x = 80, .y = 0, .w = 25, .h = 40 };
+    const obstacle_1 = Rect{ .x = 140, .y = 0, .w = 25, .h = 40 };
+    const obstacle_2 = Rect{ .x = 100, .y = 0, .w = 25, .h = 40 };
 };
 
-// 15 bindings — full menu page with status bar + 8 menu items
-const full_bindings = [_]ViewBinding(MenuState){
-    // Status bar: time
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.time_hour != p.time_hour or s.time_min != p.time_min;
-        }
-    }.f },
-    // Status bar: battery
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.battery != p.battery;
-        }
-    }.f },
-    // Status bar: wifi
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.wifi_connected != p.wifi_connected;
-        }
-    }.f },
-    // Page container visibility
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.page != p.page;
-        }
-    }.f },
-    // Title label
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return !std.mem.eql(u8, &s.title, &p.title);
-        }
-    }.f },
-    // Selected highlight
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.selected != p.selected;
-        }
-    }.f },
-    // Score
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.score != p.score;
-        }
-    }.f },
-    // Menu item 0-7 visibility
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[0] != p.menu_items[0];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[1] != p.menu_items[1];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[2] != p.menu_items[2];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[3] != p.menu_items[3];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[4] != p.menu_items[4];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[5] != p.menu_items[5];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[6] != p.menu_items[6];
-        }
-    }.f },
-    .{ .sync_fn = struct {
-        fn f(s: *const MenuState, p: *const MenuState) bool {
-            return s.menu_items[7] != p.menu_items[7];
-        }
-    }.f },
-};
-
-// ============================================================================
-// Benchmark functions
-// ============================================================================
-
-var simple_engine = SyncEngine(MenuState, &simple_bindings).init();
-var full_engine = SyncEngine(MenuState, &full_bindings).init();
-
-// State pairs for benchmarking
-const state_base = MenuState{};
-const state_score_changed = blk: {
-    var s = MenuState{};
-    s.score = 42;
-    break :blk s;
-};
-const state_page_changed = blk: {
-    var s = MenuState{};
-    s.page = .menu;
-    s.selected = 2;
-    break :blk s;
-};
-const state_many_changed = blk: {
-    var s = MenuState{};
-    s.page = .game;
-    s.score = 1000;
-    s.battery = 50;
-    s.wifi_connected = true;
-    s.brightness = 40;
-    s.time_hour = 15;
-    s.time_min = 45;
-    s.selected = 5;
-    break :blk s;
-};
-
-fn benchSimpleNoChange() void {
-    simple_engine.sync(&state_base, &state_base);
-}
-
-fn benchSimpleOneChange() void {
-    simple_engine.sync(&state_score_changed, &state_base);
-}
-
-fn benchSimpleManyChanges() void {
-    simple_engine.sync(&state_many_changed, &state_base);
-}
-
-fn benchFullNoChange() void {
-    full_engine.sync(&state_base, &state_base);
-}
-
-fn benchFullOneChange() void {
-    full_engine.sync(&state_score_changed, &state_base);
-}
-
-fn benchFullPageSwitch() void {
-    full_engine.sync(&state_page_changed, &state_base);
-}
-
-fn benchFullManyChanges() void {
-    full_engine.sync(&state_many_changed, &state_base);
-}
-
-// Simulate rapid sequence of 10 syncs (typical game loop)
-fn benchFullRapidSync() void {
-    const states = [_]MenuState{
-        state_base,
-        state_score_changed,
-        state_page_changed,
-        state_many_changed,
-        state_base,
-        state_score_changed,
-        state_page_changed,
-        state_many_changed,
-        state_base,
-        state_score_changed,
+fn menuItemRect(index: u8) Rect {
+    return switch (index) {
+        0 => widget.menu_item_0,
+        1 => widget.menu_item_1,
+        2 => widget.menu_item_2,
+        3 => widget.menu_item_3,
+        4 => widget.menu_item_4,
+        else => widget.menu_item_0,
     };
-    var i: usize = 0;
-    while (i < states.len - 1) : (i += 1) {
-        full_engine.sync(&states[i + 1], &states[i]);
-    }
 }
 
 // ============================================================================
-// Test entrypoints
+// View bindings — each binding knows its widget's bounding box
 // ============================================================================
 
-test "bench: simple sync engine (5 bindings)" {
-    std.debug.print("\n=== SyncEngine: Simple (5 bindings) ===\n", .{});
-    bench("no change", 100, 10000, benchSimpleNoChange).report();
-    bench("1 field changed", 100, 10000, benchSimpleOneChange).report();
-    bench("5 fields changed", 100, 10000, benchSimpleManyChanges).report();
+// Track which widgets got invalidated per sync
+var invalidated_bytes: u32 = 0;
+var invalidated_widgets: u8 = 0;
+
+fn invalidate(r: Rect) void {
+    invalidated_bytes += rectBytes(r);
+    invalidated_widgets += 1;
 }
 
-test "bench: full sync engine (15 bindings)" {
-    std.debug.print("\n=== SyncEngine: Full (15 bindings) ===\n", .{});
-    bench("no change", 100, 10000, benchFullNoChange).report();
-    bench("1 field changed", 100, 10000, benchFullOneChange).report();
-    bench("page switch (2 fields)", 100, 10000, benchFullPageSwitch).report();
-    bench("many fields changed", 100, 10000, benchFullManyChanges).report();
-    bench("10x rapid sync", 100, 5000, benchFullRapidSync).report();
+fn resetInvalidation() void {
+    invalidated_bytes = 0;
+    invalidated_widgets = 0;
 }
 
-test "bench: sync efficiency analysis" {
-    std.debug.print("\n=== Sync Efficiency Analysis ===\n", .{});
+const bindings = [_]ViewBinding(AppState){
+    // Status: time
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.time_hour != p.time_hour or s.time_min != p.time_min) {
+                invalidate(widget.time_label);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Status: battery
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.battery != p.battery) {
+                invalidate(widget.battery_bar);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Status: wifi
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.wifi_on != p.wifi_on) {
+                invalidate(widget.wifi_dot);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Page switch → invalidate entire content area
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page != p.page) {
+                invalidate(widget.content_area);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Menu: selected item highlight
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .menu and s.selected_item != p.selected_item) {
+                invalidate(menuItemRect(p.selected_item)); // old
+                invalidate(menuItemRect(s.selected_item)); // new
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Settings: brightness
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .settings and s.brightness != p.brightness) {
+                invalidate(widget.brightness_bar);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Settings: volume
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .settings and s.volume != p.volume) {
+                invalidate(widget.volume_bar);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Settings: wifi toggle
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .settings and s.wifi_setting != p.wifi_setting) {
+                invalidate(widget.wifi_toggle);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Game: score
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .game and s.score != p.score) {
+                invalidate(widget.score_label);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Game: player position
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .game and s.player_x != p.player_x) {
+                invalidate(widget.player_car);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+    // Game: obstacles
+    .{ .sync_fn = struct {
+        fn f(s: *const AppState, p: *const AppState) bool {
+            if (s.page == .game and !std.mem.eql(u16, &s.obstacle_y, &p.obstacle_y)) {
+                invalidate(widget.obstacle_0);
+                invalidate(widget.obstacle_1);
+                invalidate(widget.obstacle_2);
+                return true;
+            }
+            return false;
+        }
+    }.f },
+};
 
-    // Reset engines
-    simple_engine = SyncEngine(MenuState, &simple_bindings).init();
-    full_engine = SyncEngine(MenuState, &full_bindings).init();
+var engine = SyncEngine(AppState, &bindings).init();
 
-    // Simulate realistic frame sequence
-    const scenario = [_]struct { current: MenuState, prev: MenuState }{
-        .{ .current = state_base, .prev = state_base }, // idle
-        .{ .current = state_base, .prev = state_base }, // idle
-        .{ .current = state_score_changed, .prev = state_base }, // score update
-        .{ .current = state_score_changed, .prev = state_score_changed }, // idle
-        .{ .current = state_page_changed, .prev = state_score_changed }, // navigate
-        .{ .current = state_many_changed, .prev = state_page_changed }, // game start
-        .{ .current = state_many_changed, .prev = state_many_changed }, // idle
-        .{ .current = state_many_changed, .prev = state_many_changed }, // idle
-        .{ .current = state_base, .prev = state_many_changed }, // back to home
-        .{ .current = state_base, .prev = state_base }, // idle
-    };
+// ============================================================================
+// Measure helper
+// ============================================================================
 
-    for (scenario) |s| {
-        full_engine.sync(&s.current, &s.prev);
-    }
+const SpiSpeed = struct { name: []const u8, mhz: u32 };
+const spi_speeds = [_]SpiSpeed{
+    .{ .name = "10MHz", .mhz = 10 },
+    .{ .name = "20MHz", .mhz = 20 },
+    .{ .name = "40MHz", .mhz = 40 },
+    .{ .name = "80MHz", .mhz = 80 },
+};
 
-    const stats = full_engine.getStats();
-    std.debug.print("  Total frames: {d}\n", .{stats.frame_count});
-    std.debug.print("  Property updates: {d}\n", .{stats.property_updates});
-    std.debug.print("  Skipped frames (no change): {d}\n", .{stats.skipped_frames});
-    std.debug.print("  Avg updates/frame: {d}\n", .{stats.avgUpdatesPerFrame()});
-    std.debug.print("  Update rate: {d}% of frames had changes\n", .{
-        (stats.frame_count - stats.skipped_frames) * 100 / stats.frame_count,
+fn measureSync(name: []const u8, current: AppState, prev: AppState) void {
+    resetInvalidation();
+    engine.sync(&current, &prev);
+
+    const bytes = invalidated_bytes;
+    const widgets_count = invalidated_widgets;
+    const pct = if (TOTAL_BYTES > 0) @as(u64, bytes) * 10000 / TOTAL_BYTES else 0;
+
+    std.debug.print("  {s}:\n", .{name});
+    std.debug.print("    dirty: {d} bytes ({d}.{d:0>2}% of screen), {d} widgets\n", .{
+        bytes,
+        pct / 100,
+        pct % 100,
+        widgets_count,
     });
-
-    // Verify: 10 frames, 5 with changes (idle frames have 0 updates)
-    try std.testing.expectEqual(@as(u64, 10), stats.frame_count);
-    try std.testing.expect(stats.skipped_frames > 0);
-    try std.testing.expect(stats.property_updates > 0);
+    for (spi_speeds) |spd| {
+        const bits: u64 = @as(u64, bytes) * 8;
+        const time_us: u64 = if (spd.mhz > 0) bits / spd.mhz else 0;
+        const max_fps: u64 = if (time_us > 0) 1_000_000 / time_us else 99999;
+        std.debug.print("    @{s}: {d}us, max {d} fps\n", .{ spd.name, time_us, max_fps });
+    }
 }
 
-test "bench: comparison summary" {
-    std.debug.print(
-        \\
-        \\=== Framebuffer vs LVGL Flux: Architecture Comparison ===
-        \\
-        \\  Framebuffer (immediate mode):
-        \\    - render() redraws entire scene from state → O(pixels)
-        \\    - DirtyTracker marks drawn regions → flush only dirty areas
-        \\    - Cost scales with SCENE COMPLEXITY (number of draw calls)
-        \\    - Best for: games, animations, full-screen updates
-        \\
-        \\  LVGL Flux (retained mode + state diff):
-        \\    - sync() compares state fields → O(bindings)
-        \\    - Only calls LVGL API when field actually changed
-        \\    - LVGL internally invalidates only changed widgets
-        \\    - Cost scales with STATE CHANGES (not scene complexity)
-        \\    - Best for: menus, forms, settings, sparse updates
-        \\
-        \\  Key insight:
-        \\    - Partial update (1 menu item): FB ~21us render + 14% flush
-        \\    - LVGL sync (1 field): ~0ns overhead + LVGL redraws only that widget
-        \\    - For complex UI with rare changes, LVGL wins significantly
-        \\    - For games with frequent full-screen changes, FB is simpler
-        \\
-    , .{});
+// ============================================================================
+// Tests — each measures one type of state transition
+// ============================================================================
+
+test "bandwidth: menu select next item" {
+    std.debug.print("\n=== LVGL Flux: Menu select 0 → 1 ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.selected_item = 1;
+    measureSync("select next", s, prev);
+}
+
+test "bandwidth: menu select skip" {
+    std.debug.print("\n=== LVGL Flux: Menu select 0 → 2 ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.selected_item = 2;
+    measureSync("select skip", s, prev);
+}
+
+test "bandwidth: time update" {
+    std.debug.print("\n=== LVGL Flux: Time 12:30 → 12:31 ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.time_min = 31;
+    measureSync("time update", s, prev);
+}
+
+test "bandwidth: battery update" {
+    std.debug.print("\n=== LVGL Flux: Battery 80% → 75% ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.battery = 75;
+    measureSync("battery update", s, prev);
+}
+
+test "bandwidth: wifi toggle" {
+    std.debug.print("\n=== LVGL Flux: WiFi on → off ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.wifi_on = false;
+    measureSync("wifi toggle", s, prev);
+}
+
+test "bandwidth: page switch menu → settings" {
+    std.debug.print("\n=== LVGL Flux: Page menu → settings ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.page = .settings;
+    measureSync("page switch", s, prev);
+}
+
+test "bandwidth: settings brightness change" {
+    std.debug.print("\n=== LVGL Flux: Brightness 128 → 180 ===\n", .{});
+    var s = AppState{ .page = .settings };
+    const prev = s;
+    s.brightness = 180;
+    measureSync("brightness", s, prev);
+}
+
+test "bandwidth: game score increment" {
+    std.debug.print("\n=== LVGL Flux: Score 100 → 101 ===\n", .{});
+    var s = AppState{ .page = .game, .score = 100 };
+    const prev = s;
+    s.score = 101;
+    measureSync("score update", s, prev);
+}
+
+test "bandwidth: game player move" {
+    std.debug.print("\n=== LVGL Flux: Player move 110 → 140 ===\n", .{});
+    var s = AppState{ .page = .game, .player_x = 110 };
+    const prev = s;
+    s.player_x = 140;
+    measureSync("player move", s, prev);
+}
+
+test "bandwidth: game obstacle scroll" {
+    std.debug.print("\n=== LVGL Flux: Obstacles scroll 5px ===\n", .{});
+    var s = AppState{ .page = .game, .obstacle_y = .{ 50, 100, 150 } };
+    const prev = s;
+    s.obstacle_y = .{ 55, 105, 155 };
+    measureSync("obstacle scroll", s, prev);
+}
+
+test "bandwidth: no change (idle)" {
+    std.debug.print("\n=== LVGL Flux: No change (idle frame) ===\n", .{});
+    const s = AppState{};
+    measureSync("idle", s, s);
+}
+
+test "bandwidth: multiple changes at once" {
+    std.debug.print("\n=== LVGL Flux: Multiple changes (time + battery + wifi) ===\n", .{});
+    var s = AppState{};
+    const prev = s;
+    s.time_min = 31;
+    s.battery = 75;
+    s.wifi_on = false;
+    measureSync("multi-change", s, prev);
 }

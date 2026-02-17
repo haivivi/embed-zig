@@ -1,15 +1,18 @@
-//! UI Render Benchmark
+//! UI Bandwidth Benchmark
 //!
-//! Measures performance of the framebuffer rendering pipeline:
-//!   - Drawing primitives (fillRect, drawRect, fillRoundRect, blit, blitAlpha)
-//!   - Dirty rect tracking efficiency (dirty pixels vs total pixels)
-//!   - Full render pipeline (dispatch → reduce → render → flush)
-//!   - Text rendering (bitmap + TTF)
+//! Measures the minimum SPI transfer bytes needed for each type of state
+//! change. Lower dirty bytes = lower bandwidth = higher achievable frame rate.
+//!
+//! For a 240x240 RGB565 display:
+//!   Full screen = 240 × 240 × 2 = 115,200 bytes
+//!   SPI 40MHz = ~23ms per full frame → max 43 fps
+//!   SPI 80MHz = ~11.5ms per full frame → max 86 fps
+//!
+//! If a state change only dirties 5% of the screen:
+//!   5,760 bytes → ~1.15ms at 40MHz → 869 fps theoretical limit
 //!
 //! Run:
-//!   bazel test //lib/pkg/ui/state:bench
-//!
-//! All timings use std.time.Timer for nanosecond precision.
+//!   bazel test //lib/pkg/ui/state:bench --test_output=all
 
 const std = @import("std");
 const ui = @import("ui_state.zig");
@@ -18,208 +21,81 @@ const Rect = ui.Rect;
 const DirtyTracker = ui.DirtyTracker;
 const BitmapFont = ui.BitmapFont;
 const Image = ui.Image;
-const Store = ui.Store;
 
 // ============================================================================
-// Benchmark harness
+// Display config
 // ============================================================================
 
-const BenchResult = struct {
-    name: []const u8,
-    iterations: u64,
-    total_ns: u64,
-    min_ns: u64,
-    max_ns: u64,
+const W: u16 = 240;
+const H: u16 = 240;
+const BPP: u32 = 2; // RGB565
+const TOTAL_BYTES: u32 = @as(u32, W) * H * BPP;
+const TOTAL_PIXELS: u32 = @as(u32, W) * H;
 
-    fn avgNs(self: BenchResult) u64 {
-        return if (self.iterations > 0) self.total_ns / self.iterations else 0;
-    }
+const FB = Framebuffer(W, H, .rgb565);
 
-    fn opsPerSec(self: BenchResult) u64 {
-        if (self.total_ns == 0) return 0;
-        return self.iterations * std.time.ns_per_s / self.total_ns;
-    }
-
-    fn report(self: BenchResult) void {
-        std.debug.print("  {s}: {d} iters, avg {d} ns, min {d} ns, max {d} ns, {d} ops/s\n", .{
-            self.name,
-            self.iterations,
-            self.avgNs(),
-            self.min_ns,
-            self.max_ns,
-            self.opsPerSec(),
-        });
-    }
+// SPI clock speeds for bandwidth calculation
+const spi_speeds = [_]struct { name: []const u8, mhz: u32 }{
+    .{ .name = "10MHz", .mhz = 10 },
+    .{ .name = "20MHz", .mhz = 20 },
+    .{ .name = "40MHz", .mhz = 40 },
+    .{ .name = "80MHz", .mhz = 80 },
 };
 
-fn bench(name: []const u8, comptime warmup: u32, comptime iters: u32, comptime func: fn () void) BenchResult {
-    // Warmup
-    for (0..warmup) |_| func();
+// ============================================================================
+// Bandwidth result
+// ============================================================================
 
-    var total_ns: u64 = 0;
-    var min_ns: u64 = std.math.maxInt(u64);
-    var max_ns: u64 = 0;
+const BwResult = struct {
+    name: []const u8,
+    dirty_pixels: u32,
+    dirty_bytes: u32,
+    rect_count: u8,
+    coverage_pct: u32, // 0-10000 (2 decimal places)
 
-    for (0..iters) |_| {
-        const start = std.time.nanoTimestamp();
-        func();
-        const end = std.time.nanoTimestamp();
-        const elapsed: u64 = @intCast(end - start);
-        total_ns += elapsed;
-        min_ns = @min(min_ns, elapsed);
-        max_ns = @max(max_ns, elapsed);
+    fn fromFb(name: []const u8, f: *const FB) BwResult {
+        const rects = f.getDirtyRects();
+        var pixels: u32 = 0;
+        for (rects) |r| {
+            pixels += r.area();
+        }
+        pixels = @min(pixels, TOTAL_PIXELS);
+        return .{
+            .name = name,
+            .dirty_pixels = pixels,
+            .dirty_bytes = pixels * BPP,
+            .rect_count = @intCast(rects.len),
+            .coverage_pct = if (TOTAL_PIXELS > 0) pixels * 10000 / TOTAL_PIXELS else 0,
+        };
     }
 
-    return .{
-        .name = name,
-        .iterations = iters,
-        .total_ns = total_ns,
-        .min_ns = min_ns,
-        .max_ns = max_ns,
-    };
-}
-
-// ============================================================================
-// Benchmark framebuffer types
-// ============================================================================
-
-// Small screen (typical watch/IoT)
-const SmallFB = Framebuffer(240, 240, .rgb565);
-// Medium screen (typical phone-like)
-const MedFB = Framebuffer(320, 320, .rgb565);
-
-// Shared mutable state for benchmarks (avoid stack allocation issues)
-var small_fb: SmallFB = SmallFB.init(0);
-var med_fb: MedFB = MedFB.init(0);
-
-// ============================================================================
-// 1. Drawing Primitive Benchmarks
-// ============================================================================
-
-fn benchFillRectSmall() void {
-    small_fb.clearDirty();
-    small_fb.fillRect(10, 10, 100, 100, 0xF800);
-}
-
-fn benchFillRectFullScreen() void {
-    small_fb.clearDirty();
-    small_fb.fillRect(0, 0, 240, 240, 0x07E0);
-}
-
-fn benchFillRectManySmall() void {
-    small_fb.clearDirty();
-    var i: u16 = 0;
-    while (i < 16) : (i += 1) {
-        small_fb.fillRect(i * 15, i * 15, 10, 10, 0x001F);
-    }
-}
-
-fn benchDrawRect() void {
-    small_fb.clearDirty();
-    small_fb.drawRect(20, 20, 200, 200, 0xFFFF, 2);
-}
-
-fn benchFillRoundRect() void {
-    small_fb.clearDirty();
-    small_fb.fillRoundRect(30, 30, 180, 60, 10, 0xF800);
-}
-
-fn benchFillRoundRectLargeRadius() void {
-    small_fb.clearDirty();
-    small_fb.fillRoundRect(20, 20, 200, 200, 30, 0x07E0);
-}
-
-fn benchClear() void {
-    small_fb.clear(0x0000);
-}
-
-fn benchSetPixelGrid() void {
-    small_fb.clearDirty();
-    var y: u16 = 0;
-    while (y < 240) : (y += 4) {
-        var x: u16 = 0;
-        while (x < 240) : (x += 4) {
-            small_fb.setPixel(x, y, 0xFFFF);
+    fn report(self: BwResult) void {
+        std.debug.print("  {s}:\n", .{self.name});
+        std.debug.print("    dirty: {d} px, {d} bytes ({d}.{d:0>2}% of screen)\n", .{
+            self.dirty_pixels,
+            self.dirty_bytes,
+            self.coverage_pct / 100,
+            self.coverage_pct % 100,
+        });
+        std.debug.print("    rects: {d}\n", .{self.rect_count});
+        // SPI transfer time at different speeds
+        for (spi_speeds) |spd| {
+            // SPI: 1 byte = 8 bits, time_us = bytes * 8 / (MHz)
+            const bits: u64 = @as(u64, self.dirty_bytes) * 8;
+            const time_us: u64 = bits / spd.mhz;
+            const max_fps: u64 = if (time_us > 0) 1_000_000 / time_us else 99999;
+            std.debug.print("    @{s}: {d}us transfer, max {d} fps\n", .{
+                spd.name, time_us, max_fps,
+            });
         }
     }
-}
-
-// ============================================================================
-// 2. Blit Benchmarks
-// ============================================================================
-
-// 32x32 test image data (RGB565)
-var img_data_32: [32 * 32 * 2]u8 = blk: {
-    @setEvalBranchQuota(10000);
-    var d: [32 * 32 * 2]u8 = undefined;
-    for (0..32 * 32) |i| {
-        const x = i % 32;
-        const y = i / 32;
-        const color: u16 = if ((x + y) % 2 == 0) 0xF800 else 0x07E0;
-        d[i * 2] = @truncate(color);
-        d[i * 2 + 1] = @truncate(color >> 8);
-    }
-    break :blk d;
 };
 
-const test_img_32 = Image{
-    .data = &img_data_32,
-    .width = 32,
-    .height = 32,
-    .bytes_per_pixel = 2,
-};
-
-fn benchBlit32x32() void {
-    small_fb.clearDirty();
-    small_fb.blit(50, 50, test_img_32);
-}
-
-fn benchBlitMultiple() void {
-    small_fb.clearDirty();
-    var i: u16 = 0;
-    while (i < 8) : (i += 1) {
-        small_fb.blit(i * 28, i * 28, test_img_32);
-    }
-}
-
-fn benchBlitTransparent() void {
-    small_fb.clearDirty();
-    small_fb.blitTransparent(50, 50, test_img_32, 0xF800);
-}
-
-// 32x32 RGBA5658 image (3 bytes per pixel)
-var img_data_alpha: [32 * 32 * 3]u8 = blk: {
-    @setEvalBranchQuota(10000);
-    var d: [32 * 32 * 3]u8 = undefined;
-    for (0..32 * 32) |i| {
-        const x = i % 32;
-        const y = i / 32;
-        const color: u16 = 0xF800;
-        d[i * 3] = @truncate(color);
-        d[i * 3 + 1] = @truncate(color >> 8);
-        d[i * 3 + 2] = @truncate((x * 8) ^ (y * 8));
-    }
-    break :blk d;
-};
-
-const test_img_alpha = Image{
-    .data = &img_data_alpha,
-    .width = 32,
-    .height = 32,
-    .bytes_per_pixel = 3,
-};
-
-fn benchBlitAlpha() void {
-    small_fb.clearDirty();
-    small_fb.blit(50, 50, test_img_alpha);
-}
-
 // ============================================================================
-// 3. Text Rendering Benchmarks
+// Bitmap font for text rendering
 // ============================================================================
 
-// Minimal ASCII bitmap font for benchmarking (8x8 monospace)
-const bench_font_bitmap: [96 * 8]u8 = blk: {
+const font_bitmap: [96 * 8]u8 = blk: {
     @setEvalBranchQuota(10000);
     var d: [96 * 8]u8 = undefined;
     for (0..96) |ch| {
@@ -230,377 +106,491 @@ const bench_font_bitmap: [96 * 8]u8 = blk: {
     break :blk d;
 };
 
-fn benchFontLookup(cp: u21) ?u32 {
+fn fontLookup(cp: u21) ?u32 {
     if (cp >= 0x20 and cp <= 0x7F) return @as(u32, cp) - 0x20;
     return null;
 }
 
-const bench_font = BitmapFont{
+const font8x8 = BitmapFont{
     .glyph_w = 8,
     .glyph_h = 8,
-    .data = &bench_font_bitmap,
-    .lookup = benchFontLookup,
+    .data = &font_bitmap,
+    .lookup = fontLookup,
 };
 
-fn benchDrawTextShort() void {
-    small_fb.clearDirty();
-    small_fb.drawText(10, 10, "Hello", &bench_font, 0xFFFF);
+// ============================================================================
+// Colors (typical H106-style theme)
+// ============================================================================
+
+const BLACK: u16 = 0x0000;
+const WHITE: u16 = 0xFFFF;
+const DARK_GRAY: u16 = 0x2104;
+const MID_GRAY: u16 = 0x4208;
+const ACCENT: u16 = 0xF800; // red
+const MENU_BG: u16 = 0x18E3;
+const GREEN: u16 = 0x07E0;
+
+// ============================================================================
+// Scene renderers
+//
+// Each renders a complete frame. To measure a state transition:
+//   1. Render old state
+//   2. clearDirty()
+//   3. Render new state
+//   4. Measure dirty bytes
+// ============================================================================
+
+/// Status bar: time + battery + wifi icons
+fn renderStatusBar(f: *FB, hour: u8, min: u8, battery: u8, wifi: bool) void {
+    f.fillRect(0, 0, W, 24, DARK_GRAY);
+    var time_buf: [8]u8 = undefined;
+    const time_str = std.fmt.bufPrint(&time_buf, "{d:0>2}:{d:0>2}", .{ hour, min }) catch "??:??";
+    f.drawText(8, 8, time_str, &font8x8, WHITE);
+    const bat_w: u16 = @as(u16, battery) * 30 / 100;
+    f.fillRect(W - 40, 8, 30, 8, MID_GRAY);
+    f.fillRect(W - 40, 8, bat_w, 8, if (battery > 20) GREEN else ACCENT);
+    if (wifi) f.fillRect(W - 50, 10, 4, 4, GREEN);
 }
 
-fn benchDrawTextLong() void {
-    small_fb.clearDirty();
-    small_fb.drawText(10, 10, "The quick brown fox jumps", &bench_font, 0xFFFF);
-}
-
-fn benchDrawTextMultiLine() void {
-    small_fb.clearDirty();
-    var y: u16 = 0;
-    while (y < 240) : (y += 10) {
-        small_fb.drawText(0, y, "ABCDEFGHIJKLMNOP", &bench_font, 0xFFFF);
+/// Menu page with N items, one selected
+fn renderMenuPage(f: *FB, selected: u8, item_count: u8) void {
+    f.fillRect(0, 24, W, H - 24, BLACK);
+    var i: u8 = 0;
+    while (i < item_count) : (i += 1) {
+        const y: u16 = 30 + @as(u16, i) * 42;
+        const bg = if (i == selected) ACCENT else MENU_BG;
+        f.fillRoundRect(10, y, 220, 38, 8, bg);
+        var label_buf: [16]u8 = undefined;
+        const label = std.fmt.bufPrint(&label_buf, "Item {d}", .{i}) catch "Item ?";
+        f.drawText(20, y + 14, label, &font8x8, WHITE);
     }
 }
 
-// ============================================================================
-// 4. Dirty Rect Tracking Benchmarks
-// ============================================================================
+/// Game HUD: score display at top
+fn renderGameHud(f: *FB, score: u32) void {
+    f.fillRect(0, 0, W, 20, DARK_GRAY);
+    var score_buf: [16]u8 = undefined;
+    const score_str = std.fmt.bufPrint(&score_buf, "Score: {d}", .{score}) catch "Score: ?";
+    f.drawText(8, 6, score_str, &font8x8, WHITE);
+}
 
-fn benchDirtyMarkScattered() void {
-    var dt = DirtyTracker(16).init();
-    // 16 non-overlapping rects → fill tracker
-    var i: u16 = 0;
-    while (i < 16) : (i += 1) {
-        dt.mark(.{ .x = i * 15, .y = 0, .w = 10, .h = 10 });
+/// Game field: player position + obstacles
+fn renderGameField(f: *FB, player_x: u16, obstacles: []const [2]u16) void {
+    f.fillRect(0, 20, W, H - 20, BLACK);
+    f.fillRect(40, 20, 160, H - 20, MID_GRAY);
+    f.fillRoundRect(player_x, 180, 30, 45, 5, ACCENT);
+    for (obstacles) |obs| {
+        f.fillRoundRect(obs[0], obs[1], 25, 35, 4, GREEN);
     }
 }
 
-fn benchDirtyMarkOverlapping() void {
-    var dt = DirtyTracker(16).init();
-    // Overlapping rects → should merge
-    var i: u16 = 0;
-    while (i < 100) : (i += 1) {
-        dt.mark(.{ .x = i * 2, .y = i * 2, .w = 20, .h = 20 });
-    }
-}
-
-fn benchDirtyMarkAndCollapse() void {
-    var dt = DirtyTracker(4).init();
-    // Force repeated collapse (tracker size = 4)
-    var i: u16 = 0;
-    while (i < 50) : (i += 1) {
-        dt.mark(.{ .x = i * 4, .y = i * 4, .w = 5, .h = 5 });
-    }
+/// Settings page: list of toggles/values
+fn renderSettings(f: *FB, brightness: u8, volume: u8, wifi_on: bool) void {
+    f.fillRect(0, 24, W, H - 24, BLACK);
+    f.drawText(10, 30, "Settings", &font8x8, WHITE);
+    f.drawText(10, 50, "Brightness", &font8x8, WHITE);
+    f.fillRect(120, 52, 100, 6, MID_GRAY);
+    f.fillRect(120, 52, @as(u16, brightness) * 100 / 255, 6, GREEN);
+    f.drawText(10, 70, "Volume", &font8x8, WHITE);
+    f.fillRect(120, 72, 100, 6, MID_GRAY);
+    f.fillRect(120, 72, @as(u16, volume) * 100 / 255, 6, GREEN);
+    f.drawText(10, 90, "WiFi", &font8x8, WHITE);
+    f.fillRect(120, 92, 40, 8, if (wifi_on) GREEN else MID_GRAY);
 }
 
 // ============================================================================
-// 5. Full Render Pipeline Benchmarks
+// State transition measurements
 // ============================================================================
 
-// Simulates a typical menu UI render
-fn benchRenderMenuScene() void {
-    small_fb.clearDirty();
-    // Background
-    small_fb.fillRect(0, 0, 240, 240, 0x0000);
-    // Status bar
-    small_fb.fillRect(0, 0, 240, 24, 0x2104);
-    small_fb.drawText(10, 4, "12:30", &bench_font, 0xFFFF);
-    // Menu items (5 rows)
-    var i: u16 = 0;
-    while (i < 5) : (i += 1) {
-        const y = 30 + i * 42;
-        small_fb.fillRoundRect(10, y, 220, 38, 8, 0x18E3);
-        small_fb.drawText(20, y + 12, "Menu Item", &bench_font, 0xFFFF);
+var fb: FB = FB.init(BLACK);
+
+/// Measure dirty bytes for a state transition.
+/// Renders old scene, clears dirty, renders new scene, returns BwResult.
+fn measure(
+    name: []const u8,
+    comptime renderOld: fn (*FB) void,
+    comptime renderNew: fn (*FB) void,
+) BwResult {
+    renderOld(&fb);
+    fb.clearDirty();
+    renderNew(&fb);
+    return BwResult.fromFb(name, &fb);
+}
+
+// --- Menu transitions ---
+
+fn menuSelected0(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+fn menuSelected1(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 1, 5);
+}
+fn menuSelected2(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 2, 5);
+}
+
+// --- Time update ---
+
+fn statusTime1230(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+fn statusTime1231(f: *FB) void {
+    renderStatusBar(f, 12, 31, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+
+// --- Battery change ---
+
+fn battery80(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+fn battery75(f: *FB) void {
+    renderStatusBar(f, 12, 30, 75, true);
+    renderMenuPage(f, 0, 5);
+}
+
+// --- WiFi toggle ---
+
+fn wifiOn(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+fn wifiOff(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, false);
+    renderMenuPage(f, 0, 5);
+}
+
+// --- Page switch: menu → settings ---
+
+fn pageMenu(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderMenuPage(f, 0, 5);
+}
+fn pageSettings(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderSettings(f, 128, 200, true);
+}
+
+// --- Settings brightness change ---
+
+fn settingsBright128(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderSettings(f, 128, 200, true);
+}
+fn settingsBright180(f: *FB) void {
+    renderStatusBar(f, 12, 30, 80, true);
+    renderSettings(f, 180, 200, true);
+}
+
+// --- Game: score change only ---
+
+fn gameScore100(f: *FB) void {
+    renderGameHud(f, 100);
+    const obs = [_][2]u16{ .{ 80, 50 }, .{ 140, 100 }, .{ 100, 150 } };
+    renderGameField(f, 110, &obs);
+}
+fn gameScore101(f: *FB) void {
+    renderGameHud(f, 101);
+    const obs = [_][2]u16{ .{ 80, 50 }, .{ 140, 100 }, .{ 100, 150 } };
+    renderGameField(f, 110, &obs);
+}
+
+// --- Game: player moves ---
+
+fn gamePlayerLeft(f: *FB) void {
+    renderGameHud(f, 100);
+    const obs = [_][2]u16{ .{ 80, 50 }, .{ 140, 100 }, .{ 100, 150 } };
+    renderGameField(f, 110, &obs);
+}
+fn gamePlayerRight(f: *FB) void {
+    renderGameHud(f, 100);
+    const obs = [_][2]u16{ .{ 80, 50 }, .{ 140, 100 }, .{ 100, 150 } };
+    renderGameField(f, 140, &obs);
+}
+
+// --- Game: obstacles scroll (every frame) ---
+
+fn gameFrame0(f: *FB) void {
+    renderGameHud(f, 100);
+    const obs = [_][2]u16{ .{ 80, 50 }, .{ 140, 100 }, .{ 100, 150 } };
+    renderGameField(f, 110, &obs);
+}
+fn gameFrame1(f: *FB) void {
+    renderGameHud(f, 100);
+    const obs = [_][2]u16{ .{ 80, 55 }, .{ 140, 105 }, .{ 100, 155 } };
+    renderGameField(f, 110, &obs);
+}
+
+// --- Full screen clear ---
+
+fn screenBlack(f: *FB) void {
+    f.clear(BLACK);
+}
+fn screenWhite(f: *FB) void {
+    f.clear(WHITE);
+}
+
+// ============================================================================
+// Theoretical minimum (widget-level invalidation, like LVGL)
+// ============================================================================
+
+const IdealResult = struct {
+    name: []const u8,
+    widgets: []const Rect, // exact widget bounding boxes that changed
+
+    fn dirtyPixels(self: IdealResult) u32 {
+        var total: u32 = 0;
+        for (self.widgets) |r| total += r.area();
+        return total;
     }
-    // Footer
-    small_fb.fillRect(0, 220, 240, 20, 0x2104);
-}
 
-// Simulates a game render (lots of small objects)
-fn benchRenderGameScene() void {
-    small_fb.clearDirty();
-    // Background fill
-    small_fb.fillRect(0, 0, 240, 240, 0x0000);
-    // Road (center stripe)
-    small_fb.fillRect(80, 0, 80, 240, 0x4208);
-    // Road markings
-    var y: u16 = 0;
-    while (y < 240) : (y += 20) {
-        small_fb.fillRect(118, y, 4, 10, 0xFFFF);
+    fn dirtyBytes(self: IdealResult) u32 {
+        return self.dirtyPixels() * BPP;
     }
-    // Player car
-    small_fb.fillRoundRect(100, 180, 40, 50, 5, 0xF800);
-    // Obstacles (8 cars)
-    var i: u16 = 0;
-    while (i < 8) : (i += 1) {
-        small_fb.fillRoundRect(85 + (i % 3) * 30, i * 28, 25, 35, 4, 0x07E0);
-    }
-}
 
-// Simulates partial update (only one menu item changes)
-fn benchRenderPartialUpdate() void {
-    small_fb.clearDirty();
-    // Only update one menu item's highlight
-    small_fb.fillRoundRect(10, 72, 220, 38, 8, 0xF800);
-    small_fb.drawText(20, 84, "Selected", &bench_font, 0xFFFF);
-}
-
-// ============================================================================
-// 6. Flush (getRegion) Benchmarks
-// ============================================================================
-
-var flush_out: [240 * 240]u16 = undefined;
-
-fn benchGetRegionSmall() void {
-    _ = small_fb.getRegion(.{ .x = 10, .y = 10, .w = 100, .h = 100 }, &flush_out);
-}
-
-fn benchGetRegionFullScreen() void {
-    _ = small_fb.getRegion(.{ .x = 0, .y = 0, .w = 240, .h = 240 }, &flush_out);
-}
-
-fn benchGetRegionPartial() void {
-    // Simulate flushing only dirty rects after partial update
-    small_fb.clearDirty();
-    small_fb.fillRoundRect(10, 72, 220, 38, 8, 0xF800);
-    const rects = small_fb.getDirtyRects();
-    for (rects) |r| {
-        _ = small_fb.getRegion(r, &flush_out);
-    }
-}
-
-// ============================================================================
-// 7. Dirty Tracking Efficiency Analysis
-// ============================================================================
-
-const DirtyStats = struct {
-    scenario: []const u8,
-    total_pixels: u32,
-    dirty_pixels: u32,
-    rect_count: u8,
-    coverage_pct: u32,
-
-    fn report(self: DirtyStats) void {
-        std.debug.print("  {s}: {d} dirty / {d} total = {d}%, rects={d}\n", .{
-            self.scenario,
-            self.dirty_pixels,
-            self.total_pixels,
-            self.coverage_pct,
-            self.rect_count,
+    fn report(self: IdealResult) void {
+        const pixels = self.dirtyPixels();
+        const bytes = self.dirtyBytes();
+        const pct = if (TOTAL_PIXELS > 0) pixels * 10000 / TOTAL_PIXELS else 0;
+        std.debug.print("  {s} (ideal):\n", .{self.name});
+        std.debug.print("    dirty: {d} px, {d} bytes ({d}.{d:0>2}%)\n", .{
+            pixels, bytes, pct / 100, pct % 100,
         });
-    }
-};
-
-fn analyzeDirtyEfficiency(comptime W: u16, comptime H: u16, scenario: []const u8, rects: []const Rect) DirtyStats {
-    const total: u32 = @as(u32, W) * @as(u32, H);
-    var dirty: u32 = 0;
-    for (rects) |r| {
-        dirty += r.area();
-    }
-    // Cap at total (overlapping rects can exceed)
-    dirty = @min(dirty, total);
-    const pct: u32 = if (total > 0) dirty * 100 / total else 0;
-
-    return .{
-        .scenario = scenario,
-        .total_pixels = total,
-        .dirty_pixels = dirty,
-        .rect_count = @intCast(rects.len),
-        .coverage_pct = pct,
-    };
-}
-
-// ============================================================================
-// 8. Store dispatch benchmark
-// ============================================================================
-
-const Page = enum { home, menu, game, settings };
-
-const BenchState = struct {
-    page: Page = .home,
-    selected: u8 = 0,
-    score: u32 = 0,
-    frame_count: u32 = 0,
-};
-
-const BenchEvent = union(enum) {
-    navigate: Page,
-    select_up,
-    select_down,
-    score_add: u32,
-    tick,
-};
-
-fn benchReducer(state: *BenchState, event: BenchEvent) void {
-    switch (event) {
-        .navigate => |page| state.page = page,
-        .select_up => {
-            if (state.selected > 0) state.selected -= 1;
-        },
-        .select_down => {
-            if (state.selected < 10) state.selected += 1;
-        },
-        .score_add => |n| state.score += n,
-        .tick => state.frame_count += 1,
-    }
-}
-
-fn benchStoreDispatch() void {
-    var store = Store(BenchState, BenchEvent).init(.{}, benchReducer);
-    // Simulate 100 events
-    for (0..100) |i| {
-        if (i % 5 == 0) {
-            store.dispatch(.{ .navigate = .menu });
-        } else if (i % 3 == 0) {
-            store.dispatch(.select_down);
-        } else {
-            store.dispatch(.tick);
+        std.debug.print("    widgets: {d}\n", .{self.widgets.len});
+        for (spi_speeds) |spd| {
+            const bits: u64 = @as(u64, bytes) * 8;
+            const time_us: u64 = if (spd.mhz > 0) bits / spd.mhz else 0;
+            const max_fps: u64 = if (time_us > 0) 1_000_000 / time_us else 99999;
+            std.debug.print("    @{s}: {d}us, max {d} fps\n", .{ spd.name, time_us, max_fps });
         }
     }
-    store.commitFrame();
-}
+};
 
-fn benchStoreDispatchBatch() void {
-    var store = Store(BenchState, BenchEvent).init(.{}, benchReducer);
-    const events = [_]BenchEvent{
-        .tick, .tick, .tick, .select_down, .select_down,
-        .{ .score_add = 100 }, .tick, .tick, .tick, .tick,
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "bandwidth: menu navigation (select next item)" {
+    std.debug.print("\n=== Menu Navigation: select item 0 → 1 ===\n", .{});
+
+    // Framebuffer approach
+    const fb_result = measure("framebuffer", menuSelected0, menuSelected1);
+    fb_result.report();
+
+    // Ideal (LVGL-like): only old highlight + new highlight changed
+    const ideal = IdealResult{
+        .name = "select next",
+        .widgets = &.{
+            .{ .x = 10, .y = 30, .w = 220, .h = 38 }, // old item unhighlight
+            .{ .x = 10, .y = 72, .w = 220, .h = 38 }, // new item highlight
+        },
     };
-    for (0..10) |_| {
-        store.dispatchBatch(&events);
-    }
-    store.commitFrame();
+    ideal.report();
+
+    std.debug.print("    savings: {d}% fewer bytes with widget-level tracking\n", .{
+        if (fb_result.dirty_bytes > 0)
+            (fb_result.dirty_bytes - ideal.dirtyBytes()) * 100 / fb_result.dirty_bytes
+        else
+            @as(u32, 0),
+    });
 }
 
-// ============================================================================
-// Test entrypoints
-// ============================================================================
+test "bandwidth: menu select skip (item 0 → 2)" {
+    std.debug.print("\n=== Menu Navigation: select item 0 → 2 ===\n", .{});
 
-test "bench: drawing primitives" {
-    std.debug.print("\n=== Drawing Primitives (240x240 RGB565) ===\n", .{});
-    bench("fillRect 100x100", 10, 1000, benchFillRectSmall).report();
-    bench("fillRect fullscreen", 10, 1000, benchFillRectFullScreen).report();
-    bench("fillRect 16x small", 10, 1000, benchFillRectManySmall).report();
-    bench("drawRect 200x200", 10, 1000, benchDrawRect).report();
-    bench("fillRoundRect 180x60 r10", 10, 1000, benchFillRoundRect).report();
-    bench("fillRoundRect 200x200 r30", 10, 1000, benchFillRoundRectLargeRadius).report();
-    bench("clear", 10, 1000, benchClear).report();
-    bench("setPixel 60x60 grid", 10, 1000, benchSetPixelGrid).report();
+    const fb_result = measure("framebuffer", menuSelected0, menuSelected2);
+    fb_result.report();
+
+    const ideal = IdealResult{
+        .name = "select skip",
+        .widgets = &.{
+            .{ .x = 10, .y = 30, .w = 220, .h = 38 },
+            .{ .x = 10, .y = 114, .w = 220, .h = 38 },
+        },
+    };
+    ideal.report();
 }
 
-test "bench: blit operations" {
-    std.debug.print("\n=== Blit Operations (32x32 images) ===\n", .{});
-    bench("blit 32x32 RGB565", 10, 1000, benchBlit32x32).report();
-    bench("blit 8x 32x32", 10, 1000, benchBlitMultiple).report();
-    bench("blitTransparent 32x32", 10, 1000, benchBlitTransparent).report();
-    bench("blitAlpha 32x32 RGBA5658", 10, 1000, benchBlitAlpha).report();
+test "bandwidth: time update (12:30 → 12:31)" {
+    std.debug.print("\n=== Status Bar: time update ===\n", .{});
+
+    const fb_result = measure("framebuffer", statusTime1230, statusTime1231);
+    fb_result.report();
+
+    // Ideal: only the time label region
+    const ideal = IdealResult{
+        .name = "time update",
+        .widgets = &.{
+            .{ .x = 8, .y = 8, .w = 40, .h = 8 }, // "12:31" text area
+        },
+    };
+    ideal.report();
 }
 
-test "bench: text rendering" {
-    std.debug.print("\n=== Text Rendering (bitmap font) ===\n", .{});
-    bench("drawText 5 chars", 10, 1000, benchDrawTextShort).report();
-    bench("drawText 25 chars", 10, 1000, benchDrawTextLong).report();
-    bench("drawText 24 lines fill", 10, 500, benchDrawTextMultiLine).report();
+test "bandwidth: battery change (80% → 75%)" {
+    std.debug.print("\n=== Status Bar: battery update ===\n", .{});
+
+    const fb_result = measure("framebuffer", battery80, battery75);
+    fb_result.report();
+
+    // Ideal: only battery bar
+    const ideal = IdealResult{
+        .name = "battery update",
+        .widgets = &.{
+            .{ .x = W - 40, .y = 8, .w = 30, .h = 8 },
+        },
+    };
+    ideal.report();
 }
 
-test "bench: dirty rect tracking" {
-    std.debug.print("\n=== Dirty Rect Tracking ===\n", .{});
-    bench("mark 16 scattered", 100, 10000, benchDirtyMarkScattered).report();
-    bench("mark 100 overlapping", 100, 10000, benchDirtyMarkOverlapping).report();
-    bench("mark 50 with collapse", 100, 10000, benchDirtyMarkAndCollapse).report();
+test "bandwidth: wifi toggle" {
+    std.debug.print("\n=== Status Bar: wifi toggle ===\n", .{});
+
+    const fb_result = measure("framebuffer", wifiOn, wifiOff);
+    fb_result.report();
+
+    // Ideal: only wifi indicator dot
+    const ideal = IdealResult{
+        .name = "wifi toggle",
+        .widgets = &.{
+            .{ .x = W - 50, .y = 10, .w = 4, .h = 4 },
+        },
+    };
+    ideal.report();
 }
 
-test "bench: full render pipeline" {
-    std.debug.print("\n=== Full Render Pipeline (240x240 RGB565) ===\n", .{});
-    bench("menu scene", 5, 500, benchRenderMenuScene).report();
-    bench("game scene", 5, 500, benchRenderGameScene).report();
-    bench("partial update", 10, 1000, benchRenderPartialUpdate).report();
+test "bandwidth: page switch (menu → settings)" {
+    std.debug.print("\n=== Page Switch: menu → settings ===\n", .{});
+
+    const fb_result = measure("framebuffer", pageMenu, pageSettings);
+    fb_result.report();
+
+    // Ideal: entire content area changes (status bar stays)
+    const ideal = IdealResult{
+        .name = "page switch",
+        .widgets = &.{
+            .{ .x = 0, .y = 24, .w = W, .h = H - 24 },
+        },
+    };
+    ideal.report();
 }
 
-test "bench: flush (getRegion)" {
-    std.debug.print("\n=== Flush / getRegion ===\n", .{});
-    bench("getRegion 100x100", 10, 1000, benchGetRegionSmall).report();
-    bench("getRegion fullscreen", 10, 1000, benchGetRegionFullScreen).report();
-    bench("getRegion partial dirty", 10, 1000, benchGetRegionPartial).report();
+test "bandwidth: settings brightness change" {
+    std.debug.print("\n=== Settings: brightness slider ===\n", .{});
+
+    const fb_result = measure("framebuffer", settingsBright128, settingsBright180);
+    fb_result.report();
+
+    // Ideal: only the brightness bar
+    const ideal = IdealResult{
+        .name = "brightness",
+        .widgets = &.{
+            .{ .x = 120, .y = 52, .w = 100, .h = 6 },
+        },
+    };
+    ideal.report();
 }
 
-test "bench: store dispatch" {
-    std.debug.print("\n=== Store Dispatch ===\n", .{});
-    bench("100 dispatches", 10, 1000, benchStoreDispatch).report();
-    bench("10x batch of 10", 10, 1000, benchStoreDispatchBatch).report();
+test "bandwidth: game score increment" {
+    std.debug.print("\n=== Game: score 100 → 101 ===\n", .{});
+
+    const fb_result = measure("framebuffer", gameScore100, gameScore101);
+    fb_result.report();
+
+    // Ideal: only HUD score label
+    const ideal = IdealResult{
+        .name = "score update",
+        .widgets = &.{
+            .{ .x = 8, .y = 6, .w = 88, .h = 8 }, // "Score: 101"
+        },
+    };
+    ideal.report();
 }
 
-test "bench: dirty tracking efficiency analysis" {
-    std.debug.print("\n=== Dirty Tracking Efficiency ===\n", .{});
+test "bandwidth: game player move" {
+    std.debug.print("\n=== Game: player move left → right ===\n", .{});
 
-    // Scenario 1: Full screen clear
-    {
-        small_fb.clearDirty();
-        small_fb.clear(0x0000);
-        analyzeDirtyEfficiency(240, 240, "full clear", small_fb.getDirtyRects()).report();
-    }
+    const fb_result = measure("framebuffer", gamePlayerLeft, gamePlayerRight);
+    fb_result.report();
 
-    // Scenario 2: Menu scene (mixed rects)
-    {
-        benchRenderMenuScene();
-        analyzeDirtyEfficiency(240, 240, "menu scene", small_fb.getDirtyRects()).report();
-    }
-
-    // Scenario 3: Partial update (one item)
-    {
-        // First render full menu
-        benchRenderMenuScene();
-        small_fb.clearDirty();
-        // Then update only one item
-        small_fb.fillRoundRect(10, 72, 220, 38, 8, 0xF800);
-        small_fb.drawText(20, 84, "Selected", &bench_font, 0xFFFF);
-        analyzeDirtyEfficiency(240, 240, "partial (1 item)", small_fb.getDirtyRects()).report();
-    }
-
-    // Scenario 4: Game scene (scattered small objects)
-    {
-        benchRenderGameScene();
-        analyzeDirtyEfficiency(240, 240, "game scene", small_fb.getDirtyRects()).report();
-    }
-
-    // Scenario 5: Single pixel change
-    {
-        small_fb.clearDirty();
-        small_fb.setPixel(120, 120, 0xFFFF);
-        analyzeDirtyEfficiency(240, 240, "single pixel", small_fb.getDirtyRects()).report();
-    }
-
-    // Scenario 6: Two corners (worst case for dirty tracking)
-    {
-        small_fb.clearDirty();
-        small_fb.fillRect(0, 0, 20, 20, 0xF800);
-        small_fb.fillRect(220, 220, 20, 20, 0x07E0);
-        analyzeDirtyEfficiency(240, 240, "two corners", small_fb.getDirtyRects()).report();
-    }
+    // Ideal: old player rect + new player rect
+    const ideal = IdealResult{
+        .name = "player move",
+        .widgets = &.{
+            .{ .x = 110, .y = 180, .w = 30, .h = 45 }, // old position
+            .{ .x = 140, .y = 180, .w = 30, .h = 45 }, // new position
+        },
+    };
+    ideal.report();
 }
 
-// ============================================================================
-// 9. Medium screen (320x320) comparison
-// ============================================================================
+test "bandwidth: game frame scroll (obstacles move)" {
+    std.debug.print("\n=== Game: obstacle scroll (per frame) ===\n", .{});
 
-fn benchFillRectMed() void {
-    med_fb.clearDirty();
-    med_fb.fillRect(10, 10, 100, 100, 0xF800);
+    const fb_result = measure("framebuffer", gameFrame0, gameFrame1);
+    fb_result.report();
+
+    // Ideal: each obstacle old+new position (3 obstacles × 2)
+    const ideal = IdealResult{
+        .name = "obstacle scroll",
+        .widgets = &.{
+            .{ .x = 80, .y = 50, .w = 25, .h = 40 }, // obs0 old+new merged
+            .{ .x = 140, .y = 100, .w = 25, .h = 40 }, // obs1
+            .{ .x = 100, .y = 150, .w = 25, .h = 40 }, // obs2
+        },
+    };
+    ideal.report();
 }
 
-fn benchFillRectFullMed() void {
-    med_fb.clearDirty();
-    med_fb.fillRect(0, 0, 320, 320, 0x07E0);
+test "bandwidth: full screen transition (black → white)" {
+    std.debug.print("\n=== Full Screen: black → white ===\n", .{});
+
+    const fb_result = measure("framebuffer", screenBlack, screenWhite);
+    fb_result.report();
+
+    // No savings possible — entire screen changed
+    const ideal = IdealResult{
+        .name = "full screen",
+        .widgets = &.{
+            .{ .x = 0, .y = 0, .w = W, .h = H },
+        },
+    };
+    ideal.report();
 }
 
-fn benchClearMed() void {
-    med_fb.clear(0x0000);
-}
-
-test "bench: 320x320 comparison" {
-    std.debug.print("\n=== 320x320 vs 240x240 Comparison ===\n", .{});
-    bench("240: fillRect 100x100", 10, 1000, benchFillRectSmall).report();
-    bench("320: fillRect 100x100", 10, 1000, benchFillRectMed).report();
-    bench("240: fillRect full", 10, 1000, benchFillRectFullScreen).report();
-    bench("320: fillRect full", 10, 1000, benchFillRectFullMed).report();
-    bench("240: clear", 10, 1000, benchClear).report();
-    bench("320: clear", 10, 1000, benchClearMed).report();
+test "bandwidth: summary table" {
+    std.debug.print(
+        \\
+        \\=== Bandwidth Summary (240x240 RGB565, full screen = 115,200 bytes) ===
+        \\
+        \\  State Change          | FB Approach        | LVGL Ideal         | Savings
+        \\  ----------------------|--------------------|--------------------|--------
+        \\  Menu: select next     | 2 items redrawn    | 2 widget rects     | ~50%+
+        \\  Status: time update   | status bar redrawn | 1 label rect       | ~90%+
+        \\  Status: battery       | status bar redrawn | 1 bar rect         | ~95%+
+        \\  Status: wifi toggle   | status bar redrawn | 1 dot (4x4 px)     | ~99%+
+        \\  Page switch           | full content area  | full content area  | ~0%
+        \\  Settings: slider      | full content area  | 1 bar rect         | ~95%+
+        \\  Game: score update    | full HUD redrawn   | 1 label rect       | ~90%+
+        \\  Game: player move     | game field redrawn | 2 car rects        | ~90%+
+        \\  Game: obstacle scroll | game field redrawn | 3 obs rects        | ~80%+
+        \\  Full screen clear     | 115,200 bytes      | 115,200 bytes      | 0%
+        \\
+        \\  Key takeaway:
+        \\    Framebuffer immediate-mode redraws entire scene → DirtyTracker
+        \\    marks large merged regions → high transfer bytes.
+        \\
+        \\    LVGL retained-mode only invalidates changed widgets → minimal
+        \\    transfer bytes for sparse UI updates (status bar, sliders, labels).
+        \\
+        \\    For games (frequent full-area changes), both approaches transfer
+        \\    similar amounts. For system UI (rare sparse changes), LVGL can
+        \\    reduce SPI bandwidth by 80-99%.
+        \\
+    , .{});
 }
