@@ -74,7 +74,12 @@ pub fn init() void {
 
     Board.log.info("Assets loaded", .{});
 
-    store = ui.Store.init(.{}, ui.reduce);
+    // Set initial state with animation frame count
+    var initial_state = ui.AppState{};
+    if (res.anim_player) |player| {
+        initial_state.anim_total_frames = player.header.frame_count;
+    }
+    store = ui.Store.init(initial_state, ui.reduce);
     framebuf = ui.FB.init(0);
     ready = true;
     Board.log.info("H106 ready", .{});
@@ -110,16 +115,6 @@ pub fn step() void {
     }
 
     store.dispatch(.tick);
-
-    // Check if animation reached the end (feedback from player to state)
-    if (store.getState().page == .startup and !store.getState().anim_done) {
-        if (res.anim_player) |player| {
-            if (store.getState().anim_frame_index >= player.header.frame_count) {
-                // Animation done — dispatch a tick to let reducer transition
-                store.dispatch(.tick);
-            }
-        }
-    }
 
     if (store.isDirty()) {
         ui.render(&framebuf, store.getState(), &res);

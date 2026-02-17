@@ -69,6 +69,7 @@ pub const AppState = struct {
     anim_frame_index: u16 = 0,
     anim_frame_timer: u16 = 0,
     anim_done: bool = false,
+    anim_total_frames: u16 = 0, // set at init from AnimPlayer.header.frame_count
 
     // Intro (first boot guide)
     intro_index: u8 = 0,
@@ -126,6 +127,7 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
                     state.anim_frame_index = 0;
                     state.anim_frame_timer = 0;
                     state.anim_done = false;
+                    // anim_total_frames stays — it was set at init
                 }
             },
             .power_release => state.power_hold_ticks = 0,
@@ -158,6 +160,10 @@ pub fn reduce(state: *AppState, event: AppEvent) void {
                     if (state.anim_frame_timer >= 2) {
                         state.anim_frame_timer = 0;
                         state.anim_frame_index += 1;
+                    }
+                    // Check if animation completed
+                    if (state.anim_total_frames > 0 and state.anim_frame_index >= state.anim_total_frames) {
+                        state.anim_done = true;
                     }
                 }
                 if (state.anim_done) {
