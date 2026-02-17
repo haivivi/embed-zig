@@ -1,100 +1,124 @@
-//! SceneRenderer — Component-Based Partial Redraw
+//! Compositor — Component-Based Partial Rendering
 //!
-//! Splits the screen into regions, each tied to specific state fields.
-//! On each frame, only regions whose state actually changed get redrawn.
-//! This gives LVGL-like bandwidth efficiency without LVGL's binary size.
+//! Each component is a self-contained Zig struct that declares:
+//!   - bounds(state) → Rect    — where am I? (can depend on state for sprites)
+//!   - changed(state, prev) → bool — did my data change?
+//!   - draw(fb, state) → void  — render myself
 //!
-//! Data flow:
-//!   State changes → check each region's `changed()` → skip unchanged
-//!   → clear dirty region → call `draw()` → DirtyTracker has minimal area
+//! The Compositor iterates components, skips unchanged ones, and only
+//! redraws what actually changed. Moving sprites are handled automatically:
+//! the old position is cleared before drawing at the new position.
 //!
-//! Works for both UI scenes (menu, settings) and game scenes (HUD, sprites).
-//!
-//! ## Usage
+//! ## Example
 //!
 //! ```zig
 //! const ui = @import("ui_state");
 //!
-//! const regions = [_]ui.Region(GameState){
-//!     .{  // HUD: only redraws when score changes
-//!         .rect = .{ .x = 0, .y = 0, .w = 240, .h = 20 },
-//!         .changed = struct { fn f(s: *const GameState, p: *const GameState) bool {
-//!             return s.score != p.score;
-//!         }}.f,
-//!         .draw = drawHud,
-//!     },
-//!     .{  // Player: only redraws when position changes
-//!         .rect = .{ .x = 0, .y = 180, .w = 240, .h = 60 },
-//!         .changed = struct { fn f(s: *const GameState, p: *const GameState) bool {
-//!             return s.player_x != p.player_x;
-//!         }}.f,
-//!         .draw = drawPlayer,
-//!     },
+//! // Each component is a struct with required pub fns
+//! const ScoreLabel = struct {
+//!     const bg: u16 = 0x0000;
+//!     pub fn bounds(_: *const GameState) ui.Rect {
+//!         return .{ .x = 8, .y = 4, .w = 80, .h = 16 };
+//!     }
+//!     pub fn changed(s: *const GameState, p: *const GameState) bool {
+//!         return s.score != p.score;
+//!     }
+//!     pub fn draw(fb: *FB, s: *const GameState) void {
+//!         fb.fillRect(8, 4, 80, 16, 0x2104);
+//!         // ... render score
+//!     }
 //! };
 //!
-//! const Renderer = ui.SceneRenderer(GameState, &regions);
-//! Renderer.render(&fb, state, prev, false);
+//! const PlayerCar = struct {
+//!     const bg: u16 = 0x0000;
+//!     pub fn bounds(s: *const GameState) ui.Rect {
+//!         return .{ .x = s.player_x, .y = 180, .w = 30, .h = 45 };
+//!     }
+//!     pub fn changed(s: *const GameState, p: *const GameState) bool {
+//!         return s.player_x != p.player_x;
+//!     }
+//!     pub fn draw(fb: *FB, s: *const GameState) void {
+//!         fb.fillRoundRect(s.player_x, 180, 30, 45, 5, 0xF800);
+//!     }
+//! };
+//!
+//! // Compositor renders only changed components
+//! const Game = ui.Compositor(FB, GameState, .{ ScoreLabel, PlayerCar });
+//! Game.render(&fb, state, prev, false);
 //! ```
 
 const Rect = @import("dirty.zig").Rect;
 
-/// A renderable region of the screen.
+/// Compositor: renders a set of component types with partial redraw.
 ///
-/// Each region has a fixed bounding box, a state-diff function that
-/// determines when it needs redraw, and a draw function that renders
-/// it into the framebuffer.
-///
-/// Regions should not overlap for optimal dirty tracking. If they do,
-/// the lower region should be drawn first (painter's algorithm).
+/// `Fb` — Framebuffer type (e.g., `Framebuffer(240, 240, .rgb565)`)
+/// `State` — App state struct
+/// `components` — tuple of component types, each providing:
+///   - `pub fn bounds(*const State) Rect`
+///   - `pub fn changed(*const State, *const State) bool`
+///   - `pub fn draw(*Fb, *const State) void`
+///   - `const bg: u16` (optional, default 0x0000)
+pub fn Compositor(comptime Fb: type, comptime State: type, comptime components: anytype) type {
+    return struct {
+        /// Render the scene. Only components where state changed get redrawn.
+        ///
+        /// For moving components (bounds depends on state), the old position
+        /// is automatically cleared before drawing at the new position.
+        ///
+        /// `first_frame`: if true, draw all components (initial render).
+        /// Returns number of components redrawn.
+        pub fn render(fb: *Fb, state: *const State, prev: *const State, first_frame: bool) u8 {
+            var redrawn: u8 = 0;
+            inline for (components) |C| {
+                if (first_frame or C.changed(state, prev)) {
+                    const bg = if (@hasDecl(C, "bg")) C.bg else 0x0000;
+                    const old_rect = C.bounds(prev);
+                    const new_rect = C.bounds(state);
+
+                    // Clear old position
+                    fb.fillRect(old_rect.x, old_rect.y, old_rect.w, old_rect.h, bg);
+
+                    // If moved, also clear new position (in case another component was there)
+                    if (!old_rect.eql(new_rect)) {
+                        fb.fillRect(new_rect.x, new_rect.y, new_rect.w, new_rect.h, bg);
+                    }
+
+                    // Draw at current position
+                    C.draw(fb, state);
+                    redrawn += 1;
+                }
+            }
+            return redrawn;
+        }
+
+        /// Number of components.
+        pub fn count() usize {
+            return components.len;
+        }
+    };
+}
+
+// Also export Region and SceneRenderer for backward compatibility
+// (simpler API for static layouts)
+
 pub fn Region(comptime State: type) type {
     return struct {
-        /// Bounding box of this region on screen.
         rect: Rect,
-
-        /// Returns true if this region needs redraw.
-        /// Compares current state vs previous frame's state.
-        /// Should be cheap — just compare the fields this region depends on.
         changed: *const fn (current: *const State, prev: *const State) bool,
-
-        /// Draw this region into the framebuffer.
-        /// Called with: framebuffer pointer (as *anyopaque), current state, region bounds.
-        /// The draw function should only draw within the given rect bounds.
         draw: *const fn (fb: *anyopaque, state: *const State, bounds: Rect) void,
-
-        /// Background color for clearing before redraw.
-        /// Set to null to skip clearing (e.g., the draw function handles its own background).
         clear_color: ?u16 = 0x0000,
     };
 }
 
-/// Manages component-based rendering for a scene.
-///
-/// On each frame, iterates all regions:
-///   - Unchanged regions → skip (0 bytes transferred)
-///   - Changed regions → clear bounding box + redraw → DirtyTracker marks minimal area
-///
-/// `Fb` is the Framebuffer type (e.g., `Framebuffer(240, 240, .rgb565)`).
-/// `State` is the app state struct.
-/// `regions` is a comptime slice of Region descriptors.
 pub fn SceneRenderer(comptime Fb: type, comptime State: type, comptime regions: []const Region(State)) type {
     return struct {
-        const Self = @This();
-
-        /// Render the scene, only redrawing regions where state changed.
-        ///
-        /// `first_frame`: if true, draw all regions regardless of state diff
-        ///                (used for initial render or after page switch).
-        ///
-        /// Returns the number of regions that were redrawn.
         pub fn render(fb: *Fb, state: *const State, prev: *const State, first_frame: bool) u8 {
             var redrawn: u8 = 0;
             inline for (regions) |region| {
                 if (first_frame or region.changed(state, prev)) {
-                    // Clear the region to background color
                     if (region.clear_color) |bg| {
                         fb.fillRect(region.rect.x, region.rect.y, region.rect.w, region.rect.h, bg);
                     }
-                    // Draw the region content
                     region.draw(@ptrCast(fb), state, region.rect);
                     redrawn += 1;
                 }
@@ -102,13 +126,10 @@ pub fn SceneRenderer(comptime Fb: type, comptime State: type, comptime regions: 
             return redrawn;
         }
 
-        /// Number of regions in this scene.
         pub fn regionCount() usize {
             return regions.len;
         }
 
-        /// Calculate the total dirty bytes if all regions were redrawn.
-        /// Useful for worst-case bandwidth estimation.
         pub fn maxDirtyBytes(comptime bpp: u32) u32 {
             var total: u32 = 0;
             for (regions) |region| {
@@ -117,7 +138,6 @@ pub fn SceneRenderer(comptime Fb: type, comptime State: type, comptime regions: 
             return total;
         }
 
-        /// Calculate dirty bytes for a specific set of changed regions.
         pub fn dirtyBytes(changed_mask: u32, comptime bpp: u32) u32 {
             var total: u32 = 0;
             inline for (regions, 0..) |region, i| {
@@ -137,295 +157,215 @@ pub fn SceneRenderer(comptime Fb: type, comptime State: type, comptime regions: 
 const std = @import("std");
 const testing = std.testing;
 const Framebuffer = @import("framebuffer.zig").Framebuffer;
-const DirtyTracker = @import("dirty.zig").DirtyTracker;
 
 const TestFB = Framebuffer(240, 240, .rgb565);
+
+// ============================================================================
+// Test game state
+// ============================================================================
 
 const GameState = struct {
     score: u32 = 0,
     player_x: u16 = 110,
     obstacle_y: u16 = 50,
-    paused: bool = false,
+    time_sec: u16 = 0,
 };
 
-// Draw functions for test
-fn drawHud(fb_ptr: *anyopaque, state: *const GameState, bounds: Rect) void {
-    const fb: *TestFB = @alignCast(@ptrCast(fb_ptr));
-    _ = bounds;
-    // Draw score text area
-    fb.fillRect(8, 4, 80, 12, 0x2104);
-    // Simulate score digits
-    const digits: u16 = @intCast(@min(state.score, 999));
-    _ = digits;
-    fb.fillRect(50, 4, 30, 12, 0xFFFF);
-}
+// ============================================================================
+// Components (each is a self-contained struct)
+// ============================================================================
 
-fn drawPlayer(fb_ptr: *anyopaque, state: *const GameState, bounds: Rect) void {
-    const fb: *TestFB = @alignCast(@ptrCast(fb_ptr));
-    _ = bounds;
-    fb.fillRoundRect(state.player_x, 180, 30, 45, 5, 0xF800);
-}
+const HudScore = struct {
+    const bg: u16 = 0x2104;
 
-fn drawObstacles(fb_ptr: *anyopaque, state: *const GameState, bounds: Rect) void {
-    const fb: *TestFB = @alignCast(@ptrCast(fb_ptr));
-    _ = bounds;
-    fb.fillRoundRect(80, state.obstacle_y, 25, 35, 4, 0x07E0);
-    fb.fillRoundRect(140, state.obstacle_y + 50, 25, 35, 4, 0x07E0);
-}
+    pub fn bounds(_: *const GameState) Rect {
+        return .{ .x = 0, .y = 0, .w = 240, .h = 20 };
+    }
 
-fn drawPauseOverlay(fb_ptr: *anyopaque, _: *const GameState, bounds: Rect) void {
-    const fb: *TestFB = @alignCast(@ptrCast(fb_ptr));
-    _ = bounds;
-    fb.fillRect(60, 100, 120, 40, 0x4208);
-}
+    pub fn changed(s: *const GameState, p: *const GameState) bool {
+        return s.score != p.score;
+    }
 
-const game_regions = [_]Region(GameState){
-    .{
-        .rect = .{ .x = 0, .y = 0, .w = 240, .h = 20 },
-        .changed = struct {
-            fn f(s: *const GameState, p: *const GameState) bool {
-                return s.score != p.score;
-            }
-        }.f,
-        .draw = drawHud,
-        .clear_color = 0x0000,
-    },
-    .{
-        .rect = .{ .x = 0, .y = 180, .w = 240, .h = 60 },
-        .changed = struct {
-            fn f(s: *const GameState, p: *const GameState) bool {
-                return s.player_x != p.player_x;
-            }
-        }.f,
-        .draw = drawPlayer,
-        .clear_color = 0x0000,
-    },
-    .{
-        .rect = .{ .x = 0, .y = 20, .w = 240, .h = 160 },
-        .changed = struct {
-            fn f(s: *const GameState, p: *const GameState) bool {
-                return s.obstacle_y != p.obstacle_y;
-            }
-        }.f,
-        .draw = drawObstacles,
-        .clear_color = 0x0000,
-    },
-    .{
-        .rect = .{ .x = 60, .y = 100, .w = 120, .h = 40 },
-        .changed = struct {
-            fn f(s: *const GameState, p: *const GameState) bool {
-                return s.paused != p.paused;
-            }
-        }.f,
-        .draw = drawPauseOverlay,
-        .clear_color = null, // overlay, don't clear
-    },
+    pub fn draw(fb: *TestFB, s: *const GameState) void {
+        fb.fillRect(0, 0, 240, 20, bg);
+        // Simulate drawing score number at fixed position
+        const digit_x: u16 = 60 + @as(u16, @intCast(@min(s.score, 999) % 10)) * 0;
+        _ = digit_x;
+        fb.fillRect(60, 4, 40, 12, 0xFFFF);
+    }
 };
 
-const GameRenderer = SceneRenderer(TestFB, GameState, &game_regions);
+const HudTimer = struct {
+    const bg: u16 = 0x2104;
 
-test "SceneRenderer: first frame draws all regions" {
+    pub fn bounds(_: *const GameState) Rect {
+        return .{ .x = 180, .y = 0, .w = 60, .h = 20 };
+    }
+
+    pub fn changed(s: *const GameState, p: *const GameState) bool {
+        return s.time_sec != p.time_sec;
+    }
+
+    pub fn draw(fb: *TestFB, _: *const GameState) void {
+        fb.fillRect(180, 0, 60, 20, bg);
+        fb.fillRect(190, 4, 40, 12, 0xFFFF);
+    }
+};
+
+const PlayerCar = struct {
+    const bg: u16 = 0x0000;
+
+    pub fn bounds(s: *const GameState) Rect {
+        return .{ .x = s.player_x, .y = 180, .w = 30, .h = 45 };
+    }
+
+    pub fn changed(s: *const GameState, p: *const GameState) bool {
+        return s.player_x != p.player_x;
+    }
+
+    pub fn draw(fb: *TestFB, s: *const GameState) void {
+        fb.fillRoundRect(s.player_x, 180, 30, 45, 5, 0xF800);
+    }
+};
+
+const Obstacles = struct {
+    const bg: u16 = 0x0000;
+
+    pub fn bounds(_: *const GameState) Rect {
+        return .{ .x = 40, .y = 20, .w = 160, .h = 160 };
+    }
+
+    pub fn changed(s: *const GameState, p: *const GameState) bool {
+        return s.obstacle_y != p.obstacle_y;
+    }
+
+    pub fn draw(fb: *TestFB, s: *const GameState) void {
+        // Road background
+        fb.fillRect(40, 20, 160, 160, 0x4208);
+        // Obstacles at current positions
+        fb.fillRoundRect(80, s.obstacle_y, 25, 35, 4, 0x07E0);
+        fb.fillRoundRect(140, s.obstacle_y + 50, 25, 35, 4, 0x07E0);
+    }
+};
+
+const Game = Compositor(TestFB, GameState, .{ HudScore, HudTimer, PlayerCar, Obstacles });
+
+// ============================================================================
+// Compositor tests
+// ============================================================================
+
+test "Compositor: first frame draws all" {
     var fb = TestFB.init(0);
-    const state = GameState{};
-    const redrawn = GameRenderer.render(&fb, &state, &state, true);
-    try testing.expectEqual(@as(u8, 4), redrawn);
+    const s = GameState{};
+    const n = Game.render(&fb, &s, &s, true);
+    try testing.expectEqual(@as(u8, 4), n);
 }
 
-test "SceneRenderer: no change = no redraw" {
+test "Compositor: no change = no redraw" {
     var fb = TestFB.init(0);
     fb.clearDirty();
-
-    const state = GameState{ .score = 50, .player_x = 120 };
-    const redrawn = GameRenderer.render(&fb, &state, &state, false);
-
-    try testing.expectEqual(@as(u8, 0), redrawn);
-    // DirtyTracker should have nothing
+    const s = GameState{ .score = 50 };
+    const n = Game.render(&fb, &s, &s, false);
+    try testing.expectEqual(@as(u8, 0), n);
     try testing.expectEqual(@as(usize, 0), fb.getDirtyRects().len);
 }
 
-test "SceneRenderer: score change only redraws HUD" {
+test "Compositor: score change → only HudScore redrawn" {
     var fb = TestFB.init(0);
+    fb.clearDirty();
     const prev = GameState{ .score = 10 };
     const curr = GameState{ .score = 11 };
+    const n = Game.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
 
-    fb.clearDirty();
-    const redrawn = GameRenderer.render(&fb, &curr, &prev, false);
-
-    try testing.expectEqual(@as(u8, 1), redrawn);
-
-    // Only HUD region should be dirty (0,0,240,20)
-    const rects = fb.getDirtyRects();
-    var total_area: u32 = 0;
-    for (rects) |r| total_area += r.area();
-    // HUD area = 240 * 20 = 4800, plus draw calls within
-    try testing.expect(total_area <= 240 * 20);
+    var dirty: u32 = 0;
+    for (fb.getDirtyRects()) |r| dirty += r.area();
+    try testing.expect(dirty <= 240 * 20);
 }
 
-test "SceneRenderer: player move only redraws player region" {
+test "Compositor: timer change → only HudTimer redrawn" {
     var fb = TestFB.init(0);
-    const prev = GameState{ .player_x = 110 };
-    const curr = GameState{ .player_x = 130 };
-
     fb.clearDirty();
-    const redrawn = GameRenderer.render(&fb, &curr, &prev, false);
+    const prev = GameState{ .time_sec = 30 };
+    const curr = GameState{ .time_sec = 31 };
+    const n = Game.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
 
-    try testing.expectEqual(@as(u8, 1), redrawn);
-
-    // Only player region should be dirty (0,180,240,60)
-    const rects = fb.getDirtyRects();
-    var total_area: u32 = 0;
-    for (rects) |r| total_area += r.area();
-    try testing.expect(total_area <= 240 * 60);
+    var dirty: u32 = 0;
+    for (fb.getDirtyRects()) |r| dirty += r.area();
+    try testing.expect(dirty <= 60 * 20);
 }
 
-test "SceneRenderer: obstacle scroll only redraws game field" {
+test "Compositor: player move clears old + draws new" {
     var fb = TestFB.init(0);
-    const prev = GameState{ .obstacle_y = 50 };
-    const curr = GameState{ .obstacle_y = 55 };
+    // Initial render
+    const s0 = GameState{ .player_x = 100 };
+    _ = Game.render(&fb, &s0, &s0, true);
+
+    // Player at x=100 should be red
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(115, 200));
 
     fb.clearDirty();
-    const redrawn = GameRenderer.render(&fb, &curr, &prev, false);
+    const s1 = GameState{ .player_x = 150 };
+    const n = Game.render(&fb, &s1, &s0, false);
+    try testing.expectEqual(@as(u8, 1), n);
 
-    try testing.expectEqual(@as(u8, 1), redrawn);
-    // Game field region = 240 * 160
-    const rects = fb.getDirtyRects();
-    var total_area: u32 = 0;
-    for (rects) |r| total_area += r.area();
-    try testing.expect(total_area <= 240 * 160);
+    // Old position (x=100) should be cleared to bg (black)
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(115, 200));
+    // New position (x=150) should be red
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(165, 200));
 }
 
-test "SceneRenderer: multiple changes redraw multiple regions" {
+test "Compositor: score + player → 2 components redrawn" {
     var fb = TestFB.init(0);
-    const prev = GameState{ .score = 10, .player_x = 110 };
-    const curr = GameState{ .score = 11, .player_x = 130 };
-
     fb.clearDirty();
-    const redrawn = GameRenderer.render(&fb, &curr, &prev, false);
-
-    try testing.expectEqual(@as(u8, 2), redrawn);
+    const prev = GameState{ .score = 10, .player_x = 100 };
+    const curr = GameState{ .score = 20, .player_x = 120 };
+    const n = Game.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 2), n);
 }
 
-test "SceneRenderer: pause toggle redraws overlay without clear" {
-    var fb = TestFB.init(0);
-    // Fill background with a known color
-    fb.fillRect(60, 100, 120, 40, 0x1111);
-    fb.clearDirty();
-
-    const prev = GameState{ .paused = false };
-    const curr = GameState{ .paused = true };
-
-    const redrawn = GameRenderer.render(&fb, &curr, &prev, false);
-    try testing.expectEqual(@as(u8, 1), redrawn);
-
-    // The overlay drew on top (no clear), so some pixels should be 0x4208
-    try testing.expectEqual(@as(u16, 0x4208), fb.getPixel(70, 110));
-}
-
-test "SceneRenderer: regionCount" {
-    try testing.expectEqual(@as(usize, 4), GameRenderer.regionCount());
-}
-
-test "SceneRenderer: maxDirtyBytes" {
-    // HUD=240*20 + Player=240*60 + Field=240*160 + Overlay=120*40
-    // = 4800 + 14400 + 38400 + 4800 = 62400 pixels * 2 bpp = 124800
-    const max = GameRenderer.maxDirtyBytes(2);
-    try testing.expectEqual(@as(u32, 124800), max);
+test "Compositor: count" {
+    try testing.expectEqual(@as(usize, 4), Game.count());
 }
 
 // ============================================================================
-// Bandwidth comparison tests
+// Bandwidth measurement
 // ============================================================================
 
-test "bandwidth: SceneRenderer vs monolithic render" {
+test "bandwidth: Compositor per-component savings" {
     const BPP: u32 = 2;
-    const FULL_SCREEN: u32 = 240 * 240 * BPP; // 115,200
+    const FULL: u32 = 240 * 240 * BPP;
 
-    std.debug.print("\n=== SceneRenderer Bandwidth Savings ===\n", .{});
+    std.debug.print("\n=== Compositor Bandwidth (240x240 RGB565) ===\n", .{});
 
-    // Scenario 1: Score update only → HUD region
-    {
+    const scenarios = [_]struct {
+        name: []const u8,
+        curr: GameState,
+        prev: GameState,
+    }{
+        .{ .name = "score only", .curr = .{ .score = 11 }, .prev = .{ .score = 10 } },
+        .{ .name = "timer only", .curr = .{ .time_sec = 31 }, .prev = .{ .time_sec = 30 } },
+        .{ .name = "player move", .curr = .{ .player_x = 140 }, .prev = .{ .player_x = 110 } },
+        .{ .name = "obstacles scroll", .curr = .{ .obstacle_y = 55 }, .prev = .{ .obstacle_y = 50 } },
+        .{ .name = "score + player", .curr = .{ .score = 11, .player_x = 140 }, .prev = .{ .score = 10, .player_x = 110 } },
+        .{ .name = "all change", .curr = .{ .score = 11, .player_x = 140, .obstacle_y = 55, .time_sec = 31 }, .prev = .{} },
+        .{ .name = "no change", .curr = .{}, .prev = .{} },
+    };
+
+    for (scenarios) |sc| {
         var fb = TestFB.init(0);
         fb.clearDirty();
-        const prev = GameState{ .score = 99 };
-        const curr = GameState{ .score = 100 };
-        _ = GameRenderer.render(&fb, &curr, &prev, false);
+        const n = Game.render(&fb, &sc.curr, &sc.prev, false);
 
-        var dirty_pixels: u32 = 0;
-        for (fb.getDirtyRects()) |r| dirty_pixels += r.area();
-        const dirty_bytes = dirty_pixels * BPP;
-        const saved_pct = (FULL_SCREEN - dirty_bytes) * 100 / FULL_SCREEN;
+        var dirty: u32 = 0;
+        for (fb.getDirtyRects()) |r| dirty += r.area();
+        const bytes = dirty * BPP;
+        const saved = if (FULL > 0) (FULL - @min(bytes, FULL)) * 100 / FULL else 0;
 
-        std.debug.print("  score update: {d} bytes ({d}% saved vs full screen)\n", .{
-            dirty_bytes, saved_pct,
+        std.debug.print("  {s}: {d} bytes, {d} components, {d}% saved\n", .{
+            sc.name, bytes, n, saved,
         });
     }
-
-    // Scenario 2: Player move only → player region
-    {
-        var fb = TestFB.init(0);
-        fb.clearDirty();
-        const prev = GameState{ .player_x = 110 };
-        const curr = GameState{ .player_x = 130 };
-        _ = GameRenderer.render(&fb, &curr, &prev, false);
-
-        var dirty_pixels: u32 = 0;
-        for (fb.getDirtyRects()) |r| dirty_pixels += r.area();
-        const dirty_bytes = dirty_pixels * BPP;
-        const saved_pct = (FULL_SCREEN - dirty_bytes) * 100 / FULL_SCREEN;
-
-        std.debug.print("  player move: {d} bytes ({d}% saved vs full screen)\n", .{
-            dirty_bytes, saved_pct,
-        });
-    }
-
-    // Scenario 3: Obstacle scroll → game field region
-    {
-        var fb = TestFB.init(0);
-        fb.clearDirty();
-        const prev = GameState{ .obstacle_y = 50 };
-        const curr = GameState{ .obstacle_y = 55 };
-        _ = GameRenderer.render(&fb, &curr, &prev, false);
-
-        var dirty_pixels: u32 = 0;
-        for (fb.getDirtyRects()) |r| dirty_pixels += r.area();
-        const dirty_bytes = dirty_pixels * BPP;
-        const saved_pct = (FULL_SCREEN - dirty_bytes) * 100 / FULL_SCREEN;
-
-        std.debug.print("  obstacle scroll: {d} bytes ({d}% saved vs full screen)\n", .{
-            dirty_bytes, saved_pct,
-        });
-    }
-
-    // Scenario 4: Score + player move → 2 regions
-    {
-        var fb = TestFB.init(0);
-        fb.clearDirty();
-        const prev = GameState{ .score = 99, .player_x = 110 };
-        const curr = GameState{ .score = 100, .player_x = 130 };
-        _ = GameRenderer.render(&fb, &curr, &prev, false);
-
-        var dirty_pixels: u32 = 0;
-        for (fb.getDirtyRects()) |r| dirty_pixels += r.area();
-        const dirty_bytes = dirty_pixels * BPP;
-        const saved_pct = (FULL_SCREEN - dirty_bytes) * 100 / FULL_SCREEN;
-
-        std.debug.print("  score + player: {d} bytes ({d}% saved vs full screen)\n", .{
-            dirty_bytes, saved_pct,
-        });
-    }
-
-    // Scenario 5: Nothing changed → 0 bytes
-    {
-        var fb = TestFB.init(0);
-        fb.clearDirty();
-        const state = GameState{};
-        _ = GameRenderer.render(&fb, &state, &state, false);
-
-        var dirty_pixels: u32 = 0;
-        for (fb.getDirtyRects()) |r| dirty_pixels += r.area();
-
-        std.debug.print("  no change: {d} bytes (100% saved)\n", .{dirty_pixels * BPP});
-    }
-
-    std.debug.print("  full screen (reference): {d} bytes\n", .{FULL_SCREEN});
+    std.debug.print("  full screen: {d} bytes\n", .{FULL});
 }

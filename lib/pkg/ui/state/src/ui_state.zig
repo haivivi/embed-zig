@@ -77,7 +77,8 @@ pub const AnimPlayer = @import("anim.zig").AnimPlayer;
 pub const AnimFrame = @import("anim.zig").AnimFrame;
 pub const blitAnimFrame = @import("anim.zig").blitAnimFrame;
 
-// Scene renderer (component-based partial redraw)
+// Scene compositor (component-based partial redraw)
+pub const Compositor = @import("scene.zig").Compositor;
 pub const Region = @import("scene.zig").Region;
 pub const SceneRenderer = @import("scene.zig").SceneRenderer;
 
