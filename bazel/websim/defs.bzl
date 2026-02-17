@@ -13,8 +13,10 @@ Usage:
         ],
     )
 
-Run:
-    bazel run //examples/apps/lvgl:sim
+Run with tools/websim (native webview + TCP flash):
+    1. bazel run //tools/websim
+    2. bazel build //examples/apps/lvgl:sim
+    3. Flash sim.wasm via TCP
 """
 
 load("//bazel/zig:defs.bzl", "ZigModuleInfo")
@@ -245,70 +247,19 @@ _websim_build = rule(
 )
 
 # =============================================================================
-# websim_serve — Run the WebSim site with a local HTTP server
-# =============================================================================
-
-def _websim_serve_impl(ctx):
-    """Run the websim site with the Go HTTP server."""
-    site_dir = None
-    for f in ctx.attr.app[DefaultInfo].files.to_list():
-        if f.is_directory:
-            site_dir = f
-            break
-
-    if not site_dir:
-        fail("No site directory found in websim_app output")
-
-    server = ctx.executable._server
-    
-    # Create a runner script that passes the site directory to the server
-    run_script = ctx.actions.declare_file(ctx.label.name + "_run.sh")
-    ctx.actions.write(
-        output = run_script,
-        content = """#!/bin/bash
-exec "{server}" "{site_dir}" "$@"
-""".format(
-            server = server.short_path,
-            site_dir = site_dir.short_path,
-        ),
-        is_executable = True,
-    )
-
-    return [DefaultInfo(
-        executable = run_script,
-        runfiles = ctx.runfiles(
-            files = [site_dir],
-            transitive_files = ctx.attr._server[DefaultInfo].default_runfiles.files,
-        ),
-    )]
-
-_websim_serve = rule(
-    implementation = _websim_serve_impl,
-    executable = True,
-    attrs = {
-        "app": attr.label(
-            mandatory = True,
-            doc = "websim_build target",
-        ),
-        "_server": attr.label(
-            default = "//tools/websim_serve",
-            executable = True,
-            cfg = "exec",
-        ),
-    },
-    doc = "Serve a WebSim app with a local HTTP server.",
-)
-
-# =============================================================================
-# websim_app — High-level macro: build + serve
+# websim_app — Build WASM app, flash to tools/websim via TCP
 # =============================================================================
 
 def websim_app(name, main, srcs, web_shell, deps = [], visibility = None):
-    """Build a WebSim WASM app and create a serve target.
+    """Build a WebSim WASM app.
 
-    Creates two targets:
-        {name}       — Build WASM + bundle web shell
-        {name}_serve — Run local HTTP server (bazel run)
+    Creates one target:
+        {name} — Build WASM + bundle web shell
+
+    To run, use tools/websim (native webview) + TCP flash:
+        1. bazel run //tools/websim
+        2. bazel build //examples/apps/{app}:sim
+        3. Flash .wasm to websim's TCP port
 
     Args:
         web_shell: Board-specific web shell label (e.g., "//lib/platform/websim:web_h106").
@@ -322,9 +273,6 @@ def websim_app(name, main, srcs, web_shell, deps = [], visibility = None):
             web_shell = "//lib/platform/websim:web_h106",
             deps = ["//lib/platform/websim", "//lib/hal"],
         )
-
-    Run:
-        bazel run //examples/apps/lvgl:sim_serve
     """
     _vis = visibility if visibility else ["//visibility:public"]
 
@@ -334,12 +282,6 @@ def websim_app(name, main, srcs, web_shell, deps = [], visibility = None):
         srcs = srcs,
         deps = deps,
         web_shell = web_shell,
-        visibility = _vis,
-    )
-
-    _websim_serve(
-        name = name + "_serve",
-        app = ":" + name,
         visibility = _vis,
     )
 

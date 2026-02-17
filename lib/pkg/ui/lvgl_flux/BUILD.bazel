@@ -1,0 +1,19 @@
+load("//bazel/zig:defs.bzl", "zig_package", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# LVGL + Flux sync engine (no LVGL C dependency — pure Zig logic).
+# Apps combine this with lib/pkg/ui/lvgl for actual widget control.
+zig_package(
+    name = "lvgl_flux",
+    module_name = "lvgl_flux",
+)
+
+zig_test(
+    name = "bench",
+    main = "src/bench.zig",
+    srcs = glob(["src/*.zig"]),
+    tags = ["bench", "manual"],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
