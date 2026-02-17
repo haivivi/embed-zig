@@ -330,6 +330,311 @@ test "Compositor: count" {
 }
 
 // ============================================================================
+// Edge case: component at screen edge (clips to bounds)
+// ============================================================================
+
+const EdgeState = struct {
+    x: u16 = 0,
+    visible: bool = true,
+};
+
+const EdgeSprite = struct {
+    const bg: u16 = 0x0000;
+    pub fn bounds(s: *const EdgeState) Rect {
+        return .{ .x = s.x, .y = 220, .w = 30, .h = 30 };
+    }
+    pub fn changed(s: *const EdgeState, p: *const EdgeState) bool {
+        return s.x != p.x or s.visible != p.visible;
+    }
+    pub fn draw(fb: *TestFB, s: *const EdgeState) void {
+        if (s.visible) {
+            fb.fillRect(s.x, 220, 30, 30, 0xF800);
+        }
+    }
+};
+
+const EdgeScene = Compositor(TestFB, EdgeState, .{EdgeSprite});
+
+test "edge: component partially off-screen right" {
+    var fb = TestFB.init(0);
+    fb.clearDirty();
+    // Sprite at x=225, extends to x=255 (15px off-screen)
+    const prev = EdgeState{ .x = 100 };
+    const curr = EdgeState{ .x = 225 };
+    const n = EdgeScene.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    // Should draw without crash, framebuffer clips internally
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(225, 225));
+    // x=239 is still within the clipped rect (225..240), so it IS drawn
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(239, 225));
+    // But old position (x=100) should be cleared
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(110, 230));
+}
+
+test "edge: component moves from off-screen to on-screen" {
+    var fb = TestFB.init(0x1111);
+    // prev was at x=250 (fully off-screen), now at x=200
+    const prev = EdgeState{ .x = 250 };
+    const curr = EdgeState{ .x = 200 };
+    const n = EdgeScene.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    // New position should be drawn
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(210, 230));
+}
+
+test "edge: component visibility toggle" {
+    var fb = TestFB.init(0);
+    // First render visible
+    const s0 = EdgeState{ .x = 50, .visible = true };
+    _ = EdgeScene.render(&fb, &s0, &s0, true);
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(60, 230));
+
+    // Toggle to invisible
+    fb.clearDirty();
+    const s1 = EdgeState{ .x = 50, .visible = false };
+    _ = EdgeScene.render(&fb, &s1, &s0, false);
+    // Old position should be cleared to bg
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(60, 230));
+}
+
+// ============================================================================
+// Edge case: overlapping components
+// ============================================================================
+
+const OverlapState = struct {
+    bg_color: u16 = 0x1111,
+    fg_value: u16 = 0xF800,
+};
+
+const BackPanel = struct {
+    const bg: u16 = 0x0000;
+    pub fn bounds(_: *const OverlapState) Rect {
+        return .{ .x = 50, .y = 50, .w = 100, .h = 100 };
+    }
+    pub fn changed(s: *const OverlapState, p: *const OverlapState) bool {
+        return s.bg_color != p.bg_color;
+    }
+    pub fn draw(fb: *TestFB, s: *const OverlapState) void {
+        fb.fillRect(50, 50, 100, 100, s.bg_color);
+    }
+};
+
+const FrontBadge = struct {
+    const bg: u16 = 0x1111; // same as BackPanel color to blend
+    pub fn bounds(_: *const OverlapState) Rect {
+        return .{ .x = 80, .y = 80, .w = 40, .h = 40 };
+    }
+    pub fn changed(s: *const OverlapState, p: *const OverlapState) bool {
+        return s.fg_value != p.fg_value;
+    }
+    pub fn draw(fb: *TestFB, s: *const OverlapState) void {
+        fb.fillRect(80, 80, 40, 40, s.fg_value);
+    }
+};
+
+const OverlapScene = Compositor(TestFB, OverlapState, .{ BackPanel, FrontBadge });
+
+test "edge: overlapping components both drawn on first frame" {
+    var fb = TestFB.init(0);
+    const s = OverlapState{};
+    _ = OverlapScene.render(&fb, &s, &s, true);
+    // FrontBadge drawn after BackPanel → front wins at overlap
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(90, 90));
+    // BackPanel outside overlap area
+    try testing.expectEqual(@as(u16, 0x1111), fb.getPixel(55, 55));
+}
+
+test "edge: only front changes → back untouched" {
+    var fb = TestFB.init(0);
+    const s0 = OverlapState{};
+    _ = OverlapScene.render(&fb, &s0, &s0, true);
+
+    fb.clearDirty();
+    const s1 = OverlapState{ .fg_value = 0x07E0 };
+    const n = OverlapScene.render(&fb, &s1, &s0, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    // Front changed to green
+    try testing.expectEqual(@as(u16, 0x07E0), fb.getPixel(90, 90));
+    // Back panel area outside badge unchanged
+    try testing.expectEqual(@as(u16, 0x1111), fb.getPixel(55, 55));
+}
+
+test "edge: only back changes → front gets overwritten by clear" {
+    var fb = TestFB.init(0);
+    const s0 = OverlapState{};
+    _ = OverlapScene.render(&fb, &s0, &s0, true);
+
+    fb.clearDirty();
+    const s1 = OverlapState{ .bg_color = 0x2222 };
+    const n = OverlapScene.render(&fb, &s1, &s0, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    // Back changed, but front was NOT redrawn → overlap area has back's color
+    // This is a known limitation: overlapping components should both be
+    // redrawn if the back one changes. Currently the front gets clobbered.
+    try testing.expectEqual(@as(u16, 0x2222), fb.getPixel(90, 90));
+}
+
+// ============================================================================
+// Edge case: rapid position changes (ping-pong)
+// ============================================================================
+
+test "edge: rapid back-and-forth movement" {
+    var fb = TestFB.init(0);
+    const s0 = GameState{ .player_x = 100 };
+    _ = Game.render(&fb, &s0, &s0, true);
+
+    // Move right
+    fb.clearDirty();
+    const s1 = GameState{ .player_x = 120 };
+    _ = Game.render(&fb, &s1, &s0, false);
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(135, 200));
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(105, 200)); // old cleared
+
+    // Move back to original
+    fb.clearDirty();
+    const s2 = GameState{ .player_x = 100 };
+    _ = Game.render(&fb, &s2, &s1, false);
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(115, 200));
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(135, 200)); // old cleared
+}
+
+test "edge: move by 1 pixel" {
+    var fb = TestFB.init(0);
+    const prev = GameState{ .player_x = 100 };
+    const curr = GameState{ .player_x = 101 };
+    fb.clearDirty();
+    const n = Game.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
+
+    // Dirty area should be small (old 30px + new 30px, with 29px overlap)
+    var dirty: u32 = 0;
+    for (fb.getDirtyRects()) |r| dirty += r.area();
+    // At most old_rect + new_rect area (might merge due to overlap)
+    try testing.expect(dirty <= 30 * 45 * 2);
+}
+
+// ============================================================================
+// Edge case: single component scene
+// ============================================================================
+
+const SingleScene = Compositor(TestFB, GameState, .{HudScore});
+
+test "edge: single component scene" {
+    var fb = TestFB.init(0);
+    fb.clearDirty();
+    const prev = GameState{ .score = 0 };
+    const curr = GameState{ .score = 1 };
+    const n = SingleScene.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    try testing.expectEqual(@as(usize, 1), SingleScene.count());
+}
+
+// ============================================================================
+// Edge case: component with no bg declaration (defaults to 0x0000)
+// ============================================================================
+
+const NoBgComponent = struct {
+    pub fn bounds(_: *const GameState) Rect {
+        return .{ .x = 10, .y = 10, .w = 20, .h = 20 };
+    }
+    pub fn changed(s: *const GameState, p: *const GameState) bool {
+        return s.score != p.score;
+    }
+    pub fn draw(fb: *TestFB, _: *const GameState) void {
+        fb.fillRect(10, 10, 20, 20, 0xAAAA);
+    }
+};
+
+const NoBgScene = Compositor(TestFB, GameState, .{NoBgComponent});
+
+test "edge: component without bg declaration uses black" {
+    var fb = TestFB.init(0xFFFF); // white background
+    fb.clearDirty();
+    const prev = GameState{ .score = 0 };
+    const curr = GameState{ .score = 1 };
+    _ = NoBgScene.render(&fb, &curr, &prev, false);
+    // Component area drawn with 0xAAAA
+    try testing.expectEqual(@as(u16, 0xAAAA), fb.getPixel(15, 15));
+    // Adjacent area untouched (still white)
+    try testing.expectEqual(@as(u16, 0xFFFF), fb.getPixel(5, 5));
+}
+
+// ============================================================================
+// Edge case: all fields change simultaneously
+// ============================================================================
+
+test "edge: all 4 components change at once" {
+    var fb = TestFB.init(0);
+    fb.clearDirty();
+    const prev = GameState{ .score = 0, .time_sec = 0, .player_x = 100, .obstacle_y = 50 };
+    const curr = GameState{ .score = 99, .time_sec = 60, .player_x = 200, .obstacle_y = 100 };
+    const n = Game.render(&fb, &curr, &prev, false);
+    try testing.expectEqual(@as(u8, 4), n);
+
+    // All components should have drawn
+    // HudScore
+    try testing.expectEqual(@as(u16, 0xFFFF), fb.getPixel(70, 8));
+    // HudTimer
+    try testing.expectEqual(@as(u16, 0xFFFF), fb.getPixel(200, 8));
+    // Player at new position
+    try testing.expectEqual(@as(u16, 0xF800), fb.getPixel(215, 200));
+    // Old player position cleared
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(115, 200));
+}
+
+// ============================================================================
+// Edge case: changed() returns true but draw is a no-op
+// ============================================================================
+
+const PhantomComponent = struct {
+    const bg: u16 = 0x0000;
+    pub fn bounds(_: *const GameState) Rect {
+        return .{ .x = 0, .y = 0, .w = 10, .h = 10 };
+    }
+    pub fn changed(_: *const GameState, _: *const GameState) bool {
+        return true; // always claims changed
+    }
+    pub fn draw(_: *TestFB, _: *const GameState) void {
+        // draws nothing
+    }
+};
+
+const PhantomScene = Compositor(TestFB, GameState, .{PhantomComponent});
+
+test "edge: always-dirty component with no-op draw" {
+    var fb = TestFB.init(0xBBBB);
+    fb.clearDirty();
+    const s = GameState{};
+    const n = PhantomScene.render(&fb, &s, &s, false);
+    try testing.expectEqual(@as(u8, 1), n);
+    // Area was cleared to bg (black) even though draw was no-op
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(5, 5));
+    // Outside area untouched
+    try testing.expectEqual(@as(u16, 0xBBBB), fb.getPixel(15, 15));
+}
+
+// ============================================================================
+// Edge case: consecutive renders without clearDirty
+// ============================================================================
+
+test "edge: consecutive renders accumulate dirty rects" {
+    var fb = TestFB.init(0);
+    // Render frame 1: score changes
+    const s0 = GameState{ .score = 0 };
+    const s1 = GameState{ .score = 1 };
+    _ = Game.render(&fb, &s1, &s0, false);
+
+    // Don't clear dirty! Render frame 2: player moves
+    const s2 = GameState{ .score = 1, .player_x = 130 };
+    _ = Game.render(&fb, &s2, &s1, false);
+
+    // Dirty rects should include both HUD and player regions
+    var dirty: u32 = 0;
+    for (fb.getDirtyRects()) |r| dirty += r.area();
+    try testing.expect(dirty > 240 * 20); // more than just HUD
+}
+
+// ============================================================================
 // Bandwidth measurement
 // ============================================================================
 

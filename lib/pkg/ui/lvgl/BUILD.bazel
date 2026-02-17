@@ -4,6 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 zig_package(
     name = "ui_lvgl",
+    main = "src/ui.zig",
     module_name = "ui",
     deps = [
         "//third_party/lvgl",
