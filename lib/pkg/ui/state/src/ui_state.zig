@@ -77,6 +77,10 @@ pub const AnimPlayer = @import("anim.zig").AnimPlayer;
 pub const AnimFrame = @import("anim.zig").AnimFrame;
 pub const blitAnimFrame = @import("anim.zig").blitAnimFrame;
 
+// Scene renderer (component-based partial redraw)
+pub const Region = @import("scene.zig").Region;
+pub const SceneRenderer = @import("scene.zig").SceneRenderer;
+
 // ============================================================================
 // Tests — pull in all sub-module tests
 // ============================================================================
@@ -90,4 +94,5 @@ test {
     _ = @import("font.zig");
     _ = @import("image.zig");
     _ = @import("anim.zig");
+    _ = @import("scene.zig");
 }
