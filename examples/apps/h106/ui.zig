@@ -365,26 +365,12 @@ fn racerStateEql(a: *const racer.GameState, b: *const racer.GameState) bool {
 
 fn renderMenuPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
     if (state.menu_index != prev.menu_index) {
-        // Redraw icon + label + dots (central area, not background)
-        blitBgOff(fb, res, 0);
-        if (res.menu_icons[state.menu_index]) |img| fb.blit(40, 20, img);
-        if (res.font_24) |f| {
-            const label = assets_mod.MENU_LABELS[state.menu_index];
-            const tw = f.textWidth(label);
-            fb.drawTextTtf((SCREEN_W -| tw) / 2, 181, label, f, WHITE);
-        }
-        // Dots
-        var total_w: u16 = 0;
-        for (0..5) |i| { total_w += if (i == state.menu_index) @as(u16, 24) else @as(u16, 12); }
-        total_w += 4 * 10;
-        var dx: u16 = (SCREEN_W - total_w) / 2;
-        for (0..5) |i| {
-            const active = (i == state.menu_index);
-            const w: u16 = if (active) 24 else 12;
-            fb.fillRoundRect(dx, 218, w, 12, 6, if (active) WHITE else DIM_WHITE);
-            dx += w + 10;
-        }
-        renderHeader(fb, res);
+        // Menu has a full-screen background image. Without partial blit,
+        // any bg restoration marks the whole screen dirty. So for menu,
+        // we do a full page re-render when the selection changes.
+        // The icon takes up most of the screen anyway (~70%), so partial
+        // savings would be minimal.
+        renderPage(fb, state, res, .menu, 0);
     }
 }
 
@@ -428,8 +414,23 @@ fn renderSettingsPartial(fb: *FB, state: *const AppState, prev: *const AppState,
 
 fn renderSettingsLcdPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
     if (state.lcd_brightness != prev.lcd_brightness) {
-        // Only redraw the brightness indicator area
-        renderSettingsLcd(fb, state, res, 0);
+        // Only redraw the brightness indicator area (y=80..180 approx)
+        // Clear the indicator region and redraw just that part
+        fb.fillRect(20, 80, 200, 100, BLACK);
+
+        // Redraw brightness stages (same logic as renderSettingsLcd but only the bars)
+        const stages = [_]struct { val: u8, y: u16 }{
+            .{ .val = 100, .y = 85 },
+            .{ .val = 85, .y = 110 },
+            .{ .val = 55, .y = 135 },
+            .{ .val = 10, .y = 160 },
+        };
+        for (stages) |stage| {
+            const active = (state.lcd_brightness >= stage.val);
+            const color: u16 = if (active) WHITE else DIM_WHITE;
+            fb.fillRoundRect(40, stage.y, 160, 20, 4, color);
+        }
+        _ = res;
     }
 }
 

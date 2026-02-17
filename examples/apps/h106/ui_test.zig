@@ -536,6 +536,65 @@ test "render: pure function" {
     };
 }
 
+// ============================================================================
+// Bandwidth: monolithic vs partial render comparison
+// ============================================================================
+
+const BPP: u32 = 2;
+const FULL_SCREEN: u32 = 240 * 240 * BPP;
+
+fn measureDirty(fb: *ui.FB) u32 {
+    var total: u32 = 0;
+    for (fb.getDirtyRects()) |r| total += r.area();
+    return total * BPP;
+}
+
+test "bandwidth: monolithic vs partial render" {
+    std.debug.print(
+        \\
+        \\=== H106 Bandwidth: Monolithic vs Partial Render ===
+        \\
+        \\  {s:<30} {s:>10} {s:>10} {s:>8}
+        \\
+    , .{ "Scenario", "Monolith", "Partial", "Saved" });
+
+    const Scenario = struct { name: []const u8, prev: ui.AppState, curr: ui.AppState };
+    const scenarios = [_]Scenario{
+        // Menu page: change selection
+        .{ .name = "menu: select 0→1", .prev = blk: { var s = onPage(.menu); s.menu_index = 0; break :blk s; }, .curr = blk: { var s = onPage(.menu); s.menu_index = 1; break :blk s; } },
+        .{ .name = "menu: select 0→4", .prev = blk: { var s = onPage(.menu); s.menu_index = 0; break :blk s; }, .curr = blk: { var s = onPage(.menu); s.menu_index = 4; break :blk s; } },
+        // Game list: change selection
+        .{ .name = "game_list: select 0→1", .prev = blk: { var s = onPage(.game_list); s.game_index = 0; break :blk s; }, .curr = blk: { var s = onPage(.game_list); s.game_index = 1; break :blk s; } },
+        // Settings: change selection
+        .{ .name = "settings: select 0→1", .prev = blk: { var s = onPage(.settings); s.settings_index = 0; break :blk s; }, .curr = blk: { var s = onPage(.settings); s.settings_index = 1; break :blk s; } },
+        // Settings LCD: brightness change
+        .{ .name = "settings_lcd: 55→85", .prev = blk: { var s = onPage(.settings_lcd); s.lcd_brightness = 55; break :blk s; }, .curr = blk: { var s = onPage(.settings_lcd); s.lcd_brightness = 85; break :blk s; } },
+        // Same page no change (idle)
+        .{ .name = "menu: idle (no change)", .prev = onPage(.menu), .curr = onPage(.menu) },
+        // Page switch (always full)
+        .{ .name = "menu → settings (page)", .prev = onPage(.menu), .curr = onPage(.settings) },
+    };
+
+    for (scenarios) |sc| {
+        // Monolithic: always full screen
+        var fb_mono = ui.FB.init(ui.BLACK);
+        ui.render(&fb_mono, &sc.curr, &empty_res);
+        const mono = FULL_SCREEN;
+
+        // Partial: use renderWithPrev
+        var fb_part = ui.FB.init(ui.BLACK);
+        // First render the prev state
+        ui.render(&fb_part, &sc.prev, &empty_res);
+        fb_part.clearDirty();
+        // Then render with prev
+        ui.renderWithPrev(&fb_part, &sc.curr, &sc.prev, &empty_res);
+        const partial = measureDirty(&fb_part);
+
+        const saved: u32 = if (mono > 0 and partial < mono) (mono - partial) * 100 / mono else 0;
+        std.debug.print("  {s:<30} {d:>8}B {d:>8}B {d:>6}%\n", .{ sc.name, mono, partial, saved });
+    }
+}
+
 test "render: different state → different pixels" {
     var fb1 = ui.FB.init(ui.BLACK);
     var fb2 = ui.FB.init(ui.BLACK);
