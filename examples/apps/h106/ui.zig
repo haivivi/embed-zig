@@ -296,7 +296,15 @@ fn updateScroll(state: *AppState) void {
 // No side effects. No global mutable state. No mutation of anything.
 // ============================================================================
 
+/// Render with partial redraw support.
+/// When prev is provided, only regions that changed since prev are redrawn.
+/// During transitions or page changes, falls back to full redraw.
 pub fn render(fb: *FB, state: *const AppState, res: *const Resources) void {
+    renderWithPrev(fb, state, null, res);
+}
+
+pub fn renderWithPrev(fb: *FB, state: *const AppState, prev: ?*const AppState, res: *const Resources) void {
+    // Transitions always need full screen (two pages sliding)
     if (state.transition) |t| {
         const elapsed = state.tick -| t.start_tick;
         const p = @min(@as(u32, 256), elapsed * 256 / t.duration);
@@ -306,7 +314,123 @@ pub fn render(fb: *FB, state: *const AppState, res: *const Resources) void {
             .left => { renderPage(fb, state, res, t.from, -off); renderPage(fb, state, res, t.to, @intCast(@as(i16, SCREEN_W) - off)); },
             .right => { renderPage(fb, state, res, t.from, off); renderPage(fb, state, res, t.to, -(@as(i16, SCREEN_W) - off)); },
         }
-    } else renderPage(fb, state, res, state.page, 0);
+        return;
+    }
+
+    // Page changed → full redraw
+    if (prev) |p| {
+        if (p.page != state.page or p.transition != null) {
+            renderPage(fb, state, res, state.page, 0);
+            return;
+        }
+    } else {
+        renderPage(fb, state, res, state.page, 0);
+        return;
+    }
+
+    // Same page — partial redraw based on what changed
+    const p = prev.?;
+    switch (state.page) {
+        .menu => renderMenuPartial(fb, state, p, res),
+        .game_list => renderGameListPartial(fb, state, p, res),
+        .settings => renderSettingsPartial(fb, state, p, res),
+        .settings_lcd => renderSettingsLcdPartial(fb, state, p, res),
+        .game_tetris => {
+            const empty = tetris.GameState{};
+            if (!tetrisStateEql(&state.tetris, &p.tetris)) tetris.render(fb, &state.tetris, &empty);
+        },
+        .game_racer => {
+            const empty = racer.GameState{};
+            if (!racerStateEql(&state.racer, &p.racer)) racer.render(fb, &state.racer, &empty);
+        },
+        .startup => renderStartup(fb, state, res),
+        .shutting_down => renderShutdown(fb, state),
+        else => {}, // static pages (desktop, intro, contact, points, info, reset) — no within-page changes
+    }
+}
+
+fn tetrisStateEql(a: *const tetris.GameState, b: *const tetris.GameState) bool {
+    return a.tick_count == b.tick_count and a.piece.x == b.piece.x and a.piece.y == b.piece.y and
+        a.piece.shape == b.piece.shape and a.score == b.score and a.phase == b.phase;
+}
+
+fn racerStateEql(a: *const racer.GameState, b: *const racer.GameState) bool {
+    return a.tick_count == b.tick_count and a.player_lane == b.player_lane and
+        a.score == b.score and a.phase == b.phase;
+}
+
+// ============================================================================
+// Partial render functions — only redraw what changed within a page
+// ============================================================================
+
+fn renderMenuPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
+    if (state.menu_index != prev.menu_index) {
+        // Redraw icon + label + dots (central area, not background)
+        blitBgOff(fb, res, 0);
+        if (res.menu_icons[state.menu_index]) |img| fb.blit(40, 20, img);
+        if (res.font_24) |f| {
+            const label = assets_mod.MENU_LABELS[state.menu_index];
+            const tw = f.textWidth(label);
+            fb.drawTextTtf((SCREEN_W -| tw) / 2, 181, label, f, WHITE);
+        }
+        // Dots
+        var total_w: u16 = 0;
+        for (0..5) |i| { total_w += if (i == state.menu_index) @as(u16, 24) else @as(u16, 12); }
+        total_w += 4 * 10;
+        var dx: u16 = (SCREEN_W - total_w) / 2;
+        for (0..5) |i| {
+            const active = (i == state.menu_index);
+            const w: u16 = if (active) 24 else 12;
+            fb.fillRoundRect(dx, 218, w, 12, 6, if (active) WHITE else DIM_WHITE);
+            dx += w + 10;
+        }
+        renderHeader(fb, res);
+    }
+}
+
+fn renderGameListPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
+    if (state.game_index != prev.game_index) {
+        const lx: u16 = 8;
+        // Redraw only old and new highlighted items
+        for ([_]u8{ @intCast(prev.game_index), @intCast(state.game_index) }) |idx| {
+            const y: u16 = 50 + @as(u16, idx) * 59;
+            if (idx == state.game_index) {
+                if (res.btn_list) |img| fb.blit(lx, y, img);
+            } else fb.fillRoundRect(lx, y, 224, 55, 4, BLACK);
+            if (res.game_icons[idx]) |icon| fb.blit(lx + 16, y + 11, icon);
+            if (res.font_24) |f| fb.drawTextTtf(lx + 64, y + 14, assets_mod.GAME_LABELS[idx], f, WHITE);
+        }
+    }
+}
+
+fn renderSettingsPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
+    if (state.settings_index != prev.settings_index or state.settings_scroll != prev.settings_scroll) {
+        // Scroll changed or selection changed — redraw affected items
+        const lx: u16 = 8;
+        const base_y: i32 = 54 - @as(i32, state.settings_scroll);
+        for (0..9) |i| {
+            const iy: i32 = base_y + @as(i32, @intCast(i)) * 59;
+            if (iy + 55 < 0 or iy >= SCREEN_H) continue;
+            const y: u16 = if (iy < 0) 0 else @intCast(iy);
+            // Only redraw items that changed highlight state
+            const was_selected = (i == prev.settings_index);
+            const is_selected = (i == state.settings_index);
+            if (was_selected != is_selected or state.settings_scroll != prev.settings_scroll) {
+                if (is_selected) {
+                    if (res.btn_list) |img| fb.blit(lx, y, img);
+                } else fb.fillRoundRect(lx, y, 224, 55, 4, BLACK);
+                if (res.setting_icons[i]) |icon| fb.blit(lx + 16, y + 11, icon);
+                if (res.font_20) |f| fb.drawTextTtf(lx + 64, y + 16, assets_mod.SETTING_LABELS[i], f, WHITE);
+            }
+        }
+    }
+}
+
+fn renderSettingsLcdPartial(fb: *FB, state: *const AppState, prev: *const AppState, res: *const Resources) void {
+    if (state.lcd_brightness != prev.lcd_brightness) {
+        // Only redraw the brightness indicator area
+        renderSettingsLcd(fb, state, res, 0);
+    }
 }
 
 fn renderPage(fb: *FB, state: *const AppState, res: *const Resources, page: Page, xo: i16) void {

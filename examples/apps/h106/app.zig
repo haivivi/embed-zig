@@ -117,7 +117,7 @@ pub fn step() void {
     store.dispatch(.tick);
 
     if (store.isDirty()) {
-        ui.render(&framebuf, store.getState(), &res);
+        ui.renderWithPrev(&framebuf, store.getState(), store.getPrev(), &res);
         flushDisplay();
         store.commitFrame();
     }
