@@ -1,6 +1,6 @@
 //! BitMonster — Platform Glue
 
-const state_mod = @import("state.zig");
+const state_mod = @import("state/state.zig");
 const ui = @import("ui.zig");
 const ui_state = @import("ui_state");
 const flux = @import("flux");
@@ -21,13 +21,13 @@ var sim_spi: websim.SimSpi = undefined;
 var disp: Display = undefined;
 var ready: bool = false;
 var prev_state: state_mod.AppState = .{};
-
 var first_frame: bool = true;
-var flush_tmp: [320 * 320]u16 = undefined;
 
 // Font
 var font_20_inst: ui_state.TtfFont = undefined;
 var font_16_inst: ui_state.TtfFont = undefined;
+
+var flush_tmp: [320 * 320]u16 = undefined;
 
 pub fn init() void {
     Board.log.info("BitMonster starting", .{});
@@ -36,24 +36,18 @@ pub fn init() void {
     sim_spi = websim.SimSpi.init(&sim_dc);
     disp = Display.init(&sim_spi, &sim_dc);
 
-    // Load font (zero-copy from embedded data)
+    // Load font
     font_load: {
         var file = board.fs.open("/fonts/NotoSansSC-Bold.ttf", .read) orelse break :font_load;
         defer file.close();
         if (file.data) |data| {
-            if (ui_state.TtfFont.init(data, 20.0)) |f| {
-                font_20_inst = f;
-                ui.font_20 = &font_20_inst;
-            }
-            if (ui_state.TtfFont.init(data, 16.0)) |f| {
-                font_16_inst = f;
-                ui.font_16 = &font_16_inst;
-            }
+            if (ui_state.TtfFont.init(data, 20.0)) |f| { font_20_inst = f; ui.font_20 = &font_20_inst; }
+            if (ui_state.TtfFont.init(data, 16.0)) |f| { font_16_inst = f; ui.font_16 = &font_16_inst; }
             Board.log.info("Font loaded", .{});
         }
     }
 
-    // Load icons (zero-copy)
+    // Load icons
     const icon_paths = [9][]const u8{
         "/icons/house.icon",
         "/icons/fork-knife.icon",
@@ -68,21 +62,15 @@ pub fn init() void {
     for (icon_paths, 0..) |path, i| {
         if (board.fs.open(path, .read)) |file| {
             if (file.data) |data| {
-                if (data.len >= 2) {
-                    ui.map_icons[i] = .{
-                        .width = data[0],
-                        .height = data[1],
-                        .data = data[2..],
-                    };
+                if (ui.Icon.fromData(data)) |icon| {
+                    ui.map_icons[i] = icon;
                 }
             }
         }
     }
     if (board.fs.open("/icons/arrow-left.icon", .read)) |file| {
         if (file.data) |data| {
-            if (data.len >= 2) {
-                ui.back_icon = .{ .width = data[0], .height = data[1], .data = data[2..] };
-            }
+            ui.back_icon = ui.Icon.fromData(data);
         }
     }
     Board.log.info("Icons loaded", .{});
