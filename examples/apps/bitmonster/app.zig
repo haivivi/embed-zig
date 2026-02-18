@@ -21,6 +21,7 @@ var disp: Display = undefined;
 var ready: bool = false;
 var prev_state: state_mod.AppState = .{};
 
+var first_frame: bool = true;
 var flush_tmp: [320 * 320]u16 = undefined;
 
 pub fn init() void {
@@ -65,10 +66,12 @@ pub fn step() void {
     store.dispatch(.tick);
 
     if (store.isDirty()) {
-        ui.render(&framebuf, store.getState(), &prev_state);
+        const prev = if (first_frame) null else &prev_state;
+        ui.render(&framebuf, store.getState(), prev);
         flushDisplay();
         prev_state = store.getState().*;
         store.commitFrame();
+        first_frame = false;
     }
 }
 
