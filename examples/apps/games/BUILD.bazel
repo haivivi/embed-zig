@@ -6,7 +6,7 @@ package(default_visibility = ["//visibility:public"])
 websim_app(
     name = "sim",
     main = "wasm_main.zig",
-    srcs = glob(["**/*.zig"]),
+    srcs = glob(["*.zig"]) + glob(["state/*.zig"]) + glob(["render/*.zig"]) + glob(["websim/*.zig"]),
     web_shell = "//lib/platform/websim:web_h106",
     deps = [
         "//lib/platform/websim",
@@ -17,10 +17,7 @@ websim_app(
 )
 
 zig_test(
-    name = "ui_test",
-    main = "ui_test.zig",
-    srcs = ["ui_test.zig", "ui.zig", "sound.zig"],
-    deps = [
-        "//lib/pkg/ui/state:ui_state",
-    ],
+    name = "state_test",
+    main = "state/app.zig",
+    srcs = glob(["state/*.zig"]),
 )
