@@ -22,3 +22,9 @@ zig_test(
     main = "state/state_test.zig",
     srcs = glob(["state/*.zig"]),
 )
+
+zig_test(
+    name = "ui_test",
+    main = "ui/ui_test.zig",
+    srcs = glob(["ui/*.zig"]) + glob(["state/*.zig"]),
+)
