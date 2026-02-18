@@ -100,6 +100,9 @@ pub fn SpiLcd(comptime Spi: type, comptime DcPin: type, comptime config: Config)
         pub const buf_lines: u16 = config.buf_lines;
 
         pub fn init(spi: *Spi, dc: *DcPin) Self {
+            if (@hasDecl(Spi, "configureDisplay")) {
+                Spi.configureDisplay(config.width, config.height);
+            }
             return .{ .spi = spi, .dc = dc, .spi_errors = 0 };
         }
 
