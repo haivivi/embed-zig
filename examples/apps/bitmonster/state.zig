@@ -77,7 +77,11 @@ pub const AppState = struct {
     // Save system
     selected_slot: u8 = 0,
     active_slot: u8 = 0,
-    saves: [3]SaveSlot = [_]SaveSlot{.{}} ** 3,
+    saves: [3]SaveSlot = [3]SaveSlot{
+        .{ .active = true, .pet = .{ .species = .flame, .name = .{ 'F', 'l', 'a', 'm', 'e', 0, 0, 0 }, .name_len = 5 } },
+        .{},
+        .{},
+    },
 
     // Navigation
     grid_cursor: u8 = 4, // 0-8 for 3x3 grid, starts at center (pet)
