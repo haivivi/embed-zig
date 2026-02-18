@@ -30,14 +30,14 @@ pub const GamePhase = enum { playing, crashed, game_over };
 pub const SoundEvent = enum { none, lane_switch, crash, milestone };
 
 pub const Obstacle = struct {
-    lane: u8,
+    lane: u2,
     y: i16,
     active: bool,
     color_idx: u3,
 };
 
 pub const GameState = struct {
-    player_lane: u8 = 1,
+    player_lane: u2 = 1,
     player_x: u16 = LANE_X[1],
     obstacles: [MAX_OBSTACLES]Obstacle = [_]Obstacle{.{ .lane = 0, .y = -100, .active = false, .color_idx = 0 }} ** MAX_OBSTACLES,
     scroll_offset: u16 = 0,
@@ -51,7 +51,7 @@ pub const GameState = struct {
     crash_timer: u8 = 0,
     sound: SoundEvent = .none,
     last_milestone: u32 = 0,
-    prev_spawn_lane: u8 = 255,
+    prev_spawn_lane: u2 = 3, // invalid initial value (no lane matches)
 };
 
 pub const GameEvent = union(enum) { tick, move_left, move_right, restart };
@@ -114,7 +114,7 @@ fn tickUpdate(state: *GameState) void {
 fn spawnObstacle(state: *GameState) void {
     for (&state.obstacles) |*obs| {
         if (obs.active) continue;
-        var lane: u8 = @intCast(nextRng(state) % LANE_COUNT);
+        var lane: u2 = @intCast(nextRng(state) % LANE_COUNT);
         if (lane == state.prev_spawn_lane) lane = @intCast((lane + 1) % LANE_COUNT);
         state.prev_spawn_lane = lane;
         obs.* = .{ .lane = lane, .y = -@as(i16, OBS_H), .active = true, .color_idx = @intCast(nextRng(state) % OBS_COLORS.len) };
