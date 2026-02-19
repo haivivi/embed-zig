@@ -182,6 +182,7 @@ pub const GameScene = Compositor(FB, State, .{ GameHud, GamePlayer, GameObstacle
 
 pub fn render(fb: *FB, state: *const State, prev: *const State) u8 {
     const first_frame = state.page != prev.page;
+    if (first_frame) fb.clear(0x0000);
     return switch (state.page) {
         .menu => MenuScene.render(fb, state, prev, first_frame),
         .settings => SettingsScene.render(fb, state, prev, first_frame),
