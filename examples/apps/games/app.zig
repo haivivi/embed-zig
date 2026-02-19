@@ -21,12 +21,40 @@ var disp: Display = undefined;
 var ready: bool = false;
 var first_frame: bool = true;
 
+// Fonts
+var font_text_inst: ui_state.TtfFont = undefined;
+var font_icon_inst: ui_state.TtfFont = undefined;
+
 pub fn init() void {
     Board.log.info("Games starting", .{});
     board.init() catch { Board.log.err("Board init failed", .{}); return; };
 
     sim_spi = websim.SimSpi.init(&sim_dc);
     disp = Display.init(&sim_spi, &sim_dc);
+
+    // Load fonts from VFS
+    font_load: {
+        var file = board.fs.open("/fonts/PressStart2P.ttf", .read) orelse break :font_load;
+        defer file.close();
+        if (file.data) |data| {
+            if (ui_state.TtfFont.init(data, 14.0)) |f| {
+                font_text_inst = f;
+                render_mod.font_text = &font_text_inst;
+            }
+        }
+        Board.log.info("Text font loaded", .{});
+    }
+    icon_load: {
+        var file = board.fs.open("/fonts/Phosphor-Bold.ttf", .read) orelse break :icon_load;
+        defer file.close();
+        if (file.data) |data| {
+            if (ui_state.TtfFont.init(data, 48.0)) |f| {
+                font_icon_inst = f;
+                render_mod.font_icon = &font_icon_inst;
+            }
+        }
+        Board.log.info("Icon font loaded", .{});
+    }
 
     store = render_mod.Store.init(.{}, state_mod.reduce);
     framebuf = render_mod.FB.init(0);

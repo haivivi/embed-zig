@@ -8,6 +8,16 @@ const racer_state = @import("../state/racer.zig");
 
 pub const FB = ui_state.Framebuffer(240, 240, .rgb565);
 pub const Store = flux.Store(app_state.AppState, app_state.AppEvent);
+const TtfFont = ui_state.TtfFont;
+
+// Fonts (set by app.zig)
+pub var font_text: ?*TtfFont = null;
+pub var font_icon: ?*TtfFont = null;
+
+// Phosphor icon codepoints (UTF-8 encoded)
+const ICON_TETRIS = "\xee\x91\xa4"; // U+E464 squares-four
+const ICON_RACER = "\xee\xa3\x8c"; // U+E8CC car-profile
+const ICON_GAME = "\xee\x89\xae"; // U+E26E game-controller
 
 const BLACK: u16 = 0x0000;
 const WHITE: u16 = 0xFFFF;
@@ -57,22 +67,42 @@ fn renderMenuFull(fb: *FB, state: *const app_state.AppState) void {
     fb.fillRect(0, 0, 240, 240, BLACK);
 
     // Title
-    drawText(fb, 80, 30, "GAMES", WHITE);
+    if (font_text) |f| {
+        const title = "GAMES";
+        const tw = f.textWidth(title);
+        fb.drawTextTtf((240 -| tw) / 2, 20, title, f, WHITE);
+    }
 
     // Two game cards side by side
+    const icons = [2][]const u8{ ICON_TETRIS, ICON_RACER };
     for (0..2) |i| {
         const x: u16 = 20 + @as(u16, @intCast(i)) * 110;
         const selected = (i == state.selected);
         const bg: u16 = if (selected) 0x2945 else 0x1082;
-        fb.fillRoundRect(x, 80, 100, 120, 10, bg);
-        fb.fillRoundRect(x + 20, 100, 60, 60, 8, game_colors[i]);
-        if (selected) fb.drawRect(x, 80, 100, 120, ACCENT, 2);
+        fb.fillRoundRect(x, 70, 100, 130, 10, bg);
 
-        drawText(fb, x + 20, 175, game_names[i], if (selected) WHITE else GRAY);
+        // Icon
+        if (font_icon) |f| {
+            fb.drawTextTtf(x + 26, 80, icons[i], f, game_colors[i]);
+        } else {
+            fb.fillRoundRect(x + 20, 85, 60, 60, 8, game_colors[i]);
+        }
+
+        // Label
+        if (font_text) |f| {
+            const tw = f.textWidth(game_names[i]);
+            fb.drawTextTtf(x + (100 -| tw) / 2, 165, game_names[i], f, if (selected) WHITE else GRAY);
+        }
+
+        if (selected) fb.drawRect(x, 70, 100, 130, ACCENT, 2);
     }
 
     // Hint
-    drawText(fb, 60, 220, "< SELECT >", GRAY);
+    if (font_text) |f| {
+        const hint = "< SELECT >";
+        const tw = f.textWidth(hint);
+        fb.drawTextTtf((240 -| tw) / 2, 218, hint, f, GRAY);
+    }
 }
 
 fn renderMenu(fb: *FB, state: *const app_state.AppState, prev: *const app_state.AppState) void {
@@ -95,9 +125,15 @@ fn drawTetrisStatic(fb: *FB) void {
     const board_h: u16 = tetris_state.BOARD_H * CELL_SIZE;
     fb.fillRect(BOARD_X, BOARD_Y, board_w, board_h, DARK_GRAY);
     fb.drawRect(BOARD_X -| 1, BOARD_Y -| 1, board_w + 2, board_h + 2, GRAY, 1);
-    fb.hline(INFO_X, 20, 50, GRAY);
-    fb.hline(INFO_X, 60, 50, GRAY);
-    fb.hline(INFO_X, 90, 50, GRAY);
+    if (font_text) |f| {
+        fb.drawTextTtf(INFO_X, 6, "SCORE", f, GRAY);
+        fb.drawTextTtf(INFO_X, 56, "LEVEL", f, GRAY);
+        fb.drawTextTtf(INFO_X, 86, "NEXT", f, GRAY);
+    } else {
+        fb.hline(INFO_X, 20, 50, GRAY);
+        fb.hline(INFO_X, 60, 50, GRAY);
+        fb.hline(INFO_X, 90, 50, GRAY);
+    }
 }
 
 fn renderTetris(fb: *FB, state: *const tetris_state.GameState, prev: *const tetris_state.GameState) void {
@@ -121,13 +157,24 @@ fn renderTetris(fb: *FB, state: *const tetris_state.GameState, prev: *const tetr
         }
     }
     if (state.score != prev.score or state.phase != prev.phase) {
-        fb.fillRect(INFO_X, 30, 100, 40, BLACK);
-        drawNum(fb, INFO_X, 30, state.score);
-        drawNum(fb, INFO_X, 46, state.lines);
+        fb.fillRect(INFO_X, 20, 110, 50, BLACK);
+        if (font_text) |f| {
+            var buf: [10]u8 = undefined;
+            fb.drawTextTtf(INFO_X, 22, fmtDec(&buf, state.score), f, WHITE);
+            fb.drawTextTtf(INFO_X, 40, fmtDec(&buf, state.lines), f, GRAY);
+        } else {
+            drawNum(fb, INFO_X, 30, state.score);
+            drawNum(fb, INFO_X, 46, state.lines);
+        }
     }
     if (state.level != prev.level) {
-        fb.fillRect(INFO_X, 70, 50, 16, BLACK);
-        drawNum(fb, INFO_X, 70, state.level);
+        fb.fillRect(INFO_X, 70, 60, 16, BLACK);
+        if (font_text) |f| {
+            var buf: [10]u8 = undefined;
+            fb.drawTextTtf(INFO_X, 70, fmtDec(&buf, state.level), f, WHITE);
+        } else {
+            drawNum(fb, INFO_X, 70, state.level);
+        }
     }
     if (state.next_shape != prev.next_shape) {
         fb.fillRect(INFO_X, 100, 44, 44, BLACK);
@@ -145,8 +192,10 @@ fn renderTetris(fb: *FB, state: *const tetris_state.GameState, prev: *const tetr
         }
     }
     if (state.phase == .game_over and prev.phase != .game_over) {
-        fb.fillRect(BOARD_X + 5, BOARD_Y + 100, 100, 20, BLACK);
-        drawText(fb, BOARD_X + 15, BOARD_Y + 103, "GAME OVER", WHITE);
+        fb.fillRect(BOARD_X + 2, BOARD_Y + 95, 106, 30, BLACK);
+        if (font_text) |f| {
+            fb.drawTextTtf(BOARD_X + 6, BOARD_Y + 100, "GAME OVER", f, 0xF800);
+        }
     }
 }
 
@@ -192,11 +241,18 @@ fn renderRacer(fb: *FB, state: *const racer_state.GameState, prev: *const racer_
 
     // HUD
     fb.fillRect(0, 0, 240, 16, BLACK);
-    drawNum(fb, 4, 4, state.score);
+    if (font_text) |f| {
+        var buf: [10]u8 = undefined;
+        fb.drawTextTtf(4, 2, fmtDec(&buf, state.score), f, WHITE);
+    } else {
+        drawNum(fb, 4, 4, state.score);
+    }
 
     if (state.phase == .game_over) {
-        fb.fillRect(50, 100, 140, 30, BLACK);
-        drawText(fb, 65, 107, "GAME OVER", WHITE);
+        fb.fillRect(30, 95, 180, 30, BLACK);
+        if (font_text) |f| {
+            fb.drawTextTtf(40, 100, "GAME OVER", f, 0xF800);
+        }
     }
 }
 
@@ -227,6 +283,14 @@ const DIGIT_BITMAPS = [10][7]u8{
     .{ 0x70, 0x88, 0x88, 0x70, 0x88, 0x88, 0x70 },
     .{ 0x70, 0x88, 0x88, 0x78, 0x08, 0x10, 0x60 },
 };
+
+fn fmtDec(buf: *[10]u8, val: u32) []const u8 {
+    if (val == 0) { buf[9] = '0'; return buf[9..10]; }
+    var v = val;
+    var i: usize = 10;
+    while (v > 0) : (v /= 10) { i -= 1; buf[i] = @intCast('0' + v % 10); }
+    return buf[i..10];
+}
 
 fn drawNum(fb: *FB, x: u16, y: u16, value: u32) void {
     var buf: [10]u8 = undefined;

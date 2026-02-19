@@ -1,0 +1,19 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "phosphor_bold",
+    srcs = ["Phosphor-Bold.ttf"],
+)
+
+filegroup(
+    name = "press_start_2p",
+    srcs = ["PressStart2P.ttf"],
+)
+
+filegroup(
+    name = "all_fonts",
+    srcs = [
+        "Phosphor-Bold.ttf",
+        "PressStart2P.ttf",
+    ],
+)
