@@ -106,15 +106,20 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
 
         /// Fill a rectangle with a solid color. Clips to framebuffer bounds.
         pub fn fillRect(self: *Self, x: u16, y: u16, w: u16, h: u16, color: Color) void {
+            fillRectPixels(self, x, y, w, h, color);
+            const clip = clipRect(x, y, w, h);
+            if (clip.w > 0 and clip.h > 0) self.dirty.mark(clip);
+        }
+
+        /// Fill pixels without marking dirty (for composite operations that mark once at end).
+        fn fillRectPixels(self: *Self, x: u16, y: u16, w: u16, h: u16, color: Color) void {
             const clip = clipRect(x, y, w, h);
             if (clip.w == 0 or clip.h == 0) return;
-
             var row: u16 = clip.y;
             while (row < clip.y + clip.h) : (row += 1) {
                 const start = @as(usize, row) * W + @as(usize, clip.x);
                 @memset(self.buf[start..][0..clip.w], color);
             }
-            self.dirty.mark(clip);
         }
 
         /// Draw a rectangle outline. Clips to framebuffer bounds.
@@ -141,14 +146,12 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 self.fillRect(x, y, w, h, color);
                 return;
             }
-            // Center rectangle (full width, excluding top/bottom radius rows)
-            self.fillRect(x, y + r, w, h - 2 * r, color);
-            // Top and bottom strips (excluding corners)
-            self.fillRect(x + r, y, w - 2 * r, r, color);
-            self.fillRect(x + r, y + h - r, w - 2 * r, r, color);
-            // Four rounded corners using midpoint circle algorithm
+            // Draw pixels without marking dirty (single mark at end)
+            fillRectPixels(self, x, y + r, w, h - 2 * r, color);
+            fillRectPixels(self, x + r, y, w - 2 * r, r, color);
+            fillRectPixels(self, x + r, y + h - r, w - 2 * r, r, color);
             self.fillCorners(x, y, w, h, r, color);
-            // Mark the full bounding box dirty (clipped to framebuffer bounds)
+            // One dirty mark for the entire rounded rect
             self.dirty.mark(clipRect(x, y, w, h));
         }
 
