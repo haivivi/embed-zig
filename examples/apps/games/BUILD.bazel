@@ -12,6 +12,7 @@ websim_app(
         "//lib/platform/websim",
         "//lib/hal",
         "//lib/pkg/ui/state:ui_state",
+        "//lib/pkg/flux",
         "//lib/pkg/display",
     ],
 )

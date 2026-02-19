@@ -49,8 +49,14 @@ pub fn step() void {
                         .right => .right,
                         .confirm => .confirm,
                         .back => .back,
-                        .vol_up => if (store.getState().page == .playing) .{ .game_tetris = .hard_drop } else null,
-                        .vol_down => if (store.getState().page == .playing) .{ .game_tetris = .soft_drop } else null,
+                        .vol_up => if (store.getState().page == .playing) switch (store.getState().current_game) {
+                            .tetris => .{ .game_tetris = .hard_drop },
+                            .racer => null,
+                        } else null,
+                        .vol_down => if (store.getState().page == .playing) switch (store.getState().current_game) {
+                            .tetris => .{ .game_tetris = .soft_drop },
+                            .racer => null,
+                        } else null,
                         else => null,
                     };
                     if (e) |ev| store.dispatch(ev);

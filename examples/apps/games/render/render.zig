@@ -1,12 +1,13 @@
 //! Games — Framebuffer Render Dispatcher
 
 const ui_state = @import("ui_state");
+const flux = @import("flux");
 const app_state = @import("../state/app.zig");
 const tetris_state = @import("../state/tetris.zig");
 const racer_state = @import("../state/racer.zig");
 
 pub const FB = ui_state.Framebuffer(240, 240, .rgb565);
-pub const Store = ui_state.Store(app_state.AppState, app_state.AppEvent);
+pub const Store = flux.Store(app_state.AppState, app_state.AppEvent);
 
 const BLACK: u16 = 0x0000;
 const WHITE: u16 = 0xFFFF;
