@@ -369,7 +369,6 @@ pub fn StreamResampler(comptime Rt: type) type {
             const in_bytes = max_frames * src_sb;
 
             // Step 1: Convert input bytes → i16 samples
-            // max_chunk_frames source frames, up to 2 channels each
             var samples: [max_chunk_frames * 2]i16 = undefined;
             const num_i16 = in_bytes / 2;
             const in_byte_slice = self.in_buf[0..in_bytes];
@@ -392,9 +391,9 @@ pub fn StreamResampler(comptime Rt: type) type {
             }
 
             // Step 3: Resample (if rates differ)
-            // Worst case: stereo * 6x upsample
             var out_samples: [max_chunk_frames * 2 * 6]i16 = undefined;
             var produced_samples: usize = undefined;
+            var consumed_src_bytes: usize = in_bytes;
 
             if (self.resampler) |*rs| {
                 const max_out = @min(out_samples.len, out_space / 2);
@@ -402,6 +401,13 @@ pub fn StreamResampler(comptime Rt: type) type {
                     return 0;
                 };
                 produced_samples = result.out_produced;
+
+                // Map resampler's consumption back to source bytes.
+                // in_consumed is i16 count in dst-channel space; each
+                // resampler frame = 1 source frame (channel conversion
+                // is frame-preserving).
+                const consumed_src_frames = result.in_consumed / dst_ch;
+                consumed_src_bytes = consumed_src_frames * src_sb;
             } else {
                 produced_samples = @min(work_samples, out_samples.len);
                 @memcpy(out_samples[0..produced_samples], work_ptr[0..produced_samples]);
@@ -418,10 +424,10 @@ pub fn StreamResampler(comptime Rt: type) type {
             }
             self.out_end += produced_bytes;
 
-            // Step 5: Compact input buffer
-            const remaining = self.in_len - in_bytes;
+            // Step 5: Compact input buffer — only remove actually consumed bytes
+            const remaining = self.in_len - consumed_src_bytes;
             if (remaining > 0) {
-                std.mem.copyForwards(u8, self.in_buf[0..remaining], self.in_buf[in_bytes..][0..remaining]);
+                std.mem.copyForwards(u8, self.in_buf[0..remaining], self.in_buf[consumed_src_bytes..][0..remaining]);
             }
             self.in_len = remaining;
 
