@@ -220,8 +220,8 @@ fn renderRacer(fb: *FB, state: *const racer_state.GameState, prev: *const racer_
     var my: i16 = -@as(i16, racer_state.MARK_H);
     while (my < 240) : (my += @intCast(racer_state.MARK_H + racer_state.MARK_GAP)) {
         const dy: i16 = my + @as(i16, @intCast(off));
-        if (dy >= 0 and dy < 240) {
-            const uy: u16 = @intCast(dy);
+        if (dy + @as(i16, racer_state.MARK_H) > 0 and dy < 240) {
+            const uy: u16 = if (dy < 0) 0 else @intCast(dy);
             fb.fillRect(racer_state.ROAD_LEFT + racer_state.LANE_W - 1, uy, racer_state.MARK_W, racer_state.MARK_H, MARK_COLOR);
             fb.fillRect(racer_state.ROAD_LEFT + 2 * racer_state.LANE_W - 1, uy, racer_state.MARK_W, racer_state.MARK_H, MARK_COLOR);
         }

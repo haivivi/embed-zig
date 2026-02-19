@@ -148,8 +148,8 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
             self.fillRect(x + r, y + h - r, w - 2 * r, r, color);
             // Four rounded corners using midpoint circle algorithm
             self.fillCorners(x, y, w, h, r, color);
-            // Mark the full bounding box dirty (corners extend into radius area)
-            self.dirty.mark(.{ .x = x, .y = y, .w = w, .h = h });
+            // Mark the full bounding box dirty (clipped to framebuffer bounds)
+            self.dirty.mark(clipRect(x, y, w, h));
         }
 
         fn fillCorners(self: *Self, x: u16, y: u16, w: u16, h: u16, r: u16, color: Color) void {
@@ -362,9 +362,9 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 }
             }
 
-            // Mark dirty
+            // Mark dirty (clip cx to screen width)
             if (cx > x) {
-                const text_w = cx - x;
+                const text_w = @min(cx, W) - x;
                 const text_h = fnt.lineHeight();
                 self.dirty.mark(.{ .x = x, .y = y, .w = text_w, .h = @min(text_h, if (y < H) H - y else 0) });
             }
