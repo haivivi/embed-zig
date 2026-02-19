@@ -280,13 +280,13 @@ fn renderRacer(fb: *FB, state: *const racer_state.GameState, prev: *const racer_
         }
     }
 
-    // Obstacles (partially visible at top edge handled by fillRoundRect clipping)
     for (state.obstacles) |obs| {
         if (!obs.active) continue;
         if (obs.y + @as(i16, racer_state.OBS_H) <= 0 or obs.y >= 240) continue;
         const ox = racer_state.LANE_X[obs.lane];
         const oy: u16 = if (obs.y < 0) 0 else @intCast(obs.y);
-        fb.fillRoundRect(ox, oy, racer_state.OBS_W, racer_state.OBS_H, 4, racer_state.OBS_COLORS[obs.color_idx]);
+        const visible_h: u16 = if (obs.y < 0) @intCast(@as(i16, racer_state.OBS_H) + obs.y) else racer_state.OBS_H;
+        fb.fillRoundRect(ox, oy, racer_state.OBS_W, visible_h, 4, racer_state.OBS_COLORS[obs.color_idx]);
     }
 
     // Player car

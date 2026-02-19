@@ -40,9 +40,9 @@ pub fn init() void {
             if (ui_state.TtfFont.init(data, 14.0)) |f| {
                 font_text_inst = f;
                 render_mod.font_text = &font_text_inst;
-            }
-        }
-        Board.log.info("Text font loaded", .{});
+                Board.log.info("Text font loaded", .{});
+            } else Board.log.err("Text font init failed", .{});
+        } else Board.log.err("Text font data is null", .{});
     }
     icon_load: {
         var file = board.fs.open("/fonts/Phosphor-Bold.ttf", .read) orelse break :icon_load;
@@ -51,9 +51,9 @@ pub fn init() void {
             if (ui_state.TtfFont.init(data, 48.0)) |f| {
                 font_icon_inst = f;
                 render_mod.font_icon = &font_icon_inst;
-            }
-        }
-        Board.log.info("Icon font loaded", .{});
+                Board.log.info("Icon font loaded", .{});
+            } else Board.log.err("Icon font init failed", .{});
+        } else Board.log.err("Icon font data is null", .{});
     }
 
     store = render_mod.Store.init(.{}, state_mod.reduce);
