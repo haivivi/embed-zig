@@ -44,12 +44,10 @@ pub fn renderFull(fb: *FB, state: *const app_state.AppState) void {
             switch (state.current_game) {
                 .tetris => {
                     drawTetrisStatic(fb);
-                    const empty = tetris_state.GameState{};
-                    renderTetris(fb, &state.tetris, &empty);
+                    renderTetrisFull(fb, &state.tetris);
                 },
                 .racer => {
-                    const empty = racer_state.GameState{};
-                    renderRacer(fb, &state.racer, &empty);
+                    renderRacerFull(fb, &state.racer);
                 },
             }
         },
@@ -112,8 +110,62 @@ fn renderMenu(fb: *FB, state: *const app_state.AppState, prev: *const app_state.
 }
 
 // ============================================================================
-// Tetris render (from tetris/ui.zig)
+// Tetris render
 // ============================================================================
+
+fn renderTetrisFull(fb: *FB, state: *const tetris_state.GameState) void {
+    for (0..tetris_state.BOARD_H) |row| {
+        for (0..tetris_state.BOARD_W) |col| {
+            const px: u16 = BOARD_X + @as(u16, @intCast(col)) * CELL_SIZE;
+            const py: u16 = BOARD_Y + @as(u16, @intCast(row)) * CELL_SIZE;
+            const piece_at = tetris_state.isPieceAt(state, col, row);
+            const cell = state.board[row][col];
+            if (piece_at) |shape| {
+                fb.fillRect(px, py, CELL_SIZE - 1, CELL_SIZE - 1, tetris_state.PIECE_COLORS[shape]);
+            } else if (cell > 0) {
+                fb.fillRect(px, py, CELL_SIZE - 1, CELL_SIZE - 1, tetris_state.PIECE_COLORS[cell - 1]);
+            } else {
+                fb.fillRect(px, py, CELL_SIZE - 1, CELL_SIZE - 1, DARK_GRAY);
+            }
+        }
+    }
+    // HUD
+    fb.fillRect(INFO_X, 20, 110, 50, BLACK);
+    if (font_text) |f| {
+        var buf: [10]u8 = undefined;
+        fb.drawTextTtf(INFO_X, 22, fmtDec(&buf, state.score), f, WHITE);
+        fb.drawTextTtf(INFO_X, 40, fmtDec(&buf, state.lines), f, GRAY);
+    } else {
+        drawNum(fb, INFO_X, 30, state.score);
+        drawNum(fb, INFO_X, 46, state.lines);
+    }
+    fb.fillRect(INFO_X, 70, 60, 16, BLACK);
+    if (font_text) |f| {
+        var buf: [10]u8 = undefined;
+        fb.drawTextTtf(INFO_X, 70, fmtDec(&buf, state.level), f, WHITE);
+    } else {
+        drawNum(fb, INFO_X, 70, state.level);
+    }
+    // Next piece
+    fb.fillRect(INFO_X, 100, 44, 44, BLACK);
+    const s = tetris_state.SHAPES[state.next_shape][0];
+    var r: u2 = 0;
+    while (true) : (r += 1) {
+        var co: u2 = 0;
+        while (true) : (co += 1) {
+            if (tetris_state.getCell(s, r, co)) {
+                fb.fillRect(INFO_X + @as(u16, co) * CELL_SIZE, 100 + @as(u16, r) * CELL_SIZE, CELL_SIZE - 1, CELL_SIZE - 1, tetris_state.PIECE_COLORS[state.next_shape]);
+            }
+            if (co == 3) break;
+        }
+        if (r == 3) break;
+    }
+}
+
+fn renderRacerFull(fb: *FB, state: *const racer_state.GameState) void {
+    const empty = racer_state.GameState{};
+    renderRacer(fb, state, &empty);
+}
 
 const CELL_SIZE: u16 = 11;
 const BOARD_X: u16 = 5;
@@ -222,8 +274,9 @@ fn renderRacer(fb: *FB, state: *const racer_state.GameState, prev: *const racer_
         const dy: i16 = my + @as(i16, @intCast(off));
         if (dy + @as(i16, racer_state.MARK_H) > 0 and dy < 240) {
             const uy: u16 = if (dy < 0) 0 else @intCast(dy);
-            fb.fillRect(racer_state.ROAD_LEFT + racer_state.LANE_W - 1, uy, racer_state.MARK_W, racer_state.MARK_H, MARK_COLOR);
-            fb.fillRect(racer_state.ROAD_LEFT + 2 * racer_state.LANE_W - 1, uy, racer_state.MARK_W, racer_state.MARK_H, MARK_COLOR);
+            const visible_h: u16 = if (dy < 0) @intCast(@as(i16, racer_state.MARK_H) + dy) else racer_state.MARK_H;
+            fb.fillRect(racer_state.ROAD_LEFT + racer_state.LANE_W - 1, uy, racer_state.MARK_W, visible_h, MARK_COLOR);
+            fb.fillRect(racer_state.ROAD_LEFT + 2 * racer_state.LANE_W - 1, uy, racer_state.MARK_W, visible_h, MARK_COLOR);
         }
     }
 
