@@ -318,17 +318,3 @@ fn drawDigitRow(fb: *FB, x: u16, y: u16, digits: []const u8) void {
     }
 }
 
-fn drawText(fb: *FB, x: u16, y: u16, text: []const u8, color: u16) void {
-    var cx = x;
-    for (text) |ch| {
-        if (ch >= '!' and ch <= '~') {
-            // Simple 1px-wide vertical bars for letter shapes (crude but visible)
-            fb.fillRect(cx, y, 5, 7, color);
-            fb.setPixel(cx + 1, y + 1, BLACK);
-            fb.setPixel(cx + 3, y + 1, BLACK);
-            fb.setPixel(cx + 1, y + 5, BLACK);
-            fb.setPixel(cx + 3, y + 5, BLACK);
-        }
-        cx += 6;
-    }
-}
