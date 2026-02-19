@@ -117,6 +117,7 @@ pub fn reduce(state: *GameState, event: GameEvent) void {
             const seed = state.rng_state;
             state.* = .{};
             state.rng_state = seed +% 1;
+            state.piece.shape = nextRng(state);
             state.next_shape = nextRng(state);
         },
     }
