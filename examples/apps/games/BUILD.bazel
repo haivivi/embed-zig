@@ -6,7 +6,10 @@ package(default_visibility = ["//visibility:public"])
 websim_app(
     name = "sim",
     main = "wasm_main.zig",
-    srcs = glob(["*.zig"]) + glob(["state/*.zig"]) + glob(["render/*.zig"]) + glob(["websim/*.zig"]),
+    srcs = glob(["*.zig"]) + glob(["state/*.zig"]) + glob(["render/*.zig"]) + glob(["websim/*.zig"]) + [
+        "@fonts//:phosphor_bold",
+        "@fonts//:noto_sans_sc",
+    ],
     web_shell = "//lib/platform/websim:web_h106",
     deps = [
         "//lib/platform/websim",

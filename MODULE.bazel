@@ -58,6 +58,13 @@ websim_libs = use_extension("//:extensions.bzl", "websim_libs")
 use_repo(websim_libs, "webview", "minih264", "minimp4")
 
 # =============================================================================
+# Fonts (Phosphor icons + Noto Sans SC)
+# =============================================================================
+
+fonts = use_extension("//:extensions.bzl", "fonts")
+use_repo(fonts, "fonts")
+
+# =============================================================================
 # Zig toolchain extension (with Xtensa support)
 # =============================================================================
 

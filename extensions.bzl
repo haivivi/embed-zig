@@ -455,3 +455,65 @@ def _websim_libs_ext_impl(ctx):
 websim_libs = module_extension(
     implementation = _websim_libs_ext_impl,
 )
+
+# =============================================================================
+# Fonts (Phosphor icons + Noto Sans SC)
+# =============================================================================
+
+def _fonts_repo_impl(ctx):
+    """Download font files for UI rendering."""
+    # Phosphor Bold icon font (484KB)
+    dl_phosphor = ctx.download(
+        url = "https://raw.githubusercontent.com/phosphor-icons/web/master/src/bold/Phosphor-Bold.ttf",
+        output = "Phosphor-Bold.ttf",
+        sha256 = "",
+        allow_fail = True,
+    )
+    if not dl_phosphor.success:
+        ctx.execute(["curl", "-sL", "-o", "Phosphor-Bold.ttf",
+            "https://raw.githubusercontent.com/phosphor-icons/web/master/src/bold/Phosphor-Bold.ttf"],
+            timeout = 60)
+    # Noto Sans SC Bold TTF (CJK subset, ~291KB)
+    # GitHub raw URLs require redirect following — use curl fallback
+    dl_noto = ctx.download(
+        url = "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetTTF/SC/NotoSansSC-Bold.ttf",
+        output = "NotoSansSC-Bold.ttf",
+        sha256 = "",
+        allow_fail = True,
+    )
+    if not dl_noto.success:
+        ctx.execute(["curl", "-sL", "-o", "NotoSansSC-Bold.ttf",
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetTTF/SC/NotoSansSC-Bold.ttf"],
+            timeout = 60)
+    ctx.file("BUILD.bazel", """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "phosphor_bold",
+    srcs = ["Phosphor-Bold.ttf"],
+)
+
+filegroup(
+    name = "noto_sans_sc",
+    srcs = ["NotoSansSC-Bold.ttf"],
+)
+
+filegroup(
+    name = "all_fonts",
+    srcs = [
+        "Phosphor-Bold.ttf",
+        "NotoSansSC-Bold.ttf",
+    ],
+)
+""")
+
+_fonts_repo = repository_rule(
+    implementation = _fonts_repo_impl,
+)
+
+def _fonts_ext_impl(ctx):
+    _fonts_repo(name = "fonts")
+
+fonts = module_extension(
+    implementation = _fonts_ext_impl,
+)
