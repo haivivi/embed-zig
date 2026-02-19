@@ -1128,3 +1128,56 @@ test "Q3: 8k to 16k sample count" {
     try testing.expect(r.out_produced >= 140);
     try testing.expect(r.out_produced <= 180);
 }
+
+// --- M1-M3: Allocator verification ---
+
+test "M1: FixedBufferAllocator — SpeexDSP allocates from stack buffer" {
+    var buf: [65536]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+    var rs = try Resampler.init(fba.allocator(), .{ .in_rate = 16000, .out_rate = 48000 });
+
+    // SpeexDSP allocated internal state from our buffer
+    try testing.expect(fba.end_index > 0);
+
+    const used_after_init = fba.end_index;
+
+    // process should not allocate
+    var in_buf = [_]i16{1000} ** 160;
+    var out_buf: [512]i16 = undefined;
+    _ = try rs.process(&in_buf, &out_buf);
+    try testing.expectEqual(used_after_init, fba.end_index);
+
+    rs.deinit();
+}
+
+test "M2: FixedBufferAllocator too small — init fails" {
+    // 16 bytes is nowhere near enough for SpeexDSP resampler state
+    var buf: [16]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+
+    const result = Resampler.init(fba.allocator(), .{ .in_rate = 16000, .out_rate = 48000 });
+    try testing.expectError(error.SpeexInitFailed, result);
+}
+
+test "M3: GeneralPurposeAllocator — no leaks after deinit" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const check = gpa.deinit();
+        std.debug.assert(check == .ok);
+    }
+
+    var rs = try Resampler.init(gpa.allocator(), .{
+        .in_rate = 16000,
+        .out_rate = 48000,
+        .quality = 5,
+    });
+
+    // Use it
+    var in_buf = [_]i16{500} ** 160;
+    var out_buf: [512]i16 = undefined;
+    _ = try rs.process(&in_buf, &out_buf);
+
+    rs.deinit();
+    // gpa.deinit() in defer will assert no leaks
+}
