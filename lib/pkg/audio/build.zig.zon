@@ -3,6 +3,8 @@
     .version = "0.1.0",
     .dependencies = .{
         .trait = .{ .path = "../../trait" },
+        .speexdsp = .{ .path = "../../../third_party/speexdsp" },
+        .std_impl = .{ .path = "../../platform/std" },
     },
     .paths = .{
         "build.zig",

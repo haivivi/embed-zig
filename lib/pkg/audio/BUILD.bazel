@@ -1,11 +1,27 @@
-load("//bazel/zig:defs.bzl", "zig_package")
+load("//bazel/zig:defs.bzl", "zig_package", "zig_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# test = False on the package: ogg.zig requires libogg C headers not
+# available in zig_test sandbox. Resampler has its own test target below.
 zig_package(
     name = "audio",
-    deps = ["//lib/trait"],
+    deps = [
+        "//lib/trait",
+        "//third_party/speexdsp:speexdsp_float",
+    ],
     test = False,
+)
+
+zig_test(
+    name = "resampler_test",
+    main = "src/resampler.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = [
+        "//lib/trait",
+        "//lib/platform/std",
+        "//third_party/speexdsp:speexdsp_float",
+    ],
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))
