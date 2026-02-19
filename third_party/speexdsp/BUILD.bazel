@@ -1,0 +1,59 @@
+"""Zig bindings for libspeexdsp.
+
+External projects must setup the @speexdsp repository in their MODULE.bazel:
+
+    bazel_dep(name = "embed_zig", version = "...")
+
+    speexdsp_ext = use_extension("@embed_zig//third_party/speexdsp:repository.bzl", "speexdsp_repository")
+    use_repo(speexdsp_ext, "speexdsp")
+
+Or in WORKSPACE:
+
+    load("@embed_zig//third_party/speexdsp:repository.bzl", "speexdsp_repository")
+    speexdsp_repository(name = "speexdsp")
+
+Then depend on:
+- //third_party/speexdsp:speexdsp_fixed (for embedded/Xtensa/WASM, FIXED_POINT)
+- //third_party/speexdsp:speexdsp_float (for desktop/server, better quality)
+"""
+
+load("//bazel/zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Common C flags shared by both variants
+_COMMON_C_FLAGS = ["-DHAVE_CONFIG_H"]
+
+# SpeexDSP compiled with FIXED_POINT — no float, suitable for embedded
+zig_library(
+    name = "speexdsp_fixed",
+    main = "speexdsp.zig",
+    srcs = ["speexdsp.zig"],
+    c_srcs = [
+        "@speexdsp//:core_srcs",
+        "@speexdsp//:headers",
+        "@speexdsp//:internal_headers",
+        "config.h",
+    ],
+    c_flags = _COMMON_C_FLAGS + ["-DFIXED_POINT"],
+    link_libc = True,
+    module_name = "speexdsp",
+)
+
+# SpeexDSP compiled with float — better quality, needs FPU
+zig_library(
+    name = "speexdsp_float",
+    main = "speexdsp.zig",
+    srcs = ["speexdsp.zig"],
+    c_srcs = [
+        "@speexdsp//:core_srcs",
+        "@speexdsp//:headers",
+        "@speexdsp//:internal_headers",
+        "config.h",
+    ],
+    c_flags = _COMMON_C_FLAGS + ["-DFLOATING_POINT"],
+    link_libc = True,
+    module_name = "speexdsp",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))
