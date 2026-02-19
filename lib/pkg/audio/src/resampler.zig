@@ -275,6 +275,11 @@ pub fn StreamResampler(comptime Rt: type) type {
             defer self.mutex.unlock();
 
             while (self.out_start == self.out_end) {
+                // Try draining any pending input (handles close() partial drain
+                // and avoids data loss when out_buf was full during close).
+                self.drain();
+                if (self.out_start < self.out_end) break;
+
                 if (self.closed) return null;
                 self.not_empty.wait(&self.mutex);
             }
@@ -409,8 +414,14 @@ pub fn StreamResampler(comptime Rt: type) type {
                 const consumed_src_frames = result.in_consumed / dst_ch;
                 consumed_src_bytes = consumed_src_frames * src_sb;
             } else {
-                produced_samples = @min(work_samples, out_samples.len);
+                // Passthrough: limit output to available out_space, same as
+                // the resampler branch. Without this, produced_bytes can exceed
+                // out_space, causing processChunk to return 0 and lose input.
+                const max_passthrough = @min(work_samples, @min(out_samples.len, out_space / 2));
+                produced_samples = max_passthrough;
                 @memcpy(out_samples[0..produced_samples], work_ptr[0..produced_samples]);
+                const consumed_frames = produced_samples / dst_ch;
+                consumed_src_bytes = consumed_frames * src_sb;
             }
 
             // Step 4: Convert output i16 → bytes → append to out_buf
