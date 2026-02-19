@@ -9,13 +9,13 @@
 //!
 //! ```zig
 //! // Low-level (single task, you manage buffers)
-//! var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000 });
+//! var rs = try Resampler.init(allocator, .{ .in_rate = 16000, .out_rate = 48000 });
 //! defer rs.deinit();
 //! const r = try rs.process(&in_samples, &out_buf);
 //!
 //! // High-level (two tasks, blocking write/read)
 //! const Stream = StreamResampler(StdRuntime);
-//! var s = try Stream.init(.{
+//! var s = try Stream.init(allocator, .{
 //!     .src = .{ .rate = 48000, .channels = .stereo },
 //!     .dst = .{ .rate = 16000, .channels = .mono },
 //! });
@@ -95,6 +95,7 @@ pub fn monoToStereo(in: []const i16, out: []i16) usize {
 pub const Resampler = struct {
     inner: speexdsp.Resampler,
     channels: u32,
+    allocator: std.mem.Allocator,
 
     pub const Config = struct {
         channels: u32 = 1,
@@ -108,17 +109,19 @@ pub const Resampler = struct {
         out_produced: u32,
     };
 
-    pub fn init(config: Config) !Resampler {
+    pub fn init(allocator: std.mem.Allocator, config: Config) !Resampler {
+        speexdsp.setAllocator(allocator);
         const inner = try speexdsp.Resampler.init(
             config.channels,
             config.in_rate,
             config.out_rate,
             @intCast(config.quality),
         );
-        return .{ .inner = inner, .channels = config.channels };
+        return .{ .inner = inner, .channels = config.channels, .allocator = allocator };
     }
 
     pub fn deinit(self: *Resampler) void {
+        speexdsp.setAllocator(self.allocator);
         self.inner.deinit();
     }
 
@@ -185,10 +188,10 @@ pub fn StreamResampler(comptime Rt: type) type {
         dst_fmt: Format,
         closed: bool,
 
-        pub fn init(config: Config) !Self {
+        pub fn init(allocator: std.mem.Allocator, config: Config) !Self {
             const needs_resample = config.src.rate != config.dst.rate;
             const rs = if (needs_resample)
-                try Resampler.init(.{
+                try Resampler.init(allocator, .{
                     .channels = config.dst.channelCount(),
                     .in_rate = config.src.rate,
                     .out_rate = config.dst.rate,
@@ -493,12 +496,12 @@ test "C5: stereo to mono negative values" {
 // --- R1-R6: Resampler (SpeexDSP thin wrapper) ---
 
 test "R1: init and deinit" {
-    var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000 });
     defer rs.deinit();
 }
 
 test "R2: 16k to 48k upsample" {
-    var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000 });
     defer rs.deinit();
 
     var in_buf: [160]i16 = undefined;
@@ -513,7 +516,7 @@ test "R2: 16k to 48k upsample" {
 }
 
 test "R3: 48k to 16k downsample" {
-    var rs = try Resampler.init(.{ .in_rate = 48000, .out_rate = 16000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 48000, .out_rate = 16000 });
     defer rs.deinit();
 
     var in_buf: [480]i16 = undefined;
@@ -528,7 +531,7 @@ test "R3: 48k to 16k downsample" {
 }
 
 test "R4: same rate passthrough" {
-    var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 16000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 16000 });
     defer rs.deinit();
 
     var in_buf = [_]i16{100} ** 160;
@@ -539,7 +542,7 @@ test "R4: same rate passthrough" {
 }
 
 test "R5: reset clears state" {
-    var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000 });
     defer rs.deinit();
 
     var in_buf = [_]i16{1000} ** 160;
@@ -555,7 +558,7 @@ test "R5: reset clears state" {
 }
 
 test "R6: output buffer too small limits consumption" {
-    var rs = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000 });
     defer rs.deinit();
 
     var in_buf: [160]i16 = undefined;
@@ -575,7 +578,7 @@ test "R6: output buffer too small limits consumption" {
 
 test "A1: write exact sample boundary" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -588,7 +591,7 @@ test "A1: write exact sample boundary" {
 
 test "A2: write partial sample buffers remainder" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -609,7 +612,7 @@ test "A2: write partial sample buffers remainder" {
 
 test "A3: write one byte at a time" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -634,7 +637,7 @@ test "A3: write one byte at a time" {
 
 test "A4: read empty returns zero via close" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -649,7 +652,7 @@ test "A4: read empty returns zero via close" {
 
 test "A5: write zero bytes returns zero" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -661,7 +664,7 @@ test "A5: write zero bytes returns zero" {
 
 test "A6: read aligns to sample boundary" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -681,7 +684,7 @@ test "A6: read aligns to sample boundary" {
 
 test "S1: 16k to 48k mono" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 48000, .channels = .mono },
     });
@@ -710,7 +713,7 @@ test "S1: 16k to 48k mono" {
 
 test "S2: 48k to 16k mono" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 48000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -738,7 +741,7 @@ test "S2: 48k to 16k mono" {
 
 test "S3: same rate same channels passthrough" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -767,7 +770,7 @@ test "S3: same rate same channels passthrough" {
 
 test "S4: stereo 48k to mono 16k" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 48000, .channels = .stereo },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -799,7 +802,7 @@ test "S4: stereo 48k to mono 16k" {
 
 test "S5: mono 16k to stereo 48k" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 48000, .channels = .stereo },
     });
@@ -830,7 +833,7 @@ test "S5: mono 16k to stereo 48k" {
 
 test "T1: producer consumer basic" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -865,7 +868,7 @@ test "T1: producer consumer basic" {
 
 test "T2: producer fast consumer slow" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -900,7 +903,7 @@ test "T2: producer fast consumer slow" {
 
 test "T3: consumer blocks until data" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -936,7 +939,7 @@ test "T3: consumer blocks until data" {
 
 test "T4: close wakes blocked reader" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -962,7 +965,7 @@ test "T4: close wakes blocked reader" {
 
 test "T5: close wakes blocked writer" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -996,7 +999,7 @@ test "T5: close wakes blocked writer" {
 
 test "T6: close drains remaining data" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -1018,7 +1021,7 @@ test "T6: close drains remaining data" {
 
 test "T7: write after close returns error" {
     const S = StreamResampler(TestRt);
-    var s = try S.init(.{
+    var s = try S.init(testing.allocator, .{
         .src = .{ .rate = 16000, .channels = .mono },
         .dst = .{ .rate = 16000, .channels = .mono },
     });
@@ -1044,14 +1047,14 @@ test "Q1: roundtrip 16k to 48k to 16k preserves signal" {
     }
 
     // Upsample 16k → 48k
-    var up = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000, .quality = 10 });
+    var up = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000, .quality = 10 });
     defer up.deinit();
     var upsampled: [9600 + 200]i16 = undefined;
     const r1 = try up.process(&original, &upsampled);
     try testing.expect(r1.out_produced > 8000);
 
     // Downsample 48k → 16k
-    var down = try Resampler.init(.{ .in_rate = 48000, .out_rate = 16000, .quality = 10 });
+    var down = try Resampler.init(testing.allocator, .{ .in_rate = 48000, .out_rate = 16000, .quality = 10 });
     defer down.deinit();
     var roundtrip: [duration_samples + 200]i16 = undefined;
     const r2 = try down.process(upsampled[0..r1.out_produced], &roundtrip);
@@ -1089,12 +1092,12 @@ test "Q1: roundtrip 16k to 48k to 16k preserves signal" {
 test "Q2: roundtrip preserves silence" {
     const silence = [_]i16{0} ** 160;
 
-    var up = try Resampler.init(.{ .in_rate = 16000, .out_rate = 48000, .quality = 5 });
+    var up = try Resampler.init(testing.allocator, .{ .in_rate = 16000, .out_rate = 48000, .quality = 5 });
     defer up.deinit();
     var upsampled: [512]i16 = undefined;
     const r1 = try up.process(&silence, &upsampled);
 
-    var down = try Resampler.init(.{ .in_rate = 48000, .out_rate = 16000, .quality = 5 });
+    var down = try Resampler.init(testing.allocator, .{ .in_rate = 48000, .out_rate = 16000, .quality = 5 });
     defer down.deinit();
     var result: [200]i16 = undefined;
     const r2 = try down.process(upsampled[0..r1.out_produced], &result);
@@ -1110,7 +1113,7 @@ test "Q2: roundtrip preserves silence" {
 }
 
 test "Q3: 8k to 16k sample count" {
-    var rs = try Resampler.init(.{ .in_rate = 8000, .out_rate = 16000 });
+    var rs = try Resampler.init(testing.allocator, .{ .in_rate = 8000, .out_rate = 16000 });
     defer rs.deinit();
 
     var in_buf: [80]i16 = undefined; // 10ms @ 8kHz

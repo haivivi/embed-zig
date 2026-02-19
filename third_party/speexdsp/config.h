@@ -18,4 +18,16 @@
 /* #undef VAR_ARRAYS */
 /* #undef USE_ALLOCA */
 
+/* Override memory allocation — provided by Zig allocator via @export.
+ * This suppresses the default static inline speex_alloc/realloc/free
+ * in os_support.h, making them external symbols resolved at link time. */
+#define OVERRIDE_SPEEX_ALLOC
+#define OVERRIDE_SPEEX_REALLOC
+#define OVERRIDE_SPEEX_FREE
+
+/* Declare the override functions (defined in speexdsp.zig) */
+extern void *speex_alloc(int size);
+extern void *speex_realloc(void *ptr, int size);
+extern void speex_free(void *ptr);
+
 #endif
