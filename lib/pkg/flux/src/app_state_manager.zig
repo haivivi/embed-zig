@@ -68,6 +68,8 @@ pub fn AppStateManager(comptime App: type) type {
         pub fn shouldRender(self: *Self, now_ms: u64) bool {
             if (!self.store.isDirty()) return false;
             if (self.fps == 0) return true; // unlimited fps
+            // First frame: last_render_ms is 0 and hasn't been set by commitFrame yet
+            if (self.last_render_ms == 0 and now_ms < @as(u64, self.min_frame_interval_ms)) return true;
             if (now_ms - self.last_render_ms < @as(u64, self.min_frame_interval_ms)) return false;
             return true;
         }

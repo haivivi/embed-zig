@@ -466,24 +466,23 @@ def _fonts_repo_impl(ctx):
     dl_phosphor = ctx.download(
         url = "https://raw.githubusercontent.com/phosphor-icons/web/master/src/bold/Phosphor-Bold.ttf",
         output = "Phosphor-Bold.ttf",
-        sha256 = "",
+        sha256 = "10a0a1cb4f8156a420f9f84cf34c4e9871e58ed2ddea1f6a8079ad07243a7fb2",
         allow_fail = True,
     )
     if not dl_phosphor.success:
         ctx.execute(["curl", "-sL", "-o", "Phosphor-Bold.ttf",
             "https://raw.githubusercontent.com/phosphor-icons/web/master/src/bold/Phosphor-Bold.ttf"],
             timeout = 60)
-    # Noto Sans SC Bold TTF (CJK subset, ~291KB)
-    # GitHub raw URLs require redirect following — use curl fallback
-    dl_noto = ctx.download(
-        url = "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetTTF/SC/NotoSansSC-Bold.ttf",
-        output = "NotoSansSC-Bold.ttf",
-        sha256 = "",
+    # Press Start 2P pixel font (115KB)
+    dl_press = ctx.download(
+        url = "https://github.com/google/fonts/raw/main/ofl/pressstart2p/PressStart2P-Regular.ttf",
+        output = "PressStart2P.ttf",
+        sha256 = "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d",
         allow_fail = True,
     )
-    if not dl_noto.success:
-        ctx.execute(["curl", "-sL", "-o", "NotoSansSC-Bold.ttf",
-            "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetTTF/SC/NotoSansSC-Bold.ttf"],
+    if not dl_press.success:
+        ctx.execute(["curl", "-sL", "-o", "PressStart2P.ttf",
+            "https://github.com/google/fonts/raw/main/ofl/pressstart2p/PressStart2P-Regular.ttf"],
             timeout = 60)
     ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
@@ -494,15 +493,15 @@ filegroup(
 )
 
 filegroup(
-    name = "noto_sans_sc",
-    srcs = ["NotoSansSC-Bold.ttf"],
+    name = "press_start_2p",
+    srcs = ["PressStart2P.ttf"],
 )
 
 filegroup(
     name = "all_fonts",
     srcs = [
         "Phosphor-Bold.ttf",
-        "NotoSansSC-Bold.ttf",
+        "PressStart2P.ttf",
     ],
 )
 """)
