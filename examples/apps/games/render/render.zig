@@ -348,11 +348,7 @@ fn fmtDec(buf: *[10]u8, val: u32) []const u8 {
 
 fn drawNum(fb: *FB, x: u16, y: u16, value: u32) void {
     var buf: [10]u8 = undefined;
-    var v = value;
-    if (v == 0) { buf[9] = '0'; drawDigitRow(fb, x, y, buf[9..10]); return; }
-    var i: usize = 10;
-    while (v > 0) : (v /= 10) { i -= 1; buf[i] = @intCast('0' + v % 10); }
-    drawDigitRow(fb, x, y, buf[i..10]);
+    drawDigitRow(fb, x, y, fmtDec(&buf, value));
 }
 
 fn drawDigitRow(fb: *FB, x: u16, y: u16, digits: []const u8) void {

@@ -158,8 +158,11 @@ pub const GameObstacles = struct {
         if (s.page != .game) return;
         fb.fillRect(40, 20, 160, 220, MID_GRAY); // road (below HUD)
         for (s.obs_y, 0..) |y, i| {
+            if (y + 35 <= 20) continue;
             const x: u16 = switch (i) { 0 => 60, 1 => 120, else => 90 };
-            fb.fillRoundRect(x, y, 25, 35, 4, GREEN);
+            const oy: u16 = @max(y, 20);
+            const oh: u16 = if (y < 20) 35 - (20 - y) else 35;
+            fb.fillRoundRect(x, oy, 25, oh, 4, GREEN);
         }
     }
 };
