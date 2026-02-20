@@ -54,6 +54,8 @@ pub const Event = union(enum) {
 // ============================================================================
 
 pub fn reduce(state: *State, event: Event) void {
+    if (event == .tick) state.tick += 1;
+
     switch (state.page) {
         .menu => switch (event) {
             .up => if (state.selected > 0) { state.selected -= 1; },
@@ -74,7 +76,6 @@ pub fn reduce(state: *State, event: Event) void {
             .left => state.player_x = @max(40, state.player_x -| 10),
             .right => state.player_x = @min(170, state.player_x + 10),
             .tick => {
-                state.tick += 1;
                 state.score += 1;
                 for (&state.obs_y) |*y| {
                     y.* += 2;
