@@ -132,7 +132,7 @@ pub const GameHud = struct {
 };
 
 pub const GamePlayer = struct {
-    const bg: u16 = BLACK;
+    const bg: u16 = MID_GRAY;
     pub fn bounds(s: *const State) Rect {
         return .{ .x = s.player_x, .y = 180, .w = 30, .h = 45 };
     }
