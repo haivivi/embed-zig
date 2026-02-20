@@ -55,6 +55,13 @@ zig_test(
 )
 
 zig_test(
+    name = "stream_test",
+    main = "src/stream.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
     name = "engine_test",
     main = "src/engine.zig",
     srcs = glob(["src/**/*.zig"]),
