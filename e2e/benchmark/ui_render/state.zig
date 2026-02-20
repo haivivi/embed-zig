@@ -85,7 +85,8 @@ pub fn reduce(state: *State, event: Event) void {
         },
     }
 
-    // Time ticks every 1800 ticks (~1 min at 30fps)
+    if (event != .tick) return;
+
     if (state.tick % 1800 == 0) {
         state.time_min += 1;
         if (state.time_min >= 60) {
@@ -94,7 +95,6 @@ pub fn reduce(state: *State, event: Event) void {
         }
     }
 
-    // Battery drain every 3600 ticks
     if (state.tick % 3600 == 0 and state.battery > 0) {
         state.battery -= 1;
     }

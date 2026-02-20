@@ -137,8 +137,7 @@ pub const GamePlayer = struct {
         return .{ .x = s.player_x, .y = 180, .w = 30, .h = 45 };
     }
     pub fn changed(s: *const State, p: *const State) bool {
-        if (s.page != .game) return false;
-        return s.player_x != p.player_x or !eqlU16x3(s.obs_y, p.obs_y);
+        return s.page == .game and s.player_x != p.player_x;
     }
     pub fn draw(fb: *FB, s: *const State) void {
         if (s.page != .game) return;
@@ -147,7 +146,7 @@ pub const GamePlayer = struct {
 };
 
 pub const GameObstacles = struct {
-    const bg: u16 = BLACK;
+    const bg: u16 = MID_GRAY;
     pub fn bounds(_: *const State) Rect {
         return .{ .x = 40, .y = 20, .w = 160, .h = 220 };
     }
@@ -156,8 +155,8 @@ pub const GameObstacles = struct {
     }
     pub fn draw(fb: *FB, s: *const State) void {
         if (s.page != .game) return;
-        fb.fillRect(40, 20, 160, 220, MID_GRAY); // road (below HUD)
         for (s.obs_y, 0..) |y, i| {
+            if (y + 35 < 20 or y >= 240) continue;
             const x: u16 = switch (i) { 0 => 60, 1 => 120, else => 90 };
             const oy: u16 = @max(y, 20);
             const oh: u16 = if (y < 20) 35 - (20 - y) else 35;
