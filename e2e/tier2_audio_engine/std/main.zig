@@ -128,18 +128,17 @@ pub fn main() !void {
     const format = engine.outputFormat();
     const h = try engine.createTrack(.{ .label = "chirp" });
 
-    // Writer thread
-    const writer_thread = try std.Thread.spawn(.{}, struct {
-        fn run(track: *Engine.MixerT.Track, fmt: Format, data: []const i16) void {
-            track.write(fmt, data) catch {};
-        }
-    }.run, .{ h.track, format, chirp });
+    // Write chirp data (already in buffer before start)
+    try h.track.write(format, chirp);
+    h.ctrl.closeWrite();
 
     try engine.start();
 
     print("Playing chirp and capturing...\n\n", .{});
 
-    // Read clean audio and measure per-second
+    // Read clean audio and measure per-second.
+    // After all chirp data is consumed, mixer.read() will block (single loop).
+    // We read exactly the amount we wrote, then stop.
     var buf: [FRAME_SIZE]i16 = undefined;
     var total_read: usize = 0;
     var sec_energy: f64 = 0;
@@ -166,9 +165,6 @@ pub fn main() !void {
             sec_samples = 0;
         }
     }
-
-    writer_thread.join();
-    h.ctrl.closeWrite();
 
     engine.stop();
 

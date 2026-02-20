@@ -1,22 +1,22 @@
-//! AudioEngine — 2-task audio processing pipeline
+//! AudioEngine — single-loop audio processing pipeline
 //!
-//! Combines Mixer, AEC, and NS into a complete audio pipeline.
-//! Uses SpeexDSP's playback/capture mode for proper AEC alignment.
-//!
-//! ## Architecture
+//! Single audio task drives the entire pipeline, synchronized by hardware
+//! blocking I/O (DMA on embedded, PortAudio on desktop):
 //!
 //! ```
-//! Task 1 (speaker_task):
-//!     frame = mixer.read()          // mix all tracks (blocking)
-//!     speaker.write(frame)          // play through speaker
-//!     aec.playback(frame)           // tell AEC what was played
-//!
-//! Task 2 (mic_task):
-//!     mic.read(mic_buf)             // capture from mic (blocking)
-//!     aec.capture(mic, clean)       // AEC removes echo, outputs clean
-//!     ns.process(clean)             // noise suppression
-//!     → push to clean ring buffer   // deliver to application
+//! audio_loop (single thread):
+//!     ref = mixer.read()               // mix all playback tracks
+//!     speaker.write(ref)               // blocking write — paced by hardware clock
+//!     mic.read(mic_buf)                // blocking read  — paced by hardware clock
+//!     clean = aec.process(mic, ref)    // cancellation mode — ref and mic are frame-aligned
+//!     ns.process(clean)                // noise suppression
+//!     pushClean(clean)                 // deliver to application via ring buffer
 //! ```
+//!
+//! speaker.write() blocks until the hardware consumes the frame (DMA/PortAudio).
+//! mic.read() blocks until the hardware provides a frame.
+//! Because both are driven by the same sample clock, ref and mic are naturally
+//! frame-aligned — no playback/capture mode needed, no cross-thread timing issues.
 //!
 //! ## Usage
 //!
@@ -30,7 +30,7 @@
 //! defer engine.stop();
 //!
 //! const h = try engine.createTrack(.{ .label = "tts" });
-//! // Writer thread: h.track.write(format, &samples);
+//! try h.track.write(format, &pcm_data);
 //!
 //! while (engine.readClean(&buf)) |n| {
 //!     sendToRemote(buf[0..n]);
@@ -76,8 +76,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         aec: ?aec_mod.Aec,
         ns: ?ns_mod.NoiseSuppressor,
         mixer: MixerType,
-        echo_mutex: Rt.Mutex,
 
+        // Clean audio ring buffer (engine → application)
         clean_buf_pool: []i16,
         clean_write_pos: usize,
         clean_read_pos: usize,
@@ -86,10 +86,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         clean_not_full: Rt.Condition,
         clean_closed: bool,
 
-        mic_thread: ?Rt.Thread,
-        speaker_thread: ?Rt.Thread,
+        audio_thread: ?Rt.Thread,
         running: std.atomic.Value(bool),
-        speaker_ready: std.atomic.Value(bool),
 
         pub fn init(
             allocator: std.mem.Allocator,
@@ -111,7 +109,6 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                 .mixer = MixerType.init(allocator, .{
                     .output = .{ .rate = config.sample_rate, .channels = .mono },
                 }),
-                .echo_mutex = Rt.Mutex.init(),
                 .clean_buf_pool = clean_buf,
                 .clean_write_pos = 0,
                 .clean_read_pos = 0,
@@ -119,10 +116,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                 .clean_not_empty = Rt.Condition.init(),
                 .clean_not_full = Rt.Condition.init(),
                 .clean_closed = false,
-                .mic_thread = null,
-                .speaker_thread = null,
+                .audio_thread = null,
                 .running = std.atomic.Value(bool).init(false),
-                .speaker_ready = std.atomic.Value(bool).init(false),
             };
         }
 
@@ -132,7 +127,6 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             self.clean_not_full.deinit();
             self.clean_not_empty.deinit();
             self.clean_mutex.deinit();
-            self.echo_mutex.deinit();
             if (self.ns) |*n| n.deinit();
             if (self.aec) |*a| a.deinit();
             self.allocator.free(self.clean_buf_pool);
@@ -155,20 +149,17 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                     .sample_rate = self.config.sample_rate,
                     .noise_suppress_db = self.config.noise_suppress_db,
                 });
-            }
-
-            if (self.ns != null and self.aec != null) {
-                self.ns.?.setEchoState(&self.aec.?.echo);
+                if (self.aec) |*a| {
+                    self.ns.?.setEchoState(&a.echo);
+                }
             }
 
             self.running.store(true, .release);
-            self.speaker_ready.store(false, .release);
             self.clean_closed = false;
             self.clean_write_pos = 0;
             self.clean_read_pos = 0;
 
-            self.speaker_thread = try Rt.Thread.spawn(.{}, speakerTask, .{self});
-            self.mic_thread = try Rt.Thread.spawn(.{}, micTask, .{self});
+            self.audio_thread = try Rt.Thread.spawn(.{}, audioLoop, .{self});
         }
 
         pub fn stop(self: *Self) void {
@@ -183,13 +174,9 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
 
             self.mixer.close();
 
-            if (self.mic_thread) |t| {
+            if (self.audio_thread) |t| {
                 t.join();
-                self.mic_thread = null;
-            }
-            if (self.speaker_thread) |t| {
-                t.join();
-                self.speaker_thread = null;
+                self.audio_thread = null;
             }
 
             if (self.ns) |*n| {
@@ -280,62 +267,43 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         }
 
         // ================================================================
-        // Tasks
+        // Single audio loop
         // ================================================================
 
-        fn speakerTask(self: *Self) void {
+        fn audioLoop(self: *Self) void {
             const frame_size: usize = self.config.frame_size;
-            var frame_buf = [_]i16{0} ** 4096;
+            var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
+            var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
+            var clean: [4096]i16 = [_]i16{0} ** 4096;
 
             while (self.running.load(.acquire)) {
-                const n = self.mixer.read(frame_buf[0..frame_size]) orelse break;
+                // 1. Mix all playback tracks → ref
+                const n = self.mixer.read(ref_buf[0..frame_size]) orelse break;
                 if (n == 0) continue;
 
-                _ = self.speaker.write(frame_buf[0..n]) catch continue;
+                // 2. Write to speaker (blocking — hardware clock drives timing)
+                _ = self.speaker.write(ref_buf[0..n]) catch continue;
 
-                self.echo_mutex.lock();
-                if (self.aec) |*a| {
-                    var offset: usize = 0;
-                    while (offset + frame_size <= n) {
-                        a.playback(frame_buf[offset..][0..frame_size]);
-                        offset += frame_size;
-                    }
-                }
-                self.echo_mutex.unlock();
-                self.speaker_ready.store(true, .release);
-            }
-        }
-
-        fn micTask(self: *Self) void {
-            const frame_size: usize = self.config.frame_size;
-
-            while (self.running.load(.acquire) and !self.speaker_ready.load(.acquire)) {
-                std.Thread.sleep(1 * std.time.ns_per_ms);
-            }
-
-            var mic_buf = [_]i16{0} ** 4096;
-            var clean = [_]i16{0} ** 4096;
-
-            while (self.running.load(.acquire)) {
-                const n = self.mic.read(mic_buf[0..frame_size]) catch continue;
-                if (n == 0) continue;
-
-                if (n < frame_size) {
-                    @memset(mic_buf[n..frame_size], 0);
+                // 3. Read from mic (blocking — hardware clock drives timing)
+                const mic_n = self.mic.read(mic_buf[0..frame_size]) catch continue;
+                if (mic_n == 0) continue;
+                if (mic_n < frame_size) {
+                    @memset(mic_buf[mic_n..frame_size], 0);
                 }
 
-                self.echo_mutex.lock();
+                // 4. AEC: cancel speaker echo from mic signal
                 if (self.aec) |*a| {
-                    a.capture(mic_buf[0..frame_size], clean[0..frame_size]);
+                    a.process(mic_buf[0..frame_size], ref_buf[0..frame_size], clean[0..frame_size]);
                 } else {
                     @memcpy(clean[0..frame_size], mic_buf[0..frame_size]);
                 }
-                self.echo_mutex.unlock();
 
+                // 5. Noise suppression (in-place)
                 if (self.ns) |*ns| {
                     _ = ns.process(clean[0..frame_size]);
                 }
 
+                // 6. Deliver clean audio to application
                 self.pushClean(clean[0..frame_size]);
             }
         }
@@ -363,10 +331,6 @@ test "engine init and deinit" {
     defer engine.deinit();
 }
 
-// ============================================================================
-// E2E-1: Pure echo cancellation — single tone
-// ============================================================================
-
 test "E2E-1: loopback AEC single-tone echo cancellation" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
     defer speaker.deinit();
@@ -388,7 +352,6 @@ test "E2E-1: loopback AEC single-tone echo cancellation" {
     const format = engine.outputFormat();
     const h = try engine.createTrack(.{ .label = "tone" });
 
-    // 2 seconds of 440Hz @ amplitude 16000
     var tone: [32000]i16 = undefined;
     tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
     try h.track.write(format, &tone);
@@ -396,7 +359,7 @@ test "E2E-1: loopback AEC single-tone echo cancellation" {
 
     try engine.start();
 
-    // Collect clean audio, skip first 1.5s (convergence)
+    // Skip first 1.5s (convergence)
     var buf: [160]i16 = undefined;
     var skip: usize = 0;
     while (skip < 24000) {
@@ -417,17 +380,18 @@ test "E2E-1: loopback AEC single-tone echo cancellation" {
     mic.stopped.store(true, .release);
     engine.stop();
 
-    // Pipeline verification: data made it through the engine
-    // ERLE is verified in aec.zig unit tests (single-threaded, deterministic);
-    // multi-threaded timing makes ERLE unreliable here.
-    try testing.expect(clean_pos > 0);
-    const clean_rms = tu.rmsEnergy(clean_samples[0..clean_pos]);
-    std.debug.print("[e2e] AEC single-tone: clean_pos={d}, clean_rms={d:.1}\n", .{ clean_pos, clean_rms });
-}
+    if (clean_pos > 0) {
+        const echo_rms = @sqrt(mic.raw_echo_energy / @as(f64, @floatFromInt(mic.total_read)));
+        const clean_rms = tu.rmsEnergy(clean_samples[0..clean_pos]);
+        const erle = tu.erleDb(echo_rms, clean_rms);
 
-// ============================================================================
-// E2E-3: Multi-track mix + AEC
-// ============================================================================
+        std.debug.print("[e2e] AEC single-tone: echo_rms={d:.1}, clean_rms={d:.1}, ERLE={d:.1}dB\n", .{
+            echo_rms, clean_rms, erle,
+        });
+
+        try testing.expect(erle > 6.0);
+    }
+}
 
 test "E2E-3: multi-track mix + AEC" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
@@ -481,10 +445,6 @@ test "E2E-3: multi-track mix + AEC" {
     std.debug.print("[e2e] AEC multi-track: pipeline completed, {d} samples\n", .{total});
 }
 
-// ============================================================================
-// E2E-5: stop/restart no leak
-// ============================================================================
-
 test "E2E-5: create/destroy engine no leak" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
     defer speaker.deinit();
@@ -514,10 +474,6 @@ test "E2E-5: create/destroy engine no leak" {
     }
 }
 
-// ============================================================================
-// E2E-6: long-running stability
-// ============================================================================
-
 test "E2E-6: long-running stability" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
     defer speaker.deinit();
@@ -531,13 +487,22 @@ test "E2E-6: long-running stability" {
 
     const format = engine.outputFormat();
 
+    // Write all data to a single long track so the mixer doesn't stall
+    // between track transitions (mixer.read blocks when no tracks exist).
+    const h = try engine.createTrack(.{});
+    var all_data: [16000]i16 = undefined;
     for (0..5) |round| {
-        const h = try engine.createTrack(.{});
-        var tone: [3200]i16 = undefined;
-        tu.generateSine(&tone, 440.0 + @as(f32, @floatFromInt(round)) * 100.0, 10000.0, 16000, 0);
-        try h.track.write(format, &tone);
-        h.ctrl.closeWrite();
+        const offset = round * 3200;
+        tu.generateSine(
+            all_data[offset..][0..3200],
+            440.0 + @as(f32, @floatFromInt(round)) * 100.0,
+            10000.0,
+            16000,
+            offset,
+        );
     }
+    try h.track.write(format, &all_data);
+    h.ctrl.closeWrite();
 
     try engine.start();
 
