@@ -1,6 +1,7 @@
 .{
-    .name = "audio",
+    .name = .audio,
     .version = "0.1.0",
+    .fingerprint = 0x187d36954a1bb1c4,
     .dependencies = .{
         .trait = .{ .path = "../../trait" },
         .speexdsp = .{ .path = "../../../third_party/speexdsp" },

@@ -24,4 +24,15 @@ zig_test(
     ],
 )
 
+zig_test(
+    name = "mixer_test",
+    main = "src/mixer.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = [
+        "//lib/trait",
+        "//lib/platform/std",
+        "//third_party/speexdsp:speexdsp_float",
+    ],
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))
