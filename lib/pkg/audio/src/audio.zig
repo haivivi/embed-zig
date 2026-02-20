@@ -11,6 +11,7 @@ pub const resampler = @import("resampler.zig");
 pub const stream = @import("stream.zig");
 pub const ogg = @import("ogg.zig");
 pub const mixer = @import("mixer.zig");
+pub const resampler = @import("resampler.zig");
 
 pub const Format = resampler.Format;
 pub const Resampler = resampler.Resampler;
