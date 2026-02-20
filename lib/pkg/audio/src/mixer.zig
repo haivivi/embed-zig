@@ -83,6 +83,7 @@ pub fn Mixer(comptime Rt: type) type {
         running_silence_ms: u32,
 
         mix_buf: []f32,
+        track_read_buf: []i16,
         read_chunk_samples: usize,
 
         // ================================================================
@@ -107,6 +108,7 @@ pub fn Mixer(comptime Rt: type) type {
                 .close_err = false,
                 .running_silence_ms = if (config.silence_gap_ms > 0) config.silence_gap_ms else 0,
                 .mix_buf = allocator.alloc(f32, chunk_samples) catch &.{},
+                .track_read_buf = allocator.alloc(i16, chunk_samples) catch &.{},
                 .read_chunk_samples = chunk_samples,
             };
         }
@@ -130,6 +132,9 @@ pub fn Mixer(comptime Rt: type) type {
             }
             self.detached_head = null;
 
+            if (self.track_read_buf.len > 0) {
+                self.allocator.free(self.track_read_buf);
+            }
             if (self.mix_buf.len > 0) {
                 self.allocator.free(self.mix_buf);
             }
@@ -216,10 +221,13 @@ pub fn Mixer(comptime Rt: type) type {
             // Clear mix buffer
             for (self.mix_buf[0..buf.len]) |*s| s.* = 0;
 
-            // Temporary buffer for reading each track (i16-aligned)
-            const track_i16 = self.allocator.alloc(i16, buf.len) catch
-                return .{ .peak = 0, .has_data = false, .is_silence = false, .is_eof = false };
-            defer self.allocator.free(track_i16);
+            // Pre-allocated buffer for reading each track (no alloc in hot path)
+            if (self.track_read_buf.len < buf.len) {
+                if (self.track_read_buf.len > 0) self.allocator.free(self.track_read_buf);
+                self.track_read_buf = self.allocator.alloc(i16, buf.len) catch
+                    return .{ .peak = 0, .has_data = false, .is_silence = false, .is_eof = false };
+            }
+            const track_i16 = self.track_read_buf[0..buf.len];
             const track_buf = std.mem.sliceAsBytes(track_i16);
 
             var peak: f32 = 0;
@@ -352,10 +360,10 @@ pub fn Mixer(comptime Rt: type) type {
         /// Call after the track has been closed/drained and you no longer need
         /// to read readBytes/gain/label.
         pub fn destroyTrackCtrl(self: *Self, ctrl: *TrackCtrl) void {
-            // Unlink from active list
+            self.mutex.lock();
             self.unlinkCtrl(&self.head, ctrl);
-            // Unlink from detached list
             self.unlinkCtrl(&self.detached_head, ctrl);
+            self.mutex.unlock();
 
             if (ctrl.track) |t| {
                 t.deinit();
@@ -396,10 +404,11 @@ pub fn Mixer(comptime Rt: type) type {
 
             var it = self.head;
             while (it) |ctrl| {
-                if (ctrl.track) |t| t.closeWriteInternal();
+                if (ctrl.track) |t| t.closeWriteNoNotify();
                 it = ctrl.next;
             }
 
+            // Already holds mixer.mutex — signal directly (no notifyDataAvailable)
             self.track_available.broadcast();
             self.data_available.broadcast();
         }
@@ -421,10 +430,11 @@ pub fn Mixer(comptime Rt: type) type {
 
             var it = self.head;
             while (it) |ctrl| {
-                if (ctrl.track) |t| t.closeWithErrorInternal();
+                if (ctrl.track) |t| t.closeWithErrorNoNotify();
                 it = ctrl.next;
             }
 
+            // Already holds mixer.mutex — signal directly
             self.track_available.broadcast();
             self.data_available.broadcast();
         }
@@ -433,7 +443,12 @@ pub fn Mixer(comptime Rt: type) type {
         // Internal helpers
         // ================================================================
 
+        /// Signal that data is available. Acquires mixer mutex briefly to
+        /// prevent lost-wakeup race (matching Go's notifyWrite pattern).
+        /// Callers MUST NOT hold mixer.mutex, track.mutex, or ring.mutex.
         fn notifyDataAvailable(self: *Self) void {
+            self.mutex.lock();
+            self.mutex.unlock();
             self.data_available.signal();
         }
 
@@ -607,6 +622,8 @@ pub fn Mixer(comptime Rt: type) type {
             // Current writer (single writer, recreated on format change)
             current_writer: ?*TrackWriter,
             current_format: ?Format,
+            // Old writers being drained by the mixer reader (format change)
+            draining_writer: ?*TrackWriter,
 
             fn init(mixer: *Self) TrackInternal {
                 return .{
@@ -617,6 +634,7 @@ pub fn Mixer(comptime Rt: type) type {
                     .close_write = false,
                     .current_writer = null,
                     .current_format = null,
+                    .draining_writer = null,
                 };
             }
 
@@ -625,6 +643,10 @@ pub fn Mixer(comptime Rt: type) type {
             }
 
             fn deinit(self: *TrackInternal) void {
+                if (self.draining_writer) |w| {
+                    w.deinit(self.mixer.allocator);
+                    self.mixer.allocator.destroy(w);
+                }
                 if (self.current_writer) |w| {
                     w.deinit(self.mixer.allocator);
                     self.mixer.allocator.destroy(w);
@@ -700,11 +722,16 @@ pub fn Mixer(comptime Rt: type) type {
                     if (Format.eql(cf, format)) {
                         return self.current_writer.?;
                     }
-                    // Format changed — close old writer, create new one
+                    // Format changed — move old writer to draining list
+                    // so mixer reader can drain remaining data before it's freed.
                     if (self.current_writer) |w| {
                         w.ring.closeWriteRing();
-                        w.deinit(self.mixer.allocator);
-                        self.mixer.allocator.destroy(w);
+                        // Free any previous draining writer (already drained)
+                        if (self.draining_writer) |dw| {
+                            dw.deinit(self.mixer.allocator);
+                            self.mixer.allocator.destroy(dw);
+                        }
+                        self.draining_writer = w;
                     }
                 }
 
@@ -718,34 +745,49 @@ pub fn Mixer(comptime Rt: type) type {
                 return w;
             }
 
-            /// Non-blocking read through resampler → ring buffer.
+            /// Non-blocking read. Drains old writer (from format change) first,
+            /// then reads from current writer.
             fn readData(self: *TrackInternal, buf: []u8) struct { n: usize, is_err: bool, is_eof: bool } {
                 self.mutex.lock();
                 defer self.mutex.unlock();
 
                 if (self.close_err) return .{ .n = 0, .is_err = true, .is_eof = false };
 
+                // Drain old writer first (from format change)
+                if (self.draining_writer) |dw| {
+                    const rn = dw.readNonBlocking(buf);
+                    if (rn.n > 0) return .{ .n = rn.n, .is_err = false, .is_eof = false };
+                    if (rn.is_eof) {
+                        // Old writer fully drained — free it
+                        dw.deinit(self.mixer.allocator);
+                        self.mixer.allocator.destroy(dw);
+                        self.draining_writer = null;
+                    }
+                }
+
                 if (self.current_writer) |w| {
                     const rn = w.readNonBlocking(buf);
                     if (rn.n > 0) return .{ .n = rn.n, .is_err = false, .is_eof = false };
                     if (rn.is_eof) return .{ .n = 0, .is_err = false, .is_eof = true };
-                    // No data but not EOF
                     return .{ .n = 0, .is_err = false, .is_eof = false };
                 }
 
-                // No writer yet
                 if (self.close_write) return .{ .n = 0, .is_err = false, .is_eof = true };
                 return .{ .n = 0, .is_err = false, .is_eof = false };
             }
 
             fn closeWriteInternal(self: *TrackInternal) void {
+                self.closeWriteNoNotify();
+                self.mixer.notifyDataAvailable();
+            }
+
+            fn closeWriteNoNotify(self: *TrackInternal) void {
                 self.mutex.lock();
                 defer self.mutex.unlock();
                 self.close_write = true;
                 if (self.current_writer) |w| {
                     w.ring.closeWriteRing();
                 }
-                self.mixer.notifyDataAvailable();
             }
 
             fn closeInternal(self: *TrackInternal) void {
@@ -753,6 +795,11 @@ pub fn Mixer(comptime Rt: type) type {
             }
 
             fn closeWithErrorInternal(self: *TrackInternal) void {
+                self.closeWithErrorNoNotify();
+                self.mixer.notifyDataAvailable();
+            }
+
+            fn closeWithErrorNoNotify(self: *TrackInternal) void {
                 self.mutex.lock();
                 defer self.mutex.unlock();
                 self.close_err = true;
@@ -760,7 +807,6 @@ pub fn Mixer(comptime Rt: type) type {
                 if (self.current_writer) |w| {
                     w.ring.closeWithErrorRing();
                 }
-                self.mixer.notifyDataAvailable();
             }
         };
 
@@ -923,8 +969,11 @@ pub fn Mixer(comptime Rt: type) type {
 
                     const written = self.writeInternal(p);
                     p = p[written..];
-                    // Notify mixer that data is available
+                    // Release ring mutex before notifying mixer (lock order:
+                    // mixer → track → ring; notify acquires mixer mutex).
+                    self.mutex.unlock();
                     self.track.mixer.notifyDataAvailable();
+                    self.mutex.lock();
                 }
             }
 
