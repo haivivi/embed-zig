@@ -343,115 +343,19 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
 }
 
 // ============================================================================
-// Test infrastructure
+// Tests
 // ============================================================================
 
 const testing = std.testing;
 const TestRt = @import("std_impl").runtime;
+const tu = @import("test_utils.zig");
 
-fn generateSine(buf: []i16, freq: f32, sample_rate: u32, phase_offset: usize) void {
-    for (buf, 0..) |*s, i| {
-        const t: f32 = @as(f32, @floatFromInt(i + phase_offset)) / @as(f32, @floatFromInt(sample_rate));
-        s.* = @intFromFloat(@sin(t * freq * 2.0 * std.math.pi) * 20000.0);
-    }
-}
-
-fn rmsEnergy(buf: []const i16) f64 {
-    var energy: f64 = 0;
-    for (buf) |s| {
-        const v: f64 = @floatFromInt(s);
-        energy += v * v;
-    }
-    return energy / @as(f64, @floatFromInt(buf.len));
-}
-
-/// Loopback speaker: writes output to a shared ring buffer that
-/// LoopbackMic reads from, simulating acoustic echo.
-const LoopbackSpeaker = struct {
-    ring: []i16,
-    write_pos: usize = 0,
-    mutex: std.Thread.Mutex = .{},
-    write_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-
-    fn init(allocator: std.mem.Allocator, size: usize) !LoopbackSpeaker {
-        const ring = try allocator.alloc(i16, size);
-        @memset(ring, 0);
-        return .{ .ring = ring };
-    }
-
-    fn deinitRing(self: *LoopbackSpeaker, allocator: std.mem.Allocator) void {
-        allocator.free(self.ring);
-    }
-
-    pub fn write(self: *LoopbackSpeaker, buffer: []const i16) !usize {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        for (buffer) |s| {
-            self.ring[self.write_pos % self.ring.len] = s;
-            self.write_pos += 1;
-        }
-        _ = self.write_count.fetchAdd(1, .acq_rel);
-        return buffer.len;
-    }
-};
-
-/// Loopback mic: reads from the shared ring buffer (speaker echo)
-/// and optionally mixes in an injected signal (near-end voice).
-const LoopbackMic = struct {
-    speaker: *LoopbackSpeaker,
-    read_pos: usize = 0,
-    inject: ?[]const i16 = null,
-    inject_pos: usize = 0,
-    stopped: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
-    pub fn read(self: *LoopbackMic, buffer: []i16) !usize {
-        if (self.stopped.load(.acquire)) return 0;
-
-        self.speaker.mutex.lock();
-        const avail = self.speaker.write_pos -| self.read_pos;
-        self.speaker.mutex.unlock();
-
-        if (avail < buffer.len) {
-            std.Thread.sleep(2 * std.time.ns_per_ms);
-            // Return silence if not enough data yet
-            @memset(buffer, 0);
-            return buffer.len;
-        }
-
-        self.speaker.mutex.lock();
-        defer self.speaker.mutex.unlock();
-        const ring = self.speaker.ring;
-        for (buffer, 0..) |*s, i| {
-            s.* = ring[(self.read_pos + i) % ring.len];
-        }
-        self.read_pos += buffer.len;
-
-        // Mix in injected signal if present
-        if (self.inject) |inj| {
-            for (buffer, 0..) |*s, i| {
-                const inj_idx = self.inject_pos + i;
-                if (inj_idx < inj.len) {
-                    const mixed: i32 = @as(i32, s.*) + @as(i32, inj[inj_idx]);
-                    s.* = @intCast(std.math.clamp(mixed, -32768, 32767));
-                }
-            }
-            self.inject_pos += buffer.len;
-        }
-
-        return buffer.len;
-    }
-};
-
-const TestEngine = AudioEngine(TestRt, LoopbackMic, LoopbackSpeaker);
-
-// ============================================================================
-// Basic tests
-// ============================================================================
+const TestEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker);
 
 test "engine init and deinit" {
-    var speaker = try LoopbackSpeaker.init(testing.allocator, 16000);
-    defer speaker.deinitRing(testing.allocator);
-    var mic = LoopbackMic{ .speaker = &speaker };
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
+    defer speaker.deinit();
+    var mic = tu.LoopbackMic{ .speaker = &speaker };
     var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
         .enable_aec = false,
         .enable_ns = false,
@@ -460,61 +364,65 @@ test "engine init and deinit" {
 }
 
 // ============================================================================
-// E2E-1: Loopback AEC echo cancellation
+// E2E-1: Pure echo cancellation — single tone
 // ============================================================================
 
-test "E2E-1: loopback AEC echo cancellation" {
-    var speaker = try LoopbackSpeaker.init(testing.allocator, 32000);
-    defer speaker.deinitRing(testing.allocator);
-    var mic = LoopbackMic{ .speaker = &speaker };
+test "E2E-1: loopback AEC single-tone echo cancellation" {
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+    defer speaker.deinit();
+    var mic = tu.LoopbackMic{
+        .speaker = &speaker,
+        .echo_gain = 0.8,
+        .delay_samples = 320,
+    };
 
     var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
         .enable_aec = true,
         .enable_ns = false,
         .frame_size = 160,
-        .aec_filter_length = 1600,
+        .aec_filter_length = 8000,
         .sample_rate = 16000,
     });
     defer engine.deinit();
 
-    // Write 500ms of 440Hz tone
     const format = engine.outputFormat();
     const h = try engine.createTrack(.{ .label = "tone" });
-    var tone: [8000]i16 = undefined;
-    generateSine(&tone, 440.0, 16000, 0);
+
+    // 2 seconds of 440Hz @ amplitude 16000
+    var tone: [32000]i16 = undefined;
+    tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
     try h.track.write(format, &tone);
     h.ctrl.closeWrite();
 
     try engine.start();
 
-    // Read clean audio and measure energy
-    var echo_energy: f64 = 0;
-    var clean_energy: f64 = 0;
-    var total_clean: usize = 0;
+    // Collect clean audio, skip first 1.5s (convergence)
     var buf: [160]i16 = undefined;
-
-    // Skip first 500ms (AEC convergence)
     var skip: usize = 0;
-    while (skip < 4000) {
+    while (skip < 24000) {
         const n = engine.readClean(&buf) orelse break;
         skip += n;
     }
 
-    // Measure next few frames
-    while (total_clean < 2000) {
+    // Measure last 500ms
+    var clean_samples: [8000]i16 = undefined;
+    var clean_pos: usize = 0;
+    while (clean_pos < 8000) {
         const n = engine.readClean(&buf) orelse break;
-        clean_energy += rmsEnergy(buf[0..n]);
-        total_clean += n;
+        const to_copy = @min(n, 8000 - clean_pos);
+        @memcpy(clean_samples[clean_pos..][0..to_copy], buf[0..to_copy]);
+        clean_pos += to_copy;
     }
-
-    // Reference: energy of the tone we played
-    echo_energy = rmsEnergy(&tone);
 
     mic.stopped.store(true, .release);
     engine.stop();
 
-    // Verify pipeline completed: we got clean audio through
-    try testing.expect(total_clean > 0);
+    // Pipeline verification: data made it through the engine
+    // ERLE is verified in aec.zig unit tests (single-threaded, deterministic);
+    // multi-threaded timing makes ERLE unreliable here.
+    try testing.expect(clean_pos > 0);
+    const clean_rms = tu.rmsEnergy(clean_samples[0..clean_pos]);
+    std.debug.print("[e2e] AEC single-tone: clean_pos={d}, clean_rms={d:.1}\n", .{ clean_pos, clean_rms });
 }
 
 // ============================================================================
@@ -522,27 +430,30 @@ test "E2E-1: loopback AEC echo cancellation" {
 // ============================================================================
 
 test "E2E-3: multi-track mix + AEC" {
-    var speaker = try LoopbackSpeaker.init(testing.allocator, 32000);
-    defer speaker.deinitRing(testing.allocator);
-    var mic = LoopbackMic{ .speaker = &speaker };
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+    defer speaker.deinit();
+    var mic = tu.LoopbackMic{
+        .speaker = &speaker,
+        .echo_gain = 0.8,
+        .delay_samples = 320,
+    };
 
     var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
         .enable_aec = true,
         .enable_ns = false,
         .frame_size = 160,
-        .aec_filter_length = 1600,
+        .aec_filter_length = 8000,
     });
     defer engine.deinit();
 
     const format = engine.outputFormat();
 
-    // 3 tracks at different frequencies
-    var tone440: [4800]i16 = undefined;
-    var tone660: [4800]i16 = undefined;
-    var tone880: [4800]i16 = undefined;
-    generateSine(&tone440, 440.0, 16000, 0);
-    generateSine(&tone660, 660.0, 16000, 0);
-    generateSine(&tone880, 880.0, 16000, 0);
+    var tone440: [16000]i16 = undefined;
+    var tone660: [16000]i16 = undefined;
+    var tone880: [16000]i16 = undefined;
+    tu.generateSine(&tone440, 440.0, 10000.0, 16000, 0);
+    tu.generateSine(&tone660, 660.0, 10000.0, 16000, 0);
+    tu.generateSine(&tone880, 880.0, 10000.0, 16000, 0);
 
     const h1 = try engine.createTrack(.{ .label = "t1" });
     const h2 = try engine.createTrack(.{ .label = "t2" });
@@ -556,10 +467,9 @@ test "E2E-3: multi-track mix + AEC" {
 
     try engine.start();
 
-    // Read enough clean data
     var buf: [160]i16 = undefined;
     var total: usize = 0;
-    while (total < 4000) {
+    while (total < 16000) {
         const n = engine.readClean(&buf) orelse break;
         total += n;
     }
@@ -567,8 +477,8 @@ test "E2E-3: multi-track mix + AEC" {
     mic.stopped.store(true, .release);
     engine.stop();
 
-    // Basic sanity: we got data through
     try testing.expect(total > 0);
+    std.debug.print("[e2e] AEC multi-track: pipeline completed, {d} samples\n", .{total});
 }
 
 // ============================================================================
@@ -576,11 +486,11 @@ test "E2E-3: multi-track mix + AEC" {
 // ============================================================================
 
 test "E2E-5: create/destroy engine no leak" {
-    var speaker = try LoopbackSpeaker.init(testing.allocator, 16000);
-    defer speaker.deinitRing(testing.allocator);
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
+    defer speaker.deinit();
 
     for (0..3) |_| {
-        var mic = LoopbackMic{ .speaker = &speaker };
+        var mic = tu.LoopbackMic{ .speaker = &speaker };
         var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
             .enable_aec = true,
             .enable_ns = true,
@@ -600,8 +510,8 @@ test "E2E-5: create/destroy engine no leak" {
         mic.stopped.store(true, .release);
         engine.deinit();
         speaker.write_pos = 0;
+        speaker.read_pos = 0;
     }
-    // testing.allocator detects leaks automatically
 }
 
 // ============================================================================
@@ -609,9 +519,9 @@ test "E2E-5: create/destroy engine no leak" {
 // ============================================================================
 
 test "E2E-6: long-running stability" {
-    var speaker = try LoopbackSpeaker.init(testing.allocator, 32000);
-    defer speaker.deinitRing(testing.allocator);
-    var mic = LoopbackMic{ .speaker = &speaker };
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+    defer speaker.deinit();
+    var mic = tu.LoopbackMic{ .speaker = &speaker };
 
     var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
         .enable_aec = false,
@@ -621,11 +531,10 @@ test "E2E-6: long-running stability" {
 
     const format = engine.outputFormat();
 
-    // Create and close multiple tracks over ~1 second
     for (0..5) |round| {
         const h = try engine.createTrack(.{});
         var tone: [3200]i16 = undefined;
-        generateSine(&tone, 440.0 + @as(f32, @floatFromInt(round)) * 100.0, 16000, 0);
+        tu.generateSine(&tone, 440.0 + @as(f32, @floatFromInt(round)) * 100.0, 10000.0, 16000, 0);
         try h.track.write(format, &tone);
         h.ctrl.closeWrite();
     }
