@@ -611,8 +611,24 @@ pub fn Mixer(comptime Rt: type) type {
 
             fn write(self: *TrackInternal, format: Format, samples: []const i16) error{Closed}!void {
                 const writer = try self.getWriter(format);
-                const bytes = std.mem.sliceAsBytes(samples);
-                try writer.ring.writeFull(bytes);
+
+                if (writer.rs) |*rs| {
+                    // Resample on write path: loop-consume all input
+                    var remaining = samples;
+                    while (remaining.len > 0) {
+                        const chunk = remaining[0..@min(remaining.len, writer.rs_out_buf.?.len)];
+                        const result = rs.process(chunk, writer.rs_out_buf.?) catch return error.Closed;
+                        remaining = remaining[result.in_consumed..];
+                        if (result.out_produced > 0) {
+                            const out_bytes = std.mem.sliceAsBytes(writer.rs_out_buf.?[0..result.out_produced]);
+                            try writer.ring.writeFull(out_bytes);
+                        }
+                        if (result.in_consumed == 0 and result.out_produced == 0) break;
+                    }
+                } else {
+                    const bytes = std.mem.sliceAsBytes(samples);
+                    try writer.ring.writeFull(bytes);
+                }
             }
 
             fn getWriter(self: *TrackInternal, format: Format) error{Closed}!*TrackWriter {
@@ -698,8 +714,7 @@ pub fn Mixer(comptime Rt: type) type {
             rs: ?Resampler,
             input_format: Format,
 
-            // Resampler work buffers for read path
-            rs_in_buf: ?[]i16,
+            // Work buffer for resampler output (write path)
             rs_out_buf: ?[]i16,
 
             fn init(track: *TrackInternal, format: Format, allocator: Allocator) !TrackWriter {
@@ -710,7 +725,6 @@ pub fn Mixer(comptime Rt: type) type {
 
                 const needs_resample = format.rate != output.rate or format.channels != output.channels;
                 var rs: ?Resampler = null;
-                var rs_in_buf: ?[]i16 = null;
                 var rs_out_buf: ?[]i16 = null;
 
                 if (needs_resample) {
@@ -720,7 +734,7 @@ pub fn Mixer(comptime Rt: type) type {
                         .out_rate = output.rate,
                         .quality = 3,
                     });
-                    rs_in_buf = try allocator.alloc(i16, 4096);
+                    // Sized for worst case: 6x upsample of a chunk
                     rs_out_buf = try allocator.alloc(i16, 4096 * 6);
                 }
 
@@ -728,14 +742,12 @@ pub fn Mixer(comptime Rt: type) type {
                     .ring = ring,
                     .rs = rs,
                     .input_format = format,
-                    .rs_in_buf = rs_in_buf,
                     .rs_out_buf = rs_out_buf,
                 };
             }
 
             fn deinit(self: *TrackWriter, allocator: Allocator) void {
                 if (self.rs_out_buf) |b| allocator.free(b);
-                if (self.rs_in_buf) |b| allocator.free(b);
                 if (self.rs) |*rs| rs.deinit();
                 self.ring.deinit(allocator);
                 allocator.destroy(self.ring);
@@ -743,37 +755,11 @@ pub fn Mixer(comptime Rt: type) type {
 
             const ReadNBResult = struct { n: usize, is_eof: bool };
 
-            /// Non-blocking read. If resampler is present, reads raw from
-            /// ring buffer into resampler, then outputs resampled data.
+            /// Non-blocking read from ring buffer. Ring buffer already
+            /// contains output-format data (resampled on write path).
             fn readNonBlocking(self: *TrackWriter, buf: []u8) ReadNBResult {
-                if (self.rs) |*rs| {
-                    return self.readWithResampler(rs, buf);
-                }
                 const r = self.ring.readNonBlocking(buf);
                 return .{ .n = r.n, .is_eof = r.is_eof };
-            }
-
-            fn readWithResampler(self: *TrackWriter, rs: *Resampler, out_buf: []u8) ReadNBResult {
-                const in_buf = self.rs_in_buf orelse return .{ .n = 0, .is_eof = false };
-                const work_out = self.rs_out_buf orelse return .{ .n = 0, .is_eof = false };
-
-                // Read raw input from ring buffer (non-blocking)
-                const raw_bytes = std.mem.sliceAsBytes(in_buf);
-                const ring_result = self.ring.readNonBlocking(raw_bytes);
-                if (ring_result.n == 0) return .{ .n = 0, .is_eof = ring_result.is_eof };
-
-                const in_samples = ring_result.n / 2;
-                const max_out = @min(work_out.len, out_buf.len / 2);
-
-                const result = rs.process(in_buf[0..in_samples], work_out[0..max_out]) catch
-                    return .{ .n = 0, .is_eof = false };
-
-                const out_bytes = result.out_produced * 2;
-                const out_i16 = work_out[0..result.out_produced];
-                const out_as_bytes = std.mem.sliceAsBytes(out_i16);
-                @memcpy(out_buf[0..out_bytes], out_as_bytes);
-
-                return .{ .n = out_bytes, .is_eof = false };
             }
         };
 
@@ -1440,4 +1426,44 @@ test "mixer different sample rates" {
         if (s != 0) non_zero += 1;
     }
     try testing.expect(non_zero > 0);
+}
+
+test "mixer resample preserves duration (48k to 16k)" {
+    // Regression: readWithResampler was dropping unconsumed input samples.
+    // Write 500ms @ 48kHz into a single track, mixer output is 16kHz.
+    // Expected output ≈ 500ms @ 16kHz = 8000 samples.
+    // With the data-loss bug, the resampler only consumes ~70% of input per
+    // read cycle (output buffer limits consumption), losing ~30% each time.
+    // Result: ~5900 samples instead of 8000 — fails the 90% threshold.
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{ .label = "48k-duration" });
+
+    const duration_ms = 500;
+    const wave = generateSineWave(48000, 440, duration_ms);
+    defer testing.allocator.free(wave);
+
+    const fmt48k = Mx.Format{ .rate = 48000 };
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, data: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, data) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, fmt48k, wave, h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // 500ms @ 16kHz = 8000 samples. Allow 10% tolerance for resampler filter
+    // delay, but no more — the bug drops ~30%.
+    const expected_samples = 16000 * duration_ms / 1000; // 8000
+    const min_samples = expected_samples * 90 / 100; // 7200
+    try testing.expect(mixed.len >= min_samples);
 }
