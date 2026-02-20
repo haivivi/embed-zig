@@ -87,6 +87,10 @@ pub fn DirtyTracker(comptime MAX: u8) type {
             // Full? Collapse all into one bounding box, then add
             if (self.count >= MAX) {
                 self.collapse();
+                if (self.count >= MAX) {
+                    self.rects[0] = self.rects[0].merge(rect);
+                    return;
+                }
             }
 
             self.rects[self.count] = rect;

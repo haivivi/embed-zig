@@ -148,14 +148,14 @@ pub const GamePlayer = struct {
 pub const GameObstacles = struct {
     const bg: u16 = BLACK;
     pub fn bounds(_: *const State) Rect {
-        return .{ .x = 40, .y = 0, .w = 160, .h = 240 };
+        return .{ .x = 40, .y = 20, .w = 160, .h = 220 };
     }
     pub fn changed(s: *const State, p: *const State) bool {
         return s.page == .game and !eqlU16x3(s.obs_y, p.obs_y);
     }
     pub fn draw(fb: *FB, s: *const State) void {
         if (s.page != .game) return;
-        fb.fillRect(40, 0, 160, 240, MID_GRAY); // road
+        fb.fillRect(40, 20, 160, 220, MID_GRAY); // road (below HUD)
         for (s.obs_y, 0..) |y, i| {
             const x: u16 = switch (i) { 0 => 60, 1 => 120, else => 90 };
             fb.fillRoundRect(x, y, 25, 35, 4, GREEN);
