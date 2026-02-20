@@ -3,7 +3,7 @@ load("//bazel/zig:defs.bzl", "zig_package", "zig_test")
 package(default_visibility = ["//visibility:public"])
 
 # test = False on the package: ogg.zig requires libogg C headers not
-# available in zig_test sandbox. Resampler has its own test target below.
+# available in zig_test sandbox. Individual modules have their own test targets.
 zig_package(
     name = "audio",
     deps = [
@@ -13,26 +13,52 @@ zig_package(
     test = False,
 )
 
+_COMMON_TEST_DEPS = [
+    "//lib/trait",
+    "//lib/platform/std",
+    "//third_party/speexdsp:speexdsp_float",
+]
+
 zig_test(
     name = "resampler_test",
     main = "src/resampler.zig",
     srcs = glob(["src/**/*.zig"]),
-    deps = [
-        "//lib/trait",
-        "//lib/platform/std",
-        "//third_party/speexdsp:speexdsp_float",
-    ],
+    deps = _COMMON_TEST_DEPS,
 )
 
 zig_test(
     name = "mixer_test",
     main = "src/mixer.zig",
     srcs = glob(["src/**/*.zig"]),
-    deps = [
-        "//lib/trait",
-        "//lib/platform/std",
-        "//third_party/speexdsp:speexdsp_float",
-    ],
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "aec_test",
+    main = "src/aec.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "ns_test",
+    main = "src/ns.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "drc_test",
+    main = "src/drc.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "engine_test",
+    main = "src/engine.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
 )
 
 filegroup(name = "srcs", srcs = glob(["**/*"]))
