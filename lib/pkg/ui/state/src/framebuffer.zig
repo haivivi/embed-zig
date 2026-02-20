@@ -330,6 +330,8 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
 
             var cx: u16 = x;
             const baseline: u16 = y + @as(u16, @intCast(@max(0, fnt.ascent)));
+            var min_x: u16 = x;
+            var max_x: u16 = x;
             var min_y: u16 = y;
             var max_y: u16 = y;
             var i: usize = 0;
@@ -353,12 +355,15 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                                 if (px < 0 or px >= W) continue;
                                 const alpha = g.bitmap[@as(usize, gy) * g.w + @as(usize, gx)];
                                 if (alpha > 0) {
-                                    const dst_idx = @as(usize, upy) * W + @as(usize, @intCast(px));
+                                    const upx: u16 = @intCast(px);
+                                    const dst_idx = @as(usize, upy) * W + @as(usize, upx);
                                     if (alpha >= 250) {
                                         self.buf[dst_idx] = color;
                                     } else {
                                         self.buf[dst_idx] = blendRgb565(self.buf[dst_idx], color, alpha);
                                     }
+                                    if (upx < min_x) min_x = upx;
+                                    if (upx + 1 > max_x) max_x = upx + 1;
                                     if (upy < min_y) min_y = upy;
                                     if (upy + 1 > max_y) max_y = upy + 1;
                                 }
@@ -370,9 +375,8 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 }
             }
 
-            if (cx > x and max_y > min_y) {
-                const text_w = @min(cx, W) - x;
-                self.dirty.mark(.{ .x = x, .y = min_y, .w = text_w, .h = max_y - min_y });
+            if (max_x > min_x and max_y > min_y) {
+                self.dirty.mark(.{ .x = min_x, .y = min_y, .w = max_x - min_x, .h = max_y - min_y });
             }
         }
 

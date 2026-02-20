@@ -33,9 +33,7 @@ fn measureCompositor(initial: State, events: []const Event) struct { total_dirty
     var fb = comp_ui.FB.init(0);
     var prev = initial;
 
-    // Initial render (first frame always full)
-    _ = comp_ui.render(&fb, store.getState(), &prev);
-    fb.clearDirty();
+    // Setup: commit initial state (measurement starts from first event)
     store.commitFrame();
     prev = store.getState().*;
 
