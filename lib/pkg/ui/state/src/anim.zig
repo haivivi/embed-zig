@@ -207,9 +207,10 @@ pub fn blitAnimFrame(
                 var col: u16 = 0;
                 while (col < rect.w) : (col += 1) {
                     const px = rect.pixels[@as(usize, row) * rect.w + @as(usize, col)];
-                    const dx = rect.x * s + col * s;
-                    const dy = rect.y * s + row * s;
-                    fb.fillRect(dx, dy, s, s, px);
+                    const dx: u32 = @as(u32, rect.x) * s + @as(u32, col) * s;
+                    const dy: u32 = @as(u32, rect.y) * s + @as(u32, row) * s;
+                    if (dx > 0xFFFF or dy > 0xFFFF) continue;
+                    fb.fillRect(@intCast(dx), @intCast(dy), s, s, px);
                 }
             }
         }

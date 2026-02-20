@@ -328,6 +328,8 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
 
             var cx: u16 = x;
             const baseline: u16 = y + @as(u16, @intCast(@max(0, fnt.ascent)));
+            var min_y: u16 = y;
+            var max_y: u16 = y;
             var i: usize = 0;
             while (i < text.len) {
                 const decoded = font_mod.decodeUtf8(text[i..]);
@@ -335,27 +337,28 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
 
                 if (decoded.codepoint) |cp| {
                     if (fnt.getGlyph(cp)) |g| {
-                        // Destination top-left with glyph offsets
                         const dx: i32 = @as(i32, cx) + g.x_off;
                         const dy: i32 = @as(i32, baseline) + g.y_off;
 
-                        // Render alpha-blended pixels
                         var gy: u16 = 0;
                         while (gy < g.h) : (gy += 1) {
                             const py = dy + gy;
                             if (py < 0 or py >= H) continue;
+                            const upy: u16 = @intCast(py);
                             var gx: u16 = 0;
                             while (gx < g.w) : (gx += 1) {
                                 const px = dx + gx;
                                 if (px < 0 or px >= W) continue;
                                 const alpha = g.bitmap[@as(usize, gy) * g.w + @as(usize, gx)];
                                 if (alpha > 0) {
-                                    const dst_idx = @as(usize, @intCast(py)) * W + @as(usize, @intCast(px));
+                                    const dst_idx = @as(usize, upy) * W + @as(usize, @intCast(px));
                                     if (alpha >= 250) {
                                         self.buf[dst_idx] = color;
                                     } else {
                                         self.buf[dst_idx] = blendRgb565(self.buf[dst_idx], color, alpha);
                                     }
+                                    if (upy < min_y) min_y = upy;
+                                    if (upy + 1 > max_y) max_y = upy + 1;
                                 }
                             }
                         }
@@ -365,11 +368,9 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 }
             }
 
-            // Mark dirty (clip cx to screen width)
-            if (cx > x) {
+            if (cx > x and max_y > min_y) {
                 const text_w = @min(cx, W) - x;
-                const text_h = fnt.lineHeight();
-                self.dirty.mark(.{ .x = x, .y = y, .w = text_w, .h = @min(text_h, if (y < H) H - y else 0) });
+                self.dirty.mark(.{ .x = x, .y = min_y, .w = text_w, .h = max_y - min_y });
             }
         }
 
