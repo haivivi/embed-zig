@@ -108,10 +108,11 @@ pub fn step() void {
     }
 }
 
+var flush_buf: [240 * 240]u16 = undefined;
+
 fn flushDirty() void {
-    var tmp: [240 * 240]u16 = undefined;
     for (framebuf.getDirtyRects()) |rect| {
-        const pixels = framebuf.getRegion(rect, &tmp);
+        const pixels = framebuf.getRegion(rect, &flush_buf);
         if (pixels.len == 0) continue;
         disp.flush(.{ .x1 = rect.x, .y1 = rect.y, .x2 = rect.x + rect.w - 1, .y2 = rect.y + rect.h - 1 }, @ptrCast(pixels.ptr));
     }
