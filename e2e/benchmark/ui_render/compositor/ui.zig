@@ -137,7 +137,8 @@ pub const GamePlayer = struct {
         return .{ .x = s.player_x, .y = 180, .w = 30, .h = 45 };
     }
     pub fn changed(s: *const State, p: *const State) bool {
-        return s.page == .game and s.player_x != p.player_x;
+        if (s.page != .game) return false;
+        return s.player_x != p.player_x or !eqlU16x3(s.obs_y, p.obs_y);
     }
     pub fn draw(fb: *FB, s: *const State) void {
         if (s.page != .game) return;
@@ -174,7 +175,7 @@ pub const MenuScene = Compositor(FB, State, .{ StatusTime, StatusBattery, Status
 pub const SettingsScene = Compositor(FB, State, .{ StatusTime, StatusBattery, StatusWifi, SettingsContent });
 
 // Game page compositor (no status bar — HUD instead)
-pub const GameScene = Compositor(FB, State, .{ GameHud, GamePlayer, GameObstacles });
+pub const GameScene = Compositor(FB, State, .{ GameObstacles, GamePlayer, GameHud });
 
 // ============================================================================
 // Public render — dispatches to page-specific compositor
