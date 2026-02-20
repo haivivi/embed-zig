@@ -826,12 +826,16 @@ pub fn Mixer(comptime Rt: type) type {
             fn init(track: *TrackInternal, format: Format, allocator: Allocator) !TrackWriter {
                 const output = track.mixer.config.output;
                 const ring = try allocator.create(RingBuf);
+                errdefer allocator.destroy(ring);
                 const buf_size = @as(usize, output.rate) * @as(usize, @intFromEnum(output.channels)) * 2 * 10; // 10 seconds
                 ring.* = try RingBuf.init(track, allocator, buf_size);
+                errdefer ring.deinit(allocator);
 
                 const needs_resample = format.rate != output.rate or format.channels != output.channels;
                 var rs: ?Resampler = null;
+                errdefer if (rs) |*r| r.deinit();
                 var rs_out_buf: ?[]i16 = null;
+                errdefer if (rs_out_buf) |b| allocator.free(b);
                 var channel_conv_buf: ?[]i16 = null;
 
                 if (needs_resample) {
@@ -843,7 +847,6 @@ pub fn Mixer(comptime Rt: type) type {
                         .quality = 3,
                     });
                     rs_out_buf = try allocator.alloc(i16, 4096 * 6);
-                    // For channel conversion (stereo→mono or mono→stereo)
                     if (format.channels != output.channels) {
                         channel_conv_buf = try allocator.alloc(i16, 4096 * 2);
                     }
