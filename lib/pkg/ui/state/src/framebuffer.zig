@@ -125,8 +125,12 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
         /// Draw a rectangle outline. Clips to framebuffer bounds.
         pub fn drawRect(self: *Self, x: u16, y: u16, w: u16, h: u16, color: Color, thickness: u8) void {
             if (w == 0 or h == 0) return;
+            if (thickness == 0) return;
             const t: u16 = @min(@as(u16, thickness), @min(w / 2, h / 2));
-            if (t == 0) return;
+            if (t == 0) {
+                self.fillRect(x, y, w, h, color);
+                return;
+            }
 
             // Top edge
             self.fillRect(x, y, w, t, color);

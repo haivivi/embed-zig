@@ -17,7 +17,6 @@ pub var font_icon: ?*TtfFont = null;
 // Phosphor icon codepoints (UTF-8 encoded)
 const ICON_TETRIS = "\xee\x91\xa4"; // U+E464 squares-four
 const ICON_RACER = "\xee\xa3\x8c"; // U+E8CC car-profile
-const ICON_GAME = "\xee\x89\xae"; // U+E26E game-controller
 
 const BLACK: u16 = 0x0000;
 const WHITE: u16 = 0xFFFF;
@@ -64,38 +63,14 @@ const game_colors = [2]u16{ 0x07FF, 0xF800 };
 fn renderMenuFull(fb: *FB, state: *const app_state.AppState) void {
     fb.fillRect(0, 0, 240, 240, BLACK);
 
-    // Title
     if (font_text) |f| {
         const title = "GAMES";
         const tw = f.textWidth(title);
         fb.drawTextTtf((240 -| tw) / 2, 20, title, f, WHITE);
     }
 
-    // Two game cards side by side
-    const icons = [2][]const u8{ ICON_TETRIS, ICON_RACER };
-    for (0..2) |i| {
-        const x: u16 = 20 + @as(u16, @intCast(i)) * 110;
-        const selected = (i == state.selected);
-        const bg: u16 = if (selected) 0x2945 else 0x1082;
-        fb.fillRoundRect(x, 70, 100, 130, 10, bg);
+    for (0..2) |i| renderMenuCard(fb, i, i == state.selected);
 
-        // Icon
-        if (font_icon) |f| {
-            fb.drawTextTtf(x + 26, 80, icons[i], f, game_colors[i]);
-        } else {
-            fb.fillRoundRect(x + 20, 85, 60, 60, 8, game_colors[i]);
-        }
-
-        // Label
-        if (font_text) |f| {
-            const tw = f.textWidth(game_names[i]);
-            fb.drawTextTtf(x + (100 -| tw) / 2, 165, game_names[i], f, if (selected) WHITE else GRAY);
-        }
-
-        if (selected) fb.drawRect(x, 70, 100, 130, ACCENT, 2);
-    }
-
-    // Hint
     if (font_text) |f| {
         const hint = "< SELECT >";
         const tw = f.textWidth(hint);
@@ -103,9 +78,30 @@ fn renderMenuFull(fb: *FB, state: *const app_state.AppState) void {
     }
 }
 
+fn renderMenuCard(fb: *FB, idx: usize, selected: bool) void {
+    const icons = [2][]const u8{ ICON_TETRIS, ICON_RACER };
+    const x: u16 = 20 + @as(u16, @intCast(idx)) * 110;
+    const bg: u16 = if (selected) 0x2945 else 0x1082;
+    fb.fillRoundRect(x, 70, 100, 130, 10, bg);
+
+    if (font_icon) |f| {
+        fb.drawTextTtf(x + 26, 80, icons[idx], f, game_colors[idx]);
+    } else {
+        fb.fillRoundRect(x + 20, 85, 60, 60, 8, game_colors[idx]);
+    }
+
+    if (font_text) |f| {
+        const tw = f.textWidth(game_names[idx]);
+        fb.drawTextTtf(x + (100 -| tw) / 2, 165, game_names[idx], f, if (selected) WHITE else GRAY);
+    }
+
+    if (selected) fb.drawRect(x, 70, 100, 130, ACCENT, 2);
+}
+
 fn renderMenu(fb: *FB, state: *const app_state.AppState, prev: *const app_state.AppState) void {
     if (state.selected != prev.selected) {
-        renderMenuFull(fb, state);
+        renderMenuCard(fb, prev.selected, false);
+        renderMenuCard(fb, state.selected, true);
     }
 }
 
