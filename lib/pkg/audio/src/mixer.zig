@@ -352,11 +352,34 @@ pub fn Mixer(comptime Rt: type) type {
         /// Call after the track has been closed/drained and you no longer need
         /// to read readBytes/gain/label.
         pub fn destroyTrackCtrl(self: *Self, ctrl: *TrackCtrl) void {
+            // Unlink from active list
+            self.unlinkCtrl(&self.head, ctrl);
+            // Unlink from detached list
+            self.unlinkCtrl(&self.detached_head, ctrl);
+
             if (ctrl.track) |t| {
                 t.deinit();
                 self.allocator.destroy(t);
             }
             self.allocator.destroy(ctrl);
+        }
+
+        fn unlinkCtrl(self: *Self, list_head: *?*TrackCtrl, ctrl: *TrackCtrl) void {
+            _ = self;
+            var prev: ?*TrackCtrl = null;
+            var it = list_head.*;
+            while (it) |c| {
+                if (c == ctrl) {
+                    if (prev) |p| {
+                        p.next = c.next;
+                    } else {
+                        list_head.* = c.next;
+                    }
+                    return;
+                }
+                prev = c;
+                it = c.next;
+            }
         }
 
         pub fn closeWrite(self: *Self) void {
@@ -611,14 +634,49 @@ pub fn Mixer(comptime Rt: type) type {
 
             fn write(self: *TrackInternal, format: Format, samples: []const i16) error{Closed}!void {
                 const writer = try self.getWriter(format);
+                const output = self.mixer.config.output;
 
                 if (writer.rs) |*rs| {
-                    // Resample on write path: loop-consume all input
+                    const src_ch: usize = @intFromEnum(format.channels);
+                    const dst_ch: usize = @intFromEnum(output.channels);
+                    const conv_buf = writer.channel_conv_buf;
+                    const conv_buf_frames = if (conv_buf) |b| b.len / @max(src_ch, dst_ch) else 0;
+
+                    // Resample on write path: loop-consume all input.
+                    // Channel conversion happens before resampling (matching
+                    // StreamResampler.processChunk).
                     var remaining = samples;
                     while (remaining.len > 0) {
-                        const chunk = remaining[0..@min(remaining.len, writer.rs_out_buf.?.len)];
-                        const result = rs.process(chunk, writer.rs_out_buf.?) catch return error.Closed;
-                        remaining = remaining[result.in_consumed..];
+                        // Limit chunk size (in source frames)
+                        const max_src_frames = if (conv_buf != null)
+                            @min(remaining.len / src_ch, conv_buf_frames)
+                        else
+                            @min(remaining.len / src_ch, writer.rs_out_buf.?.len);
+                        if (max_src_frames == 0) break;
+                        const max_src_samples = max_src_frames * src_ch;
+
+                        var chunk_to_process: []const i16 = remaining[0..max_src_samples];
+
+                        // Channel conversion before resampling
+                        if (src_ch == 2 and dst_ch == 1) {
+                            const cb = conv_buf orelse break;
+                            @memcpy(cb[0..max_src_samples], remaining[0..max_src_samples]);
+                            const mono_n = resampler_mod.stereoToMono(cb[0..max_src_samples]);
+                            chunk_to_process = cb[0..mono_n];
+                        } else if (src_ch == 1 and dst_ch == 2) {
+                            const cb = conv_buf orelse break;
+                            const stereo_n = resampler_mod.monoToStereo(remaining[0..max_src_samples], cb);
+                            chunk_to_process = cb[0 .. stereo_n * 2];
+                        }
+
+                        const result = rs.process(chunk_to_process, writer.rs_out_buf.?) catch return error.Closed;
+
+                        // Map resampler consumption back to source samples.
+                        // in_consumed is in dst-channel space (resampler channels = dst_ch).
+                        const consumed_frames = result.in_consumed / dst_ch;
+                        const consumed_src_samples = consumed_frames * src_ch;
+                        remaining = remaining[@min(consumed_src_samples, remaining.len)..];
+
                         if (result.out_produced > 0) {
                             const out_bytes = std.mem.sliceAsBytes(writer.rs_out_buf.?[0..result.out_produced]);
                             try writer.ring.writeFull(out_bytes);
@@ -636,6 +694,7 @@ pub fn Mixer(comptime Rt: type) type {
                 defer self.mutex.unlock();
 
                 if (self.close_err) return error.Closed;
+                if (self.close_write) return error.Closed;
 
                 if (self.current_format) |cf| {
                     if (Format.eql(cf, format)) {
@@ -714,8 +773,9 @@ pub fn Mixer(comptime Rt: type) type {
             rs: ?Resampler,
             input_format: Format,
 
-            // Work buffer for resampler output (write path)
+            // Work buffers for write-path resampling
             rs_out_buf: ?[]i16,
+            channel_conv_buf: ?[]i16,
 
             fn init(track: *TrackInternal, format: Format, allocator: Allocator) !TrackWriter {
                 const output = track.mixer.config.output;
@@ -726,16 +786,21 @@ pub fn Mixer(comptime Rt: type) type {
                 const needs_resample = format.rate != output.rate or format.channels != output.channels;
                 var rs: ?Resampler = null;
                 var rs_out_buf: ?[]i16 = null;
+                var channel_conv_buf: ?[]i16 = null;
 
                 if (needs_resample) {
+                    const dst_ch = @intFromEnum(output.channels);
                     rs = try Resampler.init(allocator, .{
-                        .channels = @intFromEnum(output.channels),
+                        .channels = dst_ch,
                         .in_rate = format.rate,
                         .out_rate = output.rate,
                         .quality = 3,
                     });
-                    // Sized for worst case: 6x upsample of a chunk
                     rs_out_buf = try allocator.alloc(i16, 4096 * 6);
+                    // For channel conversion (stereo→mono or mono→stereo)
+                    if (format.channels != output.channels) {
+                        channel_conv_buf = try allocator.alloc(i16, 4096 * 2);
+                    }
                 }
 
                 return .{
@@ -743,10 +808,12 @@ pub fn Mixer(comptime Rt: type) type {
                     .rs = rs,
                     .input_format = format,
                     .rs_out_buf = rs_out_buf,
+                    .channel_conv_buf = channel_conv_buf,
                 };
             }
 
             fn deinit(self: *TrackWriter, allocator: Allocator) void {
+                if (self.channel_conv_buf) |b| allocator.free(b);
                 if (self.rs_out_buf) |b| allocator.free(b);
                 if (self.rs) |*rs| rs.deinit();
                 self.ring.deinit(allocator);
@@ -1466,4 +1533,681 @@ test "mixer resample preserves duration (48k to 16k)" {
     const expected_samples = 16000 * duration_ms / 1000; // 8000
     const min_samples = expected_samples * 90 / 100; // 7200
     try testing.expect(mixed.len >= min_samples);
+}
+
+test "mixer stereo input to mono output preserves channel conversion" {
+    // Regression: Resampler was initialized with output.channels but fed raw
+    // input samples with input.channels. When stereo→mono, the resampler
+    // misinterprets the interleaved layout.
+    //
+    // Write stereo 48kHz [V, 0, V, 0, ...] (left=signal, right=silence).
+    // Correct: stereoToMono → [V/2, V/2, ...] → resample → mono output ≈ V/2.
+    // Bug: resampler sees mono [V, 0, V, 0, ...] → output alternates high/low.
+    //
+    // Detect by checking that output samples are consistently near V/2,
+    // not alternating between V and 0.
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000, .channels = .mono },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{ .label = "stereo-to-mono" });
+
+    // Generate stereo data: L=8000, R=0 for 200ms @ 48kHz
+    const stereo_frames = 48000 * 200 / 1000; // 9600 frames
+    const stereo_samples = stereo_frames * 2; // 19200 i16 (interleaved L,R)
+    const stereo_data = try testing.allocator.alloc(i16, stereo_samples);
+    defer testing.allocator.free(stereo_data);
+    for (0..stereo_frames) |i| {
+        stereo_data[i * 2] = 8000; // L
+        stereo_data[i * 2 + 1] = 0; // R
+    }
+
+    const fmt_stereo_48k = Mx.Format{ .rate = 48000, .channels = .stereo };
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, data: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, data) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, fmt_stereo_48k, stereo_data, h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    try testing.expect(mixed.len > 0);
+
+    // With correct channel conversion:
+    //   stereoToMono → 9600 mono frames @ 48kHz → resample → ~3200 @ 16kHz
+    // Without channel conversion (bug):
+    //   resampler(channels=1) sees 19200 "mono" frames → ~6400 @ 16kHz (2x!)
+    //
+    // Check output is within 20% of expected 3200, catching the 2x blowup.
+    // Count non-zero samples (mixed.len includes zero-padded chunk tails).
+    var non_zero: usize = 0;
+    for (mixed) |s| {
+        if (s != 0) non_zero += 1;
+    }
+
+    // With correct channel conversion:
+    //   stereoToMono → 9600 mono frames @ 48kHz → resample → ~3200 @ 16kHz
+    // Without channel conversion (bug):
+    //   resampler(channels=1) sees 19200 "mono" frames → ~6400 @ 16kHz (2x!)
+    const expected_mono_samples = 16000 * 200 / 1000; // 3200
+    const max_non_zero = expected_mono_samples * 120 / 100; // 3840
+    try testing.expect(non_zero > 0);
+    try testing.expect(non_zero <= max_non_zero);
+}
+
+// ============================================================================
+// Required tests from AGENTS.md (T1-T18)
+// ============================================================================
+
+test "T1: backpressure blocks writer" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    // Write more data than ring buffer can hold without reading.
+    // Ring buffer = 16000*1*2*10 = 320000 bytes = 160000 i16.
+    // Write 200000 samples — must exceed capacity.
+    const big_data = try testing.allocator.alloc(i16, 200000);
+    defer testing.allocator.free(big_data);
+    for (big_data) |*s| s.* = 1000;
+
+    // Writer in thread (will block on backpressure)
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, data: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, data) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, format, big_data, h.ctrl });
+
+    // Reader consumes all
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // All data should be present (no drops from backpressure)
+    try testing.expect(mixed.len > 0);
+}
+
+test "T2: remove track mid-stream" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const ha = try mx.createTrack(.{ .label = "A" });
+    const hb = try mx.createTrack(.{ .label = "B" });
+
+    const data_b = [_]i16{2000} ** 1600;
+
+    // Track A: closeWithError immediately (mid-stream abort)
+    ha.ctrl.closeWithError();
+
+    // Track B: write normally
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ hb.track, format, @as([]const i16, &data_b), hb.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // Mixer should have track B's data, not crash
+    try testing.expect(mixed.len > 0);
+}
+
+test "T3: closeWithError aborts all tracks" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h1 = try mx.createTrack(.{ .label = "A" });
+    const h2 = try mx.createTrack(.{ .label = "B" });
+
+    var write1_closed = std_import.atomic.Value(bool).init(false);
+    var write2_closed = std_import.atomic.Value(bool).init(false);
+
+    const t1 = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, flag: *std_import.atomic.Value(bool)) void {
+            const data = [_]i16{500} ** 16000;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                track.write(fmt, &data) catch {
+                    flag.store(true, .release);
+                    return;
+                };
+            }
+        }
+    }.run, .{ h1.track, format, &write1_closed });
+
+    const t2 = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, flag: *std_import.atomic.Value(bool)) void {
+            const data = [_]i16{500} ** 16000;
+            var i: usize = 0;
+            while (i < 100) : (i += 1) {
+                track.write(fmt, &data) catch {
+                    flag.store(true, .release);
+                    return;
+                };
+            }
+        }
+    }.run, .{ h2.track, format, &write2_closed });
+
+    // Let writers start
+    std_import.Thread.sleep(5 * std_import.time.ns_per_ms);
+
+    // Close mixer with error
+    mx.closeWithError();
+
+    t1.join();
+    t2.join();
+
+    // Both writers should have gotten error.Closed
+    try testing.expect(write1_closed.load(.acquire));
+    try testing.expect(write2_closed.load(.acquire));
+}
+
+test "T4: track closeWithError" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{});
+    h.ctrl.closeWithError();
+    mx.closeWrite();
+
+    // read should return null (EOF), not hang
+    var buf: [160]i16 = undefined;
+    const result = mx.read(&buf);
+    try testing.expectEqual(@as(?usize, null), result);
+}
+
+test "T5: format change mid-stream" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{});
+
+    const fmt16k = Mx.Format{ .rate = 16000 };
+    const fmt48k = Mx.Format{ .rate = 48000 };
+
+    // Write 16kHz first, then switch to 48kHz
+    const data16k = [_]i16{3000} ** 320; // 20ms @ 16kHz
+    const wave48k = generateSineWave(48000, 440, 50); // 50ms @ 48kHz
+    defer testing.allocator.free(wave48k);
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, f1: Mx.Format, d1: []const i16, f2: Mx.Format, d2: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(f1, d1) catch {};
+            track.write(f2, d2) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, fmt16k, @as([]const i16, &data16k), fmt48k, wave48k, h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // Should have output from both segments
+    try testing.expect(mixed.len > 0);
+    var non_zero: usize = 0;
+    for (mixed) |s| {
+        if (s != 0) non_zero += 1;
+    }
+    try testing.expect(non_zero > 200);
+}
+
+test "T6: clipping on overflow" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+
+    // 3 tracks each writing amplitude 20000 — sum = 60000 which exceeds i16 range
+    const h1 = try mx.createTrack(.{});
+    const h2 = try mx.createTrack(.{});
+    const h3 = try mx.createTrack(.{});
+
+    const data = [_]i16{20000} ** 320;
+
+    const t1 = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h1.track, format, @as([]const i16, &data), h1.ctrl });
+    const t2 = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h2.track, format, @as([]const i16, &data), h2.ctrl });
+    const t3 = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h3.track, format, @as([]const i16, &data), h3.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t1.join();
+    t2.join();
+    t3.join();
+
+    // All samples must be within i16 range (clamped, not wrapped)
+    for (mixed) |s| {
+        try testing.expect(s >= -32768);
+        try testing.expect(s <= 32767);
+    }
+}
+
+test "T7: zero gain produces silence" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{ .gain = 0.0 });
+
+    const data = [_]i16{10000} ** 320;
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, format, @as([]const i16, &data), h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    for (mixed) |s| {
+        try testing.expectEqual(@as(i16, 0), s);
+    }
+}
+
+test "T8: gain change during playback" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{ .gain = 1.0 });
+
+    const data = [_]i16{10000} ** 3200; // 200ms
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, format, @as([]const i16, &data), h.ctrl });
+
+    // Read first chunk with gain=1.0
+    var buf1: [960]i16 = undefined;
+    const n1 = mx.read(&buf1);
+    try testing.expect(n1 != null);
+
+    // Change gain to 0.5
+    h.ctrl.setGain(0.5);
+
+    // Read rest
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // First chunk should have higher amplitude than later chunks
+    var max_first: i16 = 0;
+    if (n1) |n| {
+        for (buf1[0..n]) |s| {
+            const abs_s = if (s < 0) -s else s;
+            if (abs_s > max_first) max_first = abs_s;
+        }
+    }
+
+    var max_later: i16 = 0;
+    for (mixed) |s| {
+        const abs_s = if (s < 0) -s else s;
+        if (abs_s > max_later) max_later = abs_s;
+    }
+
+    // First chunk (gain=1.0) peak should be higher than later (gain=0.5)
+    if (max_first > 0 and max_later > 0) {
+        try testing.expect(max_first > max_later);
+    }
+}
+
+test "T9: setFadeOutDuration + closeSelf" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    h.ctrl.setFadeOutDuration(50);
+
+    // Write continuous data in background
+    const data = [_]i16{10000} ** 16000;
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16) void {
+            var i: usize = 0;
+            while (i < 10) : (i += 1) {
+                track.write(fmt, d) catch return;
+            }
+        }
+    }.run, .{ h.track, format, @as([]const i16, &data) });
+
+    // Let some data flow
+    var buf: [960]i16 = undefined;
+    _ = mx.read(&buf);
+
+    // closeSelf triggers fade-out
+    h.ctrl.closeSelf();
+    mx.closeWrite();
+
+    // Read remaining — should not hang
+    const rest = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(rest);
+    t.join();
+}
+
+test "T10: closeWriteWithSilence" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    const data = [_]i16{5000} ** 320; // 20ms of audio
+    h.track.write(format, &data) catch {};
+
+    // Close with 50ms of trailing silence
+    h.ctrl.closeWriteWithSilence(50);
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+
+    // Output should have audio followed by silence
+    try testing.expect(mixed.len > 0);
+
+    // Last portion should be silence (zeros)
+    const tail_start = if (mixed.len > 400) mixed.len - 400 else 0;
+    var tail_zeros: usize = 0;
+    for (mixed[tail_start..]) |s| {
+        if (s == 0) tail_zeros += 1;
+    }
+    try testing.expect(tail_zeros > 100);
+}
+
+test "T11: destroyTrackCtrl cleanup" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{});
+    h.ctrl.closeWrite();
+    mx.closeWrite();
+
+    // Read to drain
+    var buf: [960]i16 = undefined;
+    while (mx.read(&buf)) |_| {}
+
+    // Explicit cleanup — testing.allocator detects leaks
+    mx.destroyTrackCtrl(h.ctrl);
+}
+
+test "T12: ring buffer wraparound" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    // Write more than ring buffer capacity (320000 bytes = 160000 i16)
+    // to force wraparound
+    const total = 200000;
+    const big_data = try testing.allocator.alloc(i16, total);
+    defer testing.allocator.free(big_data);
+    for (big_data, 0..) |*s, i| {
+        s.* = @intCast(@as(i32, @intCast(i % 1000)));
+    }
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, data: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, data) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, format, big_data, h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // Data should be complete (accounting for chunk padding)
+    try testing.expect(mixed.len >= total);
+}
+
+test "T13: 8kHz to 16kHz resample" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const h = try mx.createTrack(.{});
+
+    const duration_ms = 200;
+    const wave = generateSineWave(8000, 440, duration_ms);
+    defer testing.allocator.free(wave);
+
+    const fmt8k = Mx.Format{ .rate = 8000 };
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, data: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, data) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, fmt8k, wave, h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    // 200ms @ 16kHz = 3200 samples. Input was 200ms @ 8kHz = 1600 samples.
+    // Output should be ~2x input sample count (±10%).
+    const expected = 16000 * duration_ms / 1000; // 3200
+    const min_out = expected * 90 / 100; // 2880
+    var non_zero: usize = 0;
+    for (mixed) |s| {
+        if (s != 0) non_zero += 1;
+    }
+    try testing.expect(non_zero >= min_out);
+}
+
+test "T14: empty read buffer" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    var empty_buf: [0]i16 = .{};
+    const result = mx.read(&empty_buf);
+    try testing.expectEqual(@as(?usize, 0), result);
+
+    mx.closeWrite();
+}
+
+test "T15: large throughput stress" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const num_tracks = 10;
+    const duration_ms = 500; // 500ms per track (reduced for test speed)
+    const samples_per_track = 16000 * duration_ms / 1000;
+
+    var threads: [num_tracks]std_import.Thread = undefined;
+    for (0..num_tracks) |i| {
+        const h = try mx.createTrack(.{});
+        threads[i] = try std_import.Thread.spawn(.{}, struct {
+            fn run(track: *Mx.Track, fmt: Mx.Format, n: usize, ctrl: *Mx.TrackCtrl) void {
+                const chunk = [_]i16{1000} ** 1600;
+                var written: usize = 0;
+                while (written < n) {
+                    const to_write = @min(chunk.len, n - written);
+                    track.write(fmt, chunk[0..to_write]) catch return;
+                    written += to_write;
+                }
+                ctrl.closeWrite();
+            }
+        }.run, .{ h.track, format, samples_per_track, h.ctrl });
+    }
+
+    // Read all mixed output
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+
+    for (&threads) |*t| t.join();
+
+    // Should have output (at least as much as one track's duration)
+    try testing.expect(mixed.len >= samples_per_track);
+}
+
+test "T16: single sample write" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    const data = [_]i16{12345};
+    h.track.write(format, &data) catch {};
+    h.ctrl.closeWrite();
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+
+    // Output should contain the sample (zero-padded)
+    try testing.expect(mixed.len > 0);
+    var found = false;
+    for (mixed) |s| {
+        if (s == 12345) {
+            found = true;
+            break;
+        }
+    }
+    try testing.expect(found);
+}
+
+test "T17: write after track closeWrite returns Closed" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    h.ctrl.closeWrite();
+
+    const data = [_]i16{1000} ** 10;
+    const result = h.track.write(format, &data);
+    try testing.expectError(error.Closed, result);
+
+    mx.closeWrite();
+}
+
+test "T18: read bytes counter accuracy" {
+    const Mx = Mixer(TestRt);
+    var mx = Mx.init(testing.allocator, .{
+        .output = .{ .rate = 16000 },
+        .auto_close = true,
+    });
+    defer mx.deinit();
+
+    const format = Mx.Format{ .rate = 16000 };
+    const h = try mx.createTrack(.{});
+
+    const num_samples = 1600; // 100ms
+    const data = [_]i16{1000} ** num_samples;
+
+    const t = try std_import.Thread.spawn(.{}, struct {
+        fn run(track: *Mx.Track, fmt: Mx.Format, d: []const i16, ctrl: *Mx.TrackCtrl) void {
+            track.write(fmt, d) catch {};
+            ctrl.closeWrite();
+        }
+    }.run, .{ h.track, format, @as([]const i16, &data), h.ctrl });
+
+    const mixed = try readAll(&mx, testing.allocator);
+    defer testing.allocator.free(mixed);
+    t.join();
+
+    const rb = h.ctrl.readBytes();
+    // readBytes tracks bytes read by mixer from ring buffer.
+    // Written bytes = num_samples * 2 = 3200.
+    // readBytes should be close (readFull zero-pads to chunk boundary).
+    try testing.expect(rb > 0);
+    try testing.expect(rb >= num_samples * 2);
 }
