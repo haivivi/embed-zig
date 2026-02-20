@@ -285,9 +285,11 @@ pub fn Framebuffer(comptime W: u16, comptime H: u16, comptime fmt: ColorFormat) 
                 i += decoded.len;
 
                 if (decoded.codepoint) |cp| {
-                    if (cx + fnt.glyph_w > W) break; // past right edge
-                    self.drawGlyph(cx, y, fnt, cp, color);
-                    cx += fnt.glyph_w;
+                    if (cx + fnt.glyph_w > W) break;
+                    if (fnt.getGlyph(cp) != null) {
+                        self.drawGlyph(cx, y, fnt, cp, color);
+                        cx += fnt.glyph_w;
+                    }
                 }
             }
 
