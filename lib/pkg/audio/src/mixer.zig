@@ -333,6 +333,10 @@ pub fn Mixer(comptime Rt: type) type {
             if (self.close_write) return error.Closed;
 
             const internal = try self.allocateTrackInternal();
+            errdefer {
+                internal.deinit();
+                self.allocator.destroy(internal);
+            }
             internal.* = TrackInternal.init(self);
             internal.track_handle = .{ .internal = internal };
 
