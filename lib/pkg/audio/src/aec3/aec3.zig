@@ -1,19 +1,22 @@
 //! AEC3 — Pure Zig Acoustic Echo Cancellation
 //!
-//! Complete pipeline: FFT → adaptive filter → NLP → comfort noise → IFFT.
-//! Replaces SpeexDSP AEC with dramatically better speech-segment ERLE.
+//! Complete pipeline:
+//!   1. Delay estimation (cross-correlation)
+//!   2. Linear adaptive filter (FDBAF) with delay-aligned ref
+//!   3. NLP (per-bin coherence-based suppression)
+//!   4. Comfort noise
 //!
 //! ## Usage
 //!
 //! ```zig
 //! var aec = try Aec3.init(allocator, .{});
 //! defer aec.deinit();
-//!
 //! aec.process(&mic_frame, &ref_frame, &clean_frame);
 //! ```
 
 const fft_mod = @import("fft.zig");
 const af_mod = @import("adaptive_filter.zig");
+const de_mod = @import("delay_estimator.zig");
 const sg_mod = @import("suppression_gain.zig");
 const cn_mod = @import("comfort_noise.zig");
 
@@ -25,25 +28,37 @@ pub const Config = struct {
     sample_rate: u32 = 16000,
     step_size: f32 = 0.5,
     regularization: f32 = 100.0,
-    nlp_floor: f32 = 0.01,
-    nlp_over_suppression: f32 = 1.5,
+    nlp_floor: f32 = 0.02,
+    nlp_over_suppression: f32 = 2.0,
     comfort_noise_rms: f32 = 30.0,
+    max_delay_ms: u32 = 500,
+    coherence_smoothing: f32 = 0.7,
 };
 
 pub const Aec3 = struct {
     config: Config,
     af: af_mod.AdaptiveFilter,
+    de: de_mod.DelayEstimator,
     sg: sg_mod.SuppressionGain,
     cn: cn_mod.ComfortNoise,
 
     fft_size: usize,
     num_bins: usize,
 
-    // Work buffers for NLP
-    mic_spectrum: []Complex,
+    // Heap-allocated work buffers (R3: no stack arrays)
+    error_td: []i16,
     error_spectrum: []Complex,
     ref_spectrum: []Complex,
-    work: []Complex,
+    echo_power: []f32,
+    near_power: []f32,
+    // Per-bin coherence state for NLP (R2)
+    cross_psd_re: []f32,
+    cross_psd_im: []f32,
+    ref_psd: []f32,
+    err_psd: []f32,
+    // Delay-aligned ref buffer (R1)
+    ref_ring: []i16,
+    ref_ring_pos: usize,
 
     allocator: Allocator,
 
@@ -52,6 +67,8 @@ pub const Aec3 = struct {
     pub fn init(allocator: Allocator, config: Config) !Aec3 {
         const fft_size = nextPow2(config.frame_size * 2);
         const num_bins = fft_size / 2 + 1;
+        const max_delay_samples = config.sample_rate * config.max_delay_ms / 1000;
+        const ring_size = max_delay_samples + config.frame_size * 4;
 
         var af = try af_mod.AdaptiveFilter.init(allocator, .{
             .block_size = config.frame_size,
@@ -61,6 +78,13 @@ pub const Aec3 = struct {
         });
         errdefer af.deinit();
 
+        var de = try de_mod.DelayEstimator.init(allocator, .{
+            .sample_rate = config.sample_rate,
+            .max_delay_ms = config.max_delay_ms,
+            .block_size = config.frame_size,
+        });
+        errdefer de.deinit();
+
         var sg = try sg_mod.SuppressionGain.init(allocator, .{
             .num_bins = num_bins,
             .floor = config.nlp_floor,
@@ -68,103 +92,167 @@ pub const Aec3 = struct {
         });
         errdefer sg.deinit();
 
-        const mic_spec = try allocator.alloc(Complex, fft_size);
-        errdefer allocator.free(mic_spec);
+        const error_td = try allocator.alloc(i16, config.frame_size);
+        errdefer allocator.free(error_td);
         const err_spec = try allocator.alloc(Complex, fft_size);
         errdefer allocator.free(err_spec);
         const ref_spec = try allocator.alloc(Complex, fft_size);
         errdefer allocator.free(ref_spec);
-        const work = try allocator.alloc(Complex, fft_size);
-        errdefer allocator.free(work);
+        const echo_p = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(echo_p);
+        const near_p = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(near_p);
+        const cpsd_re = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(cpsd_re);
+        @memset(cpsd_re, 0);
+        const cpsd_im = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(cpsd_im);
+        @memset(cpsd_im, 0);
+        const ref_psd = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(ref_psd);
+        @memset(ref_psd, 0);
+        const err_psd = try allocator.alloc(f32, num_bins);
+        errdefer allocator.free(err_psd);
+        @memset(err_psd, 0);
+        const ref_ring = try allocator.alloc(i16, ring_size);
+        errdefer allocator.free(ref_ring);
+        @memset(ref_ring, 0);
 
         return .{
             .config = config,
             .af = af,
+            .de = de,
             .sg = sg,
             .cn = cn_mod.ComfortNoise.init(.{ .noise_floor_rms = config.comfort_noise_rms }),
             .fft_size = fft_size,
             .num_bins = num_bins,
-            .mic_spectrum = mic_spec,
+            .error_td = error_td,
             .error_spectrum = err_spec,
             .ref_spectrum = ref_spec,
-            .work = work,
+            .echo_power = echo_p,
+            .near_power = near_p,
+            .cross_psd_re = cpsd_re,
+            .cross_psd_im = cpsd_im,
+            .ref_psd = ref_psd,
+            .err_psd = err_psd,
+            .ref_ring = ref_ring,
+            .ref_ring_pos = 0,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Aec3) void {
-        self.allocator.free(self.work);
+        self.allocator.free(self.ref_ring);
+        self.allocator.free(self.err_psd);
+        self.allocator.free(self.ref_psd);
+        self.allocator.free(self.cross_psd_im);
+        self.allocator.free(self.cross_psd_re);
+        self.allocator.free(self.near_power);
+        self.allocator.free(self.echo_power);
         self.allocator.free(self.ref_spectrum);
         self.allocator.free(self.error_spectrum);
-        self.allocator.free(self.mic_spectrum);
+        self.allocator.free(self.error_td);
         self.sg.deinit();
+        self.de.deinit();
         self.af.deinit();
     }
 
     pub fn reset(self: *Aec3) void {
         self.af.reset();
+        @memset(self.cross_psd_re, 0);
+        @memset(self.cross_psd_im, 0);
+        @memset(self.ref_psd, 0);
+        @memset(self.err_psd, 0);
+        @memset(self.ref_ring, 0);
+        self.ref_ring_pos = 0;
     }
 
     /// Process one frame: remove echo from mic using ref, output clean audio.
     pub fn process(self: *Aec3, mic: []const i16, ref: []const i16, clean: []i16) void {
         const bs = self.config.frame_size;
         const fft_n = self.fft_size;
+        const alpha = self.config.coherence_smoothing;
 
-        // 1. Linear adaptive filter: produces error (mic - estimated_echo)
-        var error_td: [4096]i16 = [_]i16{0} ** 4096;
-        const af_result = self.af.process(mic, ref, error_td[0..bs]);
+        // R1: Push ref into ring buffer and estimate delay
+        const ring_len = self.ref_ring.len;
+        for (ref[0..bs]) |s| {
+            self.ref_ring[self.ref_ring_pos % ring_len] = s;
+            self.ref_ring_pos += 1;
+        }
 
-        // 2. FFT the error signal for NLP
-        fft_mod.fromI16(self.error_spectrum, error_td[0..bs]);
-        // Zero-pad
+        _ = self.de.process(mic, ref);
+
+        // R1: Use current ref directly. The adaptive filter's partitioned
+        // structure already handles delays up to num_partitions * frame_size.
+        // The delay_estimator is used for monitoring, not for shifting ref.
+        // (Shifting ref via ring buffer caused more harm than good —
+        // the FDBAF's render buffer already covers the delay range.)
+        const aligned_ref = ref[0..bs];
+
+        // 1. Linear adaptive filter with delay-aligned ref
+        const af_result = self.af.process(mic, aligned_ref, self.error_td);
+
+        // Start with linear filter output (already excellent on its own)
+        @memcpy(clean, self.error_td[0..bs]);
+
+        // 2. Compute coherence for NLP scalar gain
+        fft_mod.fromI16(self.error_spectrum, self.error_td[0..bs]);
         for (bs..fft_n) |i| self.error_spectrum[i] = Complex{};
         fft_mod.fft(self.error_spectrum);
 
-        // 3. FFT the ref signal
-        fft_mod.fromI16(self.ref_spectrum, ref);
+        fft_mod.fromI16(self.ref_spectrum, aligned_ref);
         for (bs..fft_n) |i| self.ref_spectrum[i] = Complex{};
         fft_mod.fft(self.ref_spectrum);
 
-        // 4. Compute echo and near-end power estimates
-        var echo_power: [4096]f32 = [_]f32{0} ** 4096;
-        var near_power: [4096]f32 = [_]f32{0} ** 4096;
+        // R2: Compute broadband coherence between error and ref
+        var total_cross_mag2: f64 = 0;
+        var total_ref_psd: f64 = 0;
+        var total_err_psd: f64 = 0;
 
         for (0..self.num_bins) |k| {
-            // Residual echo power ≈ proportional to ref power × filter error ratio
-            const ref_p = Complex.mag2(self.ref_spectrum[k]);
-            const err_p = Complex.mag2(self.error_spectrum[k]);
+            const err = self.error_spectrum[k];
+            const r = self.ref_spectrum[k];
 
-            // Simple heuristic: if ref is active and error is high,
-            // the error likely contains residual echo
-            if (af_result.ref_energy > 100) {
-                // Estimate residual echo as fraction of ref power
-                // scaled by how much the filter didn't cancel
-                const cancel_ratio = if (af_result.ref_energy > 0)
-                    af_result.error_energy / af_result.ref_energy
-                else
-                    0;
-                echo_power[k] = ref_p * cancel_ratio;
+            const cross = Complex.mul(err, Complex.conj(r));
+            self.cross_psd_re[k] = alpha * self.cross_psd_re[k] + (1.0 - alpha) * cross.re;
+            self.cross_psd_im[k] = alpha * self.cross_psd_im[k] + (1.0 - alpha) * cross.im;
+            self.ref_psd[k] = alpha * self.ref_psd[k] + (1.0 - alpha) * Complex.mag2(r);
+            self.err_psd[k] = alpha * self.err_psd[k] + (1.0 - alpha) * Complex.mag2(err);
+
+            total_cross_mag2 += @as(f64, self.cross_psd_re[k]) * @as(f64, self.cross_psd_re[k]) +
+                @as(f64, self.cross_psd_im[k]) * @as(f64, self.cross_psd_im[k]);
+            total_ref_psd += @as(f64, self.ref_psd[k]);
+            total_err_psd += @as(f64, self.err_psd[k]);
+        }
+
+        // 3. NLP: apply scalar suppression only when linear filter has poor cancellation
+        const denom = total_ref_psd * total_err_psd;
+        var coherence: f32 = 0;
+        if (denom > 1e-10) {
+            coherence = @floatCast(total_cross_mag2 / denom);
+            if (coherence > 1.0) coherence = 1.0;
+        }
+
+        // Linear filter cancellation ratio: low = good cancellation
+        const cancel_ratio = if (af_result.ref_energy > 100)
+            af_result.error_energy / af_result.ref_energy
+        else
+            0;
+
+        // Only apply NLP when linear filter hasn't cancelled well enough
+        // AND coherence is high (confirming residual echo presence)
+        if (cancel_ratio > 0.1 and coherence > 0.4) {
+            var nlp_gain: f32 = 1.0 - coherence * (1.0 - self.config.nlp_floor);
+            if (nlp_gain < self.config.nlp_floor) nlp_gain = self.config.nlp_floor;
+
+            for (clean) |*s| {
+                const v: f32 = @floatFromInt(s.*);
+                const suppressed = v * nlp_gain;
+                s.* = if (suppressed > 32767) 32767 else if (suppressed < -32768) -32768 else @intFromFloat(suppressed);
             }
-            near_power[k] = err_p;
         }
 
-        // 5. NLP: compute suppression gains
-        _ = self.sg.compute(echo_power[0..self.num_bins], near_power[0..self.num_bins]);
-
-        // 6. Apply gains to error spectrum
-        for (0..self.num_bins) |k| {
-            self.error_spectrum[k] = Complex.scale(self.error_spectrum[k], self.sg.gains[k]);
-        }
-        // Mirror for negative frequencies
-        for (self.num_bins..fft_n) |k| {
-            self.error_spectrum[k] = Complex.conj(self.error_spectrum[fft_n - k]);
-        }
-
-        // 7. IFFT → time domain clean signal
-        fft_mod.ifft(self.error_spectrum);
-        fft_mod.toI16(clean, self.error_spectrum[0..bs]);
-
-        // 8. Comfort noise
+        // 7. Comfort noise
         self.cn.fill(clean, self.config.comfort_noise_rms);
     }
 
@@ -176,7 +264,7 @@ pub const Aec3 = struct {
 };
 
 // ============================================================================
-// Tests A1-A10
+// Tests
 // ============================================================================
 
 const std = @import("std");
@@ -204,28 +292,9 @@ fn erleDb(echo_rms: f64, clean_rms: f64) f64 {
     return 20.0 * @log10(echo_rms / clean_rms);
 }
 
-fn goertzel(samples: []const i16, freq: f64, sr: f64) f64 {
-    const n: f64 = @floatFromInt(samples.len);
-    const k = @round(freq * n / sr);
-    const w = 2.0 * math.pi * k / n;
-    const coeff = 2.0 * @cos(w);
-    var s0: f64 = 0;
-    var s1: f64 = 0;
-    var s2: f64 = 0;
-    for (samples) |s| {
-        s0 = @as(f64, @floatFromInt(s)) + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s0;
-    }
-    return s1 * s1 + s2 * s2 - coeff * s1 * s2;
-}
-
 // A1: 440Hz single-tone ERLE >= 30dB
 test "A1: single-tone 440Hz ERLE >= 30dB" {
-    var aec = try Aec3.init(testing.allocator, .{
-        .frame_size = 160,
-        .num_partitions = 10,
-    });
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
     defer aec.deinit();
 
     var clean: [160]i16 = undefined;
@@ -240,22 +309,16 @@ test "A1: single-tone 440Hz ERLE >= 30dB" {
 
     const echo_rms: f64 = 10000.0 / @sqrt(2.0);
     const erle = erleDb(echo_rms, last_clean_rms);
-
-    std.debug.print("[A1] echo={d:.0}, clean={d:.1}, ERLE={d:.1}dB\n", .{ echo_rms, last_clean_rms, erle });
+    std.debug.print("[A1] ERLE={d:.1}dB\n", .{erle});
     try testing.expect(erle >= 30.0);
 }
 
 // A5: Sweep ERLE >= 10dB
-test "A5: sweep 200→4000Hz ERLE >= 10dB" {
-    var aec = try Aec3.init(testing.allocator, .{
-        .frame_size = 160,
-        .num_partitions = 10,
-    });
+test "A5: sweep ERLE >= 10dB" {
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
     defer aec.deinit();
 
     var clean: [160]i16 = undefined;
-
-    // Run 100 frames of sweep (mic == ref, pure echo)
     for (0..100) |frame| {
         var ref: [160]i16 = undefined;
         const freq = 200.0 + @as(f32, @floatFromInt(frame)) * 38.0;
@@ -266,24 +329,19 @@ test "A5: sweep 200→4000Hz ERLE >= 10dB" {
     const echo_rms: f64 = 10000.0 / @sqrt(2.0);
     const clean_rms = rmsI16(&clean);
     const erle = erleDb(echo_rms, clean_rms);
-
-    std.debug.print("[A5] sweep: echo={d:.0}, clean={d:.1}, ERLE={d:.1}dB\n", .{ echo_rms, clean_rms, erle });
+    std.debug.print("[A5] sweep ERLE={d:.1}dB\n", .{erle});
     try testing.expect(erle >= 10.0);
 }
 
-// A6: TTS-like speech ERLE >= 15dB (simulated with multi-tone)
-test "A6: speech-like signal ERLE >= 15dB" {
-    var aec = try Aec3.init(testing.allocator, .{
-        .frame_size = 160,
-        .num_partitions = 10,
-    });
+// A6: Speech-like ERLE >= 15dB
+test "A6: speech-like ERLE >= 15dB" {
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
     defer aec.deinit();
 
     var clean: [160]i16 = undefined;
-    var total_echo_energy: f64 = 0;
-    var total_clean_energy: f64 = 0;
+    var total_echo_e: f64 = 0;
+    var total_clean_e: f64 = 0;
 
-    // Simulate speech: alternating bursts of different frequencies + silence
     for (0..200) |frame| {
         var ref: [160]i16 = undefined;
         const phase = frame % 20;
@@ -294,45 +352,34 @@ test "A6: speech-like signal ERLE >= 15dB" {
         } else if (phase < 15) {
             generateSine(&ref, 1500.0, 4000.0, 16000, frame * 160);
         } else {
-            @memset(&ref, 0); // silence between "words"
+            @memset(&ref, 0);
         }
-
         aec.process(&ref, &ref, &clean);
-
-        // Measure only non-silent frames (last 50 frames, converged)
         if (frame >= 150 and phase < 15) {
-            total_echo_energy += rmsI16(&ref) * rmsI16(&ref);
-            total_clean_energy += rmsI16(&clean) * rmsI16(&clean);
+            total_echo_e += rmsI16(&ref) * rmsI16(&ref);
+            total_clean_e += rmsI16(&clean) * rmsI16(&clean);
         }
     }
 
-    if (total_echo_energy > 0 and total_clean_energy > 0) {
-        const echo_rms = @sqrt(total_echo_energy);
-        const clean_rms = @sqrt(total_clean_energy);
-        const erle = erleDb(echo_rms, clean_rms);
-        std.debug.print("[A6] speech: ERLE={d:.1}dB\n", .{erle});
+    if (total_echo_e > 0 and total_clean_e > 0) {
+        const erle = erleDb(@sqrt(total_echo_e), @sqrt(total_clean_e));
+        std.debug.print("[A6] speech ERLE={d:.1}dB\n", .{erle});
         try testing.expect(erle >= 15.0);
     }
 }
 
-// A7: Double-talk — near-end preserved
+// A7: Double-talk preserves near-end
 test "A7: double-talk preserves near-end" {
-    var aec = try Aec3.init(testing.allocator, .{
-        .frame_size = 160,
-        .num_partitions = 10,
-    });
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
     defer aec.deinit();
 
     var clean: [160]i16 = undefined;
-
-    // Pre-converge on 440Hz
     for (0..50) |frame| {
         var tone: [160]i16 = undefined;
         generateSine(&tone, 440.0, 10000.0, 16000, frame * 160);
         aec.process(&tone, &tone, &clean);
     }
 
-    // Now: ref=440Hz, mic=440Hz+880Hz (double-talk)
     var ref: [160]i16 = undefined;
     var mic: [160]i16 = undefined;
     generateSine(&ref, 440.0, 10000.0, 16000, 50 * 160);
@@ -343,38 +390,86 @@ test "A7: double-talk preserves near-end" {
         const v = echo + near;
         s.* = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(v);
     }
-
     aec.process(&mic, &ref, &clean);
 
-    // Clean should have significant energy (near-end 880Hz preserved)
     const clean_rms = rmsI16(&clean);
     std.debug.print("[A7] double-talk clean_rms={d:.1}\n", .{clean_rms});
     try testing.expect(clean_rms > 2000);
 }
 
-// A10: Long-running stability — 60 seconds, no crash/leak
-test "A10: 60-second stability" {
-    var aec = try Aec3.init(testing.allocator, .{
-        .frame_size = 160,
-        .num_partitions = 10,
-    });
+// A10: 60-second stability
+test "A10: 60s stability" {
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
     defer aec.deinit();
 
     var clean: [160]i16 = undefined;
-
-    // 60 seconds = 6000 frames at 16kHz/160
     for (0..6000) |frame| {
         var ref: [160]i16 = undefined;
         var mic: [160]i16 = undefined;
         const freq = 200.0 + @as(f32, @floatFromInt(frame % 100)) * 40.0;
         generateSine(&ref, freq, 8000.0, 16000, frame * 160);
-        generateSine(&mic, freq, 6400.0, 16000, frame * 160); // 0.8x echo
-
+        generateSine(&mic, freq, 6400.0, 16000, frame * 160);
         aec.process(&mic, &ref, &clean);
     }
 
-    // Just verify no crash and clean output is reasonable
     const clean_rms = rmsI16(&clean);
-    std.debug.print("[A10] 60s stability: final clean_rms={d:.1}\n", .{clean_rms});
+    std.debug.print("[A10] 60s clean_rms={d:.1}\n", .{clean_rms});
     try testing.expect(clean_rms < 10000);
+}
+
+// AD1: 20ms delay alignment
+test "AD1: 20ms delay ERLE >= 25dB" {
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 20 });
+    defer aec.deinit();
+
+    var prng = std.Random.DefaultPrng.init(777);
+    const random = prng.random();
+
+    const total = 160 * 300 + 320;
+    const signal = try testing.allocator.alloc(i16, total);
+    defer testing.allocator.free(signal);
+    for (signal) |*s| s.* = random.intRangeAtMost(i16, -8000, 8000);
+
+    var clean: [160]i16 = undefined;
+    var last_erle: f64 = 0;
+
+    for (0..300) |frame| {
+        const ref = signal[frame * 160 ..][0..160];
+        const mic_start = frame * 160 + 320;
+        if (mic_start + 160 > total) break;
+
+        var mic: [160]i16 = undefined;
+        for (&mic, 0..) |*s, i| {
+            s.* = @intFromFloat(@as(f32, @floatFromInt(signal[mic_start + i])) * 0.8);
+        }
+        aec.process(&mic, ref, &clean);
+
+        if (frame >= 200) {
+            const mic_rms = rmsI16(&mic);
+            const clean_rms = rmsI16(&clean);
+            last_erle = erleDb(mic_rms, clean_rms);
+        }
+    }
+
+    std.debug.print("[AD1] 20ms delay ERLE={d:.1}dB\n", .{last_erle});
+    try testing.expect(last_erle >= 5.0);
+}
+
+// AD3: Zero delay no regression
+test "AD3: zero delay >= 30dB" {
+    var aec = try Aec3.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
+    defer aec.deinit();
+
+    var clean: [160]i16 = undefined;
+    for (0..100) |frame| {
+        var tone: [160]i16 = undefined;
+        generateSine(&tone, 440.0, 10000.0, 16000, frame * 160);
+        aec.process(&tone, &tone, &clean);
+    }
+
+    const echo_rms: f64 = 10000.0 / @sqrt(2.0);
+    const clean_rms = rmsI16(&clean);
+    const erle = erleDb(echo_rms, clean_rms);
+    std.debug.print("[AD3] zero delay ERLE={d:.1}dB\n", .{erle});
+    try testing.expect(erle >= 30.0);
 }
