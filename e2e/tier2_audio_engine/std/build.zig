@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "step5", .file = "step5_tts_aec3.zig", .desc = "Step 5: TTS + AEC3" },
         .{ .name = "step6", .file = "step6_conversation.zig", .desc = "Step 6: Conversation + AEC3" },
         .{ .name = "loopback", .file = "loopback.zig", .desc = "Raw mic→speaker loopback (no AEC)" },
+        .{ .name = "t5-60s", .file = "step_t5_60s.zig", .desc = "T5: 60s stability test" },
     };
 
     for (steps) |s| {
