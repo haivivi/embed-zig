@@ -45,20 +45,21 @@ pub const HeaderIterator = struct {
     };
 
     pub fn next(self: *HeaderIterator) ?Header {
-        if (self.pos >= self.raw.len) return null;
+        while (self.pos < self.raw.len) {
+            const remaining = self.raw[self.pos..];
+            const line_end = mem.indexOf(u8, remaining, "\r\n") orelse return null;
+            const line = remaining[0..line_end];
+            self.pos += line_end + 2;
 
-        const remaining = self.raw[self.pos..];
-        const line_end = mem.indexOf(u8, remaining, "\r\n") orelse return null;
-        const line = remaining[0..line_end];
-        self.pos += line_end + 2;
+            if (line.len == 0) return null;
 
-        if (line.len == 0) return null;
-
-        const colon = mem.indexOfScalar(u8, line, ':') orelse return null;
-        return .{
-            .name = mem.trim(u8, line[0..colon], " \t"),
-            .value = mem.trim(u8, line[colon + 1 ..], " \t"),
-        };
+            const colon = mem.indexOfScalar(u8, line, ':') orelse continue;
+            return .{
+                .name = mem.trim(u8, line[0..colon], " \t"),
+                .value = mem.trim(u8, line[colon + 1 ..], " \t"),
+            };
+        }
+        return null;
     }
 
     pub fn reset(self: *HeaderIterator) void {
