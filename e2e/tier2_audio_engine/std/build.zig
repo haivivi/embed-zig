@@ -36,6 +36,9 @@ pub fn build(b: *std.Build) void {
         .{ .name = "t5-60s", .file = "step_t5_60s.zig", .desc = "T5: 60s stability test" },
         .{ .name = "e1", .file = "E1_engine_loopback.zig", .desc = "E1: Engine loopback — mic→AEC→speaker" },
         .{ .name = "e2", .file = "E2_engine_tts.zig", .desc = "E2: Engine TTS — verify AEC removes TTS" },
+        .{ .name = "e3", .file = "E3_engine_multi_round.zig", .desc = "E3: Multi-round conversation" },
+        .{ .name = "e4", .file = "E4_engine_60s.zig", .desc = "E4: 60s Engine long-running" },
+        .{ .name = "e5", .file = "E5_engine_nearend.zig", .desc = "E5: Near-end detection" },
     };
 
     for (steps) |s| {

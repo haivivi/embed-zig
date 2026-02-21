@@ -77,7 +77,14 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         ns: ?ns_mod.NoiseSuppressor,
         mixer: MixerType,
 
-        // Clean audio ring buffer (engine → application)
+        // Ref ring buffer (speaker_task → mic_task, non-blocking overwrite)
+        ref_ring: []i16, // [ref_ring_cap * frame_size] flat buffer
+        ref_ring_cap: usize,
+        ref_ring_write: usize,
+        ref_ring_read: usize,
+        ref_mutex: Rt.Mutex,
+
+        // Clean audio ring buffer (mic_task → application, blocking)
         clean_buf_pool: []i16,
         clean_write_pos: usize,
         clean_read_pos: usize,
@@ -86,7 +93,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         clean_not_full: Rt.Condition,
         clean_closed: bool,
 
-        audio_thread: ?Rt.Thread,
+        speaker_thread: ?Rt.Thread,
+        mic_thread: ?Rt.Thread,
         running: std.atomic.Value(bool),
 
         pub fn init(
@@ -99,6 +107,12 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             const clean_buf = try allocator.alloc(i16, ring_samples);
             errdefer allocator.free(clean_buf);
 
+            // Ref ring: 8 frames capacity
+            const ref_ring_cap: usize = 8;
+            const ref_ring = try allocator.alloc(i16, ref_ring_cap * config.frame_size);
+            errdefer allocator.free(ref_ring);
+            @memset(ref_ring, 0);
+
             return .{
                 .allocator = allocator,
                 .config = config,
@@ -109,6 +123,11 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                 .mixer = MixerType.init(allocator, .{
                     .output = .{ .rate = config.sample_rate, .channels = .mono },
                 }),
+                .ref_ring = ref_ring,
+                .ref_ring_cap = ref_ring_cap,
+                .ref_ring_write = 0,
+                .ref_ring_read = 0,
+                .ref_mutex = Rt.Mutex.init(),
                 .clean_buf_pool = clean_buf,
                 .clean_write_pos = 0,
                 .clean_read_pos = 0,
@@ -116,7 +135,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                 .clean_not_empty = Rt.Condition.init(),
                 .clean_not_full = Rt.Condition.init(),
                 .clean_closed = false,
-                .audio_thread = null,
+                .speaker_thread = null,
+                .mic_thread = null,
                 .running = std.atomic.Value(bool).init(false),
             };
         }
@@ -127,8 +147,10 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             self.clean_not_full.deinit();
             self.clean_not_empty.deinit();
             self.clean_mutex.deinit();
+            self.ref_mutex.deinit();
             if (self.ns) |*n| n.deinit();
             if (self.aec) |*a| a.deinit();
+            self.allocator.free(self.ref_ring);
             self.allocator.free(self.clean_buf_pool);
         }
 
@@ -154,8 +176,11 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             self.clean_closed = false;
             self.clean_write_pos = 0;
             self.clean_read_pos = 0;
+            self.ref_ring_write = 0;
+            self.ref_ring_read = 0;
 
-            self.audio_thread = try Rt.Thread.spawn(.{}, audioLoop, .{self});
+            self.speaker_thread = try Rt.Thread.spawn(.{}, speakerTask, .{self});
+            self.mic_thread = try Rt.Thread.spawn(.{}, micTask, .{self});
         }
 
         pub fn stop(self: *Self) void {
@@ -170,9 +195,13 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
 
             self.mixer.close();
 
-            if (self.audio_thread) |t| {
+            if (self.mic_thread) |t| {
                 t.join();
-                self.audio_thread = null;
+                self.mic_thread = null;
+            }
+            if (self.speaker_thread) |t| {
+                t.join();
+                self.speaker_thread = null;
             }
 
             if (self.ns) |*n| {
@@ -263,43 +292,80 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         }
 
         // ================================================================
-        // Single audio loop
+        // Ref ring buffer (non-blocking, overwrite oldest)
         // ================================================================
 
-        fn audioLoop(self: *Self) void {
+        fn pushRef(self: *Self, frame: []const i16) void {
+            self.ref_mutex.lock();
+            defer self.ref_mutex.unlock();
+            const fs = self.config.frame_size;
+            const slot = self.ref_ring_write % self.ref_ring_cap;
+            const offset = slot * fs;
+            @memcpy(self.ref_ring[offset..][0..fs], frame[0..fs]);
+            self.ref_ring_write +%= 1;
+        }
+
+        fn popRef(self: *Self, out: []i16) void {
+            self.ref_mutex.lock();
+            defer self.ref_mutex.unlock();
+            const fs = self.config.frame_size;
+            if (self.ref_ring_write == self.ref_ring_read) {
+                @memset(out[0..fs], 0);
+                return;
+            }
+            // If writer is ahead by more than capacity, skip to latest
+            if (self.ref_ring_write -% self.ref_ring_read > self.ref_ring_cap) {
+                self.ref_ring_read = self.ref_ring_write - self.ref_ring_cap;
+            }
+            const slot = self.ref_ring_read % self.ref_ring_cap;
+            const offset = slot * fs;
+            @memcpy(out[0..fs], self.ref_ring[offset..][0..fs]);
+            self.ref_ring_read +%= 1;
+        }
+
+        // ================================================================
+        // Two tasks
+        // ================================================================
+
+        fn speakerTask(self: *Self) void {
             const frame_size: usize = self.config.frame_size;
             var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
-            var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
-            var clean: [4096]i16 = [_]i16{0} ** 4096;
 
             while (self.running.load(.acquire)) {
-                // 1. Mix all playback tracks → ref
                 const n = self.mixer.read(ref_buf[0..frame_size]) orelse break;
                 if (n == 0) continue;
 
-                // 2. Write to speaker (blocking — hardware clock drives timing)
                 _ = self.speaker.write(ref_buf[0..n]) catch continue;
 
-                // 3. Read from mic (blocking — hardware clock drives timing)
+                self.pushRef(ref_buf[0..frame_size]);
+            }
+        }
+
+        fn micTask(self: *Self) void {
+            const frame_size: usize = self.config.frame_size;
+            var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
+            var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
+            var clean: [4096]i16 = [_]i16{0} ** 4096;
+
+            while (self.running.load(.acquire)) {
                 const mic_n = self.mic.read(mic_buf[0..frame_size]) catch continue;
                 if (mic_n == 0) continue;
                 if (mic_n < frame_size) {
                     @memset(mic_buf[mic_n..frame_size], 0);
                 }
 
-                // 4. AEC: cancel speaker echo from mic signal
+                self.popRef(ref_buf[0..frame_size]);
+
                 if (self.aec) |*a| {
                     a.process(mic_buf[0..frame_size], ref_buf[0..frame_size], clean[0..frame_size]);
                 } else {
                     @memcpy(clean[0..frame_size], mic_buf[0..frame_size]);
                 }
 
-                // 5. Noise suppression (in-place)
                 if (self.ns) |*ns| {
                     _ = ns.process(clean[0..frame_size]);
                 }
 
-                // 6. Deliver clean audio to application
                 self.pushClean(clean[0..frame_size]);
             }
         }

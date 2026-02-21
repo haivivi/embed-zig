@@ -101,6 +101,8 @@ pub const LoopbackSpeaker = struct {
             self.write_pos += 1;
         }
         _ = self.write_count.fetchAdd(1, .acq_rel);
+        // Simulate hardware DMA timing (same as LoopbackMic)
+        std.Thread.sleep(buffer.len * std.time.ns_per_s / 16000);
         return buffer.len;
     }
 
