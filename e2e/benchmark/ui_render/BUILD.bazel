@@ -1,0 +1,20 @@
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Compositor vs Monolithic benchmark (pure Zig, no LVGL C dependency)
+zig_test(
+    name = "bench",
+    main = "bench_test.zig",
+    srcs = glob(["**/*.zig"]),
+    deps = [
+        "//lib/pkg/ui/state:ui_state",
+        "//lib/pkg/flux",
+    ],
+    tags = ["bench"],
+)
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["**/*.zig"]),
+)

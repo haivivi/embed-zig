@@ -103,6 +103,34 @@ pub fn run(comptime App: type, html: [:0]const u8) void {
     // Bind state query callbacks (JS polls Zig state)
     _ = c.webview_bind(w, "zigGetState", &onGetState, null);
 
+    // Bind board config query (comptime JSON from App)
+    {
+        const config_json: []const u8 = if (@hasDecl(App, "board_config_json"))
+            App.board_config_json
+        else
+            "{}";
+
+        const BoardCfg = struct {
+            var json: []const u8 = "";
+
+            fn onGetBoardConfig(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+                // Return as JSON string: "{ ... }"
+                var buf: [2048]u8 = undefined;
+                const len = std.fmt.bufPrint(&buf, "\"{s}\"", .{json}) catch {
+                    _ = c.webview_return(g_webview, id, 0, "\"{}\"");
+                    return;
+                };
+                buf[len.len] = 0;
+                _ = c.webview_return(g_webview, id, 0, @ptrCast(buf[0..len.len :0]));
+            }
+        };
+        BoardCfg.json = config_json;
+        _ = c.webview_bind(w, "zigGetBoardConfig", &BoardCfg.onGetBoardConfig, null);
+    }
+
+    // Bind display framebuffer query (RGB565 → base64)
+    _ = c.webview_bind(w, "zigGetDisplayFrame", &onGetDisplayFrame, null);
+
     // Bind recording callbacks
     _ = c.webview_bind(w, "zigStartRecording", &onStartRecording, null);
     _ = c.webview_bind(w, "zigStopRecording", &onStopRecording, null);
@@ -377,6 +405,39 @@ fn onPullAudioOut(id: [*c]const u8, req: [*c]const u8, _: ?*anyopaque) callconv(
     b64_buf[b64_len + 1] = '"';
     b64_buf[b64_len + 2] = 0;
     _ = c.webview_return(g_webview, id, 0, @ptrCast(b64_buf[0 .. b64_len + 2 :0]));
+}
+
+// ============================================================================
+// Display framebuffer query (RGB565 → base64 for canvas rendering)
+// ============================================================================
+
+fn onGetDisplayFrame(id: [*c]const u8, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+    if (!shared.display_dirty) {
+        _ = c.webview_return(g_webview, id, 0, "\"\"");
+        return;
+    }
+    shared.display_dirty = false;
+
+    const w_px = @as(u32, shared.display_width);
+    const h_px = @as(u32, shared.display_height);
+    const fb_bytes = w_px * h_px * state_mod.DISPLAY_BPP;
+
+    const b64_len = std.base64.standard.Encoder.calcSize(fb_bytes);
+    // 240x240*2 = 115200 bytes → ~153600 base64 chars + quotes + null
+    const buf_size = b64_len + 3;
+
+    const alloc = std.heap.c_allocator;
+    const buf = alloc.alloc(u8, buf_size) catch {
+        _ = c.webview_return(g_webview, id, 0, "\"\"");
+        return;
+    };
+    defer alloc.free(buf);
+
+    buf[0] = '"';
+    _ = std.base64.standard.Encoder.encode(buf[1..][0..b64_len], shared.display_fb[0..fb_bytes]);
+    buf[b64_len + 1] = '"';
+    buf[b64_len + 2] = 0;
+    _ = c.webview_return(g_webview, id, 0, @ptrCast(buf[0 .. b64_len + 2 :0]));
 }
 
 // ============================================================================

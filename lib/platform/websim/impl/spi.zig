@@ -88,6 +88,13 @@ pub const SimSpi = struct {
         return .{ .dc = dc };
     }
 
+    /// Set the active display dimensions in SharedState.
+    /// Called by SpiLcd.init() if the SPI type provides this method.
+    pub fn configureDisplay(comptime w: u16, comptime h: u16) void {
+        state_mod.state.display_width = w;
+        state_mod.state.display_height = h;
+    }
+
     /// SPI write — satisfies trait/spi interface.
     ///
     /// Interprets bytes based on DC pin state and internal state machine.

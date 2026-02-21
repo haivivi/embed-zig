@@ -83,6 +83,7 @@ const mic_mod = @import("mic.zig");
 const mono_speaker_mod = @import("mono_speaker.zig");
 const switch_mod = @import("switch.zig");
 const imu_mod = @import("imu.zig");
+const fs_mod = trait.fs;
 const motion_mod = @import("motion.zig");
 
 // ============================================================================
@@ -140,7 +141,7 @@ pub fn SimpleQueue(comptime T: type, comptime capacity: usize) type {
 // Spec Analysis
 // ============================================================================
 
-const PeripheralKind = enum { button_group, button_matrix, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, imu, motion, unknown };
+const PeripheralKind = enum { button_group, button_matrix, button, rgb_led_strip, led, wifi, net, temp_sensor, kvs, mic, mono_speaker, switch_, imu, motion, fs, unknown };
 
 fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (@typeInfo(T) != .@"struct") return .unknown;
@@ -159,6 +160,7 @@ fn getPeripheralKind(comptime T: type) PeripheralKind {
     if (switch_mod.is(T)) return .switch_;
     if (imu_mod.is(T)) return .imu;
     if (motion_mod.is(T)) return .motion;
+    if (fs_mod.is(T)) return .fs;
     return .unknown;
 }
 
@@ -178,6 +180,7 @@ fn SpecAnalysis(comptime spec: type) type {
         pub const switch_count = countType(spec, .switch_);
         pub const imu_count = countType(spec, .imu);
         pub const motion_count = countType(spec, .motion);
+        pub const fs_count = countType(spec, .fs);
         pub const has_buttons = button_group_count > 0 or button_matrix_count > 0 or button_count > 0;
         pub const ButtonId = extractButtonId(spec);
 
@@ -311,6 +314,8 @@ pub fn Board(comptime spec: type) type {
     const ImuDriverType = if (analysis.imu_count > 0) ImuType.DriverType else void;
     const MotionType = if (analysis.motion_count > 0) getMotionType(spec) else void;
     const MotionImuType = if (analysis.motion_count > 0) MotionType.ImuDriverType else void;
+    const FsType = if (analysis.fs_count > 0) getFsType(spec) else void;
+    const FsDriverType = if (analysis.fs_count > 0) FsType.DriverType else void;
 
     // Generate Event type
     const Event = union(enum) {
@@ -448,6 +453,10 @@ pub fn Board(comptime spec: type) type {
         // Motion detection (if present)
         motion_imu: if (analysis.motion_count > 0) MotionImuType else void,
         motion: if (analysis.motion_count > 0) MotionType else void,
+
+        // Virtual File System (if present)
+        fs_driver: if (analysis.fs_count > 0) FsDriverType else void,
+        fs: if (analysis.fs_count > 0) FsType else void,
 
         // ================================================================
         // Lifecycle
@@ -689,6 +698,10 @@ pub fn Board(comptime spec: type) type {
                 self.motion = MotionType.init(&self.motion_imu, &uptimeWrapper);
                 // Register callback for direct event push
                 self.motion.setCallback(motionEventCallback, @ptrCast(&self.events));
+            }
+            if (analysis.fs_count > 0) {
+                self.fs_driver = try FsDriverType.init();
+                self.fs = FsType.init(&self.fs_driver);
             }
 
             // Set static RTC driver for uptimeWrapper (used by ButtonGroup and Motion)
@@ -1074,6 +1087,19 @@ fn getMotionType(comptime spec: type) type {
         }
     }
     @compileError("No Motion found in spec");
+}
+
+fn getFsType(comptime spec: type) type {
+    for (@typeInfo(spec).@"struct".decls) |decl| {
+        if (@hasDecl(spec, decl.name)) {
+            const F = @TypeOf(@field(spec, decl.name));
+            if (@typeInfo(F) == .type) {
+                const T = @field(spec, decl.name);
+                if (fs_mod.is(T)) return T;
+            }
+        }
+    }
+    @compileError("No Fs found in spec");
 }
 
 fn ButtonEventPayload(comptime ButtonId: type) type {

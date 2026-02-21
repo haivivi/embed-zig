@@ -1,0 +1,30 @@
+load("//bazel/zig:defs.bzl", "zig_package", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_package(
+    name = "ui_state",
+    module_name = "ui_state",
+    c_srcs = [
+        "//third_party/stb_truetype:stb_truetype_srcs",
+    ],
+    c_includes = ["third_party/stb_truetype"],
+    link_libc = True,
+)
+
+zig_test(
+    name = "bench",
+    main = "src/bench.zig",
+    srcs = glob(["src/*.zig"]),
+    deps = [
+        "//lib/pkg/flux",
+    ],
+    c_srcs = [
+        "//third_party/stb_truetype:stb_truetype_srcs",
+    ],
+    c_includes = ["third_party/stb_truetype"],
+    link_libc = True,
+    tags = ["bench", "manual"],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

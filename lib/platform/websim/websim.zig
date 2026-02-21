@@ -42,6 +42,7 @@ pub const ble_mod = @import("impl/ble.zig");
 pub const audio_system_mod = @import("impl/audio_system.zig");
 pub const led_single_mod = @import("impl/led_single.zig");
 pub const temp_sensor_mod = @import("impl/temp_sensor.zig");
+pub const embed_fs_mod = @import("impl/embed_fs.zig");
 pub const imu_mod = @import("impl/imu.zig");
 const builtin = @import("builtin");
 
@@ -76,6 +77,8 @@ pub const PaSwitchDriver = audio_system_mod.PaSwitchDriver;
 pub const LedSingleDriver = led_single_mod.LedSingleDriver;
 pub const TempSensorDriver = temp_sensor_mod.TempSensorDriver;
 pub const ImuDriver = imu_mod.ImuDriver;
+pub const EmbedFs = embed_fs_mod.EmbedFs;
+pub const EmbedFsEntry = embed_fs_mod.Entry;
 pub const sal = drivers.sal;
 
 // Re-export simulated SPI types (for display)

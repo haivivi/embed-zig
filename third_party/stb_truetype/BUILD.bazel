@@ -1,0 +1,18 @@
+load("//bazel/zig:defs.bzl", "zig_module")
+
+package(default_visibility = ["//visibility:public"])
+
+# Expose headers for @cImport
+filegroup(
+    name = "stb_truetype_headers",
+    srcs = ["stb_truetype.h"],
+)
+
+# Expose C implementation for compilation
+filegroup(
+    name = "stb_truetype_srcs",
+    srcs = [
+        "stb_truetype_impl.c",
+        "stb_truetype.h",
+    ],
+)
