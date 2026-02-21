@@ -9,3 +9,12 @@ zig_test(
     deps = ["//lib/pkg/net/http"],
     tags = ["std", "integration"],
 )
+
+zig_test(
+    name = "http_bench_test",
+    main = "bench_test.zig",
+    srcs = ["bench_test.zig"],
+    deps = ["//lib/pkg/net/http"],
+    tags = ["std", "bench"],
+    timeout = "long",
+)

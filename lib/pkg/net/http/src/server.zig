@@ -57,10 +57,13 @@ pub fn Server(comptime Socket: type, comptime config: Config) type {
             var buffered: usize = 0;
             var requests_served: usize = 0;
 
+            var need_more_data = false;
+
             while (requests_served < config.max_requests_per_conn) {
-                // Read until we have a complete header section (or buffer is full).
-                // Skip recv if we already have "\r\n\r\n" from a previous pipelined request.
-                while (mem.indexOf(u8, read_buf[0..buffered], "\r\n\r\n") == null) {
+                // Read data until we can attempt a parse.
+                // First iteration: wait for header terminator "\r\n\r\n".
+                // After Incomplete (partial body): force at least one recv before retrying parse.
+                while (need_more_data or mem.indexOf(u8, read_buf[0..buffered], "\r\n\r\n") == null) {
                     if (buffered >= read_buf.len) break;
 
                     const n = sock.recv(read_buf[buffered..]) catch |err| {
@@ -72,6 +75,7 @@ pub fn Server(comptime Socket: type, comptime config: Config) type {
                     };
                     if (n == 0) return;
                     buffered += n;
+                    need_more_data = false;
                 }
 
                 const result = request_mod.parse(read_buf[0..buffered]) catch |err| {
@@ -81,6 +85,7 @@ pub fn Server(comptime Socket: type, comptime config: Config) type {
                                 sendError(&sock, write_buf, 413);
                                 return;
                             }
+                            need_more_data = true;
                             continue;
                         },
                         else => {
