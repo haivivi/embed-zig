@@ -1,0 +1,11 @@
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "http_e2e_test",
+    main = "e2e_test.zig",
+    srcs = ["e2e_test.zig"],
+    deps = ["//lib/pkg/net/http"],
+    tags = ["std", "integration"],
+)
