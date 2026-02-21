@@ -54,11 +54,6 @@ pub const Aec3 = struct {
     ref_spectrum: []Complex,
     echo_power: []f32,
     near_power: []f32,
-    // Per-bin coherence state for NLP (R2)
-    cross_psd_re: []f32,
-    cross_psd_im: []f32,
-    ref_psd: []f32,
-    err_psd: []f32,
     // Delay-aligned ref buffer (R1)
     ref_ring: []i16,
     ref_ring_pos: usize,
@@ -105,18 +100,6 @@ pub const Aec3 = struct {
         errdefer allocator.free(echo_p);
         const near_p = try allocator.alloc(f32, num_bins);
         errdefer allocator.free(near_p);
-        const cpsd_re = try allocator.alloc(f32, num_bins);
-        errdefer allocator.free(cpsd_re);
-        @memset(cpsd_re, 0);
-        const cpsd_im = try allocator.alloc(f32, num_bins);
-        errdefer allocator.free(cpsd_im);
-        @memset(cpsd_im, 0);
-        const ref_psd = try allocator.alloc(f32, num_bins);
-        errdefer allocator.free(ref_psd);
-        @memset(ref_psd, 0);
-        const err_psd = try allocator.alloc(f32, num_bins);
-        errdefer allocator.free(err_psd);
-        @memset(err_psd, 0);
         const ref_ring = try allocator.alloc(i16, ring_size);
         errdefer allocator.free(ref_ring);
         @memset(ref_ring, 0);
@@ -134,10 +117,6 @@ pub const Aec3 = struct {
             .ref_spectrum = ref_spec,
             .echo_power = echo_p,
             .near_power = near_p,
-            .cross_psd_re = cpsd_re,
-            .cross_psd_im = cpsd_im,
-            .ref_psd = ref_psd,
-            .err_psd = err_psd,
             .ref_ring = ref_ring,
             .ref_ring_pos = 0,
             .allocator = allocator,
@@ -146,10 +125,6 @@ pub const Aec3 = struct {
 
     pub fn deinit(self: *Aec3) void {
         self.allocator.free(self.ref_ring);
-        self.allocator.free(self.err_psd);
-        self.allocator.free(self.ref_psd);
-        self.allocator.free(self.cross_psd_im);
-        self.allocator.free(self.cross_psd_re);
         self.allocator.free(self.near_power);
         self.allocator.free(self.echo_power);
         self.allocator.free(self.ref_spectrum);
@@ -162,10 +137,7 @@ pub const Aec3 = struct {
 
     pub fn reset(self: *Aec3) void {
         self.af.reset();
-        @memset(self.cross_psd_re, 0);
-        @memset(self.cross_psd_im, 0);
-        @memset(self.ref_psd, 0);
-        @memset(self.err_psd, 0);
+        self.smoothed_cancel_ratio = 0;
         @memset(self.ref_ring, 0);
         self.ref_ring_pos = 0;
     }
@@ -195,38 +167,56 @@ pub const Aec3 = struct {
         // 1. Linear adaptive filter with delay-aligned ref
         const af_result = self.af.process(mic, aligned_ref, self.error_td);
 
-        // Start with linear filter output
-        @memcpy(clean, self.error_td[0..bs]);
+        // 2. FFT error and ref for per-bin NLP
+        fft_mod.fromI16(self.error_spectrum, self.error_td[0..bs]);
+        for (bs..fft_n) |i| self.error_spectrum[i] = Complex{};
+        fft_mod.fft(self.error_spectrum);
 
-        // NLP: simple cancel_ratio gate — only suppress when linear filter is struggling.
-        // cancel_ratio = error_energy / ref_energy. Low = good cancellation.
-        // When ratio > threshold: apply scalar gain = threshold / ratio (push down to threshold level).
-        // When ratio <= threshold: no NLP needed, linear filter did enough.
-        const nlp_threshold: f32 = 0.3;
-        _ = alpha;
-        _ = fft_n;
+        fft_mod.fromI16(self.ref_spectrum, aligned_ref);
+        for (bs..fft_n) |i| self.ref_spectrum[i] = Complex{};
+        fft_mod.fft(self.ref_spectrum);
 
-        if (af_result.ref_energy > 100) {
-            const instant_ratio = af_result.error_energy / af_result.ref_energy;
+        // 3. Per-bin NLP (方案 A: cancel_ratio × |Ref(k)|²)
+        // Smoothed global cancel_ratio from adaptive filter
+        const instant_ratio = if (af_result.ref_energy > 100)
+            af_result.error_energy / af_result.ref_energy
+        else
+            0;
+        self.smoothed_cancel_ratio = alpha * self.smoothed_cancel_ratio + (1.0 - alpha) * instant_ratio;
 
-            // Smooth the cancel ratio to avoid reacting to transient spikes
-            // during frequency transitions or adaptive filter re-convergence
-            self.smoothed_cancel_ratio = 0.8 * self.smoothed_cancel_ratio + 0.2 * instant_ratio;
+        // Double-talk check: if error >> ref, near-end present → skip NLP
+        const apply_nlp = self.smoothed_cancel_ratio > 0.01 and self.smoothed_cancel_ratio < 1.5 and af_result.ref_energy > 100;
 
-            const ratio = self.smoothed_cancel_ratio;
+        if (apply_nlp) {
+            for (0..self.num_bins) |k| {
+                const ref_p = Complex.mag2(self.ref_spectrum[k]);
+                const err_p = Complex.mag2(self.error_spectrum[k]);
 
-            // Only suppress when smoothed ratio is in the "poor but not double-talk" range
-            if (ratio > nlp_threshold and ratio < 1.5) {
-                var nlp_gain = nlp_threshold / ratio;
-                if (nlp_gain < self.config.nlp_floor) nlp_gain = self.config.nlp_floor;
-                if (nlp_gain > 1.0) nlp_gain = 1.0;
-
-                for (clean) |*s| {
-                    const v: f32 = @floatFromInt(s.*);
-                    const suppressed = v * nlp_gain;
-                    s.* = if (suppressed > 32767) 32767 else if (suppressed < -32768) -32768 else @intFromFloat(suppressed);
-                }
+                // Echo estimate power = cancel_ratio × ref_power
+                self.echo_power[k] = self.smoothed_cancel_ratio * ref_p * self.config.nlp_over_suppression;
+                // Near-end estimate = error_power - echo_estimate (clamp >= 0)
+                const near_raw = err_p - self.smoothed_cancel_ratio * ref_p;
+                self.near_power[k] = if (near_raw > 0) near_raw else 0;
             }
+
+            // Compute per-bin suppression gains via suppression_gain.zig
+            const gains = self.sg.compute(self.echo_power, self.near_power);
+
+            // Apply per-bin gains to error spectrum
+            for (0..self.num_bins) |k| {
+                self.error_spectrum[k] = Complex.scale(self.error_spectrum[k], gains[k]);
+            }
+            // Mirror negative frequencies
+            for (self.num_bins..fft_n) |k| {
+                self.error_spectrum[k] = Complex.conj(self.error_spectrum[fft_n - k]);
+            }
+
+            // IFFT → time domain clean
+            fft_mod.ifft(self.error_spectrum);
+            fft_mod.toI16(clean, self.error_spectrum[0..bs]);
+        } else {
+            // No NLP needed: use linear filter output directly
+            @memcpy(clean, self.error_td[0..bs]);
         }
 
         // 7. Comfort noise
