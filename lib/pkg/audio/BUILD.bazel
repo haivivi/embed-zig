@@ -75,4 +75,11 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
+zig_test(
+    name = "adaptive_filter_test",
+    main = "src/aec3/adaptive_filter.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))
