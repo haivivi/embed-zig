@@ -131,4 +131,79 @@ pub fn build(b: *std.Build) void {
     const step3_run = b.addRunArtifact(step3);
     const step3_step = b.step("step3", "Step 3: AEC — 440Hz + mic + AEC, no feedback");
     step3_step.dependOn(&step3_run.step);
+
+    // step4: sweep AEC
+    const step4 = b.addExecutable(.{
+        .name = "step4_sweep_aec",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("step4_sweep_aec.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    step4.root_module.addImport("portaudio", pa_module);
+    step4.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
+    step4.root_module.link_libc = true;
+    step4.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    step4.linkSystemLibrary("portaudio");
+    step4.linkFramework("CoreAudio");
+    step4.linkFramework("AudioToolbox");
+    step4.linkFramework("AudioUnit");
+    step4.linkFramework("CoreFoundation");
+    step4.linkFramework("CoreServices");
+    step4.addObjectFile(.{ .cwd_relative = root ++ "bazel-bin/third_party/speexdsp/libspeexdsp_float.a" });
+    b.installArtifact(step4);
+    const step4_run = b.addRunArtifact(step4);
+    const step4_step = b.step("step4", "Step 4: Sweep + AEC, no feedback");
+    step4_step.dependOn(&step4_run.step);
+
+    // step5: TTS AEC
+    const step5 = b.addExecutable(.{
+        .name = "step5_tts_aec",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("step5_tts_aec.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    step5.root_module.addImport("portaudio", pa_module);
+    step5.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
+    step5.root_module.link_libc = true;
+    step5.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    step5.linkSystemLibrary("portaudio");
+    step5.linkFramework("CoreAudio");
+    step5.linkFramework("AudioToolbox");
+    step5.linkFramework("AudioUnit");
+    step5.linkFramework("CoreFoundation");
+    step5.linkFramework("CoreServices");
+    step5.addObjectFile(.{ .cwd_relative = root ++ "bazel-bin/third_party/speexdsp/libspeexdsp_float.a" });
+    b.installArtifact(step5);
+    const step5_run = b.addRunArtifact(step5);
+    const step5_step = b.step("step5", "Step 5: TTS speech + AEC, no feedback");
+    step5_step.dependOn(&step5_run.step);
+
+    // step6: conversation
+    const step6 = b.addExecutable(.{
+        .name = "step6_conversation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("step6_conversation.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    step6.root_module.addImport("portaudio", pa_module);
+    step6.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
+    step6.root_module.link_libc = true;
+    step6.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    step6.linkSystemLibrary("portaudio");
+    step6.linkFramework("CoreAudio");
+    step6.linkFramework("AudioToolbox");
+    step6.linkFramework("AudioUnit");
+    step6.linkFramework("CoreFoundation");
+    step6.linkFramework("CoreServices");
+    step6.addObjectFile(.{ .cwd_relative = root ++ "bazel-bin/third_party/speexdsp/libspeexdsp_float.a" });
+    b.installArtifact(step6);
+    const step6_run = b.addRunArtifact(step6);
+    const step6_step = b.step("step6", "Step 6: Real-time conversation — TTS + voice + AEC");
+    step6_step.dependOn(&step6_run.step);
 }
