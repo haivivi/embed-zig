@@ -118,8 +118,12 @@ pub fn Server(comptime Socket: type, comptime config: Config) type {
 
                 requests_served += 1;
 
+                const is_http10 = mem.eql(u8, req.version, "HTTP/1.0");
                 if (req.header("Connection")) |conn_header| {
                     if (std.ascii.eqlIgnoreCase(conn_header, "close")) return;
+                    if (is_http10 and !std.ascii.eqlIgnoreCase(conn_header, "keep-alive")) return;
+                } else if (is_http10) {
+                    return;
                 }
 
                 const consumed = result.consumed;

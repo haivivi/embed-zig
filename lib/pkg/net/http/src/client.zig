@@ -22,6 +22,7 @@ const trait = @import("trait");
 const tls = @import("tls");
 const dns = @import("dns");
 
+const response_mod = @import("response.zig");
 const stream_mod = @import("stream.zig");
 
 pub const Method = enum {
@@ -58,22 +59,7 @@ pub const Response = struct {
     buffer_len: usize,
 
     pub fn statusText(self: Response) []const u8 {
-        return switch (self.status_code) {
-            200 => "OK",
-            201 => "Created",
-            204 => "No Content",
-            301 => "Moved Permanently",
-            302 => "Found",
-            304 => "Not Modified",
-            400 => "Bad Request",
-            401 => "Unauthorized",
-            403 => "Forbidden",
-            404 => "Not Found",
-            500 => "Internal Server Error",
-            502 => "Bad Gateway",
-            503 => "Service Unavailable",
-            else => "Unknown",
-        };
+        return response_mod.statusText(self.status_code);
     }
 
     /// Get response body
