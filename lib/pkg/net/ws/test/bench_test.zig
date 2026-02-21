@@ -218,7 +218,8 @@ fn buildResponse(buf: []u8, accept: []const u8) []const u8 {
 }
 
 fn formatNum(buf: []u8, prefix: []const u8, n: usize) []const u8 {
-    @memcpy(buf[0..prefix.len], prefix);
+    if (buf.ptr != prefix.ptr)
+        @memcpy(buf[0..prefix.len], prefix);
     const pos: usize = prefix.len;
     if (n == 0) {
         buf[pos] = '0';
