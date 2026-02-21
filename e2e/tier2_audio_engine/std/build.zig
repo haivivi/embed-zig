@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
 
     const trait_dep = b.dependency("trait", .{ .target = target, .optimize = optimize });
     const speexdsp_dep = b.dependency("speexdsp", .{ .target = target, .optimize = optimize });
+    const std_impl_dep = b.dependency("std_impl", .{ .target = target, .optimize = optimize });
 
     const pa_module = b.createModule(.{
         .root_source_file = .{ .cwd_relative = root ++ "lib/pkg/portaudio/src/portaudio.zig" },
@@ -33,6 +34,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "step6", .file = "step6_conversation.zig", .desc = "Step 6: Conversation + AEC3" },
         .{ .name = "loopback", .file = "loopback.zig", .desc = "Raw mic→speaker loopback (no AEC)" },
         .{ .name = "t5-60s", .file = "step_t5_60s.zig", .desc = "T5: 60s stability test" },
+        .{ .name = "e1", .file = "E1_engine_loopback.zig", .desc = "E1: Engine loopback — mic→AEC→speaker" },
+        .{ .name = "e2", .file = "E2_engine_tts.zig", .desc = "E2: Engine TTS — verify AEC removes TTS" },
     };
 
     for (steps) |s| {
@@ -46,6 +49,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("portaudio", pa_module);
         exe.root_module.addImport("audio", audio_module);
+        exe.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
         exe.root_module.link_libc = true;
         exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
         exe.linkSystemLibrary("portaudio");
