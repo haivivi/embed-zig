@@ -68,4 +68,11 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
+zig_test(
+    name = "fft_test",
+    main = "src/aec3/fft.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))
