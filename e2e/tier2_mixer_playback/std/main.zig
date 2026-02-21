@@ -87,19 +87,59 @@ pub fn main() !void {
     const t2 = try std.Thread.spawn(.{}, Writer.run, .{ h2.track, format, tone660 });
     const t3 = try std.Thread.spawn(.{}, Writer.run, .{ h3.track, format, tone880 });
 
-    // Reader: mixer.read() → speaker.write()
+    // Reader: mixer.read() → speaker.write(), with timing diagnostics
     var frame: [160]i16 = undefined;
     var total_written: usize = 0;
+    const expected_frame_us: i64 = @intCast(@as(u64, 160) * 1_000_000 / SAMPLE_RATE); // 10000us
+    var last_write_ts: i64 = std.time.microTimestamp();
+    var max_mixer_us: i64 = 0;
+    var max_write_us: i64 = 0;
+    var max_gap_us: i64 = 0;
+    var glitch_count: u32 = 0;
 
-    std.debug.print("Playing...", .{});
+    std.debug.print("Playing (frame={d}us)...\n", .{expected_frame_us});
     while (total_written < total_samples) {
+        const ts0 = std.time.microTimestamp();
         const n = mx.read(&frame) orelse break;
+        const ts1 = std.time.microTimestamp();
         try speaker.write(frame[0..n]);
+        const ts2 = std.time.microTimestamp();
+
+        const mixer_us = ts1 - ts0;
+        const write_us = ts2 - ts1;
+        const gap_us = ts0 - last_write_ts;
+
+        if (mixer_us > max_mixer_us) max_mixer_us = mixer_us;
+        if (write_us > max_write_us) max_write_us = write_us;
+        if (gap_us > max_gap_us) max_gap_us = gap_us;
+
+        // Flag glitches: gap between end-of-last-write and start-of-this-mixer > 2x frame
+        if (total_written > 0 and gap_us > expected_frame_us * 2) {
+            glitch_count += 1;
+            if (glitch_count <= 10) {
+                std.debug.print("  GLITCH @{d}ms: gap={d}us mixer={d}us write={d}us\n", .{
+                    total_written * 1000 / SAMPLE_RATE,
+                    gap_us,
+                    mixer_us,
+                    write_us,
+                });
+            }
+        }
+
+        last_write_ts = ts2;
         total_written += n;
 
-        // Progress dots
         if (total_written % (SAMPLE_RATE) == 0) {
-            std.debug.print(".", .{});
+            std.debug.print("  [{d}s] max: mixer={d}us write={d}us gap={d}us glitches={d}\n", .{
+                total_written / SAMPLE_RATE,
+                max_mixer_us,
+                max_write_us,
+                max_gap_us,
+                glitch_count,
+            });
+            max_mixer_us = 0;
+            max_write_us = 0;
+            max_gap_us = 0;
         }
     }
 

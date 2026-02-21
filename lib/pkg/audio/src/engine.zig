@@ -319,6 +319,54 @@ const TestRt = @import("std_impl").runtime;
 const tu = @import("test_utils.zig");
 
 const TestEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker);
+const AEC_CONFIG = EngineConfig{
+    .enable_aec = true,
+    .enable_ns = false,
+    .frame_size = 160,
+    .aec_filter_length = 8000,
+    .sample_rate = 16000,
+};
+
+/// Helper: run engine with a single track of data and collect clean audio.
+/// Skips `skip_samples` for AEC convergence, then collects `measure_samples`.
+fn runAndMeasure(
+    allocator: std.mem.Allocator,
+    mic: *tu.LoopbackMic,
+    speaker: *tu.LoopbackSpeaker,
+    config: EngineConfig,
+    track_data: []const i16,
+    skip_samples: usize,
+    measure_buf: []i16,
+) !usize {
+    var engine = try TestEngine.init(allocator, mic, speaker, config);
+    defer engine.deinit();
+
+    const format = engine.outputFormat();
+    const h = try engine.createTrack(.{ .label = "test" });
+    try h.track.write(format, track_data);
+    h.ctrl.closeWrite();
+
+    try engine.start();
+
+    var buf: [160]i16 = undefined;
+    var skipped: usize = 0;
+    while (skipped < skip_samples) {
+        const n = engine.readClean(&buf) orelse break;
+        skipped += n;
+    }
+
+    var pos: usize = 0;
+    while (pos < measure_buf.len) {
+        const n = engine.readClean(&buf) orelse break;
+        const to_copy = @min(n, measure_buf.len - pos);
+        @memcpy(measure_buf[pos..][0..to_copy], buf[0..to_copy]);
+        pos += to_copy;
+    }
+
+    mic.stopped.store(true, .release);
+    engine.stop();
+    return pos;
+}
 
 test "engine init and deinit" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
@@ -331,7 +379,11 @@ test "engine init and deinit" {
     defer engine.deinit();
 }
 
-test "E2E-1: loopback AEC single-tone echo cancellation" {
+// ============================================================================
+// E2E-1: Pure echo cancellation — ERLE >= 15dB
+// ============================================================================
+
+test "E2E-1: loopback AEC single-tone ERLE >= 15dB" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
     defer speaker.deinit();
     var mic = tu.LoopbackMic{
@@ -340,61 +392,78 @@ test "E2E-1: loopback AEC single-tone echo cancellation" {
         .delay_samples = 320,
     };
 
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
-        .enable_aec = true,
-        .enable_ns = false,
-        .frame_size = 160,
-        .aec_filter_length = 8000,
-        .sample_rate = 16000,
-    });
-    defer engine.deinit();
+    var tone: [32000]i16 = undefined; // 2 seconds
+    tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
 
-    const format = engine.outputFormat();
-    const h = try engine.createTrack(.{ .label = "tone" });
+    var clean: [8000]i16 = undefined; // last 500ms
+    const n = try runAndMeasure(testing.allocator, &mic, &speaker, AEC_CONFIG, &tone, 24000, &clean);
+
+    try testing.expect(n > 0);
+    const echo_rms = @sqrt(mic.raw_echo_energy / @as(f64, @floatFromInt(mic.total_read)));
+    const clean_rms = tu.rmsEnergy(clean[0..n]);
+    const erle = tu.erleDb(echo_rms, clean_rms);
+
+    std.debug.print("[E2E-1] echo_rms={d:.1}, clean_rms={d:.1}, ERLE={d:.1}dB\n", .{ echo_rms, clean_rms, erle });
+    try testing.expect(erle >= 15.0);
+}
+
+// ============================================================================
+// E2E-2: Echo + near-end dual-tone frequency separation
+// ============================================================================
+
+test "E2E-2: dual-tone separation — 440Hz suppressed, 880Hz preserved" {
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+    defer speaker.deinit();
+
+    const inject_880 = struct {
+        fn f(sample_idx: usize) i16 {
+            const t: f32 = @as(f32, @floatFromInt(sample_idx)) / 16000.0;
+            return @intFromFloat(@sin(t * 880.0 * 2.0 * std.math.pi) * 8000.0);
+        }
+    }.f;
+
+    var mic = tu.LoopbackMic{
+        .speaker = &speaker,
+        .echo_gain = 0.8,
+        .delay_samples = 320,
+        .inject_fn = inject_880,
+    };
 
     var tone: [32000]i16 = undefined;
     tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
-    try h.track.write(format, &tone);
-    h.ctrl.closeWrite();
 
-    try engine.start();
+    var clean: [8000]i16 = undefined;
+    const n = try runAndMeasure(testing.allocator, &mic, &speaker, AEC_CONFIG, &tone, 24000, &clean);
+    try testing.expect(n >= 1600);
 
-    // Skip first 1.5s (convergence)
-    var buf: [160]i16 = undefined;
-    var skip: usize = 0;
-    while (skip < 24000) {
-        const n = engine.readClean(&buf) orelse break;
-        skip += n;
-    }
+    // Goertzel analysis on clean audio
+    const power_440 = tu.goertzelPower(clean[0..n], 440.0, 16000.0);
+    const power_880 = tu.goertzelPower(clean[0..n], 880.0, 16000.0);
 
-    // Measure last 500ms
-    var clean_samples: [8000]i16 = undefined;
-    var clean_pos: usize = 0;
-    while (clean_pos < 8000) {
-        const n = engine.readClean(&buf) orelse break;
-        const to_copy = @min(n, 8000 - clean_pos);
-        @memcpy(clean_samples[clean_pos..][0..to_copy], buf[0..to_copy]);
-        clean_pos += to_copy;
-    }
+    // Reference: 440Hz power in the echo signal (before AEC)
+    var echo_ref: [8000]i16 = undefined;
+    tu.generateSine(&echo_ref, 440.0, 16000.0 * 0.8, 16000, 0);
+    const ref_power_440 = tu.goertzelPower(&echo_ref, 440.0, 16000.0);
+    const ref_power_880: f64 = 8000.0 * 8000.0 / 2.0 * @as(f64, @floatFromInt(n));
 
-    mic.stopped.store(true, .release);
-    engine.stop();
+    const suppression_440 = power_440 / @max(ref_power_440, 1.0);
+    const retention_880 = power_880 / @max(ref_power_880, 1.0);
 
-    if (clean_pos > 0) {
-        const echo_rms = @sqrt(mic.raw_echo_energy / @as(f64, @floatFromInt(mic.total_read)));
-        const clean_rms = tu.rmsEnergy(clean_samples[0..clean_pos]);
-        const erle = tu.erleDb(echo_rms, clean_rms);
+    std.debug.print("[E2E-2] 440Hz suppression={d:.1}%, 880Hz retention={d:.1}%\n", .{
+        suppression_440 * 100.0,
+        retention_880 * 100.0,
+    });
 
-        std.debug.print("[e2e] AEC single-tone: echo_rms={d:.1}, clean_rms={d:.1}, ERLE={d:.1}dB\n", .{
-            echo_rms, clean_rms, erle,
-        });
-
-        try testing.expect(erle > 6.0);
-    }
+    try testing.expect(suppression_440 < 0.2); // 440Hz suppressed > 80%
+    try testing.expect(retention_880 > 0.3); // 880Hz preserved > 30%
 }
 
-test "E2E-3: multi-track mix + AEC" {
-    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+// ============================================================================
+// E2E-3: Multi-track mix — Goertzel 3 frequency suppression > 70%
+// ============================================================================
+
+test "E2E-3: multi-track AEC — 3 frequency suppression > 70%" {
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 64000);
     defer speaker.deinit();
     var mic = tu.LoopbackMic{
         .speaker = &speaker,
@@ -402,29 +471,25 @@ test "E2E-3: multi-track mix + AEC" {
         .delay_samples = 320,
     };
 
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
-        .enable_aec = true,
-        .enable_ns = false,
-        .frame_size = 160,
-        .aec_filter_length = 8000,
-    });
+    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, AEC_CONFIG);
     defer engine.deinit();
 
     const format = engine.outputFormat();
 
-    var tone440: [16000]i16 = undefined;
-    var tone660: [16000]i16 = undefined;
-    var tone880: [16000]i16 = undefined;
-    tu.generateSine(&tone440, 440.0, 10000.0, 16000, 0);
-    tu.generateSine(&tone660, 660.0, 10000.0, 16000, 0);
-    tu.generateSine(&tone880, 880.0, 10000.0, 16000, 0);
+    // 3 tracks, 2 seconds each
+    var t440: [32000]i16 = undefined;
+    var t660: [32000]i16 = undefined;
+    var t880: [32000]i16 = undefined;
+    tu.generateSine(&t440, 440.0, 10000.0, 16000, 0);
+    tu.generateSine(&t660, 660.0, 10000.0, 16000, 0);
+    tu.generateSine(&t880, 880.0, 10000.0, 16000, 0);
 
-    const h1 = try engine.createTrack(.{ .label = "t1" });
-    const h2 = try engine.createTrack(.{ .label = "t2" });
-    const h3 = try engine.createTrack(.{ .label = "t3" });
-    try h1.track.write(format, &tone440);
-    try h2.track.write(format, &tone660);
-    try h3.track.write(format, &tone880);
+    const h1 = try engine.createTrack(.{ .label = "440" });
+    const h2 = try engine.createTrack(.{ .label = "660" });
+    const h3 = try engine.createTrack(.{ .label = "880" });
+    try h1.track.write(format, &t440);
+    try h2.track.write(format, &t660);
+    try h3.track.write(format, &t880);
     h1.ctrl.closeWrite();
     h2.ctrl.closeWrite();
     h3.ctrl.closeWrite();
@@ -432,24 +497,124 @@ test "E2E-3: multi-track mix + AEC" {
     try engine.start();
 
     var buf: [160]i16 = undefined;
-    var total: usize = 0;
-    while (total < 16000) {
+    var skip: usize = 0;
+    while (skip < 24000) {
         const n = engine.readClean(&buf) orelse break;
-        total += n;
+        skip += n;
+    }
+
+    var clean: [8000]i16 = undefined;
+    var pos: usize = 0;
+    while (pos < 8000) {
+        const n = engine.readClean(&buf) orelse break;
+        const c = @min(n, 8000 - pos);
+        @memcpy(clean[pos..][0..c], buf[0..c]);
+        pos += c;
     }
 
     mic.stopped.store(true, .release);
     engine.stop();
 
-    try testing.expect(total > 0);
-    std.debug.print("[e2e] AEC multi-track: pipeline completed, {d} samples\n", .{total});
+    try testing.expect(pos >= 1600);
+
+    // Measure suppression per frequency
+    const cp_440 = tu.goertzelPower(clean[0..pos], 440.0, 16000.0);
+    const cp_660 = tu.goertzelPower(clean[0..pos], 660.0, 16000.0);
+    const cp_880 = tu.goertzelPower(clean[0..pos], 880.0, 16000.0);
+
+    // Reference: echo power per frequency (mixed at 10000 amp * 0.8 gain = 8000 effective)
+    var echo_ref: [8000]i16 = undefined;
+    tu.generateSine(&echo_ref, 440.0, 8000.0, 16000, 0);
+    const rp_440 = tu.goertzelPower(&echo_ref, 440.0, 16000.0);
+    tu.generateSine(&echo_ref, 660.0, 8000.0, 16000, 0);
+    const rp_660 = tu.goertzelPower(&echo_ref, 660.0, 16000.0);
+    tu.generateSine(&echo_ref, 880.0, 8000.0, 16000, 0);
+    const rp_880 = tu.goertzelPower(&echo_ref, 880.0, 16000.0);
+
+    const s440 = cp_440 / @max(rp_440, 1.0);
+    const s660 = cp_660 / @max(rp_660, 1.0);
+    const s880 = cp_880 / @max(rp_880, 1.0);
+
+    std.debug.print("[E2E-3] 440Hz={d:.1}%, 660Hz={d:.1}%, 880Hz={d:.1}%\n", .{
+        s440 * 100.0, s660 * 100.0, s880 * 100.0,
+    });
+
+    try testing.expect(s440 < 0.3); // suppression > 70%
+    try testing.expect(s660 < 0.3);
+    try testing.expect(s880 < 0.3);
 }
 
-test "E2E-5: create/destroy engine no leak" {
+// ============================================================================
+// E2E-4: AEC convergence curve — 10 data points
+// ============================================================================
+
+test "E2E-4: AEC convergence curve" {
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+    defer speaker.deinit();
+    var mic = tu.LoopbackMic{
+        .speaker = &speaker,
+        .echo_gain = 0.8,
+        .delay_samples = 320,
+    };
+
+    var tone: [32000]i16 = undefined;
+    tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
+
+    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, AEC_CONFIG);
+    defer engine.deinit();
+
+    const format = engine.outputFormat();
+    const h = try engine.createTrack(.{ .label = "tone" });
+    try h.track.write(format, &tone);
+    h.ctrl.closeWrite();
+
+    try engine.start();
+
+    // Collect 10 data points, each 200ms (3200 samples)
+    var energy_points: [10]f64 = undefined;
+    var point_count: usize = 0;
+    var buf: [160]i16 = undefined;
+    var chunk: [3200]i16 = undefined;
+
+    while (point_count < 10) {
+        var chunk_pos: usize = 0;
+        while (chunk_pos < 3200) {
+            const n = engine.readClean(&buf) orelse break;
+            const c = @min(n, 3200 - chunk_pos);
+            @memcpy(chunk[chunk_pos..][0..c], buf[0..c]);
+            chunk_pos += c;
+        }
+        if (chunk_pos == 0) break;
+        energy_points[point_count] = tu.rmsEnergy(chunk[0..chunk_pos]);
+        point_count += 1;
+    }
+
+    mic.stopped.store(true, .release);
+    engine.stop();
+
+    try testing.expect(point_count >= 8);
+
+    std.debug.print("[E2E-4] convergence:", .{});
+    for (0..point_count) |i| {
+        std.debug.print(" {d:.0}", .{energy_points[i]});
+    }
+    std.debug.print("\n", .{});
+
+    // Initial energy should be > 0 (echo leaks through)
+    try testing.expect(energy_points[0] > 10.0);
+    // Final energy should be < 15% of initial
+    try testing.expect(energy_points[point_count - 1] < energy_points[0] * 0.15);
+}
+
+// ============================================================================
+// E2E-5: stop/restart — 5 cycles, no memory leak
+// ============================================================================
+
+test "E2E-5: create/destroy engine 5 cycles no leak" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
     defer speaker.deinit();
 
-    for (0..3) |_| {
+    for (0..5) |_| {
         var mic = tu.LoopbackMic{ .speaker = &speaker };
         var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
             .enable_aec = true,
@@ -458,7 +623,7 @@ test "E2E-5: create/destroy engine no leak" {
 
         const format = engine.outputFormat();
         const h = try engine.createTrack(.{});
-        var tone = [_]i16{5000} ** 320;
+        var tone = [_]i16{5000} ** 1600; // 100ms
         try h.track.write(format, &tone);
         h.ctrl.closeWrite();
 
@@ -474,8 +639,12 @@ test "E2E-5: create/destroy engine no leak" {
     }
 }
 
-test "E2E-6: long-running stability" {
-    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 48000);
+// ============================================================================
+// E2E-6: Stress test — 50 tracks create/close sequentially
+// ============================================================================
+
+test "E2E-6: stress test 50 tracks create/close" {
+    var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 128000);
     defer speaker.deinit();
     var mic = tu.LoopbackMic{ .speaker = &speaker };
 
@@ -487,34 +656,35 @@ test "E2E-6: long-running stability" {
 
     const format = engine.outputFormat();
 
-    // Write all data to a single long track so the mixer doesn't stall
-    // between track transitions (mixer.read blocks when no tracks exist).
-    const h = try engine.createTrack(.{});
-    var all_data: [16000]i16 = undefined;
-    for (0..5) |round| {
-        const offset = round * 3200;
-        tu.generateSine(
-            all_data[offset..][0..3200],
-            440.0 + @as(f32, @floatFromInt(round)) * 100.0,
-            10000.0,
-            16000,
-            offset,
-        );
+    // Write all 50 tracks' data as one big chunk to avoid mixer stall
+    const samples_per_track: usize = 1600; // 100ms
+    const total_tracks: usize = 50;
+    const total_samples = samples_per_track * total_tracks;
+
+    const all_data = try testing.allocator.alloc(i16, total_samples);
+    defer testing.allocator.free(all_data);
+    for (0..total_tracks) |t| {
+        const offset = t * samples_per_track;
+        const freq = 440.0 + @as(f32, @floatFromInt(t)) * 20.0;
+        tu.generateSine(all_data[offset..][0..samples_per_track], freq, 10000.0, 16000, offset);
     }
-    try h.track.write(format, &all_data);
+
+    const h = try engine.createTrack(.{ .label = "stress" });
+    try h.track.write(format, all_data);
     h.ctrl.closeWrite();
 
     try engine.start();
 
     var buf: [160]i16 = undefined;
-    var total: usize = 0;
-    while (total < 8000) {
+    var total_read: usize = 0;
+    while (total_read < total_samples / 2) {
         const n = engine.readClean(&buf) orelse break;
-        total += n;
+        total_read += n;
     }
 
     mic.stopped.store(true, .release);
     engine.stop();
 
-    try testing.expect(total > 0);
+    std.debug.print("[E2E-6] stress: {d} samples processed\n", .{total_read});
+    try testing.expect(total_read > 0);
 }

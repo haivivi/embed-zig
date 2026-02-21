@@ -155,7 +155,57 @@ test "NoiseSuppressor setEchoState link" {
 
     ns.setEchoState(&aec.echo);
 
-    // Process after linking — should not crash
     var frame = [_]i16{0} ** 160;
     _ = ns.process(&frame);
+}
+
+const tu = @import("test_utils.zig");
+
+test "E2E-7: NS reduces noise energy" {
+    var ns = try NoiseSuppressor.init(testing.allocator, .{
+        .noise_suppress_db = -30,
+    });
+    defer ns.deinit();
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Feed 3s of stationary noise to let NS learn noise profile
+    for (0..300) |_| {
+        var frame: [160]i16 = undefined;
+        for (&frame) |*s| {
+            s.* = @intCast(@as(i32, random.intRangeAtMost(i16, -8000, 8000)));
+        }
+        _ = ns.process(&frame);
+    }
+
+    // Now measure: pure noise frames → NS should suppress them heavily
+    var input_total_rms: f64 = 0;
+    var output_total_rms: f64 = 0;
+
+    for (0..50) |_| {
+        var frame: [160]i16 = undefined;
+        var clean_copy: [160]i16 = undefined;
+        for (&frame) |*s| {
+            s.* = @intCast(@as(i32, random.intRangeAtMost(i16, -8000, 8000)));
+        }
+
+        input_total_rms += tu.rmsEnergy(&frame);
+
+        @memcpy(&clean_copy, &frame);
+        _ = ns.process(&clean_copy);
+
+        output_total_rms += tu.rmsEnergy(&clean_copy);
+    }
+
+    const rms_reduction = input_total_rms / @max(output_total_rms, 0.01);
+
+    std.debug.print("[E2E-7] NS: input_rms={d:.1}, output_rms={d:.1}, reduction={d:.1}x\n", .{
+        input_total_rms / 50.0,
+        output_total_rms / 50.0,
+        rms_reduction,
+    });
+
+    // With -30dB suppression on stationary noise, expect significant reduction
+    try testing.expect(rms_reduction > 1.5);
 }
