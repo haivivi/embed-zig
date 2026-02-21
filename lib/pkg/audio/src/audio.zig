@@ -16,6 +16,14 @@
 pub const resampler = @import("resampler.zig");
 pub const mixer = @import("mixer.zig");
 pub const aec = @import("aec.zig");
+pub const aec3 = struct {
+    pub const aec3 = @import("aec3/aec3.zig");
+    pub const fft = @import("aec3/fft.zig");
+    pub const adaptive_filter = @import("aec3/adaptive_filter.zig");
+    pub const delay_estimator = @import("aec3/delay_estimator.zig");
+    pub const suppression_gain = @import("aec3/suppression_gain.zig");
+    pub const comfort_noise = @import("aec3/comfort_noise.zig");
+};
 pub const ns = @import("ns.zig");
 pub const drc = @import("drc.zig");
 pub const engine = @import("engine.zig");

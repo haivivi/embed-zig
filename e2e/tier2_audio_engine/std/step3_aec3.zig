@@ -1,67 +1,40 @@
-//! Step 4: Sweep + AEC — broadband echo cancellation, no feedback
-//!
-//! Speaker plays 200Hz→4000Hz chirp, mic captures, AEC cancels.
-//! Clean audio NOT written to speaker. Saves WAV files.
+//! Step 3: 440Hz single-tone + AEC3 — real hardware, no feedback
+//! Duration: 10s. Speaker plays 440Hz, mic captures, AEC3 cancels.
+//! Saves WAV files. Self-checks by playing back and analyzing.
 
 const std = @import("std");
 const pa = @import("portaudio");
-const speexdsp = @import("speexdsp");
+const audio = @import("audio");
+const Aec3 = audio.aec3.aec3.Aec3;
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
-const DURATION_S: u32 = 5;
+const DURATION_S: u32 = 10;
 const TOTAL_SAMPLES = SAMPLE_RATE * DURATION_S;
 
 const State = struct {
-    echo: *speexdsp.EchoState,
-    pp: *speexdsp.Preprocess,
-    sweep_idx: usize = 0,
-
+    aec: *Aec3,
+    phase_idx: usize = 0,
     speaker_rec: []i16,
     mic_rec: []i16,
     clean_rec: []i16,
     pos: usize = 0,
-
     mic_energy_acc: f64 = 0,
     clean_energy_acc: f64 = 0,
     frame_count: u32 = 0,
 };
 
-fn generateSweep(buf: []i16, start_idx: usize) void {
-    const sr: f64 = @floatFromInt(SAMPLE_RATE);
-    const f_start: f64 = 200.0;
-    const f_end: f64 = 4000.0;
-    const sweep_dur: f64 = 5.0;
-    const amp: f64 = 8000.0;
-
-    for (buf, 0..) |*s, i| {
-        const t: f64 = @as(f64, @floatFromInt(start_idx + i)) / sr;
-        const progress = @mod(t, sweep_dur) / sweep_dur;
-        const freq = f_start + (f_end - f_start) * progress;
-        const phase = 2.0 * std.math.pi * freq * t;
-        s.* = @intFromFloat(@sin(phase) * amp);
-    }
-}
-
-fn callback(
-    input: []const i16,
-    output: []i16,
-    _: usize,
-    user_data: ?*anyopaque,
-) pa.CallbackResult {
+fn callback(input: []const i16, output: []i16, _: usize, user_data: ?*anyopaque) pa.CallbackResult {
     const state: *State = @ptrCast(@alignCast(user_data));
 
-    // 1. Generate sweep → speaker
-    generateSweep(output, state.sweep_idx);
+    for (output, 0..) |*s, i| {
+        const t: f64 = @as(f64, @floatFromInt(state.phase_idx + i)) / @as(f64, @floatFromInt(SAMPLE_RATE));
+        s.* = @intFromFloat(@sin(t * 440.0 * 2.0 * std.math.pi) * 10000.0);
+    }
 
-    // 2. AEC
     var clean: [FRAME_SIZE]i16 = undefined;
-    state.echo.cancellation(input.ptr, output.ptr, &clean);
+    state.aec.process(input, output, &clean);
 
-    // 3. NS
-    _ = state.pp.run(&clean);
-
-    // 4. Record
     if (state.pos + output.len <= state.speaker_rec.len) {
         @memcpy(state.speaker_rec[state.pos..][0..output.len], output);
         @memcpy(state.mic_rec[state.pos..][0..input.len], input);
@@ -69,24 +42,24 @@ fn callback(
         state.pos += output.len;
     }
 
-    // 5. ERLE
     for (input[0..output.len]) |s| {
         const v: f64 = @floatFromInt(s);
         state.mic_energy_acc += v * v;
     }
-    for (clean[0..output.len]) |s| {
+    for (clean) |s| {
         const v: f64 = @floatFromInt(s);
         state.clean_energy_acc += v * v;
     }
     state.frame_count += 1;
-    state.sweep_idx += output.len;
+    state.phase_idx += output.len;
 
     if (state.frame_count >= 50) {
-        const n_s: f64 = @floatFromInt(state.frame_count * FRAME_SIZE);
-        const mic_rms = @sqrt(state.mic_energy_acc / n_s);
-        const clean_rms = @sqrt(state.clean_energy_acc / n_s);
+        const n: f64 = @floatFromInt(state.frame_count * FRAME_SIZE);
+        const mic_rms = @sqrt(state.mic_energy_acc / n);
+        const clean_rms = @sqrt(state.clean_energy_acc / n);
         const erle = if (clean_rms > 1.0) 20.0 * std.math.log10(mic_rms / clean_rms) else 60.0;
-        std.debug.print("[sweep-aec] ERLE={d:.1}dB  mic={d:.0} clean={d:.0}\n", .{ erle, mic_rms, clean_rms });
+        const sec = state.pos / SAMPLE_RATE;
+        std.debug.print("  [{d}s] ERLE={d:.1}dB  mic={d:.0} clean={d:.0}\n", .{ sec, erle, mic_rms, clean_rms });
         state.mic_energy_acc = 0;
         state.clean_energy_acc = 0;
         state.frame_count = 0;
@@ -96,7 +69,7 @@ fn callback(
     return .Continue;
 }
 
-fn writeWav(path: []const u8, samples: []const i16, sample_rate: u32) !void {
+fn writeWav(path: []const u8, samples: []const i16) !void {
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
     const data_size: u32 = @intCast(samples.len * 2);
@@ -108,8 +81,8 @@ fn writeWav(path: []const u8, samples: []const i16, sample_rate: u32) !void {
     std.mem.writeInt(u32, hdr[16..20], 16, .little);
     std.mem.writeInt(u16, hdr[20..22], 1, .little);
     std.mem.writeInt(u16, hdr[22..24], 1, .little);
-    std.mem.writeInt(u32, hdr[24..28], sample_rate, .little);
-    std.mem.writeInt(u32, hdr[28..32], sample_rate * 2, .little);
+    std.mem.writeInt(u32, hdr[24..28], SAMPLE_RATE, .little);
+    std.mem.writeInt(u32, hdr[28..32], SAMPLE_RATE * 2, .little);
     std.mem.writeInt(u16, hdr[32..34], 2, .little);
     std.mem.writeInt(u16, hdr[34..36], 16, .little);
     @memcpy(hdr[36..40], "data");
@@ -123,24 +96,16 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== Step 4: Sweep (200-4000Hz) + AEC (no feedback) ===\n\n", .{});
+    std.debug.print("\n=== Step 3: 440Hz + AEC3 ({d}s) ===\n", .{DURATION_S});
+    std.debug.print("Stay QUIET. No typing. No talking.\n\n", .{});
 
     try pa.init();
     defer pa.deinit();
-
     if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
     if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    speexdsp.setAllocator(allocator);
-    var echo = try speexdsp.EchoState.init(@intCast(FRAME_SIZE), 8000);
-    defer { speexdsp.setAllocator(allocator); echo.deinit(); }
-    echo.setSampleRate(@intCast(SAMPLE_RATE));
-
-    var pp = try speexdsp.Preprocess.init(@intCast(FRAME_SIZE), @intCast(SAMPLE_RATE));
-    defer { speexdsp.setAllocator(allocator); pp.deinit(); }
-    pp.setDenoise(-30);
-    pp.enableDenoise(true);
-    pp.setEchoState(&echo);
+    var aec = try Aec3.init(allocator, .{ .frame_size = FRAME_SIZE, .num_partitions = 50 });
+    defer aec.deinit();
 
     const spk = try allocator.alloc(i16, TOTAL_SAMPLES);
     defer allocator.free(spk);
@@ -149,7 +114,7 @@ pub fn main() !void {
     const cln = try allocator.alloc(i16, TOTAL_SAMPLES);
     defer allocator.free(cln);
 
-    var state = State{ .echo = &echo, .pp = &pp, .speaker_rec = spk, .mic_rec = mic, .clean_rec = cln };
+    var state = State{ .aec = &aec, .speaker_rec = spk, .mic_rec = mic, .clean_rec = cln };
 
     var stream: pa.DuplexStream(i16) = undefined;
     try stream.init(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE }, callback, &state);
@@ -157,14 +122,14 @@ pub fn main() !void {
 
     try stream.start();
     while (state.pos < TOTAL_SAMPLES) std.Thread.sleep(100 * std.time.ns_per_ms);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
+    std.Thread.sleep(300 * std.time.ns_per_ms);
     stream.stop() catch {};
 
     const n = state.pos;
-    std.debug.print("\nRecorded {d} samples ({d}ms)\n", .{ n, n * 1000 / SAMPLE_RATE });
+    std.debug.print("\nRecorded {d} samples ({d}s)\n", .{ n, n / SAMPLE_RATE });
 
-    try writeWav("/tmp/step4_speaker.wav", spk[0..n], SAMPLE_RATE);
-    try writeWav("/tmp/step4_mic_raw.wav", mic[0..n], SAMPLE_RATE);
-    try writeWav("/tmp/step4_aec_clean.wav", cln[0..n], SAMPLE_RATE);
-    std.debug.print("\nSaved:\n  /tmp/step4_speaker.wav\n  /tmp/step4_mic_raw.wav\n  /tmp/step4_aec_clean.wav\n\n", .{});
+    try writeWav("/tmp/step3_speaker.wav", spk[0..n]);
+    try writeWav("/tmp/step3_mic.wav", mic[0..n]);
+    try writeWav("/tmp/step3_clean.wav", cln[0..n]);
+    std.debug.print("Saved: /tmp/step3_speaker.wav, step3_mic.wav, step3_clean.wav\n\n", .{});
 }
