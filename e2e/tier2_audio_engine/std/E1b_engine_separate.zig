@@ -1,8 +1,7 @@
-//! E1: AudioEngine loopback — DuplexStream + RefReader mode
+//! E1b: AudioEngine loopback — Separate streams + buffer_depth mode
 //!
-//! Uses PortAudio full-duplex callback for precisely aligned ref.
-//! TTS plays through mixer → speaker. Clean audio (AEC output) routes
-//! back to monitor track → mixer → speaker. Records clean.wav for analysis.
+//! Uses independent PortAudio InputStream/OutputStream with speaker_buffer_depth
+//! to compensate for hardware buffer delay. For comparison with E1 (DuplexStream).
 
 const std = @import("std");
 const pa = @import("portaudio");
@@ -10,26 +9,23 @@ const audio = @import("audio");
 
 const std_impl = @import("std_impl");
 const Rt = std_impl.runtime;
-const da = std_impl.audio_engine;
+const MicDriver = std_impl.mic.Driver;
+const SpeakerDriver = std_impl.speaker.Driver;
 const Mixer = audio.mixer.Mixer(Rt);
 const Format = audio.resampler.Format;
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
 const DURATION_S: u32 = 15;
+const BUFFER_DEPTH: u32 = 5;
 
-const Engine = audio.engine.AudioEngine(
-    Rt,
-    da.DuplexAudio.Mic,
-    da.DuplexAudio.Speaker,
-    .{
-        .enable_aec = true,
-        .enable_ns = true,
-        .frame_size = FRAME_SIZE,
-        .sample_rate = SAMPLE_RATE,
-        .RefReader = da.DuplexAudio.RefReader,
-    },
-);
+const Engine = audio.engine.AudioEngine(Rt, MicDriver, SpeakerDriver, .{
+    .enable_aec = true,
+    .enable_ns = true,
+    .frame_size = FRAME_SIZE,
+    .sample_rate = SAMPLE_RATE,
+    .speaker_buffer_depth = BUFFER_DEPTH,
+});
 
 fn loadWav(path: []const u8, allocator: std.mem.Allocator) ![]i16 {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -75,8 +71,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E1: Engine Loopback (DuplexStream + RefReader) ===\n", .{});
-    std.debug.print("TTS plays. Clean → monitor → speaker. Recording clean.\n", .{});
+    std.debug.print("\n=== E1b: Engine Loopback (Separate Streams, depth={d}) ===\n", .{BUFFER_DEPTH});
     std.debug.print("Duration: {d}s\n\n", .{DURATION_S});
 
     const tts_data = loadWav("/tmp/tts_ref.wav", allocator) catch {
@@ -90,20 +85,16 @@ pub fn main() !void {
     if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
     if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var duplex = da.DuplexAudio.init();
-    var mic_drv = duplex.mic();
-    var spk_drv = duplex.speaker();
-    var ref_rdr = duplex.refReader();
+    var mic_drv = try MicDriver.init(.{ .sample_rate = SAMPLE_RATE, .frames_per_buffer = FRAME_SIZE });
+    defer mic_drv.deinit();
+    var spk_drv = try SpeakerDriver.init(.{ .sample_rate = SAMPLE_RATE, .frames_per_buffer = FRAME_SIZE });
+    defer spk_drv.deinit();
 
-    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
+    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, {});
     defer engine.deinit();
-
-    try duplex.start();
-    defer duplex.stop();
 
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };
 
-    // TTS writer thread
     var tts_running = std.atomic.Value(bool).init(true);
     const tts_writer = try std.Thread.spawn(.{}, struct {
         fn run(eng: *Engine, fmt: Format, tts: []const i16, running: *std.atomic.Value(bool)) void {
@@ -116,10 +107,8 @@ pub fn main() !void {
         }
     }.run, .{ &engine, format, tts_data, &tts_running });
 
-    // Monitor track: clean → mixer → speaker (feedback loop AEC should handle)
     const monitor = try engine.createTrack(.{ .label = "monitor" });
 
-    // Clean recording
     const rec_max = SAMPLE_RATE * DURATION_S;
     const rec_buf = try allocator.alloc(i16, rec_max);
     defer allocator.free(rec_buf);
@@ -166,6 +155,6 @@ pub fn main() !void {
         recorded, @as(f64, @floatFromInt(recorded)) / 16000.0,
     });
 
-    try writeWav("/tmp/E1_clean.wav", rec_buf[0..recorded]);
-    std.debug.print("Saved: /tmp/E1_clean.wav\n\n", .{});
+    try writeWav("/tmp/E1b_clean.wav", rec_buf[0..recorded]);
+    std.debug.print("Saved: /tmp/E1b_clean.wav\n\n", .{});
 }

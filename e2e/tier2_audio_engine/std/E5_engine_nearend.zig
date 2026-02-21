@@ -1,43 +1,34 @@
 //! E5: Near-end detection — TTS plays, then human speaks mid-stream
 //!
-//! First 5s: TTS plays, quiet (clean should be low energy).
-//! After 5s: human speaks into mic (clean should show voice energy).
-//! Verifies NLP doesn't suppress near-end voice.
+//! Uses DuplexStream + RefReader.
+//! Phase 1 (5s): TTS plays, stay quiet. Clean should have low energy.
+//! Phase 2 (7s): Human speaks. Clean should show voice energy.
 
 const std = @import("std");
 const pa = @import("portaudio");
 const audio = @import("audio");
 
-const Rt = @import("std_impl").runtime;
-const Mixer = audio.mixer.Mixer(Rt);
+const std_impl = @import("std_impl");
+const Rt = std_impl.runtime;
+const da = std_impl.audio_engine;
 const Format = audio.resampler.Format;
-const Engine = audio.engine.AudioEngine(Rt, MicDriver, SpeakerDriver);
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
 const DURATION_S: u32 = 12;
 
-const MicDriver = struct {
-    stream: pa.InputStream(i16),
-    pub fn init() !MicDriver {
-        var s = try pa.InputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *MicDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn read(self: *MicDriver, buf: []i16) !usize { try self.stream.read(buf); return buf.len; }
-};
-
-const SpeakerDriver = struct {
-    stream: pa.OutputStream(i16),
-    pub fn init() !SpeakerDriver {
-        var s = try pa.OutputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *SpeakerDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn write(self: *SpeakerDriver, buf: []const i16) !usize { try self.stream.write(buf); return buf.len; }
-};
+const Engine = audio.engine.AudioEngine(
+    Rt,
+    da.DuplexAudio.Mic,
+    da.DuplexAudio.Speaker,
+    .{
+        .enable_aec = true,
+        .enable_ns = true,
+        .frame_size = FRAME_SIZE,
+        .sample_rate = SAMPLE_RATE,
+        .RefReader = da.DuplexAudio.RefReader,
+    },
+);
 
 fn loadWav(path: []const u8, allocator: std.mem.Allocator) ![]i16 {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -83,9 +74,8 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E5: Near-end Detection ===\n", .{});
-    std.debug.print("TTS plays for ~3.4s. Stay quiet until prompted.\n", .{});
-    std.debug.print("When you see 'SPEAK NOW', talk into mic.\n\n", .{});
+    std.debug.print("\n=== E5: Near-end Detection (DuplexStream + RefReader) ===\n", .{});
+    std.debug.print("TTS plays. Stay quiet until prompted.\n\n", .{});
 
     const tts_data = loadWav("/tmp/tts_ref.wav", allocator) catch {
         std.debug.print("ERROR: /tmp/tts_ref.wav not found.\n", .{});
@@ -95,25 +85,20 @@ pub fn main() !void {
 
     try pa.init();
     defer pa.deinit();
-    if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
-    if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var mic_drv = try MicDriver.init();
-    defer mic_drv.deinit();
-    var spk_drv = try SpeakerDriver.init();
-    defer spk_drv.deinit();
+    var duplex = da.DuplexAudio.init();
+    var mic_drv = duplex.mic();
+    var spk_drv = duplex.speaker();
+    var ref_rdr = duplex.refReader();
 
-    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, .{
-        .enable_aec = true,
-        .enable_ns = true,
-        .frame_size = FRAME_SIZE,
-        .sample_rate = SAMPLE_RATE,
-    });
+    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
     defer engine.deinit();
+
+    try duplex.start();
+    defer duplex.stop();
 
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };
 
-    // Writer thread: continuously feed TTS to keep mixer alive
     var writer_running = std.atomic.Value(bool).init(true);
     const writer = try std.Thread.spawn(.{}, struct {
         fn run(eng: *Engine, fmt: Format, tts: []const i16, r: *std.atomic.Value(bool)) void {
@@ -126,7 +111,6 @@ pub fn main() !void {
         }
     }.run, .{ &engine, format, tts_data, &writer_running });
 
-    // Clean recording buffer
     const total = SAMPLE_RATE * DURATION_S;
     const clean_buf = try allocator.alloc(i16, total);
     defer allocator.free(clean_buf);
@@ -150,11 +134,9 @@ pub fn main() !void {
         }
     }.run, .{ &engine, clean_buf, &clean_pos, &running });
 
-    // Phase 1: quiet (5s)
     std.debug.print("Phase 1: TTS playing, stay QUIET (5s)...\n", .{});
     std.Thread.sleep(5 * std.time.ns_per_s);
 
-    // Phase 2: speak (7s)
     std.debug.print("Phase 2: >>> SPEAK NOW! <<< (7s)\n", .{});
     std.Thread.sleep(7 * std.time.ns_per_s);
 
@@ -169,7 +151,6 @@ pub fn main() !void {
         n, @as(f64, @floatFromInt(n)) / 16000.0,
     });
 
-    // Analyze: first 5s vs last 5s
     const boundary = @min(5 * SAMPLE_RATE, n);
     var quiet_energy: f64 = 0;
     for (clean_buf[0..boundary]) |s| {
@@ -197,7 +178,7 @@ pub fn main() !void {
     std.debug.print("Ratio: {d:.1}x\n", .{speak_rms / @max(quiet_rms, 1.0)});
 
     if (speak_rms > quiet_rms * 2.0) {
-        std.debug.print("\n[E5] PASS — voice detected in speak phase ({d:.1}x quiet)\n", .{
+        std.debug.print("\n[E5] PASS — voice detected ({d:.1}x quiet)\n", .{
             speak_rms / @max(quiet_rms, 1.0),
         });
     } else {
@@ -207,5 +188,5 @@ pub fn main() !void {
     }
 
     try writeWav("/tmp/E5_clean.wav", clean_buf[0..n]);
-    std.debug.print("Saved: /tmp/E5_clean.wav (first half quiet, second half voice)\n\n", .{});
+    std.debug.print("Saved: /tmp/E5_clean.wav\n\n", .{});
 }

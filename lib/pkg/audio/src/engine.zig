@@ -51,9 +51,21 @@ pub const EngineConfig = struct {
     noise_suppress_db: i32 = -30,
     enable_aec: bool = true,
     enable_ns: bool = true,
+    /// Platform declares how many frames sit in speaker hardware buffer.
+    /// Engine uses this offset to align the ref signal with mic.
+    /// Ignored when RefReader is provided.
+    speaker_buffer_depth: u32 = 0,
+    /// If set, mic_task calls RefReader.read() to get already-aligned ref.
+    /// Used by DuplexStream-based platforms where ref alignment is exact.
+    RefReader: ?type = null,
 };
 
-pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type) type {
+pub fn AudioEngine(
+    comptime Rt: type,
+    comptime Mic: type,
+    comptime Speaker: type,
+    comptime config: EngineConfig,
+) type {
     comptime {
         _ = trait.sync.Mutex(Rt.Mutex);
         _ = trait.sync.Condition(Rt.Condition, Rt.Mutex);
@@ -68,21 +80,24 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         pub const MixerT = MixerType;
         pub const TrackHandle = MixerType.TrackHandle;
 
+        const HasRefReader = config.RefReader != null;
+        const RefReaderT = if (config.RefReader) |T| T else void;
+        const frame_size = config.frame_size;
+        const ref_history_depth = if (HasRefReader) 0 else config.speaker_buffer_depth + 1;
+
         allocator: std.mem.Allocator,
-        config: EngineConfig,
         mic: *Mic,
         speaker: *Speaker,
+        ref_reader: if (HasRefReader) *RefReaderT else void,
 
         aec: ?aec3_mod.Aec3,
         ns: ?ns_mod.NoiseSuppressor,
         mixer: MixerType,
 
-        // Ref ring buffer (speaker_task → mic_task, non-blocking overwrite)
-        ref_ring: []i16, // [ref_ring_cap * frame_size] flat buffer
-        ref_ring_cap: usize,
-        ref_ring_write: usize,
-        ref_ring_read: usize,
-        ref_mutex: Rt.Mutex,
+        // Ref history ring (方式 1: buffer_depth, speaker_task → mic_task)
+        ref_ring: if (!HasRefReader) []i16 else void,
+        ref_ring_write: if (!HasRefReader) usize else void,
+        ref_mutex: if (!HasRefReader) Rt.Mutex else void,
 
         // Clean audio ring buffer (mic_task → application, blocking)
         clean_buf_pool: []i16,
@@ -101,33 +116,25 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             allocator: std.mem.Allocator,
             mic: *Mic,
             speaker: *Speaker,
-            config: EngineConfig,
+            ref_reader: if (HasRefReader) *RefReaderT else void,
         ) !Self {
             const ring_samples = @as(usize, config.sample_rate) / 2;
             const clean_buf = try allocator.alloc(i16, ring_samples);
             errdefer allocator.free(clean_buf);
 
-            // Ref ring: 8 frames capacity
-            const ref_ring_cap: usize = 8;
-            const ref_ring = try allocator.alloc(i16, ref_ring_cap * config.frame_size);
-            errdefer allocator.free(ref_ring);
-            @memset(ref_ring, 0);
-
-            return .{
+            var result = Self{
                 .allocator = allocator,
-                .config = config,
                 .mic = mic,
                 .speaker = speaker,
+                .ref_reader = ref_reader,
                 .aec = null,
                 .ns = null,
                 .mixer = MixerType.init(allocator, .{
                     .output = .{ .rate = config.sample_rate, .channels = .mono },
                 }),
-                .ref_ring = ref_ring,
-                .ref_ring_cap = ref_ring_cap,
-                .ref_ring_write = 0,
-                .ref_ring_read = 0,
-                .ref_mutex = Rt.Mutex.init(),
+                .ref_ring = if (!HasRefReader) undefined else {},
+                .ref_ring_write = if (!HasRefReader) 0 else {},
+                .ref_mutex = if (!HasRefReader) Rt.Mutex.init() else {},
                 .clean_buf_pool = clean_buf,
                 .clean_write_pos = 0,
                 .clean_read_pos = 0,
@@ -139,6 +146,20 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                 .mic_thread = null,
                 .running = std.atomic.Value(bool).init(false),
             };
+
+            // Allocate ref history ring for buffer_depth mode
+            if (!HasRefReader) {
+                const cap = ref_history_depth;
+                if (cap > 0) {
+                    result.ref_ring = try allocator.alloc(i16, cap * frame_size);
+                    @memset(result.ref_ring, 0);
+                } else {
+                    result.ref_ring = try allocator.alloc(i16, frame_size);
+                    @memset(result.ref_ring, 0);
+                }
+            }
+
+            return result;
         }
 
         pub fn deinit(self: *Self) void {
@@ -147,28 +168,30 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             self.clean_not_full.deinit();
             self.clean_not_empty.deinit();
             self.clean_mutex.deinit();
-            self.ref_mutex.deinit();
+            if (!HasRefReader) {
+                self.ref_mutex.deinit();
+                self.allocator.free(self.ref_ring);
+            }
             if (self.ns) |*n| n.deinit();
             if (self.aec) |*a| a.deinit();
-            self.allocator.free(self.ref_ring);
             self.allocator.free(self.clean_buf_pool);
         }
 
         pub fn start(self: *Self) !void {
             if (self.running.load(.acquire)) return;
 
-            if (self.config.enable_aec) {
+            if (config.enable_aec) {
                 self.aec = try aec3_mod.Aec3.init(self.allocator, .{
-                    .frame_size = self.config.frame_size,
-                    .sample_rate = self.config.sample_rate,
+                    .frame_size = config.frame_size,
+                    .sample_rate = config.sample_rate,
                 });
             }
 
-            if (self.config.enable_ns) {
+            if (config.enable_ns) {
                 self.ns = try ns_mod.NoiseSuppressor.init(self.allocator, .{
-                    .frame_size = self.config.frame_size,
-                    .sample_rate = self.config.sample_rate,
-                    .noise_suppress_db = self.config.noise_suppress_db,
+                    .frame_size = config.frame_size,
+                    .sample_rate = config.sample_rate,
+                    .noise_suppress_db = config.noise_suppress_db,
                 });
             }
 
@@ -176,8 +199,9 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             self.clean_closed = false;
             self.clean_write_pos = 0;
             self.clean_read_pos = 0;
-            self.ref_ring_write = 0;
-            self.ref_ring_read = 0;
+            if (!HasRefReader) {
+                self.ref_ring_write = 0;
+            }
 
             self.speaker_thread = try Rt.Thread.spawn(.{}, speakerTask, .{self});
             self.mic_thread = try Rt.Thread.spawn(.{}, micTask, .{self});
@@ -241,8 +265,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             }
         }
 
-        pub fn createTrack(self: *Self, config: MixerType.TrackConfig) !TrackHandle {
-            return self.mixer.createTrack(config);
+        pub fn createTrack(self: *Self, track_config: MixerType.TrackConfig) !TrackHandle {
+            return self.mixer.createTrack(track_config);
         }
 
         pub fn destroyTrackCtrl(self: *Self, ctrl: *MixerType.TrackCtrl) void {
@@ -292,35 +316,46 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         }
 
         // ================================================================
-        // Ref ring buffer (non-blocking, overwrite oldest)
+        // Ref history (方式 1: buffer_depth, non-blocking ring)
         // ================================================================
 
         fn pushRef(self: *Self, frame: []const i16) void {
+            if (HasRefReader) return;
             self.ref_mutex.lock();
             defer self.ref_mutex.unlock();
-            const fs = self.config.frame_size;
-            const slot = self.ref_ring_write % self.ref_ring_cap;
-            const offset = slot * fs;
-            @memcpy(self.ref_ring[offset..][0..fs], frame[0..fs]);
+            const cap = ref_history_depth;
+            if (cap == 0) return;
+            const slot = self.ref_ring_write % cap;
+            const offset = slot * frame_size;
+            @memcpy(self.ref_ring[offset..][0..frame_size], frame[0..frame_size]);
             self.ref_ring_write +%= 1;
         }
 
-        fn popRef(self: *Self, out: []i16) void {
-            self.ref_mutex.lock();
-            defer self.ref_mutex.unlock();
-            const fs = self.config.frame_size;
-            if (self.ref_ring_write == self.ref_ring_read) {
-                @memset(out[0..fs], 0);
+        fn getAlignedRef(self: *Self, out: []i16) void {
+            if (HasRefReader) {
+                // 方式 2: platform 给对齐的 ref
+                _ = self.ref_reader.read(out) catch {
+                    @memset(out[0..frame_size], 0);
+                };
                 return;
             }
-            // If writer is ahead by more than capacity, skip to latest
-            if (self.ref_ring_write -% self.ref_ring_read > self.ref_ring_cap) {
-                self.ref_ring_read = self.ref_ring_write - self.ref_ring_cap;
+            // 方式 1: 取 speaker_buffer_depth 帧前的 ref
+            self.ref_mutex.lock();
+            defer self.ref_mutex.unlock();
+            const depth = config.speaker_buffer_depth;
+            const cap = ref_history_depth;
+            if (cap == 0 or self.ref_ring_write == 0) {
+                @memset(out[0..frame_size], 0);
+                return;
             }
-            const slot = self.ref_ring_read % self.ref_ring_cap;
-            const offset = slot * fs;
-            @memcpy(out[0..fs], self.ref_ring[offset..][0..fs]);
-            self.ref_ring_read +%= 1;
+            // Target: write_pos - 1 - depth (the frame that was played depth frames ago)
+            const target = if (self.ref_ring_write > depth + 1)
+                self.ref_ring_write - 1 - depth
+            else
+                0;
+            const slot = target % cap;
+            const offset = slot * frame_size;
+            @memcpy(out[0..frame_size], self.ref_ring[offset..][0..frame_size]);
         }
 
         // ================================================================
@@ -328,7 +363,6 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         // ================================================================
 
         fn speakerTask(self: *Self) void {
-            const frame_size: usize = self.config.frame_size;
             var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
 
             while (self.running.load(.acquire)) {
@@ -342,7 +376,6 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         }
 
         fn micTask(self: *Self) void {
-            const frame_size: usize = self.config.frame_size;
             var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
             var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
             var clean: [4096]i16 = [_]i16{0} ** 4096;
@@ -354,7 +387,7 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                     @memset(mic_buf[mic_n..frame_size], 0);
                 }
 
-                self.popRef(ref_buf[0..frame_size]);
+                self.getAlignedRef(ref_buf[0..frame_size]);
 
                 if (self.aec) |*a| {
                     a.process(mic_buf[0..frame_size], ref_buf[0..frame_size], clean[0..frame_size]);
@@ -380,53 +413,58 @@ const testing = std.testing;
 const TestRt = @import("std_impl").runtime;
 const tu = @import("test_utils.zig");
 
-const TestEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker);
-const AEC_CONFIG = EngineConfig{
+const aec_config: EngineConfig = .{
     .enable_aec = true,
     .enable_ns = false,
     .frame_size = 160,
     .aec_filter_length = 8000,
     .sample_rate = 16000,
 };
+const no_aec_config: EngineConfig = .{
+    .enable_aec = false,
+    .enable_ns = false,
+    .frame_size = 160,
+    .sample_rate = 16000,
+};
 
-/// Helper: run engine with a single track of data and collect clean audio.
-/// Skips `skip_samples` for AEC convergence, then collects `measure_samples`.
+const AecEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker, aec_config);
+const PlainEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker, no_aec_config);
+
 fn runAndMeasure(
     allocator: std.mem.Allocator,
     mic: *tu.LoopbackMic,
     speaker: *tu.LoopbackSpeaker,
-    config: EngineConfig,
     track_data: []const i16,
     skip_samples: usize,
     measure_buf: []i16,
 ) !usize {
-    var engine = try TestEngine.init(allocator, mic, speaker, config);
-    defer engine.deinit();
+    var eng = try AecEngine.init(allocator, mic, speaker, {});
+    defer eng.deinit();
 
-    const format = engine.outputFormat();
-    const h = try engine.createTrack(.{ .label = "test" });
+    const format = eng.outputFormat();
+    const h = try eng.createTrack(.{ .label = "test" });
     try h.track.write(format, track_data);
     h.ctrl.closeWrite();
 
-    try engine.start();
+    try eng.start();
 
     var buf: [160]i16 = undefined;
     var skipped: usize = 0;
     while (skipped < skip_samples) {
-        const n = engine.readClean(&buf) orelse break;
+        const n = eng.readClean(&buf) orelse break;
         skipped += n;
     }
 
     var pos: usize = 0;
     while (pos < measure_buf.len) {
-        const n = engine.readClean(&buf) orelse break;
+        const n = eng.readClean(&buf) orelse break;
         const to_copy = @min(n, measure_buf.len - pos);
         @memcpy(measure_buf[pos..][0..to_copy], buf[0..to_copy]);
         pos += to_copy;
     }
 
     mic.stopped.store(true, .release);
-    engine.stop();
+    eng.stop();
     return pos;
 }
 
@@ -434,11 +472,8 @@ test "engine init and deinit" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
     defer speaker.deinit();
     var mic = tu.LoopbackMic{ .speaker = &speaker };
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
-        .enable_aec = false,
-        .enable_ns = false,
-    });
-    defer engine.deinit();
+    var eng = try PlainEngine.init(testing.allocator, &mic, &speaker, {});
+    defer eng.deinit();
 }
 
 // ============================================================================
@@ -458,7 +493,7 @@ test "E2E-1: loopback AEC single-tone ERLE >= 15dB" {
     tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
 
     var clean: [8000]i16 = undefined; // last 500ms
-    const n = try runAndMeasure(testing.allocator, &mic, &speaker, AEC_CONFIG, &tone, 24000, &clean);
+    const n = try runAndMeasure(testing.allocator, &mic, &speaker, &tone, 24000, &clean);
 
     try testing.expect(n > 0);
     const echo_rms = @sqrt(mic.raw_echo_energy / @as(f64, @floatFromInt(mic.total_read)));
@@ -495,7 +530,7 @@ test "E2E-2: dual-tone separation — 440Hz suppressed, 880Hz preserved" {
     tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
 
     var clean: [8000]i16 = undefined;
-    const n = try runAndMeasure(testing.allocator, &mic, &speaker, AEC_CONFIG, &tone, 24000, &clean);
+    const n = try runAndMeasure(testing.allocator, &mic, &speaker, &tone, 24000, &clean);
     try testing.expect(n >= 1600);
 
     // Goertzel analysis on clean audio
@@ -533,10 +568,10 @@ test "E2E-3: multi-track AEC — 3 frequency suppression > 70%" {
         .delay_samples = 320,
     };
 
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, AEC_CONFIG);
-    defer engine.deinit();
+    var eng = try AecEngine.init(testing.allocator, &mic, &speaker, {});
+    defer eng.deinit();
 
-    const format = engine.outputFormat();
+    const format = eng.outputFormat();
 
     // 3 tracks, 2 seconds each
     var t440: [32000]i16 = undefined;
@@ -546,9 +581,9 @@ test "E2E-3: multi-track AEC — 3 frequency suppression > 70%" {
     tu.generateSine(&t660, 660.0, 10000.0, 16000, 0);
     tu.generateSine(&t880, 880.0, 10000.0, 16000, 0);
 
-    const h1 = try engine.createTrack(.{ .label = "440" });
-    const h2 = try engine.createTrack(.{ .label = "660" });
-    const h3 = try engine.createTrack(.{ .label = "880" });
+    const h1 = try eng.createTrack(.{ .label = "440" });
+    const h2 = try eng.createTrack(.{ .label = "660" });
+    const h3 = try eng.createTrack(.{ .label = "880" });
     try h1.track.write(format, &t440);
     try h2.track.write(format, &t660);
     try h3.track.write(format, &t880);
@@ -556,26 +591,26 @@ test "E2E-3: multi-track AEC — 3 frequency suppression > 70%" {
     h2.ctrl.closeWrite();
     h3.ctrl.closeWrite();
 
-    try engine.start();
+    try eng.start();
 
     var buf: [160]i16 = undefined;
     var skip: usize = 0;
     while (skip < 24000) {
-        const n = engine.readClean(&buf) orelse break;
+        const n = eng.readClean(&buf) orelse break;
         skip += n;
     }
 
     var clean: [8000]i16 = undefined;
     var pos: usize = 0;
     while (pos < 8000) {
-        const n = engine.readClean(&buf) orelse break;
+        const n = eng.readClean(&buf) orelse break;
         const c = @min(n, 8000 - pos);
         @memcpy(clean[pos..][0..c], buf[0..c]);
         pos += c;
     }
 
     mic.stopped.store(true, .release);
-    engine.stop();
+    eng.stop();
 
     try testing.expect(pos >= 1600);
 
@@ -622,15 +657,15 @@ test "E2E-4: AEC convergence curve" {
     var tone: [32000]i16 = undefined;
     tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
 
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, AEC_CONFIG);
-    defer engine.deinit();
+    var eng = try AecEngine.init(testing.allocator, &mic, &speaker, {});
+    defer eng.deinit();
 
-    const format = engine.outputFormat();
-    const h = try engine.createTrack(.{ .label = "tone" });
+    const format = eng.outputFormat();
+    const h = try eng.createTrack(.{ .label = "tone" });
     try h.track.write(format, &tone);
     h.ctrl.closeWrite();
 
-    try engine.start();
+    try eng.start();
 
     // Collect 10 data points, each 200ms (3200 samples)
     var energy_points: [10]f64 = undefined;
@@ -641,7 +676,7 @@ test "E2E-4: AEC convergence curve" {
     while (point_count < 10) {
         var chunk_pos: usize = 0;
         while (chunk_pos < 3200) {
-            const n = engine.readClean(&buf) orelse break;
+            const n = eng.readClean(&buf) orelse break;
             const c = @min(n, 3200 - chunk_pos);
             @memcpy(chunk[chunk_pos..][0..c], buf[0..c]);
             chunk_pos += c;
@@ -652,7 +687,7 @@ test "E2E-4: AEC convergence curve" {
     }
 
     mic.stopped.store(true, .release);
-    engine.stop();
+    eng.stop();
 
     try testing.expect(point_count >= 8);
 
@@ -676,26 +711,27 @@ test "E2E-5: create/destroy engine 5 cycles no leak" {
     var speaker = try tu.LoopbackSpeaker.init(testing.allocator, 16000);
     defer speaker.deinit();
 
+    const AecNsEngine = AudioEngine(TestRt, tu.LoopbackMic, tu.LoopbackSpeaker, .{
+        .enable_aec = true,
+        .enable_ns = true,
+    });
     for (0..5) |_| {
         var mic = tu.LoopbackMic{ .speaker = &speaker };
-        var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
-            .enable_aec = true,
-            .enable_ns = true,
-        });
+        var eng = try AecNsEngine.init(testing.allocator, &mic, &speaker, {});
 
-        const format = engine.outputFormat();
-        const h = try engine.createTrack(.{});
+        const format = eng.outputFormat();
+        const h = try eng.createTrack(.{});
         var tone = [_]i16{5000} ** 1600; // 100ms
         try h.track.write(format, &tone);
         h.ctrl.closeWrite();
 
-        try engine.start();
+        try eng.start();
 
         var buf: [160]i16 = undefined;
-        _ = engine.readClean(&buf);
+        _ = eng.readClean(&buf);
 
         mic.stopped.store(true, .release);
-        engine.deinit();
+        eng.deinit();
         speaker.write_pos = 0;
         speaker.read_pos = 0;
     }
@@ -710,13 +746,10 @@ test "E2E-6: stress test 50 tracks create/close" {
     defer speaker.deinit();
     var mic = tu.LoopbackMic{ .speaker = &speaker };
 
-    var engine = try TestEngine.init(testing.allocator, &mic, &speaker, .{
-        .enable_aec = false,
-        .enable_ns = false,
-    });
-    defer engine.deinit();
+    var eng = try PlainEngine.init(testing.allocator, &mic, &speaker, {});
+    defer eng.deinit();
 
-    const format = engine.outputFormat();
+    const format = eng.outputFormat();
 
     // Write all 50 tracks' data as one big chunk to avoid mixer stall
     const samples_per_track: usize = 1600; // 100ms
@@ -731,21 +764,21 @@ test "E2E-6: stress test 50 tracks create/close" {
         tu.generateSine(all_data[offset..][0..samples_per_track], freq, 10000.0, 16000, offset);
     }
 
-    const h = try engine.createTrack(.{ .label = "stress" });
+    const h = try eng.createTrack(.{ .label = "stress" });
     try h.track.write(format, all_data);
     h.ctrl.closeWrite();
 
-    try engine.start();
+    try eng.start();
 
     var buf: [160]i16 = undefined;
     var total_read: usize = 0;
     while (total_read < total_samples / 2) {
-        const n = engine.readClean(&buf) orelse break;
+        const n = eng.readClean(&buf) orelse break;
         total_read += n;
     }
 
     mic.stopped.store(true, .release);
-    engine.stop();
+    eng.stop();
 
     std.debug.print("[E2E-6] stress: {d} samples processed\n", .{total_read});
     try testing.expect(total_read > 0);

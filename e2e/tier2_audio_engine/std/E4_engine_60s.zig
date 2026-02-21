@@ -1,42 +1,33 @@
 //! E4: 60s Engine long-running — repeated TTS cycles, no crash/leak
 //!
-//! Cycles: create track → write 3.4s TTS → close → wait 5s gap → repeat.
-//! 60s total. Verifies ERLE doesn't degrade and no memory leak.
+//! Uses DuplexStream + RefReader.
+//! Cycles: create track → write TTS → close → gap → repeat for 60s.
 
 const std = @import("std");
 const pa = @import("portaudio");
 const audio = @import("audio");
 
-const Rt = @import("std_impl").runtime;
-const Mixer = audio.mixer.Mixer(Rt);
+const std_impl = @import("std_impl");
+const Rt = std_impl.runtime;
+const da = std_impl.audio_engine;
 const Format = audio.resampler.Format;
-const Engine = audio.engine.AudioEngine(Rt, MicDriver, SpeakerDriver);
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
 const DURATION_S: u64 = 60;
 
-const MicDriver = struct {
-    stream: pa.InputStream(i16),
-    pub fn init() !MicDriver {
-        var s = try pa.InputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *MicDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn read(self: *MicDriver, buf: []i16) !usize { try self.stream.read(buf); return buf.len; }
-};
-
-const SpeakerDriver = struct {
-    stream: pa.OutputStream(i16),
-    pub fn init() !SpeakerDriver {
-        var s = try pa.OutputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *SpeakerDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn write(self: *SpeakerDriver, buf: []const i16) !usize { try self.stream.write(buf); return buf.len; }
-};
+const Engine = audio.engine.AudioEngine(
+    Rt,
+    da.DuplexAudio.Mic,
+    da.DuplexAudio.Speaker,
+    .{
+        .enable_aec = true,
+        .enable_ns = true,
+        .frame_size = FRAME_SIZE,
+        .sample_rate = SAMPLE_RATE,
+        .RefReader = da.DuplexAudio.RefReader,
+    },
+);
 
 fn loadWav(path: []const u8, allocator: std.mem.Allocator) ![]i16 {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -60,7 +51,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E4: 60s Engine Long-Running ===\n", .{});
+    std.debug.print("\n=== E4: 60s Engine Long-Running (DuplexStream + RefReader) ===\n", .{});
     std.debug.print("Repeated TTS cycles. Stay quiet.\n\n", .{});
 
     const tts_data = loadWav("/tmp/tts_ref.wav", allocator) catch {
@@ -71,25 +62,20 @@ pub fn main() !void {
 
     try pa.init();
     defer pa.deinit();
-    if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
-    if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var mic_drv = try MicDriver.init();
-    defer mic_drv.deinit();
-    var spk_drv = try SpeakerDriver.init();
-    defer spk_drv.deinit();
+    var duplex = da.DuplexAudio.init();
+    var mic_drv = duplex.mic();
+    var spk_drv = duplex.speaker();
+    var ref_rdr = duplex.refReader();
 
-    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, .{
-        .enable_aec = true,
-        .enable_ns = true,
-        .frame_size = FRAME_SIZE,
-        .sample_rate = SAMPLE_RATE,
-    });
+    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
     defer engine.deinit();
+
+    try duplex.start();
+    defer duplex.stop();
 
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };
 
-    // Reader thread drains readClean continuously
     var running = std.atomic.Value(bool).init(true);
     var clean_count = std.atomic.Value(usize).init(0);
 
@@ -117,7 +103,6 @@ pub fn main() !void {
         try h.track.write(format, tts_data);
         h.ctrl.closeWrite();
 
-        // Wait TTS + gap
         const tts_ms = tts_data.len * 1000 / SAMPLE_RATE;
         std.Thread.sleep(@as(u64, tts_ms + 4000) * std.time.ns_per_ms);
 
@@ -133,7 +118,5 @@ pub fn main() !void {
 
     const total_clean = clean_count.load(.acquire);
     std.debug.print("\n[E4] 60s completed. {d} rounds, {d} clean samples. No crash.\n", .{ round, total_clean });
-
-    // GPA leak check happens on defer gpa.deinit()
     std.debug.print("[E4] PASS\n\n", .{});
 }

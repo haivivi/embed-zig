@@ -46,6 +46,7 @@ pub const codec = struct {
 };
 pub const mic = @import("impl/mic.zig");
 pub const speaker = @import("impl/speaker.zig");
+pub const audio_engine = @import("impl/audio_engine.zig");
 pub const boards = struct {
     pub const desktop = @import("boards/desktop.zig");
 };

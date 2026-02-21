@@ -1,41 +1,32 @@
 //! E3: Multi-round conversation — 3 rounds of TTS + human reply
 //!
+//! Uses DuplexStream + RefReader for precise alignment.
 //! Each round: Engine plays TTS → wait → human speaks → readClean saves WAV.
-//! Verifies AEC maintains convergence across rounds (no re-convergence needed).
 
 const std = @import("std");
 const pa = @import("portaudio");
 const audio = @import("audio");
 
-const Rt = @import("std_impl").runtime;
-const Mixer = audio.mixer.Mixer(Rt);
+const std_impl = @import("std_impl");
+const Rt = std_impl.runtime;
+const da = std_impl.audio_engine;
 const Format = audio.resampler.Format;
-const Engine = audio.engine.AudioEngine(Rt, MicDriver, SpeakerDriver);
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
 
-const MicDriver = struct {
-    stream: pa.InputStream(i16),
-    pub fn init() !MicDriver {
-        var s = try pa.InputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *MicDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn read(self: *MicDriver, buf: []i16) !usize { try self.stream.read(buf); return buf.len; }
-};
-
-const SpeakerDriver = struct {
-    stream: pa.OutputStream(i16),
-    pub fn init() !SpeakerDriver {
-        var s = try pa.OutputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *SpeakerDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn write(self: *SpeakerDriver, buf: []const i16) !usize { try self.stream.write(buf); return buf.len; }
-};
+const Engine = audio.engine.AudioEngine(
+    Rt,
+    da.DuplexAudio.Mic,
+    da.DuplexAudio.Speaker,
+    .{
+        .enable_aec = true,
+        .enable_ns = true,
+        .frame_size = FRAME_SIZE,
+        .sample_rate = SAMPLE_RATE,
+        .RefReader = da.DuplexAudio.RefReader,
+    },
+);
 
 fn loadWav(path: []const u8, allocator: std.mem.Allocator) ![]i16 {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -81,7 +72,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E3: Multi-round Conversation (3 rounds) ===\n", .{});
+    std.debug.print("\n=== E3: Multi-round Conversation (DuplexStream + RefReader) ===\n", .{});
     std.debug.print("Each round: TTS plays → you speak → clean saved\n\n", .{});
 
     const tts_data = loadWav("/tmp/tts_ref.wav", allocator) catch {
@@ -93,25 +84,20 @@ pub fn main() !void {
 
     try pa.init();
     defer pa.deinit();
-    if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
-    if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var mic_drv = try MicDriver.init();
-    defer mic_drv.deinit();
-    var spk_drv = try SpeakerDriver.init();
-    defer spk_drv.deinit();
+    var duplex = da.DuplexAudio.init();
+    var mic_drv = duplex.mic();
+    var spk_drv = duplex.speaker();
+    var ref_rdr = duplex.refReader();
 
-    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, .{
-        .enable_aec = true,
-        .enable_ns = true,
-        .frame_size = FRAME_SIZE,
-        .sample_rate = SAMPLE_RATE,
-    });
+    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
     defer engine.deinit();
+
+    try duplex.start();
+    defer duplex.stop();
 
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };
 
-    // Start a reader thread that continuously drains readClean
     const ReaderState = struct {
         eng: *Engine,
         buf: []i16,
@@ -149,7 +135,6 @@ pub fn main() !void {
     for (0..3) |round| {
         std.debug.print("--- Round {d}/3 ---\n", .{round + 1});
 
-        // Play TTS
         const h = try engine.createTrack(.{ .label = "tts" });
         try h.track.write(format, tts_data);
         h.ctrl.closeWrite();
@@ -157,16 +142,12 @@ pub fn main() !void {
         std.debug.print("  TTS playing ({d}ms)...\n", .{tts_ms});
         std.Thread.sleep(@as(u64, tts_ms + 1000) * std.time.ns_per_ms);
 
-        // Record clean position before human speaks
         const before_speak = rs.pos.load(.acquire);
-
         std.debug.print("  Speak now! (3s)\n", .{});
         std.Thread.sleep(3 * std.time.ns_per_s);
-
         const after_speak = rs.pos.load(.acquire);
         const round_samples = after_speak - before_speak;
 
-        // Save round clean
         var path_buf: [64]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "/tmp/E3_round{d}_clean.wav", .{round + 1}) catch "/tmp/E3_clean.wav";
         if (round_samples > 0) {
@@ -181,6 +162,5 @@ pub fn main() !void {
     engine.stop();
     reader.join();
 
-    std.debug.print("[E3] 3 rounds completed. No crash, no leak.\n", .{});
-    std.debug.print("Play /tmp/E3_round1_clean.wav, E3_round2_clean.wav, E3_round3_clean.wav\n\n", .{});
+    std.debug.print("[E3] 3 rounds completed.\n\n", .{});
 }

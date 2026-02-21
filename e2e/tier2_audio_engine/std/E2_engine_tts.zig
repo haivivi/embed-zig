@@ -1,41 +1,32 @@
 //! E2: AudioEngine TTS — play TTS through engine, verify AEC removes it from clean
 //!
-//! Uses AudioEngine.createTrack to play TTS. readClean() should NOT contain TTS.
-//! Saves clean.wav for verification.
+//! Uses DuplexStream + RefReader for precise alignment.
+//! TTS → mixer → speaker. readClean() should NOT contain TTS.
 
 const std = @import("std");
 const pa = @import("portaudio");
 const audio = @import("audio");
 
-const Rt = @import("std_impl").runtime;
-const Mixer = audio.mixer.Mixer(Rt);
+const std_impl = @import("std_impl");
+const Rt = std_impl.runtime;
+const da = std_impl.audio_engine;
 const Format = audio.resampler.Format;
-const Engine = audio.engine.AudioEngine(Rt, MicDriver, SpeakerDriver);
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
 
-const MicDriver = struct {
-    stream: pa.InputStream(i16),
-    pub fn init() !MicDriver {
-        var s = try pa.InputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *MicDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn read(self: *MicDriver, buf: []i16) !usize { try self.stream.read(buf); return buf.len; }
-};
-
-const SpeakerDriver = struct {
-    stream: pa.OutputStream(i16),
-    pub fn init() !SpeakerDriver {
-        var s = try pa.OutputStream(i16).open(.{ .sample_rate = SAMPLE_RATE, .channels = 1, .frames_per_buffer = FRAME_SIZE });
-        try s.start();
-        return .{ .stream = s };
-    }
-    pub fn deinit(self: *SpeakerDriver) void { self.stream.stop() catch {}; self.stream.close(); }
-    pub fn write(self: *SpeakerDriver, buf: []const i16) !usize { try self.stream.write(buf); return buf.len; }
-};
+const Engine = audio.engine.AudioEngine(
+    Rt,
+    da.DuplexAudio.Mic,
+    da.DuplexAudio.Speaker,
+    .{
+        .enable_aec = true,
+        .enable_ns = true,
+        .frame_size = FRAME_SIZE,
+        .sample_rate = SAMPLE_RATE,
+        .RefReader = da.DuplexAudio.RefReader,
+    },
+);
 
 fn loadWav(path: []const u8, allocator: std.mem.Allocator) ![]i16 {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -81,7 +72,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E2: AudioEngine TTS — verify AEC removes TTS from clean ===\n\n", .{});
+    std.debug.print("\n=== E2: AudioEngine TTS (DuplexStream + RefReader) ===\n\n", .{});
 
     const tts_data = loadWav("/tmp/tts_ref.wav", allocator) catch {
         std.debug.print("ERROR: /tmp/tts_ref.wav not found.\n", .{});
@@ -95,20 +86,17 @@ pub fn main() !void {
     if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
     if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var mic_drv = try MicDriver.init();
-    defer mic_drv.deinit();
-    var spk_drv = try SpeakerDriver.init();
-    defer spk_drv.deinit();
+    var duplex = da.DuplexAudio.init();
+    var mic_drv = duplex.mic();
+    var spk_drv = duplex.speaker();
+    var ref_rdr = duplex.refReader();
 
-    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, .{
-        .enable_aec = true,
-        .enable_ns = true,
-        .frame_size = FRAME_SIZE,
-        .sample_rate = SAMPLE_RATE,
-    });
+    var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
     defer engine.deinit();
 
-    // Write TTS to a track → mixer → speaker
+    try duplex.start();
+    defer duplex.stop();
+
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };
     const h = try engine.createTrack(.{ .label = "tts" });
     try h.track.write(format, tts_data);
@@ -117,7 +105,6 @@ pub fn main() !void {
     try engine.start();
     std.debug.print("Playing TTS through Engine...\n\n", .{});
 
-    // Read clean audio in a separate thread (engine.readClean blocks)
     const total_samples = tts_data.len + SAMPLE_RATE * 2;
     const clean_buf = try allocator.alloc(i16, total_samples);
     defer allocator.free(clean_buf);
@@ -142,19 +129,14 @@ pub fn main() !void {
         }
     }.run, .{&rs});
 
-    // Wait for TTS duration + 3s tail, then stop
     const wait_ms = tts_data.len * 1000 / SAMPLE_RATE + 3000;
     std.Thread.sleep(@as(u64, wait_ms) * std.time.ns_per_ms);
     engine.stop();
     reader.join();
 
-    const clean_pos = rs.pos;
-
     std.debug.print("Collected {d} clean samples ({d:.1}s)\n", .{
-        clean_pos, @as(f64, @floatFromInt(clean_pos)) / 16000.0,
+        rs.pos, @as(f64, @floatFromInt(rs.pos)) / 16000.0,
     });
-
-    try writeWav("/tmp/E2_clean.wav", clean_buf[0..clean_pos]);
-    std.debug.print("Saved: /tmp/E2_clean.wav\n", .{});
-    std.debug.print("Play this file — TTS should be removed, only background noise.\n\n", .{});
+    try writeWav("/tmp/E2_clean.wav", clean_buf[0..rs.pos]);
+    std.debug.print("Saved: /tmp/E2_clean.wav\n\n", .{});
 }

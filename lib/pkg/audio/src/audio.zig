@@ -38,6 +38,7 @@ pub const Aec = aec.Aec;
 pub const NoiseSuppressor = ns.NoiseSuppressor;
 pub const Drc = drc.Drc;
 pub const AudioEngine = engine.AudioEngine;
+pub const EngineConfig = engine.EngineConfig;
 
 test {
     @import("std").testing.refAllDecls(@This());
