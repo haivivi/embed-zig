@@ -35,7 +35,6 @@ pub const HttpClient = client.HttpClient;
 pub const Client = client.Client;
 pub const ClientError = client.ClientError;
 pub const ClientResponse = client.Response;
-pub const ClientMethod = client.Method;
 
 pub const stream = @import("stream.zig");
 pub const SocketStream = stream.SocketStream;

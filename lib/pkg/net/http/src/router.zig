@@ -14,7 +14,7 @@ pub const MatchType = enum {
 };
 
 pub const Route = struct {
-    method: Method,
+    method: ?Method,
     path: []const u8,
     handler: Handler,
     match_type: MatchType = .exact,
@@ -38,7 +38,7 @@ pub fn delete(path: []const u8, handler: Handler) Route {
 }
 
 pub fn prefix(path: []const u8, handler: Handler) Route {
-    return .{ .method = .GET, .path = path, .handler = handler, .match_type = .prefix };
+    return .{ .method = null, .path = path, .handler = handler, .match_type = .prefix };
 }
 
 pub const MatchResult = enum {
@@ -63,10 +63,10 @@ pub fn match(routes: []const Route, method: Method, path: []const u8) RouteMatch
         };
 
         if (path_matches) {
-            path_matched = true;
-            if (route.method == method) {
+            if (route.method == null or route.method.? == method) {
                 return .{ .result = .found, .handler = route.handler };
             }
+            path_matched = true;
         }
     }
 
@@ -109,6 +109,17 @@ test "prefix match" {
 
     const m3 = match(&routes, .GET, "/api/other");
     try testing.expectEqual(MatchResult.not_found, m3.result);
+}
+
+test "prefix matches any method" {
+    const routes = [_]Route{
+        prefix("/api/", dummyHandler),
+    };
+
+    try testing.expectEqual(MatchResult.found, match(&routes, .GET, "/api/foo").result);
+    try testing.expectEqual(MatchResult.found, match(&routes, .POST, "/api/foo").result);
+    try testing.expectEqual(MatchResult.found, match(&routes, .PUT, "/api/foo").result);
+    try testing.expectEqual(MatchResult.found, match(&routes, .DELETE, "/api/foo").result);
 }
 
 test "404 no match" {

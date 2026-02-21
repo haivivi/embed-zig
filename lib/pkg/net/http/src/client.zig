@@ -22,30 +22,11 @@ const trait = @import("trait");
 const tls = @import("tls");
 const dns = @import("dns");
 
+const request_mod = @import("request.zig");
 const response_mod = @import("response.zig");
 const stream_mod = @import("stream.zig");
 
-pub const Method = enum {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    HEAD,
-    OPTIONS,
-    PATCH,
-
-    pub fn toString(self: Method) []const u8 {
-        return switch (self) {
-            .GET => "GET",
-            .POST => "POST",
-            .PUT => "PUT",
-            .DELETE => "DELETE",
-            .HEAD => "HEAD",
-            .OPTIONS => "OPTIONS",
-            .PATCH => "PATCH",
-        };
-    }
-};
+pub const Method = request_mod.Method;
 
 pub const Response = struct {
     status_code: u16,
