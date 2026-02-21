@@ -192,63 +192,33 @@ pub const Aec3 = struct {
         // 1. Linear adaptive filter with delay-aligned ref
         const af_result = self.af.process(mic, aligned_ref, self.error_td);
 
-        // Start with linear filter output (already excellent on its own)
+        // Start with linear filter output
         @memcpy(clean, self.error_td[0..bs]);
 
-        // 2. Compute coherence for NLP scalar gain
-        fft_mod.fromI16(self.error_spectrum, self.error_td[0..bs]);
-        for (bs..fft_n) |i| self.error_spectrum[i] = Complex{};
-        fft_mod.fft(self.error_spectrum);
+        // NLP: simple cancel_ratio gate — only suppress when linear filter is struggling.
+        // cancel_ratio = error_energy / ref_energy. Low = good cancellation.
+        // When ratio > threshold: apply scalar gain = threshold / ratio (push down to threshold level).
+        // When ratio <= threshold: no NLP needed, linear filter did enough.
+        const nlp_threshold: f32 = 0.3;
+        _ = alpha;
+        _ = fft_n;
 
-        fft_mod.fromI16(self.ref_spectrum, aligned_ref);
-        for (bs..fft_n) |i| self.ref_spectrum[i] = Complex{};
-        fft_mod.fft(self.ref_spectrum);
+        if (af_result.ref_energy > 100) {
+            const cancel_ratio = af_result.error_energy / af_result.ref_energy;
 
-        // R2: Compute broadband coherence between error and ref
-        var total_cross_mag2: f64 = 0;
-        var total_ref_psd: f64 = 0;
-        var total_err_psd: f64 = 0;
+            // Only suppress when: ratio is high (poor cancellation) BUT
+            // not during double-talk (error > ref suggests near-end signal present)
+            if (cancel_ratio > nlp_threshold and cancel_ratio < 1.5) {
+                // Suppress proportionally: bring error down toward threshold level
+                var nlp_gain = nlp_threshold / cancel_ratio;
+                if (nlp_gain < self.config.nlp_floor) nlp_gain = self.config.nlp_floor;
+                if (nlp_gain > 1.0) nlp_gain = 1.0;
 
-        for (0..self.num_bins) |k| {
-            const err = self.error_spectrum[k];
-            const r = self.ref_spectrum[k];
-
-            const cross = Complex.mul(err, Complex.conj(r));
-            self.cross_psd_re[k] = alpha * self.cross_psd_re[k] + (1.0 - alpha) * cross.re;
-            self.cross_psd_im[k] = alpha * self.cross_psd_im[k] + (1.0 - alpha) * cross.im;
-            self.ref_psd[k] = alpha * self.ref_psd[k] + (1.0 - alpha) * Complex.mag2(r);
-            self.err_psd[k] = alpha * self.err_psd[k] + (1.0 - alpha) * Complex.mag2(err);
-
-            total_cross_mag2 += @as(f64, self.cross_psd_re[k]) * @as(f64, self.cross_psd_re[k]) +
-                @as(f64, self.cross_psd_im[k]) * @as(f64, self.cross_psd_im[k]);
-            total_ref_psd += @as(f64, self.ref_psd[k]);
-            total_err_psd += @as(f64, self.err_psd[k]);
-        }
-
-        // 3. NLP: apply scalar suppression only when linear filter has poor cancellation
-        const denom = total_ref_psd * total_err_psd;
-        var coherence: f32 = 0;
-        if (denom > 1e-10) {
-            coherence = @floatCast(total_cross_mag2 / denom);
-            if (coherence > 1.0) coherence = 1.0;
-        }
-
-        // Linear filter cancellation ratio: low = good cancellation
-        const cancel_ratio = if (af_result.ref_energy > 100)
-            af_result.error_energy / af_result.ref_energy
-        else
-            0;
-
-        // Only apply NLP when linear filter hasn't cancelled well enough
-        // AND coherence is high (confirming residual echo presence)
-        if (cancel_ratio > 0.1 and coherence > 0.4) {
-            var nlp_gain: f32 = 1.0 - coherence * (1.0 - self.config.nlp_floor);
-            if (nlp_gain < self.config.nlp_floor) nlp_gain = self.config.nlp_floor;
-
-            for (clean) |*s| {
-                const v: f32 = @floatFromInt(s.*);
-                const suppressed = v * nlp_gain;
-                s.* = if (suppressed > 32767) 32767 else if (suppressed < -32768) -32768 else @intFromFloat(suppressed);
+                for (clean) |*s| {
+                    const v: f32 = @floatFromInt(s.*);
+                    const suppressed = v * nlp_gain;
+                    s.* = if (suppressed > 32767) 32767 else if (suppressed < -32768) -32768 else @intFromFloat(suppressed);
+                }
             }
         }
 
