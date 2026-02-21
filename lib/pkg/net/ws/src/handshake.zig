@@ -155,14 +155,7 @@ pub fn performHandshake(
 // Helpers
 // ==========================================================================
 
-fn sendAll(socket: anytype, data: []const u8) !void {
-    var sent: usize = 0;
-    while (sent < data.len) {
-        const n = try socket.send(data[sent..]);
-        if (n == 0) return error.Closed;
-        sent += n;
-    }
-}
+const sendAll = client_mod.sendAll;
 
 fn findHeaderEnd(data: []const u8) ?usize {
     if (data.len < 4) return null;

@@ -236,11 +236,17 @@ pub fn Client(comptime Socket: type) type {
                 else => return err,
             };
 
-            const total_frame_size = header.header_size + @as(usize, @intCast(header.payload_len));
+            // Guard against u64 payload_len overflowing usize on 32-bit targets.
+            // Compare as u64 before casting — if it doesn't fit in the buffer, it
+            // certainly doesn't fit in usize either.
+            if (header.payload_len > buffered.len) return null;
+            const payload_len: usize = @intCast(header.payload_len);
+
+            const total_frame_size = header.header_size + payload_len;
             if (buffered.len < total_frame_size) return null;
 
             const payload_start = self.read_start + header.header_size;
-            const payload_end = payload_start + @as(usize, @intCast(header.payload_len));
+            const payload_end = payload_start + payload_len;
 
             if (header.masked) {
                 frame.applyMask(self.read_buf[payload_start..payload_end], header.mask_key);
@@ -301,7 +307,7 @@ pub fn copyForward(dst: []u8, src: []const u8) void {
     }
 }
 
-fn sendAll(socket: anytype, data: []const u8) !void {
+pub fn sendAll(socket: anytype, data: []const u8) !void {
     var sent: usize = 0;
     while (sent < data.len) {
         const n = socket.send(data[sent..]) catch return error.SendFailed;
