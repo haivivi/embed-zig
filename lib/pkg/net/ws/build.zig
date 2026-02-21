@@ -41,4 +41,17 @@ pub fn build(b: *std.Build) void {
     e2e_tests.root_module.addImport("ws", ws_mod);
     const run_e2e = b.addRunArtifact(e2e_tests);
     e2e_step.dependOn(&run_e2e.step);
+
+    // Benchmarks
+    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/bench_test.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    bench_tests.root_module.addImport("ws", ws_mod);
+    const run_bench = b.addRunArtifact(bench_tests);
+    bench_step.dependOn(&run_bench.step);
 }
