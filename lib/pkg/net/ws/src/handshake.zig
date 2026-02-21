@@ -180,8 +180,10 @@ fn findHeaderValue(header: []const u8, name: []const u8) ?[]const u8 {
         const line_start = i;
         while (i < header.len and header[i] != '\r') : (i += 1) {}
         const line = header[line_start..i];
-        // Skip \r\n
-        if (i + 1 < header.len and header[i] == '\r') i += 2;
+        // Skip \r\n (or bare \r at end of buffer)
+        if (i < header.len) {
+            i += if (i + 1 < header.len and header[i + 1] == '\n') @as(usize, 2) else 1;
+        }
 
         if (line.len > name.len and eqlIgnoreCase(line[0..name.len], name) and line[name.len] == ':') {
             var val_start = name.len + 1;
