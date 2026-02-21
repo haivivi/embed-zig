@@ -39,7 +39,7 @@
 
 const std = @import("std");
 const trait = @import("trait");
-const aec_mod = @import("aec.zig");
+const aec3_mod = @import("aec3/aec3.zig");
 const ns_mod = @import("ns.zig");
 const mixer_mod = @import("mixer.zig");
 const resampler_mod = @import("resampler.zig");
@@ -73,7 +73,7 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
         mic: *Mic,
         speaker: *Speaker,
 
-        aec: ?aec_mod.Aec,
+        aec: ?aec3_mod.Aec3,
         ns: ?ns_mod.NoiseSuppressor,
         mixer: MixerType,
 
@@ -136,9 +136,8 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
             if (self.running.load(.acquire)) return;
 
             if (self.config.enable_aec) {
-                self.aec = try aec_mod.Aec.init(self.allocator, .{
+                self.aec = try aec3_mod.Aec3.init(self.allocator, .{
                     .frame_size = self.config.frame_size,
-                    .filter_length = self.config.aec_filter_length,
                     .sample_rate = self.config.sample_rate,
                 });
             }
@@ -149,9 +148,6 @@ pub fn AudioEngine(comptime Rt: type, comptime Mic: type, comptime Speaker: type
                     .sample_rate = self.config.sample_rate,
                     .noise_suppress_db = self.config.noise_suppress_db,
                 });
-                if (self.aec) |*a| {
-                    self.ns.?.setEchoState(&a.echo);
-                }
             }
 
             self.running.store(true, .release);
