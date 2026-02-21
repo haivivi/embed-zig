@@ -82,4 +82,11 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
+zig_test(
+    name = "delay_estimator_test",
+    main = "src/aec3/delay_estimator.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))
