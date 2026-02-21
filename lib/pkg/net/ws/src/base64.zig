@@ -3,8 +3,6 @@
 //! Minimal freestanding implementation for WebSocket handshake.
 //! Only standard alphabet (no URL-safe variant).
 
-const std = @import("std");
-
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Calculate encoded length (with padding).
@@ -99,6 +97,8 @@ fn decodeChar(c: u8) DecodeError!u8 {
 // ==========================================================================
 // Tests
 // ==========================================================================
+
+const std = @import("std");
 
 test "encode empty" {
     var out: [4]u8 = undefined;

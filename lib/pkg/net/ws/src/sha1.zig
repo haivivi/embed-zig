@@ -3,8 +3,6 @@
 //! Minimal freestanding implementation for WebSocket handshake
 //! (Sec-WebSocket-Accept computation). Not for general crypto use.
 
-const std = @import("std");
-
 pub const digest_length = 20;
 pub const block_length = 64;
 
@@ -160,6 +158,8 @@ fn rotl(x: u32, comptime n: u5) u32 {
 // ==========================================================================
 // Tests
 // ==========================================================================
+
+const std = @import("std");
 
 test "SHA1 empty string" {
     const digest = hash("");

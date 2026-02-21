@@ -3,8 +3,6 @@
 //! Handles encoding and decoding of WebSocket frames including masking.
 //! Zero-allocation: frame headers are parsed from caller-provided buffers.
 
-const std = @import("std");
-
 pub const Opcode = enum(u4) {
     continuation = 0x0,
     text = 0x1,
@@ -195,6 +193,8 @@ fn writeU64Big(b: *[8]u8, v: u64) void {
 // ==========================================================================
 // Tests
 // ==========================================================================
+
+const std = @import("std");
 
 test "encode text frame" {
     var buf: [MAX_HEADER_SIZE + 5]u8 = undefined;

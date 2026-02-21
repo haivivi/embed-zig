@@ -3,9 +3,9 @@
 //! Performs the HTTP Upgrade handshake over an existing socket connection.
 //! Generates Sec-WebSocket-Key and validates Sec-WebSocket-Accept.
 
-const std = @import("std");
 const sha1 = @import("sha1.zig");
 const base64 = @import("base64.zig");
+const client_mod = @import("client.zig");
 
 pub const Error = error{
     HandshakeFailed,
@@ -142,7 +142,7 @@ pub fn performHandshake(
             // Shift any leftover data (post-handshake frame bytes) to front of buffer
             const leftover = resp_len - consumed;
             if (leftover > 0) {
-                copyForward(buf, buf[consumed..resp_len]);
+                client_mod.copyForward(buf, buf[consumed..resp_len]);
             }
             return leftover;
         }
@@ -218,12 +218,6 @@ fn startsWith(haystack: []const u8, prefix: []const u8) bool {
     return eql(haystack[0..prefix.len], prefix);
 }
 
-fn copyForward(dst: []u8, src: []const u8) void {
-    for (src, 0..) |b, i| {
-        dst[i] = b;
-    }
-}
-
 /// Simple buffer writer (no allocations).
 const BufWriter = struct {
     buf: []u8,
@@ -241,6 +235,8 @@ const BufWriter = struct {
 // ==========================================================================
 // Tests
 // ==========================================================================
+
+const std = @import("std");
 
 test "buildRequest basic" {
     var buf: [512]u8 = undefined;
