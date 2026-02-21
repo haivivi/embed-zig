@@ -89,7 +89,9 @@ pub fn decodeHeader(buf: []const u8) Error!FrameHeader {
 /// Returns TruncatedPayload if buffer contains the header but not enough payload.
 pub fn decode(buf: []const u8) Error!Frame {
     const header = try decodeHeader(buf);
-    const total = header.header_size + @as(usize, @intCast(header.payload_len));
+    if (header.payload_len > buf.len) return error.TruncatedPayload;
+    const payload_len: usize = @intCast(header.payload_len);
+    const total = header.header_size + payload_len;
     if (buf.len < total) return error.TruncatedPayload;
 
     var payload = buf[header.header_size..total];

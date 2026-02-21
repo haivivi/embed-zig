@@ -75,6 +75,8 @@ pub fn Client(comptime Socket: type) type {
             socket: *Socket,
             opts: InitOptions,
         ) !Self {
+            if (opts.mask_chunk_size == 0) return error.InvalidOptions;
+
             const read_buf = try allocator.alloc(u8, opts.buffer_size);
             errdefer allocator.free(read_buf);
 
@@ -120,6 +122,8 @@ pub fn Client(comptime Socket: type) type {
                 mask_chunk_size: usize = 512,
             },
         ) !Self {
+            if (opts.mask_chunk_size == 0) return error.InvalidOptions;
+
             const read_buf = try allocator.alloc(u8, opts.buffer_size);
             errdefer allocator.free(read_buf);
 
