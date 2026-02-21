@@ -89,4 +89,18 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
+zig_test(
+    name = "suppression_gain_test",
+    main = "src/aec3/suppression_gain.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "comfort_noise_test",
+    main = "src/aec3/comfort_noise.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))
