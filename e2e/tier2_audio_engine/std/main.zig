@@ -22,12 +22,19 @@ const FRAME_SIZE: u32 = 160;
 const RUN_SECONDS: u32 = 15;
 const SWEEP_AMP: f64 = 3000.0;
 
+const MAX_RECORD_SAMPLES = SAMPLE_RATE * RUN_SECONDS;
+
 const State = struct {
     echo: speexdsp.EchoState,
     pp: speexdsp.Preprocess,
     sweep_idx: usize = 0,
     clean_accum: f64 = 0,
     frame_count: u32 = 0,
+    // Recording buffers
+    output_record: []i16,
+    mic_record: []i16,
+    clean_record: []i16,
+    record_pos: usize = 0,
 };
 
 fn audioCallback(
@@ -66,6 +73,14 @@ fn audioCallback(
         s.* = @intCast(std.math.clamp(mixed, -32768, 32767));
     }
 
+    // 4b. Record to buffers
+    if (state.record_pos + output.len <= state.output_record.len) {
+        @memcpy(state.output_record[state.record_pos..][0..output.len], output);
+        @memcpy(state.mic_record[state.record_pos..][0..input.len], input);
+        @memcpy(state.clean_record[state.record_pos..][0..output.len], clean[0..output.len]);
+        state.record_pos += output.len;
+    }
+
     // 5. Accumulate ERLE
     for (clean[0..output.len]) |s| {
         const v: f64 = @floatFromInt(s);
@@ -90,6 +105,36 @@ fn audioCallback(
     }
 
     return .Continue;
+}
+
+fn writeWav(path: []const u8, samples: []const i16, sample_rate: u32) !void {
+    const file = try std.fs.cwd().createFile(path, .{});
+    defer file.close();
+
+    const num_channels: u16 = 1;
+    const bits_per_sample: u16 = 16;
+    const byte_rate: u32 = sample_rate * @as(u32, num_channels) * @as(u32, bits_per_sample) / 8;
+    const block_align: u16 = num_channels * bits_per_sample / 8;
+    const data_size: u32 = @intCast(samples.len * 2);
+
+    // Build header in a buffer
+    var hdr: [44]u8 = undefined;
+    @memcpy(hdr[0..4], "RIFF");
+    std.mem.writeInt(u32, hdr[4..8], 36 + data_size, .little);
+    @memcpy(hdr[8..12], "WAVE");
+    @memcpy(hdr[12..16], "fmt ");
+    std.mem.writeInt(u32, hdr[16..20], 16, .little);
+    std.mem.writeInt(u16, hdr[20..22], 1, .little); // PCM
+    std.mem.writeInt(u16, hdr[22..24], num_channels, .little);
+    std.mem.writeInt(u32, hdr[24..28], sample_rate, .little);
+    std.mem.writeInt(u32, hdr[28..32], byte_rate, .little);
+    std.mem.writeInt(u16, hdr[32..34], block_align, .little);
+    std.mem.writeInt(u16, hdr[34..36], bits_per_sample, .little);
+    @memcpy(hdr[36..40], "data");
+    std.mem.writeInt(u32, hdr[40..44], data_size, .little);
+
+    try file.writeAll(&hdr);
+    try file.writeAll(std.mem.sliceAsBytes(samples));
 }
 
 pub fn main() !void {
@@ -132,9 +177,19 @@ pub fn main() !void {
     pp.enableDenoise(true);
     pp.setEchoState(&echo);
 
+    const output_rec = try allocator.alloc(i16, MAX_RECORD_SAMPLES);
+    defer allocator.free(output_rec);
+    const mic_rec = try allocator.alloc(i16, MAX_RECORD_SAMPLES);
+    defer allocator.free(mic_rec);
+    const clean_rec = try allocator.alloc(i16, MAX_RECORD_SAMPLES);
+    defer allocator.free(clean_rec);
+
     var state = State{
         .echo = echo,
         .pp = pp,
+        .output_record = output_rec,
+        .mic_record = mic_rec,
+        .clean_record = clean_rec,
     };
 
     // Open full-duplex stream
@@ -157,5 +212,27 @@ pub fn main() !void {
     }
 
     stream.stop() catch {};
+
+    const recorded = state.record_pos;
+    std.debug.print("\n[live] Recorded {d} samples ({d}ms)\n", .{
+        recorded, recorded * 1000 / SAMPLE_RATE,
+    });
+
+    // Write WAV files
+    const out_path = "/tmp/aec_speaker_output.wav";
+    const mic_path = "/tmp/aec_mic_input.wav";
+    const clean_path = "/tmp/aec_clean.wav";
+
+    writeWav(out_path, state.output_record[0..recorded], SAMPLE_RATE) catch |e| {
+        std.debug.print("Failed to write {s}: {}\n", .{ out_path, e });
+    };
+    writeWav(mic_path, state.mic_record[0..recorded], SAMPLE_RATE) catch |e| {
+        std.debug.print("Failed to write {s}: {}\n", .{ mic_path, e });
+    };
+    writeWav(clean_path, state.clean_record[0..recorded], SAMPLE_RATE) catch |e| {
+        std.debug.print("Failed to write {s}: {}\n", .{ clean_path, e });
+    };
+
+    std.debug.print("\nSaved:\n  {s}\n  {s}\n  {s}\n", .{ out_path, mic_path, clean_path });
     std.debug.print("\n[live] Done.\n\n", .{});
 }
