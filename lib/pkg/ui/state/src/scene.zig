@@ -9,6 +9,15 @@
 //! redraws what actually changed. Moving sprites are handled automatically:
 //! the old position is cleared before drawing at the new position.
 //!
+//! ## Known Limitation: Overlapping Components
+//!
+//! The Compositor has no Z-ordering. When a component is redrawn, its old
+//! position is cleared with `bg` color, which may overwrite pixels from
+//! other components that overlap that area. To avoid artifacts:
+//!   - Order components bottom-to-top (background first, foreground last)
+//!   - Use the component's `bg` color matching the layer beneath it
+//!   - Avoid large background fills inside draw(); let `bg` handle clearing
+//!
 //! ## Example
 //!
 //! ```zig

@@ -3,6 +3,14 @@
 //! Renders glyphs on demand from TTF font data loaded via VFS.
 //! Supports any Unicode codepoint at any size.
 //!
+//! ## Platform Compatibility
+//!
+//! stb_truetype requires `<math.h>` and `<stdlib.h>`. This works on:
+//!   - **std** (macOS/Linux): native libc
+//!   - **ESP32**: ESP-IDF provides newlib with full math support
+//!   - **WASM**: wasi-libc or Zig's freestanding math builtins
+//!   - **BK7258**: untested — may need comptime exclusion if libc is incomplete
+//!
 //! Usage:
 //! ```zig
 //! var font = TtfFont.init(ttf_data, 24.0) orelse return;

@@ -304,3 +304,161 @@ test "AnimPlayer: RLE decode multiple runs" {
     try testing.expectEqual(@as(u16, 0xFFFF), frame.rects[0].pixels[2]);
     try testing.expectEqual(@as(u16, 0xFFFF), frame.rects[0].pixels[3]);
 }
+
+// Build a multi-frame .anim blob for T1/T2/T3 tests.
+// 3 frames, 2x1 pixels each, 1 rect per frame, 2-color palette.
+// Frame 0: [black, white], Frame 1: [white, black], Frame 2: [white, white]
+fn buildMultiFrameAnim() [14 + 4 + 3 * (2 + 8 + 2 * 2)]u8 {
+    const HEADER = 14;
+    const PAL = 4; // 2 colors * 2 bytes
+    const FRAME = 2 + 8 + 4; // rect_count(2) + rect_header(8) + 2 RLE runs(4)
+    var d: [HEADER + PAL + 3 * FRAME]u8 = undefined;
+    // Header
+    d[0] = 2; d[1] = 0; d[2] = 1; d[3] = 0; // display 2x1
+    d[4] = 2; d[5] = 0; d[6] = 1; d[7] = 0; // frame 2x1
+    d[8] = 3; d[9] = 0; // 3 frames
+    d[10] = 10; d[11] = 1; // 10fps, scale 1
+    d[12] = 2; d[13] = 0; // 2 colors
+    // Palette
+    d[14] = 0; d[15] = 0; // black
+    d[16] = 0xFF; d[17] = 0xFF; // white
+
+    const base = HEADER + PAL;
+    // Each frame: 1 rect (x=0,y=0,w=2,h=1), 2 RLE runs (1 pixel each)
+    inline for (0..3) |f| {
+        const off = base + f * FRAME;
+        d[off] = 1; d[off + 1] = 0; // rect_count = 1
+        d[off + 2] = 0; d[off + 3] = 0; d[off + 4] = 0; d[off + 5] = 0; // x=0,y=0
+        d[off + 6] = 2; d[off + 7] = 0; d[off + 8] = 1; d[off + 9] = 0; // w=2,h=1
+        // Frame pixel data (2 pixels as 2 RLE runs of length 1)
+        const colors: [3][2]u8 = .{
+            .{ 0, 1 }, // frame 0: black, white
+            .{ 1, 0 }, // frame 1: white, black
+            .{ 1, 1 }, // frame 2: white, white
+        };
+        d[off + 10] = 0; d[off + 11] = colors[f][0]; // run 1
+        d[off + 12] = 0; d[off + 13] = colors[f][1]; // run 2
+    }
+    return d;
+}
+
+test "T1: multi-frame playback — nextFrame traverses all frames" {
+    var data = buildMultiFrameAnim();
+    var player = AnimPlayer.init(&data).?;
+
+    try testing.expectEqual(@as(u16, 3), player.header.frame_count);
+    try testing.expect(!player.isDone());
+
+    // Frame 0: [black, white]
+    const f0 = player.nextFrame().?;
+    try testing.expectEqual(@as(u16, 0), f0.frame_index);
+    try testing.expectEqual(@as(u16, 0x0000), f0.rects[0].pixels[0]);
+    try testing.expectEqual(@as(u16, 0xFFFF), f0.rects[0].pixels[1]);
+
+    // Frame 1: [white, black]
+    const f1 = player.nextFrame().?;
+    try testing.expectEqual(@as(u16, 1), f1.frame_index);
+    try testing.expectEqual(@as(u16, 0xFFFF), f1.rects[0].pixels[0]);
+    try testing.expectEqual(@as(u16, 0x0000), f1.rects[0].pixels[1]);
+
+    // Frame 2: [white, white]
+    const f2 = player.nextFrame().?;
+    try testing.expectEqual(@as(u16, 2), f2.frame_index);
+    try testing.expectEqual(@as(u16, 0xFFFF), f2.rects[0].pixels[0]);
+    try testing.expectEqual(@as(u16, 0xFFFF), f2.rects[0].pixels[1]);
+
+    // No more frames
+    try testing.expect(player.nextFrame() == null);
+    try testing.expect(player.isDone());
+}
+
+test "T2: loop playback — reset replays from frame 0" {
+    var data = buildMultiFrameAnim();
+    var player = AnimPlayer.init(&data).?;
+
+    // Play through all 3 frames
+    _ = player.nextFrame().?;
+    _ = player.nextFrame().?;
+    _ = player.nextFrame().?;
+    try testing.expect(player.isDone());
+
+    // Reset and replay
+    player.reset();
+    try testing.expect(!player.isDone());
+    try testing.expectEqual(@as(u16, 0), player.frame_index);
+
+    // Frame 0 again: [black, white]
+    const f0 = player.nextFrame().?;
+    try testing.expectEqual(@as(u16, 0), f0.frame_index);
+    try testing.expectEqual(@as(u16, 0x0000), f0.rects[0].pixels[0]);
+    try testing.expectEqual(@as(u16, 0xFFFF), f0.rects[0].pixels[1]);
+
+    // Can continue to frame 1
+    const f1 = player.nextFrame().?;
+    try testing.expectEqual(@as(u16, 1), f1.frame_index);
+}
+
+test "T3: blitAnimFrame writes correct pixels to framebuffer" {
+    var data = buildMultiFrameAnim();
+    var player = AnimPlayer.init(&data).?;
+
+    const FB = framebuffer_mod.Framebuffer(4, 4, .rgb565);
+    var fb = FB.init(0x1234); // fill with non-zero sentinel
+
+    // Frame 0: rect at (0,0) w=2 h=1, pixels [black, white], scale=1
+    const frame = player.nextFrame().?;
+    blitAnimFrame(4, 4, .rgb565, &fb, frame, 1);
+
+    try testing.expectEqual(@as(u16, 0x0000), fb.getPixel(0, 0)); // black
+    try testing.expectEqual(@as(u16, 0xFFFF), fb.getPixel(1, 0)); // white
+    try testing.expectEqual(@as(u16, 0x1234), fb.getPixel(2, 0)); // untouched
+    try testing.expectEqual(@as(u16, 0x1234), fb.getPixel(0, 1)); // untouched
+
+    // Test scale=2: each pixel becomes 2x2
+    var fb2 = FB.init(0x1234);
+    blitAnimFrame(4, 4, .rgb565, &fb2, frame, 2);
+
+    // Pixel (0,0) scaled to (0,0)-(1,1)
+    try testing.expectEqual(@as(u16, 0x0000), fb2.getPixel(0, 0));
+    try testing.expectEqual(@as(u16, 0x0000), fb2.getPixel(1, 0));
+    try testing.expectEqual(@as(u16, 0x0000), fb2.getPixel(0, 1));
+    try testing.expectEqual(@as(u16, 0x0000), fb2.getPixel(1, 1));
+    // Pixel (1,0) scaled to (2,0)-(3,1)
+    try testing.expectEqual(@as(u16, 0xFFFF), fb2.getPixel(2, 0));
+    try testing.expectEqual(@as(u16, 0xFFFF), fb2.getPixel(3, 0));
+    try testing.expectEqual(@as(u16, 0xFFFF), fb2.getPixel(2, 1));
+    try testing.expectEqual(@as(u16, 0xFFFF), fb2.getPixel(3, 1));
+}
+
+test "T4: malformed data does not crash" {
+    // Empty data
+    try testing.expect(AnimPlayer.init(&[_]u8{}) == null);
+
+    // Truncated header (< 14 bytes)
+    try testing.expect(AnimPlayer.init(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) == null);
+
+    // Valid header but palette too large for data
+    var short: [14]u8 = undefined;
+    @memset(&short, 0);
+    short[12] = 100; // palette_size = 100, but no palette data follows
+    try testing.expect(AnimPlayer.init(&short) == null);
+
+    // Valid header + palette, 0 frames
+    var zero_frames: [14 + 4]u8 = undefined;
+    @memset(&zero_frames, 0);
+    zero_frames[12] = 2; // palette_size = 2
+    zero_frames[14] = 0xAA; zero_frames[15] = 0xBB; // palette color 0
+    zero_frames[16] = 0xCC; zero_frames[17] = 0xDD; // palette color 1
+    var player = AnimPlayer.init(&zero_frames).?;
+    try testing.expect(player.isDone());
+    try testing.expect(player.nextFrame() == null);
+
+    // Valid header but frame data truncated mid-rect
+    var trunc: [14 + 4 + 2]u8 = undefined;
+    @memset(&trunc, 0);
+    trunc[8] = 1; // 1 frame
+    trunc[12] = 2; // palette_size = 2
+    trunc[18] = 1; trunc[19] = 0; // rect_count = 1, but no rect data follows
+    var player2 = AnimPlayer.init(&trunc).?;
+    try testing.expect(player2.nextFrame() == null); // graceful failure, not crash
+}
