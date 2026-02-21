@@ -1,9 +1,10 @@
-//! WebSocket Echo Test — ESP32
+//! WebSocket Echo Test
 //!
-//! Connects to WiFi, resolves DNS, establishes TLS + WebSocket connection
-//! to echo.websocket.org, sends text/binary messages and verifies echoes.
+//! Platform-independent e2e test. Connects to WiFi, resolves DNS,
+//! establishes TLS + WebSocket connection to echo.websocket.org,
+//! sends text/binary messages and verifies echoes.
 //!
-//! Usage:
+//! Usage (ESP32):
 //!   bazel run //e2e/tier1_websocket/esp:flash \
 //!     --//bazel:port=/dev/cu.usbmodem11101 \
 //!     --define WIFI_SSID=MyWiFi --define WIFI_PASSWORD=secret
@@ -20,10 +21,7 @@ const log = Board.log;
 const Socket = trait.socket.from(Board.socket);
 const Crypto = Board.crypto;
 const Rt = platform.Rt;
-
-const esp = @import("esp");
-const idf = esp.idf;
-const allocator = idf.heap.psram;
+const allocator = platform.allocator;
 
 const TlsClient = tls.Client(Socket, Crypto, Rt);
 

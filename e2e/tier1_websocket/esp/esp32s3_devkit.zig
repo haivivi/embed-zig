@@ -34,6 +34,8 @@ pub fn isRunning() bool {
     return board.isRunning();
 }
 
+pub const allocator = idf.heap.psram;
+
 pub const TlsRt = struct {
     pub const Mutex = idf.runtime.Mutex;
 };

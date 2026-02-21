@@ -5,6 +5,7 @@ const build_options = @import("build_options");
 
 pub const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    else => @compileError("unsupported board"),
 };
 
 const spec = struct {
@@ -23,3 +24,4 @@ const spec = struct {
 
 pub const Board = hal.Board(spec);
 pub const Rt = hw.TlsRt;
+pub const allocator = hw.allocator;
