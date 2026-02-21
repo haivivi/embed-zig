@@ -345,7 +345,7 @@ const MockSocket = struct {
 
 fn deterministicRng(buf: []u8) void {
     for (buf, 0..) |*b, i| {
-        b.* ^= @intCast(i % 256);
+        b.* = @intCast(i % 256);
     }
 }
 

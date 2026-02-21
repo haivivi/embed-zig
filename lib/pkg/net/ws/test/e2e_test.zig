@@ -217,6 +217,7 @@ fn findCRLFCRLF(data: []const u8) ?usize {
 
 fn extractKey(request: []const u8) ?[]const u8 {
     const needle = "Sec-WebSocket-Key: ";
+    if (request.len < needle.len) return null;
     for (0..request.len - needle.len) |i| {
         if (std.mem.eql(u8, request[i..][0..needle.len], needle)) {
             const start = i + needle.len;
