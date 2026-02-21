@@ -25,8 +25,12 @@ pub const Response = struct {
 
     /// Append a custom response header. Must be called before send/json/sendStatus.
     /// Headers are buffered in write_buf and flushed when send is called.
+    /// Atomic: if the full header doesn't fit, nothing is written (avoids malformed HTTP).
     pub fn setHeader(self: *Response, name: []const u8, value: []const u8) *Response {
         if (self.headers_sent) return self;
+        const needed = name.len + 2 + value.len + 2; // "name: value\r\n"
+        const available = self.write_buf.len - self.pos;
+        if (needed > available) return self;
         self.appendSlice(name);
         self.appendSlice(": ");
         self.appendSlice(value);
