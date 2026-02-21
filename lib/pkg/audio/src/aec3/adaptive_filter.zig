@@ -129,13 +129,15 @@ pub const AdaptiveFilter = struct {
         }
         fft_mod.fft(self.padded);
 
-        // 6. Compute error in time domain
+        // 6. Compute error and mic energy
         var error_energy: f32 = 0;
+        var mic_energy: f32 = 0;
         for (0..bs) |i| {
             const mic_val: f32 = @floatFromInt(mic[i]);
             const echo_val = echo_freq[i].re;
             const err = mic_val - echo_val;
             error_energy += err * err;
+            mic_energy += mic_val * mic_val;
 
             if (err > 32767) {
                 error_out[i] = 32767;
@@ -146,6 +148,12 @@ pub const AdaptiveFilter = struct {
             }
         }
 
+        // Divergence protection: if error >> mic, filter is wrong → pass mic through
+        if (error_energy > mic_energy * 4.0 and mic_energy > 100) {
+            @memcpy(error_out, mic);
+            error_energy = mic_energy;
+        }
+
         // 7. Compute ref energy for normalization
         var ref_energy: f32 = 0;
         for (0..bs) |i| {
@@ -153,7 +161,12 @@ pub const AdaptiveFilter = struct {
             ref_energy += v * v;
         }
 
-        // 8. Update filter (NLMS in frequency domain)
+        // 8. Update filter (skip if diverging)
+        if (error_energy > mic_energy * 4.0 and mic_energy > 100) {
+            self.render_idx = (self.render_idx + 1) % self.config.num_partitions;
+            return .{ .error_energy = error_energy / @as(f32, @floatFromInt(bs)), .ref_energy = ref_energy / @as(f32, @floatFromInt(bs)) };
+        }
+
         // FFT the error (zero-padded)
         for (self.padded, 0..) |*c, i| {
             if (i < bs) {
@@ -181,7 +194,8 @@ pub const AdaptiveFilter = struct {
             }
         }
 
-        // Update each partition
+        // Update each partition with leaky LMS (leak prevents divergence)
+        const leak: f32 = 0.9995;
         for (0..self.config.num_partitions) |p| {
             const ri = (self.render_idx + self.config.num_partitions - p) % self.config.num_partitions;
             const x_offset = ri * n_bins;
@@ -192,7 +206,11 @@ pub const AdaptiveFilter = struct {
                 const grad = Complex.mul(err_k, x_conj);
                 const norm = ref_power[k] + delta;
                 const step = Complex.scale(grad, mu / norm);
-                self.filter[h_offset + k] = Complex.add(self.filter[h_offset + k], step);
+                // Leaky LMS: shrink old coefficients to prevent accumulation
+                self.filter[h_offset + k] = Complex.add(
+                    Complex.scale(self.filter[h_offset + k], leak),
+                    step,
+                );
             }
         }
 
