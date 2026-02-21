@@ -1,0 +1,8 @@
+# Tier 1: HTTP Server Test
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = glob(["*.zig"]),
+)

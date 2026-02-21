@@ -34,6 +34,9 @@ esp_board_build(name = "tier1_net_event_esp32s3_devkit", target = "//e2e/tier1_n
 # --- tier1_tls_concurrent: esp32s3_devkit (needs env) ---
 esp_board_build(name = "tier1_tls_concurrent_esp32s3_devkit", target = "//e2e/tier1_tls_concurrent/esp:app", board = "esp32s3_devkit")
 
+# --- tier1_http_server: esp32s3_devkit (needs env) ---
+esp_board_build(name = "tier1_http_server_esp32s3_devkit", target = "//e2e/tier1_http_server/esp:app", board = "esp32s3_devkit")
+
 # --- tier1_wifi_scan: esp32s3_devkit ---
 esp_board_build(name = "tier1_wifi_scan_esp32s3_devkit", target = "//e2e/tier1_wifi_scan/esp:app", board = "esp32s3_devkit")
 
@@ -158,6 +161,7 @@ filegroup(
         ":tier0_memory_esp32s3_devkit",
         ":tier0_timer_esp32s3_devkit",
         ":tier1_net_event_esp32s3_devkit",
+        ":tier1_http_server_esp32s3_devkit",
         ":tier1_tls_concurrent_esp32s3_devkit",
         ":tier1_wifi_scan_esp32s3_devkit",
         ":tier2_opus_aec_lichuang_gocool",
@@ -286,6 +290,8 @@ test_suite(
         "//e2e/trait/rtc/std:test",
         # Tier 0 (async primitives)
         "//e2e/tier0_timer/native:test",
+        # Tier 1 (network)
+        "//lib/pkg/net/http/test:http_e2e_test",
     ],
 )
 
