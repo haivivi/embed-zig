@@ -68,7 +68,14 @@ pub fn Server(comptime Socket: type, comptime config: Config) type {
 
                     const n = sock.recv(read_buf[buffered..]) catch |err| {
                         switch (err) {
-                            error.Timeout => break,
+                            error.Timeout => {
+                                if (buffered == 0) return;
+                                if (need_more_data) {
+                                    sendError(&sock, write_buf, 408);
+                                    return;
+                                }
+                                break;
+                            },
                             error.Closed => return,
                             else => return,
                         }
