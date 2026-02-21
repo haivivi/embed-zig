@@ -439,6 +439,122 @@ pub fn CallbackStream(comptime SampleType: type) type {
 }
 
 // ============================================================================
+// Full-Duplex Stream (callback with both input and output)
+// ============================================================================
+
+pub fn DuplexStream(comptime SampleType: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Callback = *const fn (
+            input: []const SampleType,
+            output: []SampleType,
+            frames: usize,
+            user_data: ?*anyopaque,
+        ) CallbackResult;
+
+        const CallbackContext = struct {
+            callback: Callback,
+            user_data: ?*anyopaque,
+            channels: i32,
+        };
+
+        stream: ?*c.PaStream,
+        config: StreamConfig,
+        context: CallbackContext,
+
+        pub fn init(
+            self: *Self,
+            cfg: StreamConfig,
+            callback: Callback,
+            user_data: ?*anyopaque,
+        ) Error!void {
+            self.* = Self{
+                .stream = null,
+                .config = cfg,
+                .context = .{
+                    .callback = callback,
+                    .user_data = user_data,
+                    .channels = cfg.channels,
+                },
+            };
+
+            const in_device = defaultInputDevice();
+            const out_device = defaultOutputDevice();
+
+            const input_params = c.PaStreamParameters{
+                .device = in_device,
+                .channelCount = cfg.channels,
+                .sampleFormat = sampleFormat(SampleType),
+                .suggestedLatency = 0.050,
+                .hostApiSpecificStreamInfo = null,
+            };
+
+            const output_params = c.PaStreamParameters{
+                .device = out_device,
+                .channelCount = cfg.channels,
+                .sampleFormat = sampleFormat(SampleType),
+                .suggestedLatency = 0.050,
+                .hostApiSpecificStreamInfo = null,
+            };
+
+            const CallbackWrapper = struct {
+                fn cb(
+                    input: ?*const anyopaque,
+                    output: ?*anyopaque,
+                    frame_count: c_ulong,
+                    _: [*c]const c.PaStreamCallbackTimeInfo,
+                    _: c.PaStreamCallbackFlags,
+                    user: ?*anyopaque,
+                ) callconv(.c) c_int {
+                    const ctx: *CallbackContext = @ptrCast(@alignCast(user));
+                    const total_samples = frame_count * @as(c_ulong, @intCast(ctx.channels));
+                    const in_ptr: [*]const SampleType = @ptrCast(@alignCast(input));
+                    const out_ptr: [*]SampleType = @ptrCast(@alignCast(output));
+                    const result = ctx.callback(
+                        in_ptr[0..total_samples],
+                        out_ptr[0..total_samples],
+                        frame_count,
+                        ctx.user_data,
+                    );
+                    return @intFromEnum(result);
+                }
+            };
+
+            try check(c.Pa_OpenStream(
+                &self.stream,
+                &input_params,
+                &output_params,
+                cfg.sample_rate,
+                @intCast(cfg.frames_per_buffer),
+                c.paClipOff,
+                CallbackWrapper.cb,
+                &self.context,
+            ));
+        }
+
+        pub fn close(self: *Self) void {
+            if (self.stream) |s| {
+                _ = c.Pa_CloseStream(s);
+                self.stream = null;
+            }
+        }
+
+        pub fn start(self: *Self) Error!void {
+            if (self.stream) |s| {
+                try check(c.Pa_StartStream(s));
+            }
+        }
+
+        pub fn stop(self: *Self) Error!void {
+            if (self.stream) |s| {
+                try check(c.Pa_StopStream(s));
+            }
+        }
+    };
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 

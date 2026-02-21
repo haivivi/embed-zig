@@ -37,6 +37,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("portaudio", pa_module);
     exe.root_module.addImport("audio", audio_module);
     exe.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
+    exe.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
     exe.root_module.link_libc = true;
 
     // Link PortAudio
