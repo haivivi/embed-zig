@@ -482,6 +482,118 @@ test "AD3: zero delay >= 30dB" {
 }
 
 // ============================================================================
+// Zero/low ref energy tests: critical for real-world scenarios
+// ============================================================================
+
+// A-Z1: When ref=0, clean should equal mic (AEC has nothing to cancel)
+test "A-Z1: zero ref → clean equals mic (no false suppression)" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,  // Disable comfort noise for clean test
+    });
+    defer aec.deinit();
+
+    var mic: [160]i16 = undefined;
+    var ref: [160]i16 = [_]i16{0} ** 160;  // Zero ref
+    var clean: [160]i16 = undefined;
+
+    // Process 10 frames to stabilize
+    for (0..10) |f| {
+        generateSine(&mic, 1000.0, 5000.0, 16000, f * 160);
+        aec.process(&mic, &ref, &clean);
+    }
+
+    const mic_rms = rmsI16(&mic);
+    const clean_rms = rmsI16(&clean);
+
+    std.debug.print("[A-Z1] mic_rms={d:.0} clean_rms={d:.0} ratio={d:.2}\n", .{ mic_rms, clean_rms, clean_rms / mic_rms });
+
+    // clean should be very close to mic (80%-120%)
+    try testing.expect(clean_rms > mic_rms * 0.8);
+    try testing.expect(clean_rms < mic_rms * 1.2);
+    // clean should NOT be near 0 (would indicate bug)
+    try testing.expect(clean_rms > 1000);
+}
+
+// A-Z2: Low ref energy (<100) - must not over-suppress
+test "A-Z2: low ref energy → no over-suppression" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .nlp_floor = 0.003,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var mic: [160]i16 = undefined;
+    var ref: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    // Run 50 frames: mic has speech, ref is very low (like E1 startup)
+    for (0..50) |f| {
+        // mic: 880Hz @ 3000 amplitude (RMS ≈ 2121)
+        generateSine(&mic, 880.0, 3000.0, 16000, f * 160);
+        // ref: 880Hz @ 10 amplitude (RMS ≈ 7, energy ≈ 50 < 100)
+        // Must be low enough to trigger af.skip_update
+        generateSine(&ref, 880.0, 10.0, 16000, f * 160);
+        aec.process(&mic, &ref, &clean);
+    }
+
+    const mic_rms = rmsI16(&mic);
+    const ref_rms = rmsI16(&ref);
+    const clean_rms = rmsI16(&clean);
+
+    std.debug.print("[A-Z2] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{ mic_rms, ref_rms, clean_rms });
+
+    // ref should be very low
+    try testing.expect(ref_rms < 20);
+    // clean should preserve most of mic signal (at least 50%)
+    try testing.expect(clean_rms > mic_rms * 0.5);
+    // clean must not be near 0
+    try testing.expect(clean_rms > 1000);
+}
+
+// A-S1: Cold start - silence to speech transition
+test "A-S1: cold start → clean preserves near-end speech" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var mic: [160]i16 = undefined;
+    var ref: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    // Phase 1: 30 frames of silence (both mic and ref = 0)
+    @memset(&mic, 0);
+    @memset(&ref, 0);
+    for (0..30) |_| {
+        aec.process(&mic, &ref, &clean);
+    }
+
+    // Phase 2: Suddenly start speaking (near-end only, no echo/ref)
+    var max_clean: f64 = 0;
+    for (0..50) |f| {
+        // Near-end speech: 1000Hz @ 8000 amplitude
+        generateSine(&mic, 1000.0, 8000.0, 16000, f * 160);
+        // No ref = no echo
+        @memset(&ref, 0);
+        aec.process(&mic, &ref, &clean);
+
+        const cr = rmsI16(&clean);
+        if (cr > max_clean) max_clean = cr;
+    }
+
+    std.debug.print("[A-S1] max_clean_rms={d:.0}\n", .{max_clean});
+
+    // Must have audible output, not silence
+    try testing.expect(max_clean > 5000);  // At least 5000 RMS
+}
+
+// ============================================================================
 // Closed-loop tests: clean feeds back as next mic/ref
 // ============================================================================
 

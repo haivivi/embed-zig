@@ -159,11 +159,16 @@ pub fn GenAdaptiveFilter(comptime Arith: type) type {
             // In a feedback loop, mic always contains ref's echo + ambient,
             // so mic > ref is normal — NOT an indicator of double-talk.
             // Only skip when ref has no useful content to learn from.
-            const skip_update = (ref_energy < 100);
+            // ref_energy here is sum of squares; divide by block_size for average per sample.
+            const ref_energy_avg = ref_energy / @as(f32, @floatFromInt(bs));
+            const skip_update = (ref_energy_avg < 100);
 
             if (skip_update) {
+                // CRITICAL: When ref is silent, echo_estimate ≈ 0, so error ≈ mic.
+                // Must copy mic to error_out - otherwise output is uninitialized!
+                @memcpy(error_out, mic);
                 self.render_idx = (self.render_idx + 1) % self.config.num_partitions;
-                return .{ .error_energy = error_energy / @as(f32, @floatFromInt(bs)), .ref_energy = ref_energy / @as(f32, @floatFromInt(bs)) };
+                return .{ .error_energy = error_energy / @as(f32, @floatFromInt(bs)), .ref_energy = ref_energy_avg };
             }
 
             // FFT error for filter update
@@ -404,4 +409,66 @@ test "AF8: reset then re-converge" {
     const after_reset = rmsI16(&error_buf);
     std.debug.print("[AF8] converged={d:.1}, after_reset={d:.1}\n", .{ converged, after_reset });
     try testing.expect(after_reset > converged * 10 or after_reset > 1000);
+}
+
+// AF-Z1: Critical bug fix verification - zero ref must output mic, not garbage
+test "AF-Z1: zero ref energy → error_out equals mic (no uninitialized output)" {
+    var af = try AdaptiveFilter.init(testing.allocator, .{ .block_size = 160, .num_partitions = 10, .step_size = 0.5 });
+    defer af.deinit();
+
+    var mic: [160]i16 = undefined;
+    var ref: [160]i16 = [_]i16{0} ** 160;  // Zero ref
+    var error_out: [160]i16 = undefined;
+
+    // mic: 1000Hz @ 5000 amplitude
+    for (&mic, 0..) |*s, i| {
+        s.* = @intFromFloat(@sin(@as(f32, @floatFromInt(i)) / 16000.0 * 1000.0 * 2.0 * math.pi) * 5000.0);
+    }
+
+    const result = af.process(&mic, &ref, &error_out);
+
+    // Verify ref_energy < 100 (triggers skip_update path)
+    try testing.expect(result.ref_energy < 100);
+
+    // error_out should EQUAL mic (not 0, not garbage)
+    var match_count: usize = 0;
+    for (0..160) |i| {
+        if (@abs(error_out[i] - mic[i]) <= 1) match_count += 1;
+    }
+
+    std.debug.print("[AF-Z1] ref_energy={d:.1}, match={d}/160\n", .{ result.ref_energy, match_count });
+    try testing.expect(match_count >= 158);  // At least 98% match
+}
+
+// AF-Z2: Low ref energy (<100) - should still output mic
+test "AF-Z2: low ref energy (<100) → error_out equals mic" {
+    var af = try AdaptiveFilter.init(testing.allocator, .{ .block_size = 160, .num_partitions = 10, .step_size = 0.5 });
+    defer af.deinit();
+
+    var mic: [160]i16 = undefined;
+    var ref: [160]i16 = undefined;
+    var error_out: [160]i16 = undefined;
+
+    // mic: 880Hz @ 6000 amplitude (RMS ≈ 4243)
+    for (&mic, 0..) |*s, i| {
+        s.* = @intFromFloat(@sin(@as(f32, @floatFromInt(i)) / 16000.0 * 880.0 * 2.0 * math.pi) * 6000.0);
+    }
+    // ref: 880Hz @ 11 amplitude (RMS ≈ 7.8, energy ≈ 60) - must be < 100 threshold
+    // Note: ref_energy in process() is average per sample, so RMS^2
+    for (&ref, 0..) |*s, i| {
+        s.* = @intFromFloat(@sin(@as(f32, @floatFromInt(i)) / 16000.0 * 880.0 * 2.0 * math.pi) * 11.0);
+    }
+
+    const result = af.process(&mic, &ref, &error_out);
+
+    // ref_energy should be < 100
+    try testing.expect(result.ref_energy < 100);
+
+    // error_out should still equal mic (echo_estimate ≈ 0 when ref is tiny)
+    var match_count: usize = 0;
+    for (0..160) |i| {
+        if (@abs(error_out[i] - mic[i]) <= 1) match_count += 1;
+    }
+    std.debug.print("[AF-Z2] ref_energy={d:.1}, mic_rms={d:.1}, match={d}/160\n", .{ result.ref_energy, rmsI16(&mic), match_count });
+    try testing.expect(match_count >= 158);
 }
