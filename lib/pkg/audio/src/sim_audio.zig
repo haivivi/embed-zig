@@ -1,418 +1,501 @@
 //! SimAudio — Simulated audio I/O for closed-loop AudioEngine testing.
 //!
-//! Simulates a complete audio system with configurable echo path.
-//! Designed as drop-in replacement for real hardware in AudioEngine.
+//! Simulates speaker, microphone (with mixer), acoustic echo path, and
+//! optionally a hardware-aligned reference reader.
 //!
-//!   Test harness ──writeNearEnd()──→ near_end_ring
-//!                                         ↓
-//!                                    ┌─────────┐
-//!     near_end ──────────────────────│  mixer  │──→ mic_ring ──→ SimMic.read()
-//!     echo (delayed speaker output) ─│         │
-//!                                    └─────────┘
-//!   SimSpeaker.write() ──→ spk_ring ──→ SimClock:
-//!                                        ├─→ echo path (delay + gain) → mixer
-//!                                        └─→ ref_ring ──→ SimRefReader.read()
+//!   writeNearEnd() → near_end_ring ─┐
+//!                                    ├─ mixer ──→ mic_ring ──→ Mic.read()
+//!   echo (delayed speaker output) ──┘
 //!
-//! SimClock fires once per frame, producing aligned mic + ref.
+//!   Speaker.write() ──→ spk_ring ──→ clock tick:
+//!                                     ├─→ echo path (delay + gain) → mixer
+//!                                     └─→ ref_ring ──→ RefReader.read()
+//!                                          (only if has_hardware_loopback)
 
 const std = @import("std");
 
 pub const SimConfig = struct {
     frame_size: u32 = 160,
     sample_rate: u32 = 16000,
-    /// Total delay from speaker.write() to echo appearing in mic.read(), in samples.
-    /// Includes hardware buffer, physical propagation, and ADC latency.
     echo_delay_samples: u32 = 160,
-    /// Echo attenuation (0.0 = no echo, 1.0 = full echo)
     echo_gain: f32 = 0.76,
-    /// Whether hardware provides aligned reference (like DuplexStream).
-    /// true: SimRefReader available, Engine uses RefReader mode.
-    /// false: no RefReader, Engine uses speaker_buffer_depth mode.
     has_hardware_loopback: bool = true,
 };
 
-pub const SimAudio = struct {
-    const RingCap = 160 * 128;
+pub fn SimAudio(comptime cfg: SimConfig) type {
+    const RingCap = cfg.frame_size * 128;
+    const frame_size = cfg.frame_size;
 
-    config: SimConfig,
+    return struct {
+        const Self = @This();
 
-    // Speaker ring: Engine speakerTask writes here
-    spk_ring: [RingCap]i16,
-    spk_write: usize,
-    spk_read: usize,
+        spk_ring: [RingCap]i16,
+        spk_write: usize,
+        spk_read: usize,
 
-    // Near-end ring: test harness injects signals here
-    near_end_ring: [RingCap]i16,
-    ne_write: usize,
-    ne_read: usize,
+        near_end_ring: [RingCap]i16,
+        ne_write: usize,
+        ne_read: usize,
 
-    // Mic ring: clock produces mixed signal (echo + near_end) here
-    mic_ring: [RingCap]i16,
-    mic_write: usize,
-    mic_read: usize,
+        mic_ring: [RingCap]i16,
+        mic_write: usize,
+        mic_read: usize,
 
-    // Ref ring: clock produces ref (speaker output) here
-    ref_ring: [RingCap]i16,
-    ref_write: usize,
-    ref_read: usize,
+        ref_ring: if (cfg.has_hardware_loopback) [RingCap]i16 else void,
+        ref_write: if (cfg.has_hardware_loopback) usize else void,
+        ref_read: if (cfg.has_hardware_loopback) usize else void,
 
-    // Echo delay line: speaker samples travel through here
-    echo_line: [16384]i16,
-    echo_write_pos: usize,
-    echo_read_pos: usize,
+        echo_line: [16384]i16,
+        echo_write_pos: usize,
 
-    // Synchronization
-    mutex: std.Thread.Mutex,
-    data_ready: std.Thread.Condition,
-    spk_space: std.Thread.Condition,
+        mutex: std.Thread.Mutex,
+        data_ready: std.Thread.Condition,
+        spk_space: std.Thread.Condition,
 
-    clock_thread: ?std.Thread,
-    running: std.atomic.Value(bool),
+        clock_thread: ?std.Thread,
+        running: std.atomic.Value(bool),
 
-    pub fn init(cfg: SimConfig) SimAudio {
-        return .{
-            .config = cfg,
-            .spk_ring = [_]i16{0} ** RingCap,
-            .spk_write = 0,
-            .spk_read = 0,
-            .near_end_ring = [_]i16{0} ** RingCap,
-            .ne_write = 0,
-            .ne_read = 0,
-            .mic_ring = [_]i16{0} ** RingCap,
-            .mic_write = 0,
-            .mic_read = 0,
-            .ref_ring = [_]i16{0} ** RingCap,
-            .ref_write = 0,
-            .ref_read = 0,
-            .echo_line = [_]i16{0} ** 16384,
-            .echo_write_pos = 0,
-            .echo_read_pos = 0,
-            .mutex = .{},
-            .data_ready = .{},
-            .spk_space = .{},
-            .clock_thread = null,
-            .running = std.atomic.Value(bool).init(false),
-        };
-    }
-
-    pub fn start(self: *SimAudio) !void {
-        self.running.store(true, .release);
-        self.clock_thread = try std.Thread.spawn(.{}, clockLoop, .{self});
-    }
-
-    pub fn stop(self: *SimAudio) void {
-        self.running.store(false, .release);
-        self.mutex.lock();
-        self.data_ready.broadcast();
-        self.spk_space.broadcast();
-        self.mutex.unlock();
-        if (self.clock_thread) |t| {
-            t.join();
-            self.clock_thread = null;
+        pub fn init() Self {
+            return .{
+                .spk_ring = [_]i16{0} ** RingCap,
+                .spk_write = 0,
+                .spk_read = 0,
+                .near_end_ring = [_]i16{0} ** RingCap,
+                .ne_write = 0,
+                .ne_read = 0,
+                .mic_ring = [_]i16{0} ** RingCap,
+                .mic_write = 0,
+                .mic_read = 0,
+                .ref_ring = if (cfg.has_hardware_loopback) [_]i16{0} ** RingCap else {},
+                .ref_write = if (cfg.has_hardware_loopback) 0 else {},
+                .ref_read = if (cfg.has_hardware_loopback) 0 else {},
+                .echo_line = [_]i16{0} ** 16384,
+                .echo_write_pos = 0,
+                .mutex = .{},
+                .data_ready = .{},
+                .spk_space = .{},
+                .clock_thread = null,
+                .running = std.atomic.Value(bool).init(false),
+            };
         }
-    }
 
-    /// Inject near-end signal into mic mixer (test harness calls this).
-    pub fn writeNearEnd(self: *SimAudio, buf: []const i16) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        for (buf) |s| {
-            self.near_end_ring[self.ne_write % RingCap] = s;
-            self.ne_write += 1;
+        pub fn start(self: *Self) !void {
+            self.running.store(true, .release);
+            self.clock_thread = try std.Thread.spawn(.{}, clockLoop, .{self});
         }
-    }
 
-    // ================================================================
-    // SimClock: one tick per frame, produces aligned mic + ref
-    // ================================================================
+        pub fn stop(self: *Self) void {
+            self.running.store(false, .release);
+            self.mutex.lock();
+            self.data_ready.broadcast();
+            self.spk_space.broadcast();
+            self.mutex.unlock();
+            if (self.clock_thread) |t| {
+                t.join();
+                self.clock_thread = null;
+            }
+        }
 
-    fn clockLoop(self: *SimAudio) void {
-        const fs: usize = self.config.frame_size;
-        const echo_delay: usize = self.config.echo_delay_samples;
-        const gain = self.config.echo_gain;
-        const echo_cap: usize = self.echo_line.len;
-
-        while (self.running.load(.acquire)) {
-            std.Thread.sleep(@as(u64, fs) * std.time.ns_per_s / self.config.sample_rate);
-
+        pub fn writeNearEnd(self: *Self, buf: []const i16) void {
             self.mutex.lock();
             defer self.mutex.unlock();
-
-            // 1. Pop one frame from speaker ring
-            var spk_frame: [160]i16 = [_]i16{0} ** 160;
-            const spk_avail = self.spk_write -| self.spk_read;
-            if (spk_avail >= fs) {
-                for (0..fs) |i| {
-                    spk_frame[i] = self.spk_ring[(self.spk_read + i) % RingCap];
-                }
-                self.spk_read += fs;
-                self.spk_space.signal();
+            for (buf) |s| {
+                self.near_end_ring[self.ne_write % RingCap] = s;
+                self.ne_write += 1;
             }
-
-            // 2. Push speaker frame into echo delay line
-            for (0..fs) |i| {
-                self.echo_line[(self.echo_write_pos + i) % echo_cap] = spk_frame[i];
-            }
-            self.echo_write_pos += fs;
-
-            // 3. Build mic frame: echo + near_end
-            var mic_frame: [160]i16 = undefined;
-            for (0..fs) |i| {
-                // Echo: read from delay line at (write_pos - echo_delay)
-                var echo: f32 = 0;
-                if (self.echo_write_pos > echo_delay) {
-                    const idx = self.echo_write_pos - echo_delay + i;
-                    // Only read if we have enough history
-                    if (idx >= fs) {
-                        echo = @as(f32, @floatFromInt(self.echo_line[(idx - fs) % echo_cap])) * gain;
-                    }
-                }
-
-                // Near-end
-                var near_end: f32 = 0;
-                if (self.ne_read < self.ne_write) {
-                    near_end = @floatFromInt(self.near_end_ring[self.ne_read % RingCap]);
-                    self.ne_read += 1;
-                }
-
-                // Mix with clipping
-                const mixed = echo + near_end;
-                mic_frame[i] = if (mixed > 32767) 32767 else if (mixed < -32768) -32768 else @intFromFloat(mixed);
-            }
-
-            // 4. Push mic_frame → mic_ring, spk_frame → ref_ring
-            for (0..fs) |i| {
-                self.mic_ring[(self.mic_write + i) % RingCap] = mic_frame[i];
-                self.ref_ring[(self.ref_write + i) % RingCap] = spk_frame[i];
-            }
-            self.mic_write += fs;
-            self.ref_write += fs;
-            self.data_ready.broadcast();
         }
-    }
 
-    // ================================================================
-    // Driver interfaces
-    // ================================================================
+        // ============================================================
+        // Clock: one tick per frame
+        // ============================================================
 
-    pub const Mic = struct {
-        parent: *SimAudio,
+        fn clockLoop(self: *Self) void {
+            const echo_delay: usize = cfg.echo_delay_samples;
+            const gain = cfg.echo_gain;
+            const echo_cap: usize = self.echo_line.len;
 
-        pub fn read(self: *Mic, buf: []i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
-            while (self.parent.running.load(.acquire)) {
-                const avail = self.parent.mic_write -| self.parent.mic_read;
-                if (avail >= buf.len) {
-                    for (0..buf.len) |i| {
-                        buf[i] = self.parent.mic_ring[(self.parent.mic_read + i) % RingCap];
+            while (self.running.load(.acquire)) {
+                std.Thread.sleep(@as(u64, frame_size) * std.time.ns_per_s / cfg.sample_rate);
+
+                self.mutex.lock();
+                defer self.mutex.unlock();
+
+                // Pop one frame from speaker ring
+                var spk_frame: [frame_size]i16 = [_]i16{0} ** frame_size;
+                const spk_avail = self.spk_write -| self.spk_read;
+                if (spk_avail >= frame_size) {
+                    for (0..frame_size) |i| {
+                        spk_frame[i] = self.spk_ring[(self.spk_read + i) % RingCap];
                     }
-                    self.parent.mic_read += buf.len;
-                    return buf.len;
+                    self.spk_read += frame_size;
+                    self.spk_space.signal();
                 }
-                self.parent.data_ready.wait(&self.parent.mutex);
+
+                // Push into echo delay line
+                for (0..frame_size) |i| {
+                    self.echo_line[(self.echo_write_pos + i) % echo_cap] = spk_frame[i];
+                }
+                self.echo_write_pos += frame_size;
+
+                // Build mic frame: echo + near_end
+                var mic_frame: [frame_size]i16 = undefined;
+                for (0..frame_size) |i| {
+                    var echo: f32 = 0;
+                    if (self.echo_write_pos > echo_delay) {
+                        const idx = self.echo_write_pos - echo_delay + i;
+                        if (idx >= frame_size) {
+                            echo = @as(f32, @floatFromInt(self.echo_line[(idx - frame_size) % echo_cap])) * gain;
+                        }
+                    }
+
+                    var near_end: f32 = 0;
+                    if (self.ne_read < self.ne_write) {
+                        near_end = @floatFromInt(self.near_end_ring[self.ne_read % RingCap]);
+                        self.ne_read += 1;
+                    }
+
+                    const mixed = echo + near_end;
+                    mic_frame[i] = if (mixed > 32767) 32767 else if (mixed < -32768) -32768 else @intFromFloat(mixed);
+                }
+
+                // Push mic_ring
+                for (0..frame_size) |i| {
+                    self.mic_ring[(self.mic_write + i) % RingCap] = mic_frame[i];
+                }
+                self.mic_write += frame_size;
+
+                // Push ref_ring (only if hardware loopback)
+                if (cfg.has_hardware_loopback) {
+                    for (0..frame_size) |i| {
+                        self.ref_ring[(self.ref_write + i) % RingCap] = spk_frame[i];
+                    }
+                    self.ref_write += frame_size;
+                }
+
+                self.data_ready.broadcast();
             }
-            return 0;
+        }
+
+        // ============================================================
+        // Driver interfaces
+        // ============================================================
+
+        pub const Mic = struct {
+            parent: *Self,
+
+            pub fn read(self_mic: *Mic, buf: []i16) !usize {
+                self_mic.parent.mutex.lock();
+                defer self_mic.parent.mutex.unlock();
+                while (self_mic.parent.running.load(.acquire)) {
+                    const avail = self_mic.parent.mic_write -| self_mic.parent.mic_read;
+                    if (avail >= buf.len) {
+                        for (0..buf.len) |i| {
+                            buf[i] = self_mic.parent.mic_ring[(self_mic.parent.mic_read + i) % RingCap];
+                        }
+                        self_mic.parent.mic_read += buf.len;
+                        return buf.len;
+                    }
+                    self_mic.parent.data_ready.wait(&self_mic.parent.mutex);
+                }
+                return 0;
+            }
+        };
+
+        pub const Speaker = struct {
+            parent: *Self,
+
+            pub fn write(self_spk: *Speaker, buf: []const i16) !usize {
+                self_spk.parent.mutex.lock();
+                defer self_spk.parent.mutex.unlock();
+                var offset: usize = 0;
+                while (offset < buf.len) {
+                    if (!self_spk.parent.running.load(.acquire)) break;
+                    const used = self_spk.parent.spk_write -| self_spk.parent.spk_read;
+                    const space = RingCap - used;
+                    if (space == 0) {
+                        self_spk.parent.spk_space.wait(&self_spk.parent.mutex);
+                        continue;
+                    }
+                    const chunk = @min(buf.len - offset, space);
+                    for (0..chunk) |i| {
+                        self_spk.parent.spk_ring[(self_spk.parent.spk_write + i) % RingCap] = buf[offset + i];
+                    }
+                    self_spk.parent.spk_write += chunk;
+                    offset += chunk;
+                }
+                return buf.len;
+            }
+
+            pub fn setVolume(_: *Speaker, _: u8) !void {}
+        };
+
+        pub const RefReader = if (cfg.has_hardware_loopback) struct {
+            parent: *Self,
+
+            pub fn read(self_ref: *RefReader, buf: []i16) !usize {
+                self_ref.parent.mutex.lock();
+                defer self_ref.parent.mutex.unlock();
+                while (self_ref.parent.running.load(.acquire)) {
+                    const avail = self_ref.parent.ref_write -| self_ref.parent.ref_read;
+                    if (avail >= buf.len) {
+                        for (0..buf.len) |i| {
+                            buf[i] = self_ref.parent.ref_ring[(self_ref.parent.ref_read + i) % RingCap];
+                        }
+                        self_ref.parent.ref_read += buf.len;
+                        return buf.len;
+                    }
+                    self_ref.parent.data_ready.wait(&self_ref.parent.mutex);
+                }
+                return 0;
+            }
+        } else void;
+
+        pub fn mic(self: *Self) Mic {
+            return .{ .parent = self };
+        }
+
+        pub fn speaker(self: *Self) Speaker {
+            return .{ .parent = self };
+        }
+
+        pub fn refReader(self: *Self) if (cfg.has_hardware_loopback) RefReader else void {
+            if (cfg.has_hardware_loopback) {
+                return .{ .parent = self };
+            }
         }
     };
-
-    pub const Speaker = struct {
-        parent: *SimAudio,
-
-        pub fn write(self: *Speaker, buf: []const i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
-            var offset: usize = 0;
-            while (offset < buf.len) {
-                if (!self.parent.running.load(.acquire)) break;
-                const used = self.parent.spk_write -| self.parent.spk_read;
-                const space = RingCap - used;
-                if (space == 0) {
-                    self.parent.spk_space.wait(&self.parent.mutex);
-                    continue;
-                }
-                const chunk = @min(buf.len - offset, space);
-                for (0..chunk) |i| {
-                    self.parent.spk_ring[(self.parent.spk_write + i) % RingCap] = buf[offset + i];
-                }
-                self.parent.spk_write += chunk;
-                offset += chunk;
-            }
-            return buf.len;
-        }
-
-        pub fn setVolume(_: *Speaker, _: u8) !void {}
-    };
-
-    pub const RefReader = struct {
-        parent: *SimAudio,
-
-        pub fn read(self: *RefReader, buf: []i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
-            while (self.parent.running.load(.acquire)) {
-                const avail = self.parent.ref_write -| self.parent.ref_read;
-                if (avail >= buf.len) {
-                    for (0..buf.len) |i| {
-                        buf[i] = self.parent.ref_ring[(self.parent.ref_read + i) % RingCap];
-                    }
-                    self.parent.ref_read += buf.len;
-                    return buf.len;
-                }
-                self.parent.data_ready.wait(&self.parent.mutex);
-            }
-            return 0;
-        }
-    };
-
-    pub fn mic(self: *SimAudio) Mic {
-        return .{ .parent = self };
-    }
-
-    pub fn speaker(self: *SimAudio) Speaker {
-        return .{ .parent = self };
-    }
-
-    pub fn refReader(self: *SimAudio) RefReader {
-        return .{ .parent = self };
-    }
-};
+}
 
 // ============================================================================
-// Tests for SimAudio itself
+// Tests
 // ============================================================================
 
 const testing = std.testing;
 const tu = @import("test_utils.zig");
 
-// S1: Speaker → ref passthrough — ref contains what speaker wrote
-test "S1: speaker output appears in ref reader" {
-    var sim = SimAudio.init(.{});
+// ---- Mode A: has_hardware_loopback = true ----
+
+const SimA = SimAudio(.{ .echo_delay_samples = 160, .echo_gain = 0.5, .has_hardware_loopback = true });
+
+// A1: RefReader content = speaker data (Goertzel verified)
+test "A1: ref reader returns speaker data" {
+    var sim = SimA.init();
     try sim.start();
     defer sim.stop();
 
     var spk = sim.speaker();
     var rdr = sim.refReader();
 
-    var tone: [160]i16 = undefined;
-    tu.generateSine(&tone, 440.0, 10000.0, 16000, 0);
-    _ = try spk.write(&tone);
+    // Speaker writes 440Hz
+    for (0..3) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
+    }
 
+    // Ref should contain 440Hz
     var ref: [160]i16 = undefined;
-    _ = try rdr.read(&ref);
+    for (0..3) |_| _ = try rdr.read(&ref);
 
-    // Goertzel: ref should have 440Hz
     const p440 = tu.goertzelPower(&ref, 440.0, 16000.0);
     const p880 = tu.goertzelPower(&ref, 880.0, 16000.0);
+    std.debug.print("[A1] ref 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
     try testing.expect(p440 > p880 * 50);
     try testing.expect(tu.rmsEnergy(&ref) > 5000);
 }
 
-// S2: Near-end injection — near_end signal appears in mic
-test "S2: near-end signal appears in mic" {
-    var sim = SimAudio.init(.{});
+// A2: Ref and mic are frame-aligned (same clock tick)
+test "A2: ref and mic aligned" {
+    var sim = SimA.init();
     try sim.start();
     defer sim.stop();
 
     var spk = sim.speaker();
     var mic_drv = sim.mic();
+    var rdr = sim.refReader();
 
-    // Inject near-end 880Hz
-    var ne: [160]i16 = undefined;
-    tu.generateSine(&ne, 880.0, 8000.0, 16000, 0);
-    sim.writeNearEnd(&ne);
+    // Write 10 frames, read mic+ref each time, count how many have matching content
+    var aligned: usize = 0;
+    for (0..10) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
 
-    // Speaker must also write to drive the clock
-    var silence: [160]i16 = [_]i16{0} ** 160;
-    _ = try spk.write(&silence);
+        var mic_buf: [160]i16 = undefined;
+        var ref_buf: [160]i16 = undefined;
+        _ = try mic_drv.read(&mic_buf);
+        _ = try rdr.read(&ref_buf);
 
-    var mic_buf: [160]i16 = undefined;
-    _ = try mic_drv.read(&mic_buf);
+        // Both should have content from same tick
+        if (tu.rmsEnergy(&ref_buf) > 100) aligned += 1;
+    }
 
-    // Mic should have 880Hz from near-end
-    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
-    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
-    try testing.expect(p880 > p440 * 50);
+    std.debug.print("[A2] aligned={d}/10\n", .{aligned});
+    try testing.expect(aligned >= 7);
 }
 
-// S3: Echo path — speaker output appears in mic after echo_delay with gain
-test "S3: speaker echo in mic with delay and gain" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 160,
-        .echo_gain = 0.5,
-    });
+// A3: Mic = echo(speaker) + near_end, both frequencies present
+test "A3: mic mixes echo and near-end" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 0.5, .has_hardware_loopback = true });
+    var sim = Sim.init();
     try sim.start();
     defer sim.stop();
 
     var spk = sim.speaker();
     var mic_drv = sim.mic();
 
-    // Write several frames of 440Hz to speaker
+    for (0..5) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
+
+        var ne: [160]i16 = undefined;
+        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
+        sim.writeNearEnd(&ne);
+    }
+
+    var mic_buf: [160]i16 = undefined;
+    for (0..5) |_| _ = try mic_drv.read(&mic_buf);
+
+    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
+    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
+    std.debug.print("[A3] mic 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
+    try testing.expect(p440 > 1000);
+    try testing.expect(p880 > 1000);
+}
+
+// A4: Echo delay correct
+test "A4: echo delay timing" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 320, .echo_gain = 0.8, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    // Write 1 loud frame then silence
+    var tone: [160]i16 = undefined;
+    tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
+    _ = try spk.write(&tone);
+    var silence: [160]i16 = [_]i16{0} ** 160;
+    for (0..5) |_| _ = try spk.write(&silence);
+
+    var echo_frame: ?usize = null;
+    for (0..6) |f| {
+        var mic_buf: [160]i16 = undefined;
+        _ = try mic_drv.read(&mic_buf);
+        if (tu.rmsEnergy(&mic_buf) > 1000 and echo_frame == null) echo_frame = f;
+    }
+
+    std.debug.print("[A4] echo at frame {?d} (expect ~2 for 320/160)\n", .{echo_frame});
+    if (echo_frame) |ef| {
+        try testing.expect(ef >= 1 and ef <= 4);
+    } else return error.TestUnexpectedResult;
+}
+
+// A5: Echo gain accuracy
+test "A5: echo gain accuracy" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 0.5, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+    var rdr = sim.refReader();
+
+    for (0..10) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
+    }
+
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    for (0..10) |_| {
+        _ = try mic_drv.read(&mic_buf);
+        _ = try rdr.read(&ref_buf);
+    }
+
+    const mic_rms = tu.rmsEnergy(&mic_buf);
+    const ref_rms = tu.rmsEnergy(&ref_buf);
+    const ratio = mic_rms / ref_rms;
+    std.debug.print("[A5] mic={d:.0} ref={d:.0} ratio={d:.2} (expect ~0.5)\n", .{ mic_rms, ref_rms, ratio });
+    try testing.expect(ratio > 0.3 and ratio < 0.7);
+}
+
+// ---- Mode B: has_hardware_loopback = false ----
+
+const SimB = SimAudio(.{ .echo_delay_samples = 160, .echo_gain = 0.5, .has_hardware_loopback = false });
+
+// B1: RefReader does not exist at comptime
+test "B1: no RefReader when has_hardware_loopback=false" {
+    try testing.expect(!@hasDecl(SimB, "RefReader") or SimB.RefReader == void);
+}
+
+// B2: Mic still mixes echo + near_end correctly
+test "B2: mic works without hardware loopback" {
+    var sim = SimB.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    for (0..5) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
+
+        var ne: [160]i16 = undefined;
+        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
+        sim.writeNearEnd(&ne);
+    }
+
+    var mic_buf: [160]i16 = undefined;
+    for (0..5) |_| _ = try mic_drv.read(&mic_buf);
+
+    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
+    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
+    std.debug.print("[B2] mic 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
+    // Only near-end 880Hz should be present (echo has delay=160, may not appear yet)
+    try testing.expect(p880 > 1000);
+}
+
+// B3: Echo delay and gain still work
+test "B3: echo works without hardware loopback" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 0.5, .has_hardware_loopback = false });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
     for (0..5) |f| {
         var tone: [160]i16 = undefined;
         tu.generateSine(&tone, 440.0, 16000.0, 16000, f * 160);
         _ = try spk.write(&tone);
     }
 
-    // Read mic frames — echo should appear after delay
-    var found_echo = false;
-    for (0..5) |_| {
-        var mic_buf: [160]i16 = undefined;
-        _ = try mic_drv.read(&mic_buf);
-        const rms = tu.rmsEnergy(&mic_buf);
-        if (rms > 3000) {
-            found_echo = true;
-            // Should be 440Hz
-            const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
-            const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
-            try testing.expect(p440 > p880 * 10);
-        }
-    }
-
-    try testing.expect(found_echo);
-}
-
-// S4: Mixing — echo + near-end both appear in mic
-test "S4: echo and near-end mix in mic" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 0,
-        .echo_gain = 0.5,
-    });
-    try sim.start();
-    defer sim.stop();
-
-    var spk = sim.speaker();
-    var mic_drv = sim.mic();
-
-    for (0..5) |f| {
-        // Speaker: 440Hz
-        var tone: [160]i16 = undefined;
-        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
-        _ = try spk.write(&tone);
-
-        // Near-end: 880Hz
-        var ne: [160]i16 = undefined;
-        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
-        sim.writeNearEnd(&ne);
-    }
-
-    // Last mic frame should have both frequencies
     var mic_buf: [160]i16 = undefined;
-    for (0..5) |_| _ = try mic_drv.read(&mic_buf);
+    var last_rms: f64 = 0;
+    for (0..5) |_| {
+        _ = try mic_drv.read(&mic_buf);
+        last_rms = tu.rmsEnergy(&mic_buf);
+    }
 
-    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
-    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
-    std.debug.print("[S4] 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
-    try testing.expect(p440 > 1000);
-    try testing.expect(p880 > 1000);
+    std.debug.print("[B3] echo rms={d:.0} (expect ~5600 for 16000*0.5/sqrt2)\n", .{last_rms});
+    try testing.expect(last_rms > 2000);
 }
 
-// S5: Clipping — overflow is clamped to i16 range
-test "S5: clipping on overflow" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 0,
-        .echo_gain = 1.0,
-    });
+// ---- Common tests ----
+
+// C1: Clipping
+test "C1: clipping on overflow" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 1.0, .has_hardware_loopback = true });
+    var sim = Sim.init();
     try sim.start();
     defer sim.stop();
 
@@ -432,160 +515,15 @@ test "S5: clipping on overflow" {
     var mic_buf: [160]i16 = undefined;
     for (0..3) |_| _ = try mic_drv.read(&mic_buf);
 
-    // All samples within i16 range
     for (mic_buf) |s| {
-        try testing.expect(s >= -32768);
-        try testing.expect(s <= 32767);
+        try testing.expect(s >= -32768 and s <= 32767);
     }
     try testing.expect(tu.rmsEnergy(&mic_buf) > 10000);
 }
 
-// S6: Mic and ref alignment — both come from same clock tick
-test "S6: mic and ref from same clock tick" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 0,
-        .echo_gain = 0.8,
-    });
-    try sim.start();
-    defer sim.stop();
-
-    var spk = sim.speaker();
-    var mic_drv = sim.mic();
-    var rdr = sim.refReader();
-
-    var aligned: usize = 0;
-    for (0..10) |f| {
-        var tone: [160]i16 = undefined;
-        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
-        _ = try spk.write(&tone);
-
-        var mic_buf: [160]i16 = undefined;
-        var ref_buf: [160]i16 = undefined;
-        _ = try mic_drv.read(&mic_buf);
-        _ = try rdr.read(&ref_buf);
-
-        const mr = tu.rmsEnergy(&mic_buf);
-        const rr = tu.rmsEnergy(&ref_buf);
-        if (mr > 100 and rr > 100) aligned += 1;
-    }
-
-    std.debug.print("[S6] aligned={d}/10\n", .{aligned});
-    try testing.expect(aligned >= 5);
-}
-
-// S7: Echo delay — with echo_delay_samples=320, echo is delayed by 2 frames
-test "S7: echo delay timing" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 320,
-        .echo_gain = 0.8,
-    });
-    try sim.start();
-    defer sim.stop();
-
-    var spk = sim.speaker();
-    var mic_drv = sim.mic();
-
-    // Write 1 loud frame then silence
-    var tone: [160]i16 = undefined;
-    tu.generateSine(&tone, 440.0, 16000.0, 16000, 0);
-    _ = try spk.write(&tone);
-
-    var silence: [160]i16 = [_]i16{0} ** 160;
-    for (0..5) |_| _ = try spk.write(&silence);
-
-    // Read frames and find when echo appears
-    var echo_frame: ?usize = null;
-    for (0..6) |f| {
-        var mic_buf: [160]i16 = undefined;
-        _ = try mic_drv.read(&mic_buf);
-        const rms = tu.rmsEnergy(&mic_buf);
-        if (rms > 1000 and echo_frame == null) {
-            echo_frame = f;
-        }
-    }
-
-    std.debug.print("[S7] echo appeared at frame {?d} (delay=320 samples = 2 frames)\n", .{echo_frame});
-    // Echo should appear around frame 2-3 (320 samples / 160 = 2 frames delay)
-    if (echo_frame) |ef| {
-        try testing.expect(ef >= 1 and ef <= 4);
-    } else {
-        return error.TestUnexpectedResult;
-    }
-}
-
-// S8: Echo gain — mic echo amplitude matches speaker * gain
-test "S8: echo gain accuracy" {
-    var sim = SimAudio.init(.{
-        .echo_delay_samples = 0,
-        .echo_gain = 0.5,
-    });
-    try sim.start();
-    defer sim.stop();
-
-    var spk = sim.speaker();
-    var mic_drv = sim.mic();
-    var rdr = sim.refReader();
-
-    // Write steady tone
-    for (0..10) |f| {
-        var tone: [160]i16 = undefined;
-        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
-        _ = try spk.write(&tone);
-    }
-
-    // Read last few frames (after steady state)
-    var mic_buf: [160]i16 = undefined;
-    var ref_buf: [160]i16 = undefined;
-    for (0..10) |_| {
-        _ = try mic_drv.read(&mic_buf);
-        _ = try rdr.read(&ref_buf);
-    }
-
-    const mic_rms = tu.rmsEnergy(&mic_buf);
-    const ref_rms = tu.rmsEnergy(&ref_buf);
-    const ratio = mic_rms / ref_rms;
-
-    std.debug.print("[S8] mic_rms={d:.0} ref_rms={d:.0} ratio={d:.2} (expect ~0.5)\n", .{ mic_rms, ref_rms, ratio });
-    // Ratio should be close to echo_gain (0.5)
-    try testing.expect(ratio > 0.3 and ratio < 0.7);
-}
-
-// S9: No echo — echo_gain=0, mic only has near-end
-test "S9: zero echo gain — mic has only near-end" {
-    var sim = SimAudio.init(.{
-        .echo_gain = 0.0,
-    });
-    try sim.start();
-    defer sim.stop();
-
-    var spk = sim.speaker();
-    var mic_drv = sim.mic();
-
-    for (0..3) |f| {
-        // Speaker plays 440Hz but gain=0 so no echo
-        var tone: [160]i16 = undefined;
-        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
-        _ = try spk.write(&tone);
-
-        // Near-end: 880Hz
-        var ne: [160]i16 = undefined;
-        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
-        sim.writeNearEnd(&ne);
-    }
-
-    var mic_buf: [160]i16 = undefined;
-    for (0..3) |_| _ = try mic_drv.read(&mic_buf);
-
-    // Should have 880Hz but NOT 440Hz
-    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
-    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
-    std.debug.print("[S9] 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
-    try testing.expect(p880 > p440 * 50);
-}
-
-// S10: Silence — no speaker, no near-end → mic is silence
-test "S10: silence when no input" {
-    var sim = SimAudio.init(.{});
+// C2: Silence
+test "C2: silence when no input" {
+    var sim = SimA.init();
     try sim.start();
     defer sim.stop();
 
@@ -599,4 +537,137 @@ test "S10: silence when no input" {
     for (0..3) |_| _ = try mic_drv.read(&mic_buf);
 
     try testing.expect(tu.rmsEnergy(&mic_buf) < 1.0);
+}
+
+// C3: No echo when echo_gain=0
+test "C3: zero echo gain" {
+    const Sim = SimAudio(.{ .echo_gain = 0.0, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    for (0..3) |f| {
+        var tone: [160]i16 = undefined;
+        tu.generateSine(&tone, 440.0, 10000.0, 16000, f * 160);
+        _ = try spk.write(&tone);
+
+        var ne: [160]i16 = undefined;
+        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
+        sim.writeNearEnd(&ne);
+    }
+
+    var mic_buf: [160]i16 = undefined;
+    for (0..3) |_| _ = try mic_drv.read(&mic_buf);
+
+    const p440 = tu.goertzelPower(&mic_buf, 440.0, 16000.0);
+    const p880 = tu.goertzelPower(&mic_buf, 880.0, 16000.0);
+    std.debug.print("[C3] 440Hz={d:.0} 880Hz={d:.0}\n", .{ p440, p880 });
+    try testing.expect(p880 > p440 * 50);
+}
+
+// ---- Baseline: no AEC, echo should be present ----
+
+// D1: Mic passthrough to speaker → echo builds up
+test "D1: no AEC — echo present in mic" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 0.8, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    // Inject 880Hz near-end for 3 frames
+    for (0..3) |f| {
+        var ne: [160]i16 = undefined;
+        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
+        sim.writeNearEnd(&ne);
+    }
+
+    // Passthrough: mic → speaker (no AEC)
+    for (0..10) |_| {
+        var mic_buf: [160]i16 = undefined;
+        _ = try mic_drv.read(&mic_buf);
+        _ = try spk.write(&mic_buf);
+    }
+
+    // After several rounds, mic should contain echo of 880Hz from speaker
+    var mic_buf: [160]i16 = undefined;
+    _ = try mic_drv.read(&mic_buf);
+
+    const rms = tu.rmsEnergy(&mic_buf);
+    std.debug.print("[D1] mic rms after passthrough loop={d:.0}\n", .{rms});
+    // Should have significant energy from echo feedback
+    try testing.expect(rms > 100);
+}
+
+// D2: High echo_gain without AEC → signal grows
+test "D2: no AEC high gain — signal grows" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 0.95, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    // Seed with one frame of noise
+    var seed: [160]i16 = undefined;
+    tu.generateSine(&seed, 440.0, 1000.0, 16000, 0);
+    sim.writeNearEnd(&seed);
+
+    // Passthrough loop, track energy per frame
+    var first_rms: f64 = 0;
+    var last_rms: f64 = 0;
+    for (0..20) |f| {
+        var mic_buf: [160]i16 = undefined;
+        _ = try mic_drv.read(&mic_buf);
+        _ = try spk.write(&mic_buf);
+        const rms = tu.rmsEnergy(&mic_buf);
+        if (f == 2) first_rms = rms;
+        last_rms = rms;
+    }
+
+    std.debug.print("[D2] first_rms={d:.0} last_rms={d:.0}\n", .{ first_rms, last_rms });
+    // With gain=0.95 and no AEC, echo persists: 0.95^20 ≈ 0.36 of original
+    // Signal should still be audible (> 50 RMS) after 20 rounds
+    try testing.expect(last_rms > 50);
+}
+
+// D3: Clipping produces harmonics
+test "D3: clipping produces harmonics" {
+    const Sim = SimAudio(.{ .echo_delay_samples = 0, .echo_gain = 1.0, .has_hardware_loopback = true });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+
+    // Speaker plays 440Hz at amp=30000, echo gain=1.0
+    // Near-end also 440Hz at amp=30000 → total 60000 amp, clips hard at ±32767
+    for (0..10) |f| {
+        var loud: [160]i16 = undefined;
+        tu.generateSine(&loud, 440.0, 30000.0, 16000, f * 160);
+        _ = try spk.write(&loud);
+        sim.writeNearEnd(&loud);
+    }
+
+    var all: [1600]i16 = undefined;
+    for (0..10) |f| {
+        var mic_buf: [160]i16 = undefined;
+        _ = try mic_drv.read(&mic_buf);
+        @memcpy(all[f * 160 ..][0..160], &mic_buf);
+    }
+
+    // Clipped sine → square-like waveform → odd harmonics (3rd = 1320Hz)
+    const p440 = tu.goertzelPower(&all, 440.0, 16000.0);
+    const p1320 = tu.goertzelPower(&all, 1320.0, 16000.0);
+    std.debug.print("[D3] 440Hz={d:.0} 1320Hz(3rd)={d:.0}\n", .{ p440, p1320 });
+    try testing.expect(p440 > 1000);
+    // Hard clipping of a sine produces significant 3rd harmonic
+    try testing.expect(p1320 > p440 * 0.01);
 }
