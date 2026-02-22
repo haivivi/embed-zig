@@ -14,13 +14,11 @@
 //! aec.process(&mic_frame, &ref_frame, &clean_frame);
 //! ```
 
-const fft_mod = @import("fft.zig");
+const arith_mod = @import("arithmetic.zig");
 const af_mod = @import("adaptive_filter.zig");
 const de_mod = @import("delay_estimator.zig");
 const sg_mod = @import("suppression_gain.zig");
 const cn_mod = @import("comfort_noise.zig");
-
-const Complex = fft_mod.Complex;
 
 pub const Config = struct {
     frame_size: usize = 160,
@@ -35,40 +33,42 @@ pub const Config = struct {
     coherence_smoothing: f32 = 0.7,
 };
 
-pub const Aec3 = struct {
-    config: Config,
-    af: af_mod.AdaptiveFilter,
-    de: de_mod.DelayEstimator,
-    sg: sg_mod.SuppressionGain,
-    cn: cn_mod.ComfortNoise,
+pub fn GenAec3(comptime Arith: type) type {
+    const C = Arith.Complex;
+    const AF = af_mod.GenAdaptiveFilter(Arith);
+    const SG = sg_mod.GenSuppressionGain(Arith);
+
+    return struct {
+        const Self = @This();
+
+        config: Config,
+        af: AF,
+        de: de_mod.DelayEstimator,
+        sg: SG,
+        cn: cn_mod.ComfortNoise,
 
     fft_size: usize,
     num_bins: usize,
-
-    // NLP smoothed cancel ratio
     smoothed_cancel_ratio: f32 = 0,
 
-    // Heap-allocated work buffers (R3: no stack arrays)
     error_td: []i16,
-    error_spectrum: []Complex,
-    ref_spectrum: []Complex,
+    error_spectrum: []C,
+    ref_spectrum: []C,
     echo_power: []f32,
     near_power: []f32,
-    // Delay-aligned ref buffer (R1)
     ref_ring: []i16,
     ref_ring_pos: usize,
 
     allocator: Allocator,
-
     const Allocator = @import("std").mem.Allocator;
 
-    pub fn init(allocator: Allocator, config: Config) !Aec3 {
+    pub fn init(allocator: Allocator, config: Config) !Self {
         const fft_size = nextPow2(config.frame_size * 2);
         const num_bins = fft_size / 2 + 1;
         const max_delay_samples = config.sample_rate * config.max_delay_ms / 1000;
         const ring_size = max_delay_samples + config.frame_size * 4;
 
-        var af = try af_mod.AdaptiveFilter.init(allocator, .{
+        var af = try AF.init(allocator, .{
             .block_size = config.frame_size,
             .num_partitions = config.num_partitions,
             .step_size = config.step_size,
@@ -83,7 +83,7 @@ pub const Aec3 = struct {
         });
         errdefer de.deinit();
 
-        var sg = try sg_mod.SuppressionGain.init(allocator, .{
+        var sg = try SG.init(allocator, .{
             .num_bins = num_bins,
             .floor = config.nlp_floor,
             .over_suppression = config.nlp_over_suppression,
@@ -92,9 +92,9 @@ pub const Aec3 = struct {
 
         const error_td = try allocator.alloc(i16, config.frame_size);
         errdefer allocator.free(error_td);
-        const err_spec = try allocator.alloc(Complex, fft_size);
+        const err_spec = try allocator.alloc(C, fft_size);
         errdefer allocator.free(err_spec);
-        const ref_spec = try allocator.alloc(Complex, fft_size);
+        const ref_spec = try allocator.alloc(C, fft_size);
         errdefer allocator.free(ref_spec);
         const echo_p = try allocator.alloc(f32, num_bins);
         errdefer allocator.free(echo_p);
@@ -123,7 +123,7 @@ pub const Aec3 = struct {
         };
     }
 
-    pub fn deinit(self: *Aec3) void {
+    pub fn deinit(self: *Self) void {
         self.allocator.free(self.ref_ring);
         self.allocator.free(self.near_power);
         self.allocator.free(self.echo_power);
@@ -135,7 +135,7 @@ pub const Aec3 = struct {
         self.af.deinit();
     }
 
-    pub fn reset(self: *Aec3) void {
+    pub fn reset(self: *Self) void {
         self.af.reset();
         self.smoothed_cancel_ratio = 0;
         @memset(self.ref_ring, 0);
@@ -143,7 +143,7 @@ pub const Aec3 = struct {
     }
 
     /// Process one frame: remove echo from mic using ref, output clean audio.
-    pub fn process(self: *Aec3, mic: []const i16, ref: []const i16, clean: []i16) void {
+    pub fn process(self: *Self, mic: []const i16, ref: []const i16, clean: []i16) void {
         const bs = self.config.frame_size;
         const fft_n = self.fft_size;
         const alpha = self.config.coherence_smoothing;
@@ -167,14 +167,14 @@ pub const Aec3 = struct {
         // 1. Linear adaptive filter with delay-aligned ref
         const af_result = self.af.process(mic, aligned_ref, self.error_td);
 
-        // 2. FFT error and ref for per-bin NLP
-        fft_mod.fromI16(self.error_spectrum, self.error_td[0..bs]);
-        for (bs..fft_n) |i| self.error_spectrum[i] = Complex{};
-        fft_mod.fft(self.error_spectrum);
+        // 2. FFT error and ref for NLP
+        Arith.complexFromI16(self.error_spectrum, self.error_td[0..bs]);
+        for (bs..fft_n) |i| self.error_spectrum[i] = C{};
+        Arith.fft(self.error_spectrum);
 
-        fft_mod.fromI16(self.ref_spectrum, aligned_ref);
-        for (bs..fft_n) |i| self.ref_spectrum[i] = Complex{};
-        fft_mod.fft(self.ref_spectrum);
+        Arith.complexFromI16(self.ref_spectrum, aligned_ref);
+        for (bs..fft_n) |i| self.ref_spectrum[i] = C{};
+        Arith.fft(self.ref_spectrum);
 
         // 3. Per-bin NLP (方案 A: cancel_ratio × |Ref(k)|²)
         // Smoothed global cancel_ratio from adaptive filter
@@ -189,31 +189,25 @@ pub const Aec3 = struct {
 
         if (apply_nlp) {
             for (0..self.num_bins) |k| {
-                const ref_p = Complex.mag2(self.ref_spectrum[k]);
-                const err_p = Complex.mag2(self.error_spectrum[k]);
+                const ref_p = Arith.toFloat(C.mag2(self.ref_spectrum[k]));
+                const err_p = Arith.toFloat(C.mag2(self.error_spectrum[k]));
 
-                // Echo estimate power = cancel_ratio × ref_power
                 self.echo_power[k] = self.smoothed_cancel_ratio * ref_p * self.config.nlp_over_suppression;
-                // Near-end estimate = error_power - echo_estimate (clamp >= 0)
                 const near_raw = err_p - self.smoothed_cancel_ratio * ref_p;
                 self.near_power[k] = if (near_raw > 0) near_raw else 0;
             }
 
-            // Compute per-bin suppression gains via suppression_gain.zig
             const gains = self.sg.compute(self.echo_power, self.near_power);
 
-            // Apply per-bin gains to error spectrum
             for (0..self.num_bins) |k| {
-                self.error_spectrum[k] = Complex.scale(self.error_spectrum[k], gains[k]);
+                self.error_spectrum[k] = C.scale(self.error_spectrum[k], gains[k]);
             }
-            // Mirror negative frequencies
             for (self.num_bins..fft_n) |k| {
-                self.error_spectrum[k] = Complex.conj(self.error_spectrum[fft_n - k]);
+                self.error_spectrum[k] = C.conj(self.error_spectrum[fft_n - k]);
             }
 
-            // IFFT → time domain clean
-            fft_mod.ifft(self.error_spectrum);
-            fft_mod.toI16(clean, self.error_spectrum[0..bs]);
+            Arith.ifft(self.error_spectrum);
+            Arith.complexToI16(clean, self.error_spectrum[0..bs]);
         } else {
             // No NLP needed: use linear filter output directly
             @memcpy(clean, self.error_td[0..bs]);
@@ -245,7 +239,11 @@ pub const Aec3 = struct {
         while (v < n) v *= 2;
         return v;
     }
-};
+    };
+}
+
+// Backward compatible: f32
+pub const Aec3 = GenAec3(arith_mod.Float);
 
 // ============================================================================
 // Tests

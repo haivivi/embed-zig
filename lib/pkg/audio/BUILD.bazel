@@ -104,6 +104,13 @@ zig_test(
 )
 
 zig_test(
+    name = "arithmetic_test",
+    main = "src/aec3/arithmetic.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
     name = "aec3_test",
     main = "src/aec3/aec3.zig",
     srcs = glob(["src/**/*.zig"]),
