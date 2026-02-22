@@ -37,7 +37,6 @@ pub const MessageType = enum {
     binary,
     ping,
     pong,
-    close,
 };
 
 pub fn Client(comptime Socket: type) type {
@@ -189,11 +188,16 @@ pub fn Client(comptime Socket: type) type {
             if (self.state == .closed) return null;
 
             while (true) {
+                const prev_start = self.read_start;
                 if (try self.tryParseFrame()) |msg| {
                     return msg;
                 }
 
                 if (self.state == .closed) return null;
+
+                // If tryParseFrame consumed a frame (e.g. unknown opcode) but
+                // returned null, retry without blocking on readMore.
+                if (self.read_start != prev_start) continue;
 
                 try self.readMore();
             }

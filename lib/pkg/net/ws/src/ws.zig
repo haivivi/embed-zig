@@ -20,9 +20,10 @@
 //!         .text => handleText(msg.payload),
 //!         .binary => handleBinary(msg.payload),
 //!         .ping => {},  // auto-pong
-//!         .close => break,
+//!         .pong => {},
 //!     }
 //! }
+//! // recv() returns null on close
 //! ```
 
 pub const frame = @import("frame.zig");
