@@ -35,6 +35,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "loopback", .file = "loopback.zig", .desc = "Raw mic→speaker loopback (no AEC)" },
         .{ .name = "t5-60s", .file = "step_t5_60s.zig", .desc = "T5: 60s stability test" },
         .{ .name = "diag-mic", .file = "diag_mic_only.zig", .desc = "Diagnostic: mic only, quiet room" },
+        .{ .name = "diag-offset", .file = "diag_offset.zig", .desc = "Diagnostic: measure mic/ref offset with tone" },
         .{ .name = "diag-analyze", .file = "diag_analyze.zig", .desc = "Analyze loop recordings" },
         .{ .name = "diag", .file = "diag_duplex.zig", .desc = "Diagnostic: DuplexAudio mic vs ref alignment" },
         .{ .name = "diag-aec", .file = "diag_aec_offline.zig", .desc = "Diagnostic: AEC3 offline with real data" },
