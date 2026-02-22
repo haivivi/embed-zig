@@ -1,22 +1,24 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 env:
   IDF_PATH: /usr/local/src/esp-idf
 
 jobs:
-  build-and-test:
+  std:
+    name: std (ubuntu + macOS)
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,16 +32,6 @@ jobs:
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'extensions.bzl') }}
           restore-keys: |
             bazel-${{ runner.os }}-
-
-      - name: Setup ESP-IDF (Linux only)
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/esp-idf-setup
-
-      - name: Build Zig rules tests
-        run: bazel build --config=ci //bazel/zig/tests/...
-
-      - name: Test Zig rules
-        run: bazel test --config=ci //bazel/zig/tests/...
 
       - name: Build cross-platform libraries
         run: |
@@ -58,12 +50,37 @@ jobs:
             //lib/pkg/async/cancellation:cancellation_test \
             //lib/platform/std:std_test
 
+      - name: Build Zig rules tests
+        run: bazel build --config=ci //bazel/zig/tests/...
+
+      - name: Test Zig rules
+        run: bazel test --config=ci //bazel/zig/tests/...
+
       - name: Build all std targets
         run: bazel build --config=ci //e2e/ci:build_all_std
 
       - name: Test std platform
         run: bazel test --config=ci //e2e/ci:test_std
 
-      - name: Build all ESP targets (Linux only)
-        if: runner.os == 'Linux'
+  esp:
+    name: ESP cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel-repo
+            ~/.cache/bazel-disk
+          key: bazel-esp-${{ hashFiles('MODULE.bazel', 'extensions.bzl') }}
+          restore-keys: |
+            bazel-esp-
+
+      - name: Setup ESP-IDF
+        uses: ./.github/actions/esp-idf-setup
+
+      - name: Build all ESP targets
         run: bazel build --config=ci //e2e/ci:build_all_esp
