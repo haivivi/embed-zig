@@ -30,7 +30,7 @@ pub const Config = struct {
     regularization: f32 = 100.0,
     nlp_floor: f32 = 0.003,
     nlp_over_suppression: f32 = 5.0,
-    comfort_noise_rms: f32 = 30.0,
+    comfort_noise_rms: f32 = 0,
     max_delay_ms: u32 = 500,
     coherence_smoothing: f32 = 0.7,
 };
@@ -439,4 +439,255 @@ test "AD3: zero delay >= 30dB" {
     const erle = erleDb(echo_rms, clean_rms);
     std.debug.print("[AD3] zero delay ERLE={d:.1}dB\n", .{erle});
     try testing.expect(erle >= 30.0);
+}
+
+// ============================================================================
+// Closed-loop tests: clean feeds back as next mic/ref
+// ============================================================================
+
+/// Simulate acoustic path: delay + gain + add near-end signal
+fn acousticSim(
+    clean: []const i16,
+    delay_buf: []i16,
+    delay_write: *usize,
+    delay_samples: usize,
+    acoustic_gain: f32,
+    near_end: ?[]const i16,
+    mic_out: []i16,
+    ref_out: []i16,
+) void {
+    const n = clean.len;
+    const cap = delay_buf.len;
+
+    // ref = clean (what speaker plays)
+    @memcpy(ref_out[0..n], clean[0..n]);
+
+    // Push clean into delay line
+    for (0..n) |i| {
+        delay_buf[(delay_write.* + i) % cap] = clean[i];
+    }
+    delay_write.* += n;
+
+    // mic = delayed(clean) * gain + near_end
+    for (0..n) |i| {
+        var sample: f32 = 0;
+        if (delay_write.* >= delay_samples + n) {
+            const idx = delay_write.* - n + i - delay_samples;
+            sample = @as(f32, @floatFromInt(delay_buf[idx % cap])) * acoustic_gain;
+        }
+        if (near_end) |ne| {
+            sample += @floatFromInt(ne[i]);
+        }
+        mic_out[i] = if (sample > 32767) 32767 else if (sample < -32768) -32768 else @intFromFloat(sample);
+    }
+}
+
+// CL1: Closed-loop stability — no near-end, signal must not grow
+test "CL1: closed-loop stability — no near-end, no divergence" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    const delay_samples: usize = 26;
+    const acoustic_gain: f32 = 0.76;
+    var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+    var delay_write: usize = 0;
+
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    // Seed: one frame of noise to kick-start the loop
+    var prng = std.Random.DefaultPrng.init(42);
+    for (&clean) |*s| s.* = prng.random().intRangeAtMost(i16, -500, 500);
+
+    var max_clean_rms: f64 = 0;
+    var amplified_frames: usize = 0;
+
+    for (0..500) |frame| {
+        acousticSim(&clean, &delay_buf, &delay_write, delay_samples, acoustic_gain, null, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+
+        const mic_rms = rmsI16(&mic_buf);
+        const clean_rms = rmsI16(&clean);
+
+        if (clean_rms > max_clean_rms) max_clean_rms = clean_rms;
+        if (clean_rms > mic_rms * 1.01 and mic_rms > 10) amplified_frames += 1;
+
+        if (frame % 100 == 0) {
+            std.debug.print("[CL1 f{d}] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
+                frame, mic_rms, rmsI16(&ref_buf), clean_rms,
+            });
+        }
+    }
+
+    std.debug.print("[CL1] max_clean_rms={d:.0}, amplified_frames={d}/500\n", .{ max_clean_rms, amplified_frames });
+
+    // Signal must not explode: max clean RMS should stay below 5000
+    // (seed noise is 500 RMS, acoustic gain 0.76 → should decay without AEC)
+    try testing.expect(max_clean_rms < 5000);
+    // At most 10% of frames should have clean > mic
+    try testing.expect(amplified_frames < 50);
+}
+
+// CL2: Per-frame gain constraint — clean_rms <= mic_rms
+test "CL2: per-frame gain — clean never exceeds mic" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var clean: [160]i16 = undefined;
+    var worst_ratio: f64 = 0;
+    var violations: usize = 0;
+
+    for (0..300) |frame| {
+        var ref: [160]i16 = undefined;
+        var mic: [160]i16 = undefined;
+        const freq = 300.0 + @as(f32, @floatFromInt(frame % 50)) * 40.0;
+        generateSine(&ref, freq, 10000.0, 16000, frame * 160);
+        // mic = ref * 0.8 (echo) — no near-end
+        for (&mic, 0..) |*s, i| {
+            s.* = @intFromFloat(@as(f32, @floatFromInt(ref[i])) * 0.8);
+        }
+        aec.process(&mic, &ref, &clean);
+
+        const mic_rms = rmsI16(&mic);
+        const clean_rms = rmsI16(&clean);
+        if (mic_rms > 100) {
+            const ratio = clean_rms / mic_rms;
+            if (ratio > worst_ratio) worst_ratio = ratio;
+            if (ratio > 1.05) violations += 1;
+        }
+    }
+
+    std.debug.print("[CL2] worst_ratio={d:.3}, violations={d}/300\n", .{ worst_ratio, violations });
+    // After convergence (first ~10 frames), clean should never significantly exceed mic
+    try testing.expect(violations < 15);
+}
+
+// CL3: Closed-loop with near-end — voice preserved, no echo buildup
+test "CL3: closed-loop with near-end speech" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    const delay_samples: usize = 26;
+    const acoustic_gain: f32 = 0.5;
+    var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+    var delay_write: usize = 0;
+
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = [_]i16{0} ** 160;
+
+    // First 200 frames: only feedback (no near-end), let AEC converge
+    for (0..200) |_| {
+        acousticSim(&clean, &delay_buf, &delay_write, delay_samples, acoustic_gain, null, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+    }
+
+    // Next 100 frames: inject near-end 880Hz while feedback continues
+    var near_end_energy: f64 = 0;
+    var clean_energy: f64 = 0;
+    for (0..100) |frame| {
+        var near: [160]i16 = undefined;
+        generateSine(&near, 880.0, 8000.0, 16000, frame * 160);
+        acousticSim(&clean, &delay_buf, &delay_write, delay_samples, acoustic_gain, &near, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+
+        near_end_energy += rmsI16(&near) * rmsI16(&near);
+        clean_energy += rmsI16(&clean) * rmsI16(&clean);
+    }
+
+    const near_rms = @sqrt(near_end_energy / 100);
+    const clean_rms = @sqrt(clean_energy / 100);
+    std.debug.print("[CL3] near_rms={d:.0}, clean_rms={d:.0}\n", .{ near_rms, clean_rms });
+
+    // Clean should preserve near-end (at least 30% of near-end energy)
+    try testing.expect(clean_rms > near_rms * 0.3);
+    // Clean should not exceed near-end by much (AEC should cancel feedback)
+    try testing.expect(clean_rms < near_rms * 3.0);
+}
+
+// CL4: Closed-loop varying acoustic gains (0.3, 0.5, 0.9)
+test "CL4: closed-loop stability at different acoustic gains" {
+    const gains = [_]f32{ 0.3, 0.5, 0.9 };
+    for (gains) |gain| {
+        var aec = try Aec3.init(testing.allocator, .{
+            .frame_size = 160,
+            .num_partitions = 10,
+            .comfort_noise_rms = 0,
+        });
+        defer aec.deinit();
+
+        var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+        var delay_write: usize = 0;
+        var mic_buf: [160]i16 = undefined;
+        var ref_buf: [160]i16 = undefined;
+        var clean: [160]i16 = undefined;
+
+        var prng = std.Random.DefaultPrng.init(99);
+        for (&clean) |*s| s.* = prng.random().intRangeAtMost(i16, -500, 500);
+
+        var max_rms: f64 = 0;
+        for (0..500) |_| {
+            acousticSim(&clean, &delay_buf, &delay_write, 26, gain, null, &mic_buf, &ref_buf);
+            aec.process(&mic_buf, &ref_buf, &clean);
+            const cr = rmsI16(&clean);
+            if (cr > max_rms) max_rms = cr;
+        }
+
+        std.debug.print("[CL4] gain={d:.1} max_clean_rms={d:.0}\n", .{ gain, max_rms });
+        try testing.expect(max_rms < 5000);
+    }
+}
+
+// CL5: Closed-loop 60s (6000 frames) — no drift
+test "CL5: closed-loop 60s stability" {
+    var aec = try Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+    var delay_write: usize = 0;
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    var prng = std.Random.DefaultPrng.init(123);
+    for (&clean) |*s| s.* = prng.random().intRangeAtMost(i16, -300, 300);
+
+    var max_rms: f64 = 0;
+    for (0..6000) |frame| {
+        // Inject near-end speech every 10 seconds for 2 seconds
+        const sec = frame / 100;
+        const in_speech = (sec % 10) < 2;
+        var near: [160]i16 = undefined;
+        if (in_speech) {
+            const freq = 300.0 + @as(f32, @floatFromInt(frame % 40)) * 50.0;
+            generateSine(&near, freq, 6000.0, 16000, frame * 160);
+            acousticSim(&clean, &delay_buf, &delay_write, 50, 0.6, &near, &mic_buf, &ref_buf);
+        } else {
+            acousticSim(&clean, &delay_buf, &delay_write, 50, 0.6, null, &mic_buf, &ref_buf);
+        }
+        aec.process(&mic_buf, &ref_buf, &clean);
+
+        const cr = rmsI16(&clean);
+        if (cr > max_rms) max_rms = cr;
+    }
+
+    std.debug.print("[CL5] 60s max_clean_rms={d:.0}\n", .{max_rms});
+    try testing.expect(max_rms < 20000);
 }

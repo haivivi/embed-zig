@@ -1,10 +1,10 @@
-//! E1: Mic → AEC → Speaker loopback (DuplexStream)
+//! Simplest possible AEC loopback — NO Engine, NO mixer, NO tracks.
 //!
-//! Simplest possible AEC test. No Engine, no mixer, no tracks.
-//! Just: mic.read() → aec3.process(mic, ref) → speaker.write(clean)
+//! Single loop:
+//!   mic.read() → ref_reader.read() → aec3.process() → speaker.write()
 //!
-//! Without AEC: you hear yourself with echo buildup (feedback).
-//! With AEC: you hear yourself once, no echo.
+//! If this has echo, the problem is AEC3 or DuplexAudio.
+//! If this has NO echo, the problem is in Engine/mixer/track.
 
 const std = @import("std");
 const pa = @import("portaudio");
@@ -15,16 +15,15 @@ const da = std_impl.audio_engine;
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
-const DURATION_S: u32 = 30;
+const DURATION_S: u32 = 15;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("\n=== E1: Mic → AEC → Speaker (DuplexStream, no Engine) ===\n", .{});
-    std.debug.print("Speak into mic. You should hear yourself, no echo.\n", .{});
-    std.debug.print("Duration: {d}s\n\n", .{DURATION_S});
+    std.debug.print("\n=== Simple AEC Loop (no Engine) ===\n", .{});
+    std.debug.print("mic → AEC → speaker. Speak into mic. {d}s.\n\n", .{DURATION_S});
 
     try pa.init();
     defer pa.deinit();
@@ -39,6 +38,7 @@ pub fn main() !void {
     var aec = try audio.aec3.aec3.Aec3.init(allocator, .{
         .frame_size = FRAME_SIZE,
         .sample_rate = SAMPLE_RATE,
+        .comfort_noise_rms = 0,
     });
     defer aec.deinit();
 
@@ -50,11 +50,11 @@ pub fn main() !void {
     var mic_buf: [FRAME_SIZE]i16 = undefined;
     var ref_buf: [FRAME_SIZE]i16 = undefined;
     var clean: [FRAME_SIZE]i16 = undefined;
-    var frame_count: usize = 0;
 
-    const deadline = std.time.milliTimestamp() + DURATION_S * 1000;
+    const total_frames = SAMPLE_RATE * DURATION_S / FRAME_SIZE;
+    var frame: usize = 0;
 
-    while (std.time.milliTimestamp() < deadline) {
+    while (frame < total_frames) {
         _ = mic_drv.read(&mic_buf) catch continue;
         _ = ref_rdr.read(&ref_buf) catch continue;
 
@@ -62,27 +62,28 @@ pub fn main() !void {
 
         _ = spk_drv.write(&clean) catch continue;
 
-        frame_count += 1;
-        if (frame_count % 100 == 0) {
-            var mic_e: f64 = 0;
-            var ref_e: f64 = 0;
-            var cln_e: f64 = 0;
+        if (frame % 100 == 0) {
+            var me: f64 = 0;
+            var re: f64 = 0;
+            var ce: f64 = 0;
             for (0..FRAME_SIZE) |i| {
                 const mv: f64 = @floatFromInt(mic_buf[i]);
                 const rv: f64 = @floatFromInt(ref_buf[i]);
                 const cv: f64 = @floatFromInt(clean[i]);
-                mic_e += mv * mv;
-                ref_e += rv * rv;
-                cln_e += cv * cv;
+                me += mv * mv;
+                re += rv * rv;
+                ce += cv * cv;
             }
-            const mr = @sqrt(mic_e / FRAME_SIZE);
-            const rr = @sqrt(ref_e / FRAME_SIZE);
-            const cr = @sqrt(cln_e / FRAME_SIZE);
+            const mr = @sqrt(me / FRAME_SIZE);
+            const rr = @sqrt(re / FRAME_SIZE);
+            const cr = @sqrt(ce / FRAME_SIZE);
             std.debug.print("[{d}s] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
-                frame_count / 100, mr, rr, cr,
+                frame / 100, mr, rr, cr,
             });
         }
+
+        frame += 1;
     }
 
-    std.debug.print("\n[E1] Done. {d} frames processed.\n\n", .{frame_count});
+    std.debug.print("\n[Done]\n\n", .{});
 }

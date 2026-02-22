@@ -51,6 +51,7 @@ pub const EngineConfig = struct {
     noise_suppress_db: i32 = -30,
     enable_aec: bool = true,
     enable_ns: bool = true,
+    comfort_noise_rms: f32 = 0,
     /// Platform declares how many frames sit in speaker hardware buffer.
     /// Engine uses this offset to align the ref signal with mic.
     /// Ignored when RefReader is provided.
@@ -184,6 +185,7 @@ pub fn AudioEngine(
                 self.aec = try aec3_mod.Aec3.init(self.allocator, .{
                     .frame_size = config.frame_size,
                     .sample_rate = config.sample_rate,
+                    .comfort_noise_rms = config.comfort_noise_rms,
                 });
             }
 
@@ -375,10 +377,20 @@ pub fn AudioEngine(
             }
         }
 
+        fn rmsI16(buf: []const i16) f64 {
+            var sum: f64 = 0;
+            for (buf) |s| {
+                const v: f64 = @floatFromInt(s);
+                sum += v * v;
+            }
+            return @sqrt(sum / @as(f64, @floatFromInt(buf.len)));
+        }
+
         fn micTask(self: *Self) void {
             var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
             var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
             var clean: [4096]i16 = [_]i16{0} ** 4096;
+            var dbg_frame: usize = 0;
 
             while (self.running.load(.acquire)) {
                 const mic_n = self.mic.read(mic_buf[0..frame_size]) catch continue;
@@ -397,6 +409,16 @@ pub fn AudioEngine(
 
                 if (self.ns) |*ns| {
                     _ = ns.process(clean[0..frame_size]);
+                }
+
+                dbg_frame += 1;
+                if (dbg_frame % 100 == 0) {
+                    const mr = rmsI16(mic_buf[0..frame_size]);
+                    const rr = rmsI16(ref_buf[0..frame_size]);
+                    const cr = rmsI16(clean[0..frame_size]);
+                    std.debug.print("[mic_task {d}s] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
+                        dbg_frame / 100, mr, rr, cr,
+                    });
                 }
 
                 self.pushClean(clean[0..frame_size]);
