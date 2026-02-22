@@ -442,6 +442,12 @@ pub fn CallbackStream(comptime SampleType: type) type {
 // Full-Duplex Stream (callback with both input and output)
 // ============================================================================
 
+pub const TimeInfo = struct {
+    input_adc_time: f64,
+    current_time: f64,
+    output_dac_time: f64,
+};
+
 pub fn DuplexStream(comptime SampleType: type) type {
     return struct {
         const Self = @This();
@@ -450,6 +456,7 @@ pub fn DuplexStream(comptime SampleType: type) type {
             input: []const SampleType,
             output: []SampleType,
             frames: usize,
+            time_info: TimeInfo,
             user_data: ?*anyopaque,
         ) CallbackResult;
 
@@ -503,7 +510,7 @@ pub fn DuplexStream(comptime SampleType: type) type {
                     input: ?*const anyopaque,
                     output: ?*anyopaque,
                     frame_count: c_ulong,
-                    _: [*c]const c.PaStreamCallbackTimeInfo,
+                    time_info: [*c]const c.PaStreamCallbackTimeInfo,
                     _: c.PaStreamCallbackFlags,
                     user: ?*anyopaque,
                 ) callconv(.c) c_int {
@@ -511,10 +518,16 @@ pub fn DuplexStream(comptime SampleType: type) type {
                     const total_samples = frame_count * @as(c_ulong, @intCast(ctx.channels));
                     const in_ptr: [*]const SampleType = @ptrCast(@alignCast(input));
                     const out_ptr: [*]SampleType = @ptrCast(@alignCast(output));
+                    const ti = TimeInfo{
+                        .input_adc_time = time_info.*.inputBufferAdcTime,
+                        .current_time = time_info.*.currentTime,
+                        .output_dac_time = time_info.*.outputBufferDacTime,
+                    };
                     const result = ctx.callback(
                         in_ptr[0..total_samples],
                         out_ptr[0..total_samples],
                         frame_count,
+                        ti,
                         ctx.user_data,
                     );
                     return @intFromEnum(result);

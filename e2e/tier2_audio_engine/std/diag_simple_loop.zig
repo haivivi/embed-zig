@@ -74,6 +74,13 @@ pub fn main() !void {
     try duplex.start();
     defer duplex.stop();
 
+    // Wait a moment for offset to be measured
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+    std.debug.print("Measured ref offset: {d} samples ({d:.1}ms)\n\n", .{
+        duplex.getRefOffset(),
+        @as(f64, @floatFromInt(duplex.getRefOffset())) / 16.0,
+    });
+
     var mic_all: [TOTAL_SAMPLES]i16 = undefined;
     var ref_all: [TOTAL_SAMPLES]i16 = undefined;
     var clean_all: [TOTAL_SAMPLES]i16 = undefined;

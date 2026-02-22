@@ -1,25 +1,9 @@
 //! PortAudio full-duplex audio I/O for std platform.
 //!
-//! DuplexAudio wraps a PortAudio DuplexStream callback into three driver
-//! interfaces (Mic, Speaker, RefReader) that the AudioEngine can consume.
-//!
-//! Usage:
-//!   const da = @import("std_impl").audio_engine;
-//!   const audio = @import("audio");
-//!
-//!   // Duplex mode (RefReader gives precisely aligned ref)
-//!   const Engine = audio.AudioEngine(Rt, da.DuplexAudio.Mic, da.DuplexAudio.Speaker, .{
-//!       .RefReader = da.DuplexAudio.RefReader,
-//!       .enable_aec = true,
-//!   });
-//!
-//!   // Separate mode (buffer_depth compensates delay)
-//!   const mic_drv = @import("std_impl").mic;
-//!   const spk_drv = @import("std_impl").speaker;
-//!   const Engine = audio.AudioEngine(Rt, mic_drv.Driver, spk_drv.Driver, .{
-//!       .speaker_buffer_depth = 5,
-//!       .enable_aec = true,
-//!   });
+//! DuplexAudio wraps a PortAudio DuplexStream callback into Mic, Speaker,
+//! and RefReader drivers. Uses PaStreamCallbackTimeInfo to align mic and
+//! ref ring buffers — compensating for the hardware latency difference
+//! between ADC input and DAC output.
 
 const std = @import("std");
 const pa = @import("portaudio");
@@ -30,15 +14,25 @@ const FRAME_SIZE: u32 = 160;
 pub const DuplexAudio = struct {
     const RingCap = FRAME_SIZE * 64;
 
+    // Mic and ref rings, written by callback
     mic_ring: [RingCap]i16,
     mic_write: usize,
     mic_read: usize,
-    spk_ring: [RingCap]i16,
-    spk_write: usize,
-    spk_read: usize,
+
     ref_ring: [RingCap]i16,
     ref_write: usize,
     ref_read: usize,
+
+    // Speaker ring, written by Speaker.write(), read by callback
+    spk_ring: [RingCap]i16,
+    spk_write: usize,
+    spk_read: usize,
+
+    // Alignment: offset in samples between ref and mic.
+    // Positive = ref needs to be read offset samples behind mic.
+    ref_offset_samples: i32,
+    offset_initialized: bool,
+
     mutex: std.Thread.Mutex,
     mic_ready: std.Thread.Condition,
     spk_ready: std.Thread.Condition,
@@ -49,12 +43,14 @@ pub const DuplexAudio = struct {
             .mic_ring = [_]i16{0} ** RingCap,
             .mic_write = 0,
             .mic_read = 0,
-            .spk_ring = [_]i16{0} ** RingCap,
-            .spk_write = 0,
-            .spk_read = 0,
             .ref_ring = [_]i16{0} ** RingCap,
             .ref_write = 0,
             .ref_read = 0,
+            .spk_ring = [_]i16{0} ** RingCap,
+            .spk_write = 0,
+            .spk_read = 0,
+            .ref_offset_samples = 0,
+            .offset_initialized = false,
             .mutex = .{},
             .mic_ready = .{},
             .spk_ready = .{},
@@ -86,6 +82,7 @@ pub const DuplexAudio = struct {
         input: []const i16,
         output: []i16,
         _: usize,
+        time_info: pa.TimeInfo,
         user_data: ?*anyopaque,
     ) pa.CallbackResult {
         const self: *DuplexAudio = @ptrCast(@alignCast(user_data));
@@ -93,13 +90,53 @@ pub const DuplexAudio = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        // Calculate offset from timeInfo (DAC time - ADC time) in samples.
+        if (!self.offset_initialized and time_info.input_adc_time > 0) {
+            const offset_sec = time_info.output_dac_time - time_info.input_adc_time;
+            self.ref_offset_samples = @intFromFloat(@round(offset_sec * @as(f64, SAMPLE_RATE)));
+            self.offset_initialized = true;
+
+            // Apply initial alignment: advance ref_read so it lags behind
+            // mic_read by offset_samples. This means when mic.read() and
+            // ref.read() both consume frames, ref returns data that was
+            // played offset_samples earlier — matching the actual echo timing.
+            if (self.ref_offset_samples > 0) {
+                // ref_read stays at 0, mic_read will naturally advance.
+                // When mic reads frame N, ref is still at frame 0.
+                // After offset_samples / frame_size frames, they converge.
+                // Instead, pre-advance mic by discarding offset_samples:
+                // NO — simpler: let ref_read start behind by keeping it at 0
+                // while mic_read advances. Or: just note the offset and
+                // let RefReader handle it in read().
+            }
+        }
+
+        // Track drift
+        if (self.offset_initialized and time_info.input_adc_time > 0) {
+            const offset_sec = time_info.output_dac_time - time_info.input_adc_time;
+            const current_offset: i32 = @intFromFloat(@round(offset_sec * @as(f64, SAMPLE_RATE)));
+            const drift = current_offset - self.ref_offset_samples;
+            if (drift > 80 or drift < -80) {
+                // Drift detected: adjust ref_read to compensate
+                if (drift > 0) {
+                    // ref needs to lag more — skip ref_read backward
+                    // (already behind, so just update the offset)
+                    self.ref_offset_samples = current_offset;
+                } else {
+                    // ref needs to lag less — advance ref_read (discard)
+                    const skip: usize = @intCast(-drift);
+                    self.ref_read += skip;
+                    self.ref_offset_samples = current_offset;
+                }
+            }
+        }
+
         // Push mic samples
         const n = @min(input.len, RingCap);
         for (0..n) |i| {
             self.mic_ring[(self.mic_write + i) % RingCap] = input[i];
         }
         self.mic_write += n;
-        self.mic_ready.signal();
 
         // Pop speaker samples → output
         const avail = self.spk_write -| self.spk_read;
@@ -113,56 +150,58 @@ pub const DuplexAudio = struct {
         self.spk_read += to_play;
         self.spk_ready.signal();
 
-        // Copy actual output → ref_ring for AEC
+        // Copy actual output → ref_ring
         for (0..output.len) |i| {
             self.ref_ring[(self.ref_write + i) % RingCap] = output[i];
         }
         self.ref_write += output.len;
 
+        self.mic_ready.broadcast();
+
         return .Continue;
     }
 
-    /// Mic driver: blocking read from duplex input ring
+    /// Mic driver: blocking read from mic_ring
     pub const Mic = struct {
         parent: *DuplexAudio,
 
-        pub fn read(self: *Mic, buf: []i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
+        pub fn read(self_mic: *Mic, buf: []i16) !usize {
+            self_mic.parent.mutex.lock();
+            defer self_mic.parent.mutex.unlock();
             while (true) {
-                const a = self.parent.mic_write -| self.parent.mic_read;
+                const a = self_mic.parent.mic_write -| self_mic.parent.mic_read;
                 if (a >= buf.len) {
                     for (0..buf.len) |i| {
-                        buf[i] = self.parent.mic_ring[(self.parent.mic_read + i) % RingCap];
+                        buf[i] = self_mic.parent.mic_ring[(self_mic.parent.mic_read + i) % RingCap];
                     }
-                    self.parent.mic_read += buf.len;
+                    self_mic.parent.mic_read += buf.len;
                     return buf.len;
                 }
-                self.parent.mic_ready.wait(&self.parent.mutex);
+                self_mic.parent.mic_ready.wait(&self_mic.parent.mutex);
             }
         }
     };
 
-    /// Speaker driver: blocking write to duplex output ring
+    /// Speaker driver: blocking write to spk_ring
     pub const Speaker = struct {
         parent: *DuplexAudio,
 
-        pub fn write(self: *Speaker, buf: []const i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
+        pub fn write(self_spk: *Speaker, buf: []const i16) !usize {
+            self_spk.parent.mutex.lock();
+            defer self_spk.parent.mutex.unlock();
             var offset: usize = 0;
             while (offset < buf.len) {
-                const used = self.parent.spk_write -| self.parent.spk_read;
+                const used = self_spk.parent.spk_write -| self_spk.parent.spk_read;
                 const space = RingCap - used;
                 if (space == 0) {
-                    self.parent.spk_ready.wait(&self.parent.mutex);
+                    self_spk.parent.spk_ready.wait(&self_spk.parent.mutex);
                     continue;
                 }
                 const chunk = @min(buf.len - offset, space);
                 for (0..chunk) |i| {
-                    self.parent.spk_ring[(self.parent.spk_write + i) % RingCap] = buf[offset + i];
+                    self_spk.parent.spk_ring[(self_spk.parent.spk_write + i) % RingCap] = buf[offset + i];
                 }
-                self.parent.spk_write += chunk;
+                self_spk.parent.spk_write += chunk;
                 offset += chunk;
             }
             return buf.len;
@@ -171,23 +210,49 @@ pub const DuplexAudio = struct {
         pub fn setVolume(_: *Speaker, _: u8) !void {}
     };
 
-    /// RefReader: reads the exact samples played by the speaker (callback-aligned)
+    /// RefReader: reads from ref_ring with offset compensation.
+    /// The read position is shifted by ref_offset_samples relative to mic,
+    /// so the ref frame returned corresponds to what the speaker was
+    /// physically playing when the mic captured its frame.
+    /// RefReader: reads from ref_ring lagging behind mic by ref_offset_samples.
+    /// mic.read() and ref.read() are called in sequence each frame.
+    /// Both rings receive the same number of samples per callback.
+    /// ref_read naturally lags behind ref_write, and we require enough
+    /// accumulated data (including the offset) before returning.
     pub const RefReader = struct {
         parent: *DuplexAudio,
 
-        pub fn read(self: *RefReader, buf: []i16) !usize {
-            self.parent.mutex.lock();
-            defer self.parent.mutex.unlock();
+        pub fn read(self_ref: *RefReader, buf: []i16) !usize {
+            self_ref.parent.mutex.lock();
+            defer self_ref.parent.mutex.unlock();
+
+            const offset: usize = if (self_ref.parent.ref_offset_samples > 0)
+                @intCast(self_ref.parent.ref_offset_samples)
+            else
+                0;
+
             while (true) {
-                const a = self.parent.ref_write -| self.parent.ref_read;
-                if (a >= buf.len) {
+                const avail = self_ref.parent.ref_write -| self_ref.parent.ref_read;
+
+                // Need buf.len + offset available: the extra offset samples
+                // sit between ref_read and the "real" data we want.
+                // We read from ref_read (which is offset samples behind mic).
+                if (avail >= buf.len + offset) {
                     for (0..buf.len) |i| {
-                        buf[i] = self.parent.ref_ring[(self.parent.ref_read + i) % RingCap];
+                        buf[i] = self_ref.parent.ref_ring[(self_ref.parent.ref_read + i) % RingCap];
                     }
-                    self.parent.ref_read += buf.len;
+                    self_ref.parent.ref_read += buf.len;
+
+                    // Drift correction: if backlog grows too large, discard
+                    const backlog = self_ref.parent.ref_write -| self_ref.parent.ref_read;
+                    if (backlog > offset + FRAME_SIZE * 6) {
+                        const skip = backlog - offset - FRAME_SIZE * 2;
+                        self_ref.parent.ref_read += skip;
+                    }
+
                     return buf.len;
                 }
-                self.parent.mic_ready.wait(&self.parent.mutex);
+                self_ref.parent.mic_ready.wait(&self_ref.parent.mutex);
             }
         }
     };
@@ -202,5 +267,12 @@ pub const DuplexAudio = struct {
 
     pub fn refReader(self: *DuplexAudio) RefReader {
         return .{ .parent = self };
+    }
+
+    /// Return the measured offset in samples (for diagnostics).
+    pub fn getRefOffset(self: *DuplexAudio) i32 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.ref_offset_samples;
     }
 };
