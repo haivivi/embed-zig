@@ -39,6 +39,8 @@ pub const NoiseSuppressor = ns.NoiseSuppressor;
 pub const Drc = drc.Drc;
 pub const AudioEngine = engine.AudioEngine;
 pub const EngineConfig = engine.EngineConfig;
+pub const sim_audio = @import("sim_audio.zig");
+pub const SimAudio = sim_audio.SimAudio;
 
 test {
     @import("std").testing.refAllDecls(@This());
