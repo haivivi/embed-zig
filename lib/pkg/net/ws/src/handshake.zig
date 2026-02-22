@@ -122,7 +122,7 @@ pub fn performHandshake(
 
     // Build and send request
     const request = buildRequest(buf, host, path, &ws_key, extra_headers) catch
-        return error.SendFailed;
+        return error.ResponseTooLarge;
 
     sendAll(socket, request) catch return error.SendFailed;
 
