@@ -26,8 +26,10 @@ pub const Response = struct {
     /// Append a custom response header. Must be called before send/json/sendStatus.
     /// Headers are buffered in write_buf and flushed when send is called.
     /// Atomic: if the full header doesn't fit, nothing is written (avoids malformed HTTP).
+    /// Rejects names/values containing CR or LF to prevent header injection.
     pub fn setHeader(self: *Response, name: []const u8, value: []const u8) *Response {
         if (self.headers_sent) return self;
+        if (containsCrlf(name) or containsCrlf(value)) return self;
         const needed = name.len + 2 + value.len + 2; // "name: value\r\n"
         const available = self.write_buf.len - self.pos;
         if (needed > available) return self;
@@ -60,7 +62,7 @@ pub const Response = struct {
         self.headers_sent = true;
 
         // 1. Build status line + auto-headers on stack, send first
-        var hdr_buf: [256]u8 = undefined;
+        var hdr_buf: [512]u8 = undefined;
         var hdr_pos: usize = 0;
 
         hdr_pos = appendBuf(&hdr_buf, hdr_pos, "HTTP/1.1 ");
@@ -108,13 +110,18 @@ pub const Response = struct {
     }
 };
 
+fn containsCrlf(s: []const u8) bool {
+    for (s) |c| {
+        if (c == '\r' or c == '\n') return true;
+    }
+    return false;
+}
+
 fn appendBuf(buf: []u8, pos: usize, data: []const u8) usize {
     const available = buf.len - pos;
-    const to_copy = @min(data.len, available);
-    if (to_copy > 0) {
-        @memcpy(buf[pos .. pos + to_copy], data[0..to_copy]);
-    }
-    return pos + to_copy;
+    if (data.len > available) return pos; // refuse partial writes
+    @memcpy(buf[pos .. pos + data.len], data);
+    return pos + data.len;
 }
 
 fn writeStatusCode(buf: *[3]u8, code: u16) []const u8 {
