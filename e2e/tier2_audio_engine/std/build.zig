@@ -34,6 +34,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "step6", .file = "step6_conversation.zig", .desc = "Step 6: Conversation + AEC3" },
         .{ .name = "loopback", .file = "loopback.zig", .desc = "Raw mic→speaker loopback (no AEC)" },
         .{ .name = "t5-60s", .file = "step_t5_60s.zig", .desc = "T5: 60s stability test" },
+        .{ .name = "diag-mic", .file = "diag_mic_only.zig", .desc = "Diagnostic: mic only, quiet room" },
+        .{ .name = "diag-analyze", .file = "diag_analyze.zig", .desc = "Analyze loop recordings" },
         .{ .name = "diag", .file = "diag_duplex.zig", .desc = "Diagnostic: DuplexAudio mic vs ref alignment" },
         .{ .name = "diag-aec", .file = "diag_aec_offline.zig", .desc = "Diagnostic: AEC3 offline with real data" },
         .{ .name = "diag-loop", .file = "diag_simple_loop.zig", .desc = "Diagnostic: simplest AEC loop (no engine)" },
