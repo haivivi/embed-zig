@@ -163,24 +163,27 @@ pub const AdaptiveFilter = struct {
             return .{ .error_energy = error_energy / @as(f32, @floatFromInt(bs)), .ref_energy = ref_energy / @as(f32, @floatFromInt(bs)) };
         }
 
-        // Output gain constraint: clean must never exceed mic in energy.
-        // If echo estimate overshoots, error gets amplified — clamp it.
-        if (error_energy > mic_energy and mic_energy > 100) {
-            const scale = @sqrt(mic_energy / error_energy);
+        // Output gain constraint: clean energy must be less than mic energy.
+        // In a feedback loop, even clamping to mic level preserves the signal.
+        // Apply additional attenuation (0.7) when clamping to ensure loop decays.
+        if (error_energy > mic_energy * 0.5 and mic_energy > 100) {
+            const target = mic_energy * 0.5;
+            const scale = @sqrt(target / error_energy);
             for (0..bs) |i| {
                 const v: f32 = @as(f32, @floatFromInt(error_out[i])) * scale;
                 error_out[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(@round(v));
             }
-            error_energy = mic_energy;
+            error_energy = target;
         }
 
-        // Double-talk detection: skip update when error and ref are uncorrelated
-        // (near-end speech present). Use simple energy ratio: if error_energy
-        // is much larger than what a pure-echo scenario should produce
-        // (mic_energy for unconverged filter, or small residual for converged),
-        // AND mic_energy >> ref_energy (near-end dominates), skip update.
-        const near_end_dominant = mic_energy > ref_energy * 2.0 and ref_energy > 100;
-        const skip_update = (ref_energy < 100) or near_end_dominant;
+        // Double-talk / update safety: skip coefficient update when the
+        // error signal cannot be reliably attributed to echo mismatch.
+        // Cases where updating would corrupt the filter:
+        //  - ref too quiet (nothing to learn from)
+        //  - near-end speech dominates (mic >> ref)
+        //  - error larger than ref (unexplained energy, likely near-end)
+        const skip_update = (ref_energy < 100) or
+            (mic_energy > ref_energy * 3.0);
 
         if (skip_update) {
             self.render_idx = (self.render_idx + 1) % self.config.num_partitions;
@@ -215,7 +218,7 @@ pub const AdaptiveFilter = struct {
         }
 
         // Update each partition with leaky LMS (leak prevents divergence)
-        const leak: f32 = 0.9995;
+        const leak: f32 = 0.999;
         for (0..self.config.num_partitions) |p| {
             const ri = (self.render_idx + self.config.num_partitions - p) % self.config.num_partitions;
             const x_offset = ri * n_bins;

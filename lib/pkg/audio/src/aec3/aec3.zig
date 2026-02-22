@@ -219,7 +219,24 @@ pub const Aec3 = struct {
             @memcpy(clean, self.error_td[0..bs]);
         }
 
-        // 7. Comfort noise
+        // 7. Final output gain constraint: clean must never exceed mic
+        var clean_energy: f32 = 0;
+        var mic_energy: f32 = 0;
+        for (0..bs) |i| {
+            const cv: f32 = @floatFromInt(clean[i]);
+            const mv: f32 = @floatFromInt(mic[i]);
+            clean_energy += cv * cv;
+            mic_energy += mv * mv;
+        }
+        if (clean_energy > mic_energy and mic_energy > 100) {
+            const scale = @sqrt(mic_energy / clean_energy);
+            for (0..bs) |i| {
+                const v: f32 = @as(f32, @floatFromInt(clean[i])) * scale;
+                clean[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(@round(v));
+            }
+        }
+
+        // 8. Comfort noise
         self.cn.fill(clean, self.config.comfort_noise_rms);
     }
 
