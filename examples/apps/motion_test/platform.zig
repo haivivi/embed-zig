@@ -10,6 +10,7 @@ const hal = @import("hal");
 const hw = switch (build_options.board) {
     .lichuang_szp => @import("esp/lichuang_szp.zig"),
     .lichuang_gocool => @import("esp/lichuang_gocool.zig"),
+    else => @compileError("unsupported board for motion_test"),
 };
 
 /// Board specification for hal.Board

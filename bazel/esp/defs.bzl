@@ -666,7 +666,12 @@ def _esp_zig_app_impl(ctx):
     
     # build_options module: provides BoardType enum and selected board
     # Used by platform.zig for board selection at compile time
-    board_enum_fields = ", ".join(boards_list)
+    # Include non-ESP boards so shared platform.zig switch is exhaustive
+    all_boards = list(boards_list)
+    for extra in ["bk7258", "sim_raylib"]:
+        if extra not in all_boards:
+            all_boards.append(extra)
+    board_enum_fields = ", ".join(all_boards)
     build_options_lines = [
         "    // build_options module (BoardType enum + selected board)",
         "    const board_options = b.addOptions();",

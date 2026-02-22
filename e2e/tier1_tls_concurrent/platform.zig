@@ -5,6 +5,7 @@ const build_options = @import("build_options");
 
 pub const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    else => @compileError("unsupported board for tls_concurrent"),
 };
 
 const spec = struct {

@@ -5,6 +5,7 @@ const build_options = @import("build_options");
 
 const hw = switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
+    else => @compileError("unsupported board for adc_button"),
 };
 
 pub const ButtonId = enum(u8) {
