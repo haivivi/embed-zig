@@ -186,6 +186,8 @@ pub fn Client(comptime Socket: type) type {
         /// Note: fragmented messages (continuation frames) are not supported.
         /// Each message must fit in a single frame.
         pub fn recv(self: *Self) !?Message {
+            if (self.state == .closed) return null;
+
             while (true) {
                 if (try self.tryParseFrame()) |msg| {
                     return msg;
