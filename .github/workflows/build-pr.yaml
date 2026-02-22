@@ -9,8 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ADF_PATH: /usr/local/src/esp-adf
-  IDF_PATH: /usr/local/src/esp-adf/esp-idf
+  IDF_PATH: /usr/local/src/esp-idf
 
 jobs:
   affected:
@@ -76,8 +75,8 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
 
-      - name: Setup ESP-ADF
-        uses: ./.github/actions/esp-adf-setup
+      - name: Setup ESP-IDF
+        uses: ./.github/actions/esp-idf-setup
 
       - name: Build affected targets
         run: |

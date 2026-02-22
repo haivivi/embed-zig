@@ -29,10 +29,9 @@ build --host_action_env=PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/us
 # ESP-IDF environment
 # =============================================================================
 
-# IDF_PATH and ADF_PATH are required for ESP builds
-# These should be set in .bazelrc.user or environment
+# IDF_PATH is required for ESP builds
+# Set in .bazelrc.user or environment
 build --action_env=IDF_PATH
-build --action_env=ADF_PATH
 build --action_env=HOME
 
 # =============================================================================

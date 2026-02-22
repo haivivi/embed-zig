@@ -1,5 +1,5 @@
-name: Setup ESP-ADF
-description: Install ESP-ADF (with ESP-IDF 5.4.0) for cross-compiling ESP32 targets.
+name: Setup ESP-IDF
+description: Install ESP-IDF 5.4.0 for cross-compiling ESP32 targets.
 runs:
   using: "composite"
   steps:
@@ -7,19 +7,16 @@ runs:
       run: sudo apt-get update && sudo apt-get install -y git python3-pip cmake
     - shell: bash
       run: |
-        sudo git clone --filter=blob:none --no-checkout \
-          https://github.com/espressif/esp-adf.git \
-          /usr/local/src/esp-adf
-        cd /usr/local/src/esp-adf
-        sudo git checkout 715aa221a37c43a92d3ceed6af1452ce4a50abdb
+        sudo git clone --filter=blob:none -b v5.4 --single-branch \
+          https://github.com/espressif/esp-idf.git \
+          /usr/local/src/esp-idf
+        cd /usr/local/src/esp-idf
+        sudo git checkout v5.4
         sudo git submodule update --init --recursive --depth=1
-        sudo chown -R runner:sudo /usr/local/src/esp-adf
+        sudo chown -R runner:sudo /usr/local/src/esp-idf
     - shell: bash
-      working-directory: /usr/local/src/esp-adf/esp-idf
+      working-directory: /usr/local/src/esp-idf
       run: |
-        ADF_PATH=/usr/local/src/esp-adf
-        IDF_PATH=$ADF_PATH/esp-idf
-
         . ./tools/detect_python.sh
         "${ESP_PYTHON}" ./tools/python_version_checker.py
         "${ESP_PYTHON}" ./tools/idf_tools.py --non-interactive install required --targets=all
