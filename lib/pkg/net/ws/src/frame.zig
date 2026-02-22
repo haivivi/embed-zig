@@ -94,9 +94,6 @@ pub fn decode(buf: []const u8) Error!Frame {
     const total = header.header_size + payload_len;
     if (buf.len < total) return error.TruncatedPayload;
 
-    var payload = buf[header.header_size..total];
-    _ = &payload;
-
     return .{
         .header = header,
         .payload = buf[header.header_size..total],
