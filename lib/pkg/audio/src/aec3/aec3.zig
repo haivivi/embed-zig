@@ -244,6 +244,7 @@ pub fn GenAec3(comptime Arith: type) type {
 
 // Backward compatible: f32
 pub const Aec3 = GenAec3(arith_mod.Float);
+pub const Aec3Fixed = GenAec3(arith_mod.Fixed);
 
 // ============================================================================
 // Tests
@@ -705,4 +706,103 @@ test "CL5: closed-loop 60s stability" {
 
     std.debug.print("[CL5] 60s max_clean_rms={d:.0}\n", .{max_rms});
     try testing.expect(max_rms < 20000);
+}
+
+// ============================================================================
+// Fixed-point tests
+// ============================================================================
+
+// FA1: Fixed-point 440Hz ERLE
+test "FA1: fixed-point single-tone ERLE" {
+    var aec = try Aec3Fixed.init(testing.allocator, .{ .frame_size = 160, .num_partitions = 10 });
+    defer aec.deinit();
+
+    var clean: [160]i16 = undefined;
+    var last_clean_rms: f64 = 0;
+
+    for (0..100) |frame| {
+        var tone: [160]i16 = undefined;
+        generateSine(&tone, 440.0, 10000.0, 16000, frame * 160);
+        aec.process(&tone, &tone, &clean);
+        last_clean_rms = rmsI16(&clean);
+    }
+
+    const echo_rms: f64 = 10000.0 / @sqrt(2.0);
+    const erle = erleDb(echo_rms, last_clean_rms);
+    std.debug.print("[FA1] fixed ERLE={d:.1}dB (clean_rms={d:.0})\n", .{ erle, last_clean_rms });
+    // Fixed-point has less precision, accept lower ERLE
+    try testing.expect(erle >= 10.0);
+}
+
+// FA2: Fixed-point closed-loop stability
+test "FA2: fixed-point closed-loop stability" {
+    var aec = try Aec3Fixed.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+    var delay_write: usize = 0;
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    var prng = std.Random.DefaultPrng.init(42);
+    for (&clean) |*s| s.* = prng.random().intRangeAtMost(i16, -500, 500);
+
+    var max_rms: f64 = 0;
+    for (0..500) |frame| {
+        acousticSim(&clean, &delay_buf, &delay_write, 26, 0.76, null, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+        const cr = rmsI16(&clean);
+        if (cr > max_rms) max_rms = cr;
+        if (frame % 100 == 0) {
+            std.debug.print("[FA2 f{d}] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
+                frame, rmsI16(&mic_buf), rmsI16(&ref_buf), cr,
+            });
+        }
+    }
+
+    std.debug.print("[FA2] fixed max_clean_rms={d:.0}\n", .{max_rms});
+    try testing.expect(max_rms < 5000);
+}
+
+// FA3: Fixed-point closed-loop with near-end
+test "FA3: fixed-point closed-loop with near-end" {
+    var aec = try Aec3Fixed.init(testing.allocator, .{
+        .frame_size = 160,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var delay_buf: [4096]i16 = [_]i16{0} ** 4096;
+    var delay_write: usize = 0;
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = [_]i16{0} ** 160;
+
+    for (0..200) |_| {
+        acousticSim(&clean, &delay_buf, &delay_write, 26, 0.5, null, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+    }
+
+    var near_energy: f64 = 0;
+    var clean_energy: f64 = 0;
+    for (0..100) |frame| {
+        var near: [160]i16 = undefined;
+        generateSine(&near, 880.0, 8000.0, 16000, frame * 160);
+        acousticSim(&clean, &delay_buf, &delay_write, 26, 0.5, &near, &mic_buf, &ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+        near_energy += rmsI16(&near) * rmsI16(&near);
+        clean_energy += rmsI16(&clean) * rmsI16(&clean);
+    }
+
+    const near_rms = @sqrt(near_energy / 100);
+    const clean_rms = @sqrt(clean_energy / 100);
+    std.debug.print("[FA3] fixed near={d:.0} clean={d:.0}\n", .{ near_rms, clean_rms });
+    try testing.expect(clean_rms > near_rms * 0.1);
+    try testing.expect(clean_rms < near_rms * 5.0);
 }
