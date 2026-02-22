@@ -144,19 +144,22 @@ pub fn GenAdaptiveFilter(comptime Arith: type) type {
                 return .{ .error_energy = error_energy / @as(f32, @floatFromInt(bs)), .ref_energy = ref_energy / @as(f32, @floatFromInt(bs)) };
             }
 
-            // Output gain constraint
+            // Output gain constraint: clean must not exceed mic
             if (error_energy > mic_energy * 0.5 and mic_energy > 100) {
-                const target = mic_energy * 0.5;
-                const scale_f = @sqrt(target / error_energy);
+                const gain_target = mic_energy * 0.5;
+                const scale_f = @sqrt(gain_target / error_energy);
                 for (0..bs) |i| {
                     const v: f32 = @as(f32, @floatFromInt(error_out[i])) * scale_f;
                     error_out[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(@round(v));
                 }
-                error_energy = target;
+                error_energy = gain_target;
             }
 
-            // Double-talk detection
-            const skip_update = (ref_energy < 100) or (mic_energy > ref_energy * 3.0);
+            // Double-talk detection: only skip when ref is truly silent.
+            // In a feedback loop, mic always contains ref's echo + ambient,
+            // so mic > ref is normal — NOT an indicator of double-talk.
+            // Only skip when ref has no useful content to learn from.
+            const skip_update = (ref_energy < 100);
 
             if (skip_update) {
                 self.render_idx = (self.render_idx + 1) % self.config.num_partitions;

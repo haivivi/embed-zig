@@ -213,17 +213,41 @@ pub fn GenAec3(comptime Arith: type) type {
             @memcpy(clean, self.error_td[0..bs]);
         }
 
-        // 7. Final output gain constraint: clean must never exceed mic
+        // 7. Output constraints
         var clean_energy: f32 = 0;
         var mic_energy: f32 = 0;
+        var ref_energy_total: f32 = 0;
         for (0..bs) |i| {
             const cv: f32 = @floatFromInt(clean[i]);
             const mv: f32 = @floatFromInt(mic[i]);
+            const rv: f32 = @floatFromInt(ref[i]);
             clean_energy += cv * cv;
             mic_energy += mv * mv;
+            ref_energy_total += rv * rv;
         }
+
+        // 7a. Clean must not exceed mic (prevents AEC amplification)
         if (clean_energy > mic_energy and mic_energy > 100) {
             const scale = @sqrt(mic_energy / clean_energy);
+            for (0..bs) |i| {
+                const v: f32 = @as(f32, @floatFromInt(clean[i])) * scale;
+                clean[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(@round(v));
+            }
+            clean_energy = mic_energy;
+        }
+
+        // 7b. Feedback loop protection: when echo is dominant (ref is loud,
+        // near-end not detected), limit clean to prevent loop gain > 1.
+        // Only active when ref has significant energy and clean > ref.
+        // This ensures speaker output doesn't grow each round trip.
+        // 7b. Feedback loop protection: limit clean to ref when AEC
+        // hasn't converged (smoothed cancel ratio is poor).
+        // cancel_ratio < 0.3 means AEC is canceling well → don't limit.
+        // cancel_ratio > 0.5 means AEC isn't canceling → apply ref limit.
+        if (ref_energy_total > 1000 and clean_energy > ref_energy_total and
+            self.smoothed_cancel_ratio > 0.5)
+        {
+            const scale = @sqrt(ref_energy_total / clean_energy);
             for (0..bs) |i| {
                 const v: f32 = @as(f32, @floatFromInt(clean[i])) * scale;
                 clean[i] = if (v > 32767) 32767 else if (v < -32768) -32768 else @intFromFloat(@round(v));
