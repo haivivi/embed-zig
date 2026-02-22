@@ -40,6 +40,8 @@ pub const Mutex = struct {
 pub const Condition = struct {
     inner: std.Thread.Condition,
 
+    pub const TimedWaitResult = enum { signaled, timed_out };
+
     pub fn init() Condition {
         return .{ .inner = .{} };
     }
@@ -48,17 +50,19 @@ pub const Condition = struct {
         _ = self;
     }
 
-    /// Atomically unlock mutex, wait for signal, re-lock mutex
     pub fn wait(self: *Condition, mutex: *Mutex) void {
         self.inner.wait(&mutex.inner);
     }
 
-    /// Wake one waiting thread
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
+        self.inner.timedWait(&mutex.inner, timeout_ns) catch return .timed_out;
+        return .signaled;
+    }
+
     pub fn signal(self: *Condition) void {
         self.inner.signal();
     }
 
-    /// Wake all waiting threads
     pub fn broadcast(self: *Condition) void {
         self.inner.broadcast();
     }

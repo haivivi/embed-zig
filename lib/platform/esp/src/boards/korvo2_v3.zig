@@ -243,9 +243,7 @@ pub const PaSwitchDriver = struct {
 
     is_on: bool = false,
 
-    /// Initialize PA switch driver
-    /// Note: i2c parameter is for API compatibility with other boards (ignored here, uses direct GPIO)
-    pub fn init(_: *idf.I2c) !Self {
+    pub fn init() !Self {
         try gpio.configOutput(pa_gpio);
         try gpio.setLevel(pa_gpio, 0);
         return Self{ .is_on = false };

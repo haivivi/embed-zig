@@ -366,27 +366,20 @@ pub const PaSwitchDriver = struct {
 
     is_on: bool = false,
     gpio: Tca9554Driver = undefined,
+    i2c: idf.I2c = undefined,
 
-    /// Initialize PA switch driver with external I2C bus
-    pub fn init(i2c: *idf.I2c) !Self {
+    pub fn init() !Self {
         var self = Self{};
-
-        // Initialize PCA9557 GPIO expander driver (compatible with TCA9554)
-        self.gpio = Tca9554Driver.init(i2c, pca9557_addr);
-
-        // Sync current state from device
+        self.i2c = try idf.I2c.init(.{ .sda = i2c_sda, .scl = i2c_scl, .freq_hz = i2c_freq_hz });
+        self.gpio = Tca9554Driver.init(&self.i2c, pca9557_addr);
         self.gpio.syncFromDevice() catch return error.GpioInitFailed;
-
-        // Configure PA_EN pin as output with initial low (PA off)
         self.gpio.configureOutput(PA_EN_PIN, .low) catch return error.GpioInitFailed;
-
-        log.info("PaSwitchDriver: PCA9557 @ 0x{x} initialized via driver", .{pca9557_addr});
+        log.info("PaSwitchDriver: PCA9557 @ 0x{x} initialized", .{pca9557_addr});
         return self;
     }
 
     pub fn deinit(self: *Self) void {
         if (self.is_on) self.off() catch |err| log.warn("PA off failed in deinit: {}", .{err});
-        // I2C is managed externally, don't deinit here
     }
 
     pub fn on(self: *Self) !void {

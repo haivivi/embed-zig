@@ -33,6 +33,9 @@
 
 const std = @import("std");
 
+/// Standard task function signature for spawned work items.
+pub const TaskFn = *const fn (?*anyopaque) void;
+
 /// Validate that Impl provides Thread
 ///
 /// Required:
