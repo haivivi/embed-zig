@@ -224,7 +224,10 @@ pub fn Client(comptime Socket: type) type {
             var hdr_buf: [frame.MAX_HEADER_SIZE]u8 = undefined;
             const hdr_len = frame.encodeHeader(&hdr_buf, opcode, payload.len, true, mask_key);
 
-            try sendAll(self.socket, hdr_buf[0..hdr_len]);
+            sendAll(self.socket, hdr_buf[0..hdr_len]) catch {
+                self.state = .closed;
+                return error.SendFailed;
+            };
 
             // Stream-mask payload in chunks to avoid modifying caller's buffer
             var offset: usize = 0;
@@ -232,7 +235,10 @@ pub fn Client(comptime Socket: type) type {
                 const chunk_size = @min(self.mask_buf.len, payload.len - offset);
                 @memcpy(self.mask_buf[0..chunk_size], payload[offset..][0..chunk_size]);
                 frame.applyMaskOffset(self.mask_buf[0..chunk_size], mask_key, offset);
-                try sendAll(self.socket, self.mask_buf[0..chunk_size]);
+                sendAll(self.socket, self.mask_buf[0..chunk_size]) catch {
+                    self.state = .closed;
+                    return error.SendFailed;
+                };
                 offset += chunk_size;
             }
         }
