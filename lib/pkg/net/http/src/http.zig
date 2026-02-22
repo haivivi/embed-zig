@@ -1,51 +1,77 @@
-//! HTTP Client Library
+//! HTTP Library — Client and Server
 //!
-//! A simple HTTP/1.1 client with built-in pure Zig TLS and DNS resolver.
+//! ## Server
 //!
-//! ## Full Featured (HTTP + HTTPS + DNS) - Recommended
+//! Lightweight HTTP/1.1 server with comptime-configurable buffer sizes.
 //!
 //! ```zig
 //! const http = @import("http");
-//! const crypto = @import("crypto");
-//! const Rt = @import("std_impl").runtime; // or esp.idf.runtime
 //!
-//! // Create full-featured client with built-in TLS and DNS
-//! const Client = http.HttpClient(Socket, crypto.Suite, Rt, void);
-//! var client = Client{
-//!     .allocator = allocator,
-//!     .dns_server = .{ 223, 5, 5, 5 },  // AliDNS
-//!     .skip_cert_verify = true,
+//! const routes = [_]http.Route{
+//!     http.get("/", serveIndex),
+//!     http.get("/api/status", getStatus),
+//!     http.post("/api/wifi/config", setWifiConfig),
+//!     http.prefix("/static/", http.static.serveEmbedded(&files)),
 //! };
 //!
-//! var buffer: [8192]u8 = undefined;
-//! const resp = try client.get("https://example.com/api", &buffer);
+//! var server = http.Server(Socket, .{}).init(allocator, &routes);
+//!
+//! while (try listener.accept()) |conn| {
+//!     wg.go(server.serveConn, .{conn});
+//! }
 //! ```
 //!
-//! ## HTTP Only (IP addresses only, no TLS, no DNS)
+//! ## Client
 //!
 //! ```zig
-//! const Client = http.Client(Socket);
-//! var client = Client{};
-//! const resp = try client.get("http://192.168.1.100/api", &buffer);
+//! const Client = http.HttpClient(Socket, crypto.Suite, Rt, void);
+//! var client = Client{ .allocator = allocator };
+//! const resp = try client.get("https://example.com/api", &buffer);
 //! ```
 
+// -- Client --
 pub const client = @import("client.zig");
-
-/// Full-featured HTTP Client with built-in TLS and DNS
-///
-/// - Socket: Platform socket type
-/// - Crypto: Crypto suite (must include Rng)
-/// - Rt: Runtime providing Mutex (for TLS thread safety)
-/// - DomainResolver: Custom domain resolver (void to disable)
 pub const HttpClient = client.HttpClient;
-
-/// HTTP-only Client (no TLS, no DNS resolver)
-/// Use this for simple HTTP requests to IP addresses.
 pub const Client = client.Client;
-
-pub const Method = client.Method;
-pub const Response = client.Response;
 pub const ClientError = client.ClientError;
+pub const ClientResponse = client.Response;
 
 pub const stream = @import("stream.zig");
 pub const SocketStream = stream.SocketStream;
+
+// -- Server --
+pub const server_mod = @import("server.zig");
+pub const Server = server_mod.Server;
+pub const ServerConfig = server_mod.Config;
+
+pub const request = @import("request.zig");
+pub const Request = request.Request;
+pub const Method = request.Method;
+pub const HeaderIterator = request.HeaderIterator;
+pub const ParseError = request.ParseError;
+
+pub const response = @import("response.zig");
+pub const Response = response.Response;
+pub const statusText = response.statusText;
+
+pub const router = @import("router.zig");
+pub const Route = router.Route;
+pub const Handler = router.Handler;
+pub const MatchType = router.MatchType;
+pub const get = router.get;
+pub const post = router.post;
+pub const put = router.put;
+pub const delete = router.delete;
+pub const prefix = router.prefix;
+
+pub const static = @import("static.zig");
+pub const EmbeddedFile = static.EmbeddedFile;
+
+// Run all tests
+test {
+    _ = request;
+    _ = response;
+    _ = router;
+    _ = server_mod;
+    _ = static;
+}
