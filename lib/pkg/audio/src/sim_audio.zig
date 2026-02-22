@@ -20,6 +20,14 @@ pub const SimConfig = struct {
     echo_delay_samples: u32 = 160,
     echo_gain: f32 = 0.76,
     has_hardware_loopback: bool = true,
+    /// RMS level of continuous ambient noise injected into mic (0 = none)
+    ambient_noise_rms: f32 = 0,
+    /// Resonant frequency where echo gain is boosted (Hz, 0 = disabled)
+    resonance_freq: f32 = 0,
+    /// Extra gain at resonant frequency (multiplied on top of echo_gain)
+    resonance_gain: f32 = 3.0,
+    /// Q factor of resonance (higher = narrower peak)
+    resonance_q: f32 = 5.0,
 };
 
 pub fn SimAudio(comptime cfg: SimConfig) type {
@@ -48,6 +56,13 @@ pub fn SimAudio(comptime cfg: SimConfig) type {
         echo_line: [16384]i16,
         echo_write_pos: usize,
 
+        // Resonant biquad filter state (2nd-order IIR)
+        biquad_z1: f32,
+        biquad_z2: f32,
+
+        // Ambient noise PRNG
+        noise_rng: u64,
+
         mutex: std.Thread.Mutex,
         data_ready: std.Thread.Condition,
         spk_space: std.Thread.Condition,
@@ -71,6 +86,9 @@ pub fn SimAudio(comptime cfg: SimConfig) type {
                 .ref_read = if (cfg.has_hardware_loopback) 0 else {},
                 .echo_line = [_]i16{0} ** 16384,
                 .echo_write_pos = 0,
+                .biquad_z1 = 0,
+                .biquad_z2 = 0,
+                .noise_rng = 0xDEADBEEF12345678,
                 .mutex = .{},
                 .data_ready = .{},
                 .spk_space = .{},
@@ -137,9 +155,10 @@ pub fn SimAudio(comptime cfg: SimConfig) type {
                 }
                 self.echo_write_pos += frame_size;
 
-                // Build mic frame: echo + near_end
+                // Build mic frame: echo (with resonance) + near_end + ambient noise
                 var mic_frame: [frame_size]i16 = undefined;
                 for (0..frame_size) |i| {
+                    // Base echo: delayed speaker * gain
                     var echo: f32 = 0;
                     if (self.echo_write_pos > echo_delay) {
                         const idx = self.echo_write_pos - echo_delay + i;
@@ -148,13 +167,43 @@ pub fn SimAudio(comptime cfg: SimConfig) type {
                         }
                     }
 
+                    // Resonant filter: boosts echo at resonance_freq
+                    // 2nd-order IIR peaking EQ
+                    if (cfg.resonance_freq > 0) {
+                        const w0 = 2.0 * std.math.pi * cfg.resonance_freq / @as(f32, @floatFromInt(cfg.sample_rate));
+                        const alpha = @sin(w0) / (2.0 * cfg.resonance_q);
+                        const a0 = 1.0 + alpha;
+                        const b0 = (1.0 + alpha * cfg.resonance_gain) / a0;
+                        const b1 = (-2.0 * @cos(w0)) / a0;
+                        const b2 = (1.0 - alpha * cfg.resonance_gain) / a0;
+                        const a1 = b1; // (-2*cos(w0))/a0
+                        const a2 = (1.0 - alpha) / a0;
+
+                        const input = echo;
+                        const output = b0 * input + self.biquad_z1;
+                        self.biquad_z1 = b1 * input - a1 * output + self.biquad_z2;
+                        self.biquad_z2 = b2 * input - a2 * output;
+                        echo = output;
+                    }
+
+                    // Near-end signal
                     var near_end: f32 = 0;
                     if (self.ne_read < self.ne_write) {
                         near_end = @floatFromInt(self.near_end_ring[self.ne_read % RingCap]);
                         self.ne_read += 1;
                     }
 
-                    const mixed = echo + near_end;
+                    // Ambient noise
+                    var ambient: f32 = 0;
+                    if (cfg.ambient_noise_rms > 0) {
+                        self.noise_rng ^= self.noise_rng << 13;
+                        self.noise_rng ^= self.noise_rng >> 7;
+                        self.noise_rng ^= self.noise_rng << 17;
+                        const raw: f32 = @floatFromInt(@as(i32, @truncate(@as(i64, @bitCast(self.noise_rng)))));
+                        ambient = raw / 2147483648.0 * cfg.ambient_noise_rms * 1.73;
+                    }
+
+                    const mixed = echo + near_end + ambient;
                     mic_frame[i] = if (mixed > 32767) 32767 else if (mixed < -32768) -32768 else @intFromFloat(mixed);
                 }
 
@@ -670,4 +719,132 @@ test "D3: clipping produces harmonics" {
     try testing.expect(p440 > 1000);
     // Hard clipping of a sine produces significant 3rd harmonic
     try testing.expect(p1320 > p440 * 0.01);
+}
+
+// ============================================================================
+// Realistic closed-loop AEC tests (reproduces real-hardware failure)
+// ============================================================================
+
+const aec3_mod = @import("aec3/aec3.zig");
+
+// R1: Quiet room with ambient noise + resonance → AEC must keep signal stable
+test "R1: realistic closed-loop — ambient noise + resonance, no divergence" {
+    const Sim = SimAudio(.{
+        .echo_delay_samples = 350,
+        .echo_gain = 0.8,
+        .has_hardware_loopback = true,
+        .ambient_noise_rms = 100,
+        .resonance_freq = 800,
+        .resonance_gain = 10.0,
+        .resonance_q = 2.0,
+    });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+    var rdr = sim.refReader();
+
+    var aec = try aec3_mod.Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .sample_rate = 16000,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+    var max_mic_rms: f64 = 0;
+    var max_clean_rms: f64 = 0;
+
+    for (0..500) |frame| {
+        _ = try mic_drv.read(&mic_buf);
+        _ = try rdr.read(&ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+        _ = try spk.write(&clean);
+
+        const mr = tu.rmsEnergy(&mic_buf);
+        const cr = tu.rmsEnergy(&clean);
+        if (mr > max_mic_rms) max_mic_rms = mr;
+        if (cr > max_clean_rms) max_clean_rms = cr;
+
+        if (frame % 100 == 0) {
+            std.debug.print("[R1 f{d}] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
+                frame, mr, tu.rmsEnergy(&ref_buf), cr,
+            });
+        }
+    }
+
+    std.debug.print("[R1] max_mic={d:.0} max_clean={d:.0}\n", .{ max_mic_rms, max_clean_rms });
+
+    try testing.expect(max_mic_rms < 2000);
+    try testing.expect(max_clean_rms < 2000);
+}
+
+test "R2: realistic closed-loop with near-end speech" {
+    const Sim = SimAudio(.{
+        .echo_delay_samples = 350,
+        .echo_gain = 0.3,
+        .has_hardware_loopback = true,
+        .ambient_noise_rms = 100,
+        .resonance_freq = 800,
+        .resonance_gain = 4.0,
+        .resonance_q = 3.0,
+    });
+    var sim = Sim.init();
+    try sim.start();
+    defer sim.stop();
+
+    var spk = sim.speaker();
+    var mic_drv = sim.mic();
+    var rdr = sim.refReader();
+
+    var aec = try aec3_mod.Aec3.init(testing.allocator, .{
+        .frame_size = 160,
+        .sample_rate = 16000,
+        .num_partitions = 10,
+        .comfort_noise_rms = 0,
+    });
+    defer aec.deinit();
+
+    var mic_buf: [160]i16 = undefined;
+    var ref_buf: [160]i16 = undefined;
+    var clean: [160]i16 = undefined;
+
+    // Run 200 frames silence to let AEC converge
+    for (0..200) |_| {
+        _ = try mic_drv.read(&mic_buf);
+        _ = try rdr.read(&ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+        _ = try spk.write(&clean);
+    }
+
+    // Inject near-end 880Hz for 100 frames, continue loop
+    var near_energy: f64 = 0;
+    var clean_energy: f64 = 0;
+    for (0..100) |f| {
+        var ne: [160]i16 = undefined;
+        tu.generateSine(&ne, 880.0, 8000.0, 16000, f * 160);
+        sim.writeNearEnd(&ne);
+
+        _ = try mic_drv.read(&mic_buf);
+        _ = try rdr.read(&ref_buf);
+        aec.process(&mic_buf, &ref_buf, &clean);
+        _ = try spk.write(&clean);
+
+        near_energy += tu.rmsEnergy(&ne) * tu.rmsEnergy(&ne);
+        clean_energy += tu.rmsEnergy(&clean) * tu.rmsEnergy(&clean);
+    }
+
+    const near_rms = @sqrt(near_energy / 100);
+    const clean_rms = @sqrt(clean_energy / 100);
+    std.debug.print("[R2] near={d:.0} clean={d:.0}\n", .{ near_rms, clean_rms });
+
+    // Near-end should be preserved
+    try testing.expect(clean_rms > near_rms * 0.1);
+    // Signal should not explode
+    try testing.expect(clean_rms < near_rms * 5.0);
 }
