@@ -17,7 +17,7 @@ const Board = platform.Board;
 const log = Board.log;
 const Socket = trait.socket.from(Board.socket);
 
-const DnsResolver = dns.Resolver(Board.socket);
+const DnsResolver = dns.Resolver(Board.socket, void);
 
 // C native test entry point
 extern fn bk_native_https_test() void;
