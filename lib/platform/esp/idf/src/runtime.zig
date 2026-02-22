@@ -134,6 +134,37 @@ pub const Condition = struct {
 };
 
 // ============================================================================
+// Notify — lightweight event via FreeRTOS binary semaphore
+// ============================================================================
+
+pub const Notify = struct {
+    sem: c.SemaphoreHandle_t,
+
+    pub fn init() Notify {
+        const sem = c.xSemaphoreCreateBinary();
+        return .{ .sem = sem };
+    }
+
+    pub fn deinit(self: *Notify) void {
+        c.vSemaphoreDelete(self.sem);
+    }
+
+    pub fn signal(self: *Notify) void {
+        _ = c.xSemaphoreGive(self.sem);
+    }
+
+    pub fn wait(self: *Notify) void {
+        _ = c.xSemaphoreTake(self.sem, c.portMAX_DELAY);
+    }
+
+    pub fn timedWait(self: *Notify, timeout_ns: u64) bool {
+        const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, std.math.maxInt(u32)));
+        const ticks = if (timeout_ms > 0) timeout_ms / c.portTICK_PERIOD_MS else 1;
+        return c.xSemaphoreTake(self.sem, ticks) == c.pdTRUE;
+    }
+};
+
+// ============================================================================
 // Time — for Mux/Stream Runtime trait
 // ============================================================================
 

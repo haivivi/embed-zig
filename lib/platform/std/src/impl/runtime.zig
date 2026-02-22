@@ -68,6 +68,67 @@ pub const Condition = struct {
     }
 };
 
+/// Notify — lightweight event notification (no Mutex required)
+/// Linux: eventfd, macOS/BSD: pipe
+pub const Notify = struct {
+    const builtin = @import("builtin");
+    const posix = std.posix;
+
+    fd_read: posix.fd_t,
+    fd_write: posix.fd_t,
+
+    pub fn init() Notify {
+        if (comptime builtin.os.tag == .linux) {
+            const fd = std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC);
+            return .{ .fd_read = @intCast(fd), .fd_write = @intCast(fd) };
+        } else {
+            const fds = posix.pipe2(.{ .CLOEXEC = true }) catch
+                @panic("Notify: pipe2 failed");
+            return .{ .fd_read = fds[0], .fd_write = fds[1] };
+        }
+    }
+
+    pub fn deinit(self: *Notify) void {
+        posix.close(self.fd_read);
+        if (self.fd_read != self.fd_write) posix.close(self.fd_write);
+    }
+
+    pub fn signal(self: *Notify) void {
+        const builtin_ = @import("builtin");
+        if (comptime builtin_.os.tag == .linux) {
+            const val: u64 = 1;
+            _ = posix.write(self.fd_write, std.mem.asBytes(&val)) catch {};
+        } else {
+            _ = posix.write(self.fd_write, &[1]u8{1}) catch {};
+        }
+    }
+
+    pub fn wait(self: *Notify) void {
+        var buf: [8]u8 = undefined;
+        _ = posix.read(self.fd_read, &buf) catch {};
+    }
+
+    pub fn timedWait(self: *Notify, timeout_ns: u64) bool {
+        const timeout_ms: i32 = if (timeout_ns >= std.math.maxInt(u64))
+            -1
+        else
+            @intCast(@min(timeout_ns / std.time.ns_per_ms, std.math.maxInt(i32)));
+
+        var pfds = [1]posix.pollfd{.{
+            .fd = self.fd_read,
+            .events = posix.POLL.IN,
+            .revents = 0,
+        }};
+        const n = posix.poll(&pfds, timeout_ms) catch return false;
+        if (n > 0) {
+            var buf: [8]u8 = undefined;
+            _ = posix.read(self.fd_read, &buf) catch {};
+            return true;
+        }
+        return false;
+    }
+};
+
 /// Task spawn options
 pub const Options = struct {
     /// Stack size in bytes (advisory on std, OS manages)
@@ -193,6 +254,45 @@ test "Thread joinable spawn" {
 
     t.join();
     try std.testing.expect(called.load(.acquire));
+}
+
+test "Notify signal/wait" {
+    var notify = Notify.init();
+    defer notify.deinit();
+
+    const thread = try std.Thread.spawn(.{}, struct {
+        fn run(n: *Notify) void {
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+            n.signal();
+        }
+    }.run, .{&notify});
+
+    notify.wait();
+    thread.join();
+}
+
+test "Notify timedWait timeout" {
+    var notify = Notify.init();
+    defer notify.deinit();
+
+    const result = notify.timedWait(1 * std.time.ns_per_ms);
+    try std.testing.expect(!result);
+}
+
+test "Notify timedWait signaled" {
+    var notify = Notify.init();
+    defer notify.deinit();
+
+    const thread = try std.Thread.spawn(.{}, struct {
+        fn run(n: *Notify) void {
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+            n.signal();
+        }
+    }.run, .{&notify});
+
+    const result = notify.timedWait(1 * std.time.ns_per_s);
+    try std.testing.expect(result);
+    thread.join();
 }
 
 test "nowMs returns positive" {

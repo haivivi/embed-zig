@@ -1,4 +1,4 @@
-//! Sync Trait — Mutex and Condition Variable contracts
+//! Sync Trait — Mutex, Condition Variable, and Notify contracts
 //!
 //! Validates that a Runtime type provides proper synchronization primitives.
 //! Used by cross-platform packages (channel, waitgroup) to abstract over
@@ -26,6 +26,21 @@
 //!     pub fn signal(self: *Condition) void;
 //!     pub fn broadcast(self: *Condition) void;
 //!     pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult;
+//! };
+//! ```
+//!
+//! ## Notify Contract
+//!
+//! Lightweight thread notification — faster than Condition (no Mutex needed).
+//! Linux: eventfd, macOS: pipe, ESP32: task notification, Windows: Event.
+//!
+//! ```zig
+//! const Notify = struct {
+//!     pub fn init() Notify;
+//!     pub fn deinit(self: *Notify) void;
+//!     pub fn signal(self: *Notify) void;
+//!     pub fn wait(self: *Notify) void;
+//!     pub fn timedWait(self: *Notify, timeout_ns: u64) bool;
 //! };
 //! ```
 //!
@@ -80,6 +95,27 @@ pub fn Condition(comptime Impl: type, comptime MutexImpl: type) type {
         _ = @as(*const fn (*Impl) void, &Impl.signal);
         _ = @as(*const fn (*Impl) void, &Impl.broadcast);
         _ = @as(*const fn (*Impl, *MutexImpl, u64) Impl.TimedWaitResult, &Impl.timedWait);
+    }
+    return Impl;
+}
+
+/// Validate that Impl is a valid Notify type
+///
+/// Lightweight event notification — no Mutex required.
+///
+/// Required methods:
+/// - `init() -> Notify`
+/// - `deinit(*Notify) -> void`
+/// - `signal(*Notify) -> void` — wake the waiter
+/// - `wait(*Notify) -> void` — block until signaled
+/// - `timedWait(*Notify, timeout_ns: u64) -> bool` — true if signaled, false if timed out
+pub fn Notify(comptime Impl: type) type {
+    comptime {
+        _ = @as(*const fn () Impl, &Impl.init);
+        _ = @as(*const fn (*Impl) void, &Impl.deinit);
+        _ = @as(*const fn (*Impl) void, &Impl.signal);
+        _ = @as(*const fn (*Impl) void, &Impl.wait);
+        _ = @as(*const fn (*Impl, u64) bool, &Impl.timedWait);
     }
     return Impl;
 }
