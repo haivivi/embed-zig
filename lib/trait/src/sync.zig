@@ -19,11 +19,13 @@
 //!
 //! ```zig
 //! const Condition = struct {
+//!     pub const TimedWaitResult = enum { signaled, timed_out };
 //!     pub fn init() Condition;
 //!     pub fn deinit(self: *Condition) void;
 //!     pub fn wait(self: *Condition, mutex: *Mutex) void;
 //!     pub fn signal(self: *Condition) void;
 //!     pub fn broadcast(self: *Condition) void;
+//!     pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult;
 //! };
 //! ```
 //!
@@ -68,7 +70,6 @@ pub fn Mutex(comptime Impl: type) type {
 /// - `signal(*Condition) -> void`
 /// - `broadcast(*Condition) -> void`
 ///
-/// Optional (for timeout support):
 /// - `timedWait(*Condition, *Mutex, timeout_ns: u64) -> TimedWaitResult`
 ///   where TimedWaitResult is an enum with `.timed_out` variant.
 pub fn Condition(comptime Impl: type, comptime MutexImpl: type) type {
@@ -78,6 +79,7 @@ pub fn Condition(comptime Impl: type, comptime MutexImpl: type) type {
         _ = @as(*const fn (*Impl, *MutexImpl) void, &Impl.wait);
         _ = @as(*const fn (*Impl) void, &Impl.signal);
         _ = @as(*const fn (*Impl) void, &Impl.broadcast);
+        _ = @as(*const fn (*Impl, *MutexImpl, u64) Impl.TimedWaitResult, &Impl.timedWait);
     }
     return Impl;
 }
