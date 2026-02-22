@@ -283,8 +283,14 @@ pub fn Client(comptime Socket: type) type {
                     self.state = .closed;
                     return null;
                 },
-                .text => return Message{ .type = .text, .payload = payload },
-                .binary => return Message{ .type = .binary, .payload = payload },
+                .text => {
+                    if (!header.fin) return error.FragmentedMessage;
+                    return Message{ .type = .text, .payload = payload };
+                },
+                .binary => {
+                    if (!header.fin) return error.FragmentedMessage;
+                    return Message{ .type = .binary, .payload = payload };
+                },
                 .pong => return Message{ .type = .pong, .payload = payload },
                 else => return null,
             }
