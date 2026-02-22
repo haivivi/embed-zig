@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  ADF_PATH: /usr/local/src/esp-adf
+  IDF_PATH: /usr/local/src/esp-adf/esp-idf
+
 jobs:
   build-and-test:
     strategy:
@@ -27,6 +31,10 @@ jobs:
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'extensions.bzl') }}
           restore-keys: |
             bazel-${{ runner.os }}-
+
+      - name: Setup ESP-ADF (Linux only)
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/esp-adf-setup
 
       - name: Build Zig rules tests
         run: bazel build --config=ci //bazel/zig/tests/...
@@ -51,5 +59,12 @@ jobs:
             //lib/pkg/async/cancellation:cancellation_test \
             //lib/platform/std:std_test
 
-      - name: Verify examples compile
-        run: bazel build --config=ci //examples:all
+      - name: Build all std targets
+        run: bazel build --config=ci //e2e/ci:build_all_std
+
+      - name: Test std platform
+        run: bazel test --config=ci //e2e/ci:test_std
+
+      - name: Build all ESP targets (Linux only)
+        if: runner.os == 'Linux'
+        run: bazel build --config=ci //e2e/ci:build_all_esp

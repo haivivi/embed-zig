@@ -8,6 +8,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ADF_PATH: /usr/local/src/esp-adf
+  IDF_PATH: /usr/local/src/esp-adf/esp-idf
+
 jobs:
   affected:
     name: Find Affected Targets
@@ -72,14 +76,16 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
 
+      - name: Setup ESP-ADF
+        uses: ./.github/actions/esp-adf-setup
+
       - name: Build affected targets
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
           echo "Building: $TARGETS"
-          # --config=ci provides dummy env defines for ESP apps that need WIFI_SSID etc.
-          bazel build --config=ci $TARGETS --keep_going 2>&1 || true
+          bazel build --config=ci $TARGETS --keep_going
 
       - name: Test affected targets
         run: |
           TARGETS="${{ needs.affected.outputs.targets }}"
-          bazel test --config=ci $TARGETS --keep_going 2>&1 || [ $? -eq 4 ] || true
+          bazel test --config=ci $TARGETS --keep_going || [ $? -eq 4 ]
