@@ -587,7 +587,7 @@ pub const TempSensorDriver = struct {
 /// ```
 /// var i2c = try idf.I2c.init(.{ .sda = i2c_sda, .scl = i2c_scl, .freq_hz = i2c_freq_hz });
 /// var audio = try AudioSystem.initWithI2c(&i2c);
-/// var pa = try PaSwitchDriver.init(&i2c);
+/// var pa = try PaSwitchDriver.init();
 /// ```
 pub const AudioSystem = BaseAudioSystem;
 

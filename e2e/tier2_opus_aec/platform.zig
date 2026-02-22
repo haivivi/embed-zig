@@ -44,7 +44,7 @@ pub const Board = struct {
         self.audio = try AudioSystem.init(&self.i2c);
         errdefer self.audio.deinit();
 
-        self.pa_switch = try PaSwitchDriver.init(&self.i2c);
+        self.pa_switch = try PaSwitchDriver.init();
     }
 
     pub fn deinit(self: *Self) void {
