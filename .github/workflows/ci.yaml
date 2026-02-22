@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IDF_PATH: /usr/local/src/esp-adf/esp-idf
+  IDF_PATH: /usr/local/src/esp-idf
 
 jobs:
   std:
