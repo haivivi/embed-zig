@@ -37,6 +37,9 @@ esp_board_build(name = "tier1_tls_concurrent_esp32s3_devkit", target = "//e2e/ti
 # --- tier1_http_server: esp32s3_devkit (needs env) ---
 esp_board_build(name = "tier1_http_server_esp32s3_devkit", target = "//e2e/tier1_http_server/esp:app", board = "esp32s3_devkit")
 
+# --- tier1_websocket: esp32s3_devkit (needs env) ---
+esp_board_build(name = "tier1_websocket_esp32s3_devkit", target = "//e2e/tier1_websocket/esp:app", board = "esp32s3_devkit")
+
 # --- tier1_wifi_scan: esp32s3_devkit ---
 esp_board_build(name = "tier1_wifi_scan_esp32s3_devkit", target = "//e2e/tier1_wifi_scan/esp:app", board = "esp32s3_devkit")
 
@@ -163,6 +166,7 @@ filegroup(
         ":tier1_net_event_esp32s3_devkit",
         ":tier1_http_server_esp32s3_devkit",
         ":tier1_tls_concurrent_esp32s3_devkit",
+        ":tier1_websocket_esp32s3_devkit",
         ":tier1_wifi_scan_esp32s3_devkit",
         ":tier2_opus_aec_lichuang_gocool",
         ":tier3_ble_esp32s3_devkit",
