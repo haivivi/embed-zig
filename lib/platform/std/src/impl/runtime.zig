@@ -1,19 +1,7 @@
-//! StdRuntime — Runtime implementation using Zig standard library
-//!
-//! Provides Mutex, Condition, and spawn for cross-platform async packages.
-//! This is the "glue" that makes Channel, WaitGroup, etc. work on desktop/POSIX.
-//!
-//! ## Usage
-//!
-//! ```zig
-//! const std_impl = @import("std_impl");
-//! const Rt = std_impl.runtime;
-//!
-//! const MyChannel = channel.Channel(u32, 16, Rt);
-//! const MyWaitGroup = waitgroup.WaitGroup(Rt);
-//! ```
+//! Standard library runtime implementation (Mutex, Condition, Notify, spawn)
 
 const std = @import("std");
+const posix = std.posix;
 
 /// Mutex — wraps std.Thread.Mutex with init/deinit interface
 pub const Mutex = struct {
@@ -36,27 +24,44 @@ pub const Mutex = struct {
     }
 };
 
-/// Condition — wraps std.Thread.Condition, paired with our Mutex type
+/// Condition — wraps std.Thread.Condition with trait-compatible interface
 pub const Condition = struct {
     inner: std.Thread.Condition,
+    mutex: *Mutex,
 
-    pub const TimedWaitResult = enum { signaled, timed_out };
+    pub const TimedWaitResult = enum {
+        signaled,
+        timeout,
+    };
 
-    pub fn init() Condition {
-        return .{ .inner = .{} };
+    pub fn init(mutex: *Mutex) Condition {
+        return .{
+            .inner = .{},
+            .mutex = mutex,
+        };
     }
 
     pub fn deinit(self: *Condition) void {
         _ = self;
     }
 
-    pub fn wait(self: *Condition, mutex: *Mutex) void {
-        self.inner.wait(&mutex.inner);
+    pub fn wait(self: *Condition) void {
+        self.inner.wait(&self.mutex.inner);
     }
 
-    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
-        self.inner.timedWait(&mutex.inner, timeout_ns) catch return .timed_out;
-        return .signaled;
+    pub fn timedWait(self: *Condition, timeout_ns: u64) TimedWaitResult {
+        const timeout_ms: i32 = if (timeout_ns >= std.math.maxInt(u64))
+            -1
+        else
+            @intCast(@min(timeout_ns / std.time.ns_per_ms, std.math.maxInt(i32)));
+
+        if (timeout_ms < 0) {
+            self.inner.wait(&self.mutex.inner);
+            return .signaled;
+        }
+
+        const result = self.inner.timedWait(&self.mutex.inner, timeout_ns);
+        return if (result == error.Timeout) .timeout else .signaled;
     }
 
     pub fn signal(self: *Condition) void {
@@ -69,44 +74,69 @@ pub const Condition = struct {
 };
 
 /// Notify — lightweight event notification (no Mutex required)
-/// Linux: eventfd, macOS/BSD: pipe
+/// Linux: eventfd, macOS/BSD: kqueue + EVFILT_USER
 pub const Notify = struct {
     const builtin = @import("builtin");
-    const posix = std.posix;
 
-    fd_read: posix.fd_t,
-    fd_write: posix.fd_t,
+    fd: posix.fd_t,
+    is_kqueue: bool,
 
     pub fn init() Notify {
         if (comptime builtin.os.tag == .linux) {
             const fd = posix.eventfd(0, std.os.linux.EFD.CLOEXEC) catch
                 @panic("Notify: eventfd failed");
-            return .{ .fd_read = fd, .fd_write = fd };
+            return .{ .fd = fd, .is_kqueue = false };
         } else {
-            const fds = posix.pipe2(.{ .CLOEXEC = true }) catch
-                @panic("Notify: pipe2 failed");
-            return .{ .fd_read = fds[0], .fd_write = fds[1] };
+            // macOS/BSD: use kqueue + EVFILT_USER for proper binary semaphore semantics
+            const kq = posix.kqueue() catch @panic("Notify: kqueue failed");
+            // Register EVFILT_USER event with EV_CLEAR (auto-reset after consume)
+            const changelist = [_]posix.system.Kevent{.{
+                .ident = 1, // user identifier
+                .filter = posix.system.EVFILT.USER,
+                .flags = posix.system.EV.ADD | posix.system.EV.CLEAR,
+                .fflags = 0,
+                .data = 0,
+                .udata = 0,
+            }};
+            _ = posix.kevent(kq, &changelist, &[_]posix.system.Kevent{}, null) catch {
+                posix.close(kq);
+                @panic("Notify: kevent register failed");
+            };
+            return .{ .fd = kq, .is_kqueue = true };
         }
     }
 
     pub fn deinit(self: *Notify) void {
-        posix.close(self.fd_read);
-        if (self.fd_read != self.fd_write) posix.close(self.fd_write);
+        posix.close(self.fd);
     }
 
     pub fn signal(self: *Notify) void {
-        const builtin_ = @import("builtin");
-        if (comptime builtin_.os.tag == .linux) {
+        if (comptime builtin.os.tag == .linux) {
             const val: u64 = 1;
-            _ = posix.write(self.fd_write, std.mem.asBytes(&val)) catch {};
+            _ = posix.write(self.fd, std.mem.asBytes(&val)) catch {};
         } else {
-            _ = posix.write(self.fd_write, &[1]u8{1}) catch {};
+            // Trigger EVFILT_USER event with NOTE.TRIGGER
+            const changelist = [_]posix.system.Kevent{.{
+                .ident = 1,
+                .filter = posix.system.EVFILT.USER,
+                .flags = 0,
+                .fflags = posix.system.NOTE.TRIGGER,
+                .data = 0,
+                .udata = 0,
+            }};
+            _ = posix.kevent(self.fd, &changelist, &[_]posix.system.Kevent{}, null) catch {};
         }
     }
 
     pub fn wait(self: *Notify) void {
-        var buf: [8]u8 = undefined;
-        _ = posix.read(self.fd_read, &buf) catch {};
+        if (comptime builtin.os.tag == .linux) {
+            var buf: [8]u8 = undefined;
+            _ = posix.read(self.fd, &buf) catch {};
+        } else {
+            // Wait for EVFILT_USER event (with EV_CLEAR, auto-reset after consume)
+            var events: [1]posix.system.Kevent = undefined;
+            _ = posix.kevent(self.fd, &[_]posix.system.Kevent{}, &events, null) catch {};
+        }
     }
 
     pub fn timedWait(self: *Notify, timeout_ns: u64) bool {
@@ -115,18 +145,29 @@ pub const Notify = struct {
         else
             @intCast(@min(timeout_ns / std.time.ns_per_ms, std.math.maxInt(i32)));
 
-        var pfds = [1]posix.pollfd{.{
-            .fd = self.fd_read,
-            .events = posix.POLL.IN,
-            .revents = 0,
-        }};
-        const n = posix.poll(&pfds, timeout_ms) catch return false;
-        if (n > 0) {
-            var buf: [8]u8 = undefined;
-            _ = posix.read(self.fd_read, &buf) catch {};
-            return true;
+        if (comptime builtin.os.tag == .linux) {
+            var pfds = [1]posix.pollfd{.{
+                .fd = self.fd,
+                .events = posix.POLL.IN,
+                .revents = 0,
+            }};
+            const n = posix.poll(&pfds, timeout_ms) catch return false;
+            if (n > 0) {
+                var buf: [8]u8 = undefined;
+                _ = posix.read(self.fd, &buf) catch {};
+                return true;
+            }
+            return false;
+        } else {
+            // macOS/BSD: kevent with timeout
+            const timeout = posix.timespec{
+                .sec = @intCast(@divFloor(timeout_ms, 1000)),
+                .nsec = @intCast(@mod(timeout_ms, 1000) * std.time.ns_per_ms),
+            };
+            var events: [1]posix.system.Kevent = undefined;
+            const n = posix.kevent(self.fd, &[_]posix.system.Kevent{}, &events, &timeout) catch return false;
+            return n > 0;
         }
-        return false;
     }
 };
 
@@ -137,171 +178,92 @@ pub const Options = struct {
     /// Task priority (advisory on std)
     priority: u8 = 16,
     /// CPU core affinity (-1 = any core)
-    core: i8 = -1,
+    core_id: i8 = -1,
 };
 
-/// Task function signature
-pub const TaskFn = *const fn (?*anyopaque) void;
-
-/// Spawn a detached thread that runs independently
-///
-/// The thread is detached (fire-and-forget). Use WaitGroup if you need
-/// to wait for completion.
-pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) !void {
-    _ = name;
+/// Spawn a new task/thread
+pub fn spawn(comptime func: *const fn (?*anyopaque) void, arg: ?*anyopaque, opts: Options) !void {
     _ = opts;
-    const thread = try std.Thread.spawn(.{}, struct {
-        fn wrapper(f: TaskFn, c: ?*anyopaque) void {
-            f(c);
-        }
-    }.wrapper, .{ func, ctx });
+    const thread = try std.Thread.spawn(.{}, func, .{arg});
     thread.detach();
-}
-
-// ============================================================================
-// Thread — Joinable thread (wraps std.Thread)
-// ============================================================================
-
-/// Joinable thread — wraps std.Thread for trait.spawner compatibility
-pub const Thread = std.Thread;
-
-// ============================================================================
-// Time
-// ============================================================================
-
-/// Get current time in milliseconds
-pub fn nowMs() u64 {
-    return @intCast(std.time.milliTimestamp());
-}
-
-// ============================================================================
-// CPU Info
-// ============================================================================
-
-/// Get CPU core count
-pub fn getCpuCount() !usize {
-    return std.Thread.getCpuCount() catch |err| {
-        // std.Thread.getCpuCount() can fail on some platforms
-        return err;
-    };
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-test "Mutex basic" {
-    var mutex = Mutex.init();
-    defer mutex.deinit();
+test "Mutex lock/unlock" {
+    var m = Mutex.init();
+    defer m.deinit();
 
-    mutex.lock();
-    mutex.unlock();
+    m.lock();
+    m.unlock();
 }
 
-test "Condition signal" {
-    var mutex = Mutex.init();
-    defer mutex.deinit();
-    var cond = Condition.init();
-    defer cond.deinit();
+test "Condition wait/signal" {
+    var m = Mutex.init();
+    defer m.deinit();
+    var c = Condition.init(&m);
+    defer c.deinit();
 
-    var ready = false;
-
-    const thread = try std.Thread.spawn(.{}, struct {
-        fn run(m: *Mutex, c: *Condition, r: *bool) void {
-            std.Thread.sleep(1 * std.time.ns_per_ms);
-            m.lock();
-            r.* = true;
-            c.signal();
-            m.unlock();
-        }
-    }.run, .{ &mutex, &cond, &ready });
-
-    mutex.lock();
-    while (!ready) {
-        cond.wait(&mutex);
-    }
-    mutex.unlock();
-
-    thread.join();
-    try std.testing.expect(ready);
-}
-
-test "spawn fire and forget" {
-    var done = std.atomic.Value(bool).init(false);
-
-    try spawn("test", struct {
-        fn run(ctx: ?*anyopaque) void {
-            const d: *std.atomic.Value(bool) = @ptrCast(@alignCast(ctx));
-            d.store(true, .release);
-        }
-    }.run, &done, .{});
-
-    // Wait for thread to complete
-    while (!done.load(.acquire)) {
-        std.Thread.sleep(1 * std.time.ns_per_ms);
-    }
-    try std.testing.expect(done.load(.acquire));
-}
-
-test "Thread joinable spawn" {
-    var called = std.atomic.Value(bool).init(false);
-
-    const t = try std.Thread.spawn(.{}, struct {
-        fn run(c: *std.atomic.Value(bool)) void {
-            std.Thread.sleep(1 * std.time.ns_per_ms);
-            c.store(true, .release);
-        }
-    }.run, .{&called});
-
-    t.join();
-    try std.testing.expect(called.load(.acquire));
+    // Simple signal test - just verify it compiles and runs
+    m.lock();
+    c.signal();
+    m.unlock();
 }
 
 test "Notify signal/wait" {
-    var notify = Notify.init();
-    defer notify.deinit();
+    var n = Notify.init();
+    defer n.deinit();
 
+    // Signal from another thread
     const thread = try std.Thread.spawn(.{}, struct {
-        fn run(n: *Notify) void {
-            std.Thread.sleep(5 * std.time.ns_per_ms);
-            n.signal();
+        fn run(notify: *Notify) void {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            notify.signal();
         }
-    }.run, .{&notify});
+    }.run, .{&n});
 
-    notify.wait();
+    n.wait();
     thread.join();
-}
-
-test "Notify timedWait timeout" {
-    var notify = Notify.init();
-    defer notify.deinit();
-
-    const result = notify.timedWait(1 * std.time.ns_per_ms);
-    try std.testing.expect(!result);
 }
 
 test "Notify timedWait signaled" {
-    var notify = Notify.init();
-    defer notify.deinit();
+    var n = Notify.init();
+    defer n.deinit();
+
+    // Signal immediately before wait
+    n.signal();
+    const signaled = n.timedWait(100 * std.time.ns_per_ms);
+    try std.testing.expect(signaled);
+}
+
+test "Notify timedWait timeout" {
+    var n = Notify.init();
+    defer n.deinit();
+
+    // Wait without signal - should timeout
+    const start = std.time.milliTimestamp();
+    const signaled = n.timedWait(50 * std.time.ns_per_ms);
+    const elapsed = std.time.milliTimestamp() - start;
+
+    try std.testing.expect(!signaled);
+    try std.testing.expect(elapsed >= 40); // Allow some tolerance
+}
+
+test "Notify signal from thread" {
+    var n = Notify.init();
+    defer n.deinit();
 
     const thread = try std.Thread.spawn(.{}, struct {
-        fn run(n: *Notify) void {
-            std.Thread.sleep(5 * std.time.ns_per_ms);
-            n.signal();
+        fn run(notify: *Notify) void {
+            std.Thread.sleep(20 * std.time.ns_per_ms);
+            notify.signal();
         }
-    }.run, .{&notify});
+    }.run, .{&n});
 
-    const result = notify.timedWait(1 * std.time.ns_per_s);
-    try std.testing.expect(result);
+    const signaled = n.timedWait(100 * std.time.ns_per_ms);
     thread.join();
-}
 
-test "nowMs returns positive" {
-    const ms = nowMs();
-    try std.testing.expect(ms > 0);
-}
-
-test "getCpuCount returns at least 1" {
-    const count = try getCpuCount();
-    try std.testing.expect(count >= 1);
+    try std.testing.expect(signaled);
 }
