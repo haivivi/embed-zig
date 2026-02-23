@@ -79,8 +79,9 @@ pub const Notify = struct {
 
     pub fn init() Notify {
         if (comptime builtin.os.tag == .linux) {
-            const fd = std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC);
-            return .{ .fd_read = @intCast(fd), .fd_write = @intCast(fd) };
+            const fd = posix.eventfd(0, std.os.linux.EFD.CLOEXEC) catch
+                @panic("Notify: eventfd failed");
+            return .{ .fd_read = fd, .fd_write = fd };
         } else {
             const fds = posix.pipe2(.{ .CLOEXEC = true }) catch
                 @panic("Notify: pipe2 failed");
