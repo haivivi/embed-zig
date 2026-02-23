@@ -101,7 +101,8 @@ pub const Condition = struct {
     /// Wait with timeout (nanoseconds).
     pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
         const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, std.math.maxInt(u32)));
-        const ticks = if (timeout_ms > 0) timeout_ms / c.portTICK_PERIOD_MS else 1;
+        // timeout_ms == 0: non-blocking (0 ticks), otherwise at least 1 tick
+        const ticks = if (timeout_ms == 0) 0 else @max(1, timeout_ms / c.portTICK_PERIOD_MS);
         mutex.unlock();
         const result = c.xSemaphoreTake(self.sem, ticks);
         mutex.lock();
