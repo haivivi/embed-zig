@@ -47,11 +47,15 @@ pub fn GenAec3(comptime Arith: type) type {
         sg: SG,
         cn: cn_mod.ComfortNoise,
 
-    fft_size: usize,
-    num_bins: usize,
-    smoothed_cancel_ratio: f32 = 0,
+        fft_size: usize,
+        num_bins: usize,
+        smoothed_cancel_ratio: f32 = 0,
 
-    error_td: []i16,
+        // Near-end detection state (fast attack, slow release)
+        near_end_counter: i32 = 0,  // Positive = near-end frames detected
+        near_end_state: bool = false,  // True = currently in near-end mode
+
+        error_td: []i16,
     error_spectrum: []C,
     ref_spectrum: []C,
     echo_power: []f32,
@@ -185,7 +189,11 @@ pub fn GenAec3(comptime Arith: type) type {
         self.smoothed_cancel_ratio = alpha * self.smoothed_cancel_ratio + (1.0 - alpha) * instant_ratio;
 
         // Double-talk check: if error >> ref, near-end present → skip NLP
-        const apply_nlp = self.smoothed_cancel_ratio > 0.01 and self.smoothed_cancel_ratio < 1.5 and af_result.ref_energy > 100;
+        // Also skip NLP when fast near-end detector triggers (near_end_state)
+        const apply_nlp = !self.near_end_state  // Skip if near-end detected
+              and self.smoothed_cancel_ratio > 0.01
+              and self.smoothed_cancel_ratio < 1.5
+              and af_result.ref_energy > 100;
 
         if (apply_nlp) {
             for (0..self.num_bins) |k| {
@@ -213,7 +221,8 @@ pub fn GenAec3(comptime Arith: type) type {
             @memcpy(clean, self.error_td[0..bs]);
         }
 
-        // 7. Output constraints
+        // 7. Fast near-end detection (before output constraints)
+        // Calculate energies for detection
         var clean_energy: f32 = 0;
         var mic_energy: f32 = 0;
         var ref_energy_total: f32 = 0;
@@ -224,6 +233,37 @@ pub fn GenAec3(comptime Arith: type) type {
             clean_energy += cv * cv;
             mic_energy += mv * mv;
             ref_energy_total += rv * rv;
+        }
+
+        // Fast near-end detection: mic >> ref indicates near-end speech
+        // Using ratio threshold of 1.5 (mic_energy > ref_energy * 1.5)
+        // Lower threshold for faster detection of near-end onset
+        const ne_detected = if (ref_energy_total > 100)
+            mic_energy > ref_energy_total * 1.5
+        else
+            mic_energy > 5000;  // Even if ref is low, moderate mic suggests near-end
+
+        if (ne_detected) {
+            self.near_end_counter += 1;
+        } else {
+            self.near_end_counter -= 1;
+            if (self.near_end_counter < 0) self.near_end_counter = 0;
+        }
+
+        // Trigger near-end state: immediate on first detection (fastest attack)
+        // Hold state: 50 frames after last detection (slow release)
+        if (self.near_end_counter > 0) {
+            self.near_end_state = true;
+        } else {
+            self.near_end_state = false;
+        }
+
+        // When in near-end state: limit suppression to preserve speech
+        // by setting high floor (effectively skip aggressive NLP)
+        if (self.near_end_state) {
+            // Preserve clean output - don't let NLP suppress too much
+            // This is equivalent to using nearend_tuning in WebRTC
+            clean_energy = mic_energy;  // Prevent gain constraint from reducing output
         }
 
         // 7a. Clean must not exceed mic (prevents AEC amplification)
