@@ -210,15 +210,9 @@ pub const DuplexAudio = struct {
         pub fn setVolume(_: *Speaker, _: u8) !void {}
     };
 
-    /// RefReader: reads from ref_ring with offset compensation.
-    /// The read position is shifted by ref_offset_samples relative to mic,
-    /// so the ref frame returned corresponds to what the speaker was
-    /// physically playing when the mic captured its frame.
-    /// RefReader: reads from ref_ring lagging behind mic by ref_offset_samples.
-    /// mic.read() and ref.read() are called in sequence each frame.
-    /// Both rings receive the same number of samples per callback.
-    /// ref_read naturally lags behind ref_write, and we require enough
-    /// accumulated data (including the offset) before returning.
+    /// RefReader: reads ref aligned to mic by time offset.
+    /// Each call returns the ref frame that was played `ref_offset_samples`
+    /// before the current mic frame — matching the actual echo timing.
     pub const RefReader = struct {
         parent: *DuplexAudio,
 
@@ -232,26 +226,60 @@ pub const DuplexAudio = struct {
                 0;
 
             while (true) {
-                const avail = self_ref.parent.ref_write -| self_ref.parent.ref_read;
+                // Application loop: mic.read() -> ref.read() -> AEC -> speaker.write()
+                // 
+                // Frame N: mic[N] captures audio including echo from speaker[N-1] (played one frame ago)
+                //         ref should be speaker[N-1] (the actual echo source)
+                //         clean[N] = AEC(mic[N], ref=speaker[N-1])
+                //         speaker[N] = clean[N]
+                //
+                // So ref frame N should return the speaker output from frame N-1.
+                // This is 1 frame of delay (FRAME_SIZE samples), not the PortAudio clock offset.
+                
+                const mic_end = self_ref.parent.mic_read;
+                const mic_start = mic_end - buf.len;  // Start of the frame just read by mic.read()
+                
+                // AEC needs the speaker output from the PREVIOUS frame as ref.
+                // This is a 1-frame delay (FRAME_SIZE samples = 10ms).
+                const ref_delay_samples = buf.len;  // One frame delay
+                
+                // Startup handling: when mic_start < ref_delay_samples, we don't have history.
+                // Return silence (zeros) - AEC will just pass through mic (no echo cancellation yet).
+                if (mic_start < ref_delay_samples) {
+                    @memset(buf, 0);
+                    return buf.len;
+                }
+                
+                // Read ref from one frame ago
+                const target_ref_start = mic_start - ref_delay_samples;
 
-                // Need buf.len + offset available: the extra offset samples
-                // sit between ref_read and the "real" data we want.
-                // We read from ref_read (which is offset samples behind mic).
-                if (avail >= buf.len + offset) {
+                // Check if target range [target_ref_start, target_ref_start + buf.len) is available
+                const ref_write = self_ref.parent.ref_write;
+                
+                if (ref_write >= target_ref_start + buf.len) {
+                    // Data is available. Read from target_ref_start.
                     for (0..buf.len) |i| {
-                        buf[i] = self_ref.parent.ref_ring[(self_ref.parent.ref_read + i) % RingCap];
+                        const ref_idx = (target_ref_start + i) % RingCap;
+                        buf[i] = self_ref.parent.ref_ring[ref_idx];
                     }
-                    self_ref.parent.ref_read += buf.len;
-
-                    // Drift correction: if backlog grows too large, discard
-                    const backlog = self_ref.parent.ref_write -| self_ref.parent.ref_read;
-                    if (backlog > offset + FRAME_SIZE * 6) {
-                        const skip = backlog - offset - FRAME_SIZE * 2;
+                    
+                    // Update ref_read to track what we've consumed
+                    // This prevents ref from growing unbounded
+                    self_ref.parent.ref_read = target_ref_start + buf.len;
+                    
+                    // Drift correction: if ref is accumulating too much beyond what we need,
+                    // skip ahead to keep latency bounded
+                    const backlog = ref_write -| self_ref.parent.ref_read;
+                    const max_backlog = offset + FRAME_SIZE * 4;
+                    if (backlog > max_backlog) {
+                        const skip = backlog - max_backlog;
                         self_ref.parent.ref_read += skip;
                     }
 
                     return buf.len;
                 }
+                
+                // Target data not yet available - wait for next callback
                 self_ref.parent.mic_ready.wait(&self_ref.parent.mutex);
             }
         }

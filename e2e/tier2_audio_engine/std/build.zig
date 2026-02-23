@@ -46,11 +46,26 @@ pub fn build(b: *std.Build) void {
         .{ .name = "e3", .file = "E3_engine_multi_round.zig", .desc = "E3: Multi-round conversation (DuplexStream)" },
         .{ .name = "e4", .file = "E4_engine_60s.zig", .desc = "E4: 60s Engine long-running (DuplexStream)" },
         .{ .name = "e5", .file = "E5_engine_nearend.zig", .desc = "E5: Near-end detection (DuplexStream)" },
+        .{ .name = "analyze", .file = "analyze_wav.zig", .desc = "Analyze recorded WAV files" },
     };
 
     // std_impl needs portaudio for audio_engine.zig
     const std_impl_mod = std_impl_dep.module("std_impl");
     std_impl_mod.addImport("portaudio", pa_module);
+
+    // wav_writer module for audio recording
+    const wav_module = b.createModule(.{
+        .root_source_file = b.path("wav_writer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // wav_reader module for analysis
+    const wav_reader_module = b.createModule(.{
+        .root_source_file = b.path("wav_reader.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     for (steps) |s| {
         const exe = b.addExecutable(.{
@@ -64,6 +79,8 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("portaudio", pa_module);
         exe.root_module.addImport("audio", audio_module);
         exe.root_module.addImport("std_impl", std_impl_mod);
+        exe.root_module.addImport("wav_writer", wav_module);
+        exe.root_module.addImport("wav_reader", wav_reader_module);
         exe.root_module.link_libc = true;
         exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
         exe.linkSystemLibrary("portaudio");
