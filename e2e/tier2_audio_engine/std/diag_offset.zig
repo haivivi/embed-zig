@@ -38,6 +38,9 @@ fn writeWav(path: []const u8, samples: []const i16) !void {
 }
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
     std.debug.print("\n=== Offset Measurement: 440Hz tone, no AEC ===\n\n", .{});
 
     try pa.init();
@@ -45,12 +48,11 @@ pub fn main() !void {
     if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
     if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var duplex = da.DuplexAudio.init();
+    var duplex = try da.DuplexAudio.init(allocator);
     var mic_drv = duplex.mic();
     var spk_drv = duplex.speaker();
     var ref_rdr = duplex.refReader();
 
-    try duplex.start();
     defer duplex.stop();
 
     // Wait for offset measurement

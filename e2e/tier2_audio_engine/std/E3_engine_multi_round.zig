@@ -85,7 +85,7 @@ pub fn main() !void {
     try pa.init();
     defer pa.deinit();
 
-    var duplex = da.DuplexAudio.init();
+    var duplex = try da.DuplexAudio.init(allocator);
     var mic_drv = duplex.mic();
     var spk_drv = duplex.speaker();
     var ref_rdr = duplex.refReader();
@@ -93,7 +93,6 @@ pub fn main() !void {
     var engine = try Engine.init(allocator, &mic_drv, &spk_drv, &ref_rdr);
     defer engine.deinit();
 
-    try duplex.start();
     defer duplex.stop();
 
     const format = Format{ .rate = SAMPLE_RATE, .channels = .mono };

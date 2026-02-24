@@ -16,10 +16,45 @@ pub fn main() !void {
     std.debug.print("Files: mic={d} samples, ref={d} samples, clean={d} samples\n\n",
         .{mic_wav.num_samples, ref_wav.num_samples, clean_wav.num_samples});
 
-    var frame_count: usize = 0;
     var mic_buf: [FRAME_SIZE]i16 = undefined;
     var ref_buf: [FRAME_SIZE]i16 = undefined;
     var clean_buf: [FRAME_SIZE]i16 = undefined;
+
+    // Calculate silence/background noise level (first 50 frames = 0.5s)
+    var silence_mic_energy: f64 = 0;
+    var silence_ref_energy: f64 = 0;
+    var frame_idx: usize = 0;
+    while (frame_idx < 50) {
+        const n = try mic_wav.readSamples(&mic_buf);
+        if (n < FRAME_SIZE) break;
+        _ = try ref_wav.readSamples(&ref_buf);
+        _ = try clean_wav.readSamples(&clean_buf);
+
+        for (0..FRAME_SIZE) |i| {
+            const mv: f64 = @floatFromInt(mic_buf[i]);
+            const rv: f64 = @floatFromInt(ref_buf[i]);
+            silence_mic_energy += mv * mv;
+            silence_ref_energy += rv * rv;
+        }
+        frame_idx += 1;
+    }
+    const total_samples = @as(f64, @floatFromInt(frame_idx * FRAME_SIZE));
+    const silence_mic_rms = @sqrt(silence_mic_energy / total_samples);
+    const silence_ref_rms = @sqrt(silence_ref_energy / total_samples);
+    std.debug.print("=== Background Noise Level (first 0.5s) ===\n", .{});
+    std.debug.print("Mic silence RMS: {d:.1}\n", .{silence_mic_rms});
+    std.debug.print("Ref silence RMS: {d:.1}\n", .{silence_ref_rms});
+    std.debug.print("\n", .{});
+
+    // Rewind for full analysis
+    mic_wav.deinit();
+    ref_wav.deinit();
+    clean_wav.deinit();
+    mic_wav = try wav.WavReader.init("e1_mic.wav");
+    ref_wav = try wav.WavReader.init("e1_ref.wav");
+    clean_wav = try wav.WavReader.init("e1_clean.wav");
+
+    var frame_count: usize = 0;
 
     // Statistics
     var ne_frames: usize = 0;  // Near-end detected

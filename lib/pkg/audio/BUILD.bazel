@@ -124,4 +124,46 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
+zig_test(
+    name = "i16_spectrum_test",
+    main = "src/i16_spectrum_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "i16_convergence_test",
+    main = "src/i16_convergence_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "aec_closed_loop_test",
+    main = "src/aec_closed_loop_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "diag_engine_test",
+    main = "src/diag_engine_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "e1_sim_tts_test",
+    main = "src/e1_sim_tts_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
+zig_test(
+    name = "engine_wav_test",
+    main = "src/engine_wav_test.zig",
+    srcs = glob(["src/**/*.zig"]),
+    deps = _COMMON_TEST_DEPS,
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))

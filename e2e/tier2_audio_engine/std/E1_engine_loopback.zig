@@ -16,7 +16,7 @@ const da = std_impl.audio_engine;
 
 const SAMPLE_RATE: u32 = 16000;
 const FRAME_SIZE: u32 = 160;
-const DURATION_S: u32 = 10;  // Shorter for testing (10s)
+const DURATION_S: u32 = 10; // Shorter for testing (10s)
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -32,7 +32,7 @@ pub fn main() !void {
     if (pa.deviceInfo(pa.defaultInputDevice())) |info| std.debug.print("Input:  {s}\n", .{info.name});
     if (pa.deviceInfo(pa.defaultOutputDevice())) |info| std.debug.print("Output: {s}\n\n", .{info.name});
 
-    var duplex = da.DuplexAudio.init();
+    var duplex = try da.DuplexAudio.init(allocator);
     var mic_drv = duplex.mic();
     var spk_drv = duplex.speaker();
     var ref_rdr = duplex.refReader();
@@ -40,11 +40,23 @@ pub fn main() !void {
     var aec = try audio.aec3.aec3.Aec3.init(allocator, .{
         .frame_size = FRAME_SIZE,
         .sample_rate = SAMPLE_RATE,
+        .num_partitions = 64, // 增加 partition 数量，覆盖更大延迟
     });
     defer aec.deinit();
 
-    try duplex.start();
     defer duplex.stop();
+
+    // Wait for offset measurement to stabilize
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+    const measured_offset = duplex.getRefOffset();
+    std.debug.print("PortAudio hardware offset: {d} samples ({d:.1}ms)\n", .{
+        measured_offset,
+        @as(f64, @floatFromInt(measured_offset)) / 16.0,
+    });
+    std.debug.print("RefReader total delay: {d} samples ({d:.1}ms) = hardware offset only (no acoustic delay)\n\n", .{
+        measured_offset,
+        @as(f64, @floatFromInt(measured_offset)) / 16.0,
+    });
 
     // Create WAV file recorders
     var mic_wav = try wav.WavWriter.init("e1_mic.wav", SAMPLE_RATE);

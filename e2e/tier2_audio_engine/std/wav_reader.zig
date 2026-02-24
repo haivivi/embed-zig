@@ -44,7 +44,8 @@ pub const WavReader = struct {
         const remaining = self.num_samples - self.current_sample;
         const to_read = @min(buffer.len, remaining);
 
-        var bytes_buf: [320]u8 = undefined;  // Max 160 samples * 2 bytes
+        // Support up to 2048 samples (4096 bytes) for FFT analysis
+        var bytes_buf: [4096]u8 = undefined;
         const bytes_to_read = to_read * 2;
         const n = try self.file.readAll(bytes_buf[0..bytes_to_read]);
 

@@ -23,6 +23,7 @@ fn callback(
     input: []const i16,
     output: []i16,
     _: usize,
+    _: pa.TimeInfo,
     user_data: ?*anyopaque,
 ) pa.CallbackResult {
     const state: *State = @ptrCast(@alignCast(user_data));

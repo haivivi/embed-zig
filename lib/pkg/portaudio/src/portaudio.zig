@@ -1,39 +1,39 @@
-//! PortAudio Zig Bindings
+//! PortAudio Zig Bindings — Blocking I/O
 //!
-//! Cross-platform audio I/O library.
+//! Uses Pa_ReadStream / Pa_WriteStream (blocking mode).
+//! Same pattern as giztoy Go/Rust implementations.
 //!
 //! Example:
 //! ```zig
 //! const pa = @import("portaudio");
+//! try pa.init();
+//! defer pa.deinit();
 //!
-//! pub fn main() !void {
-//!     try pa.init();
-//!     defer pa.deinit();
+//! var stream = try pa.Stream.open(allocator, .{
+//!     .input_channels  = 1,
+//!     .output_channels = 1,
+//!     .sample_rate     = 16000,
+//!     .frames_per_buffer = 160,
+//! });
+//! defer stream.close();
+//! try stream.start();
 //!
-//!     var stream = try pa.OutputStream(i16).open(.{
-//!         .sample_rate = 44100,
-//!         .channels = 2,
-//!         .frames_per_buffer = 256,
-//!     });
-//!     defer stream.close();
-//!
-//!     try stream.start();
-//!     // ... write audio data ...
-//!     try stream.stop();
+//! var buf: [160]i16 = undefined;
+//! while (true) {
+//!     _ = try stream.read(&buf);   // blocking
+//!     try stream.write(&buf);      // blocking
 //! }
 //! ```
 
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("portaudio.h");
-});
+const c = @cImport(@cInclude("portaudio.h"));
 
 // ============================================================================
-// Error Handling
+// Error
 // ============================================================================
 
-pub const Error = error{
+pub const PaError = error{
     NotInitialized,
     UnanticipatedHostError,
     InvalidChannelCount,
@@ -45,83 +45,61 @@ pub const Error = error{
     InsufficientMemory,
     BufferTooBig,
     BufferTooSmall,
-    NullCallback,
     BadStreamPtr,
     TimedOut,
     InternalError,
     DeviceUnavailable,
-    IncompatibleHostApiSpecificStreamInfo,
     StreamIsStopped,
     StreamIsNotStopped,
     InputOverflowed,
     OutputUnderflowed,
     HostApiNotFound,
     InvalidHostApi,
-    CanNotReadFromACallbackStream,
-    CanNotWriteToACallbackStream,
-    CanNotReadFromAnOutputOnlyStream,
-    CanNotWriteToAnInputOnlyStream,
-    IncompatibleStreamHostApi,
     BadBufferPtr,
     Unknown,
 };
 
-fn errorFromCode(code: c.PaError) Error {
+fn check(code: c.PaError) PaError!void {
+    if (code == c.paNoError) return;
     return switch (code) {
-        c.paNotInitialized => Error.NotInitialized,
-        c.paUnanticipatedHostError => Error.UnanticipatedHostError,
-        c.paInvalidChannelCount => Error.InvalidChannelCount,
-        c.paInvalidSampleRate => Error.InvalidSampleRate,
-        c.paInvalidDevice => Error.InvalidDevice,
-        c.paInvalidFlag => Error.InvalidFlag,
-        c.paSampleFormatNotSupported => Error.SampleFormatNotSupported,
-        c.paBadIODeviceCombination => Error.BadIODeviceCombination,
-        c.paInsufficientMemory => Error.InsufficientMemory,
-        c.paBufferTooBig => Error.BufferTooBig,
-        c.paBufferTooSmall => Error.BufferTooSmall,
-        c.paNullCallback => Error.NullCallback,
-        c.paBadStreamPtr => Error.BadStreamPtr,
-        c.paTimedOut => Error.TimedOut,
-        c.paInternalError => Error.InternalError,
-        c.paDeviceUnavailable => Error.DeviceUnavailable,
-        c.paIncompatibleHostApiSpecificStreamInfo => Error.IncompatibleHostApiSpecificStreamInfo,
-        c.paStreamIsStopped => Error.StreamIsStopped,
-        c.paStreamIsNotStopped => Error.StreamIsNotStopped,
-        c.paInputOverflowed => Error.InputOverflowed,
-        c.paOutputUnderflowed => Error.OutputUnderflowed,
-        c.paHostApiNotFound => Error.HostApiNotFound,
-        c.paInvalidHostApi => Error.InvalidHostApi,
-        c.paCanNotReadFromACallbackStream => Error.CanNotReadFromACallbackStream,
-        c.paCanNotWriteToACallbackStream => Error.CanNotWriteToACallbackStream,
-        c.paCanNotReadFromAnOutputOnlyStream => Error.CanNotReadFromAnOutputOnlyStream,
-        c.paCanNotWriteToAnInputOnlyStream => Error.CanNotWriteToAnInputOnlyStream,
-        c.paIncompatibleStreamHostApi => Error.IncompatibleStreamHostApi,
-        c.paBadBufferPtr => Error.BadBufferPtr,
-        else => Error.Unknown,
+        c.paNotInitialized => error.NotInitialized,
+        c.paUnanticipatedHostError => error.UnanticipatedHostError,
+        c.paInvalidChannelCount => error.InvalidChannelCount,
+        c.paInvalidSampleRate => error.InvalidSampleRate,
+        c.paInvalidDevice => error.InvalidDevice,
+        c.paInvalidFlag => error.InvalidFlag,
+        c.paSampleFormatNotSupported => error.SampleFormatNotSupported,
+        c.paBadIODeviceCombination => error.BadIODeviceCombination,
+        c.paInsufficientMemory => error.InsufficientMemory,
+        c.paBufferTooBig => error.BufferTooBig,
+        c.paBufferTooSmall => error.BufferTooSmall,
+        c.paBadStreamPtr => error.BadStreamPtr,
+        c.paTimedOut => error.TimedOut,
+        c.paInternalError => error.InternalError,
+        c.paDeviceUnavailable => error.DeviceUnavailable,
+        c.paStreamIsStopped => error.StreamIsStopped,
+        c.paStreamIsNotStopped => error.StreamIsNotStopped,
+        c.paInputOverflowed => error.InputOverflowed,
+        c.paOutputUnderflowed => error.OutputUnderflowed,
+        c.paHostApiNotFound => error.HostApiNotFound,
+        c.paInvalidHostApi => error.InvalidHostApi,
+        c.paBadBufferPtr => error.BadBufferPtr,
+        else => error.Unknown,
     };
 }
 
-fn check(code: c.PaError) Error!void {
-    if (code != c.paNoError) {
-        return errorFromCode(code);
-    }
-}
-
 // ============================================================================
-// Initialization
+// Init / Deinit
 // ============================================================================
 
-/// Initialize PortAudio. Must be called before any other PortAudio functions.
-pub fn init() Error!void {
+pub fn init() PaError!void {
     try check(c.Pa_Initialize());
 }
 
-/// Terminate PortAudio. Call when done using PortAudio.
 pub fn deinit() void {
     _ = c.Pa_Terminate();
 }
 
-/// Get PortAudio version string.
 pub fn versionText() []const u8 {
     return std.mem.span(c.Pa_GetVersionText());
 }
@@ -139,454 +117,129 @@ pub const DeviceInfo = struct {
     default_sample_rate: f64,
     default_low_input_latency: f64,
     default_low_output_latency: f64,
-    default_high_input_latency: f64,
-    default_high_output_latency: f64,
 };
 
-/// Get the number of available devices.
-pub fn deviceCount() i32 {
-    return c.Pa_GetDeviceCount();
-}
-
-/// Get the default input device index.
 pub fn defaultInputDevice() DeviceIndex {
     return c.Pa_GetDefaultInputDevice();
 }
 
-/// Get the default output device index.
 pub fn defaultOutputDevice() DeviceIndex {
     return c.Pa_GetDefaultOutputDevice();
 }
 
-/// Get information about a device.
 pub fn deviceInfo(index: DeviceIndex) ?DeviceInfo {
-    const info = c.Pa_GetDeviceInfo(index);
-    if (info == null) return null;
-
-    return DeviceInfo{
-        .name = std.mem.span(info.*.name),
-        .max_input_channels = info.*.maxInputChannels,
-        .max_output_channels = info.*.maxOutputChannels,
-        .default_sample_rate = info.*.defaultSampleRate,
-        .default_low_input_latency = info.*.defaultLowInputLatency,
-        .default_low_output_latency = info.*.defaultLowOutputLatency,
-        .default_high_input_latency = info.*.defaultHighInputLatency,
-        .default_high_output_latency = info.*.defaultHighOutputLatency,
+    const info = c.Pa_GetDeviceInfo(index) orelse return null;
+    return .{
+        .name = std.mem.span(info.name),
+        .max_input_channels = info.maxInputChannels,
+        .max_output_channels = info.maxOutputChannels,
+        .default_sample_rate = info.defaultSampleRate,
+        .default_low_input_latency = info.defaultLowInputLatency,
+        .default_low_output_latency = info.defaultLowOutputLatency,
     };
 }
 
 // ============================================================================
-// Stream Configuration
+// Stream — Blocking I/O
 // ============================================================================
 
 pub const StreamConfig = struct {
-    sample_rate: f64 = 44100,
-    channels: i32 = 2,
-    frames_per_buffer: u32 = 256,
-    device: DeviceIndex = c.paNoDevice,
+    input_channels: u32 = 1,
+    output_channels: u32 = 1,
+    sample_rate: f64 = 16000.0,
+    frames_per_buffer: u32 = 160,
 };
 
-// ============================================================================
-// Output Stream (blocking write)
-// ============================================================================
+pub const Stream = struct {
+    pa_stream: ?*c.PaStream,
+    cfg: StreamConfig,
+    buf: []i16,
+    allocator: std.mem.Allocator,
 
-pub fn OutputStream(comptime SampleType: type) type {
-    return struct {
-        const Self = @This();
+    pub fn open(allocator: std.mem.Allocator, cfg: StreamConfig) (PaError || std.mem.Allocator.Error)!Stream {
+        var in_params: ?c.PaStreamParameters = null;
+        var out_params: ?c.PaStreamParameters = null;
 
-        stream: ?*c.PaStream,
-        config: StreamConfig,
-
-        pub fn open(cfg: StreamConfig) Error!Self {
-            var self = Self{
-                .stream = null,
-                .config = cfg,
-            };
-
-            const device = if (cfg.device == c.paNoDevice) defaultOutputDevice() else cfg.device;
-
-            const output_params = c.PaStreamParameters{
-                .device = device,
-                .channelCount = cfg.channels,
-                .sampleFormat = sampleFormat(SampleType),
-                .suggestedLatency = 0.050,
+        if (cfg.input_channels > 0) {
+            const dev = c.Pa_GetDefaultInputDevice();
+            if (dev == c.paNoDevice) return error.InvalidDevice;
+            const info = c.Pa_GetDeviceInfo(dev) orelse return error.InvalidDevice;
+            in_params = .{
+                .device = dev,
+                .channelCount = @intCast(cfg.input_channels),
+                .sampleFormat = c.paInt16,
+                .suggestedLatency = info.defaultLowInputLatency,
                 .hostApiSpecificStreamInfo = null,
             };
-
-            try check(c.Pa_OpenStream(
-                &self.stream,
-                null, // no input
-                &output_params,
-                cfg.sample_rate,
-                @intCast(cfg.frames_per_buffer),
-                c.paClipOff,
-                null, // no callback (blocking)
-                null,
-            ));
-
-            return self;
         }
 
-        pub fn close(self: *Self) void {
-            if (self.stream) |s| {
-                _ = c.Pa_CloseStream(s);
-                self.stream = null;
-            }
-        }
-
-        pub fn start(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StartStream(s));
-            }
-        }
-
-        pub fn stop(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StopStream(s));
-            }
-        }
-
-        pub fn write(self: *Self, buffer: []const SampleType) Error!void {
-            if (self.stream) |s| {
-                const frames = @divExact(buffer.len, @as(usize, @intCast(self.config.channels)));
-                try check(c.Pa_WriteStream(s, buffer.ptr, @intCast(frames)));
-            }
-        }
-    };
-}
-
-// ============================================================================
-// Input Stream (blocking read)
-// ============================================================================
-
-pub fn InputStream(comptime SampleType: type) type {
-    return struct {
-        const Self = @This();
-
-        stream: ?*c.PaStream,
-        config: StreamConfig,
-
-        pub fn open(cfg: StreamConfig) Error!Self {
-            var self = Self{
-                .stream = null,
-                .config = cfg,
-            };
-
-            const device = if (cfg.device == c.paNoDevice) defaultInputDevice() else cfg.device;
-
-            const input_params = c.PaStreamParameters{
-                .device = device,
-                .channelCount = cfg.channels,
-                .sampleFormat = sampleFormat(SampleType),
-                .suggestedLatency = 0.050,
+        if (cfg.output_channels > 0) {
+            const dev = c.Pa_GetDefaultOutputDevice();
+            if (dev == c.paNoDevice) return error.InvalidDevice;
+            const info = c.Pa_GetDeviceInfo(dev) orelse return error.InvalidDevice;
+            out_params = .{
+                .device = dev,
+                .channelCount = @intCast(cfg.output_channels),
+                .sampleFormat = c.paInt16,
+                .suggestedLatency = info.defaultLowOutputLatency,
                 .hostApiSpecificStreamInfo = null,
             };
-
-            try check(c.Pa_OpenStream(
-                &self.stream,
-                &input_params,
-                null, // no output
-                cfg.sample_rate,
-                @intCast(cfg.frames_per_buffer),
-                c.paClipOff,
-                null, // no callback (blocking)
-                null,
-            ));
-
-            return self;
         }
 
-        pub fn close(self: *Self) void {
-            if (self.stream) |s| {
-                _ = c.Pa_CloseStream(s);
-                self.stream = null;
-            }
-        }
+        var pa_stream: ?*c.PaStream = null;
+        try check(c.Pa_OpenStream(
+            &pa_stream,
+            if (in_params) |*p| p else null,
+            if (out_params) |*p| p else null,
+            cfg.sample_rate,
+            cfg.frames_per_buffer,
+            c.paClipOff,
+            null, // no callback
+            null,
+        ));
 
-        pub fn start(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StartStream(s));
-            }
-        }
+        const max_ch = @max(cfg.input_channels, cfg.output_channels);
+        const buf = try allocator.alloc(i16, cfg.frames_per_buffer * max_ch);
 
-        pub fn stop(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StopStream(s));
-            }
-        }
-
-        pub fn read(self: *Self, buffer: []SampleType) Error!void {
-            if (self.stream) |s| {
-                const frames = @divExact(buffer.len, @as(usize, @intCast(self.config.channels)));
-                try check(c.Pa_ReadStream(s, buffer.ptr, @intCast(frames)));
-            }
-        }
-    };
-}
-
-// ============================================================================
-// Callback Stream
-// ============================================================================
-
-pub const CallbackResult = enum(c_int) {
-    Continue = c.paContinue,
-    Complete = c.paComplete,
-    Abort = c.paAbort,
-};
-
-pub fn CallbackStream(comptime SampleType: type) type {
-    return struct {
-        const Self = @This();
-
-        pub const Callback = *const fn (
-            output: []SampleType,
-            frames: usize,
-            user_data: ?*anyopaque,
-        ) CallbackResult;
-
-        /// Context passed to PortAudio callback wrapper
-        const CallbackContext = struct {
-            callback: Callback,
-            user_data: ?*anyopaque,
-            channels: i32,
+        return .{
+            .pa_stream = pa_stream,
+            .cfg = cfg,
+            .buf = buf,
+            .allocator = allocator,
         };
+    }
 
-        stream: ?*c.PaStream,
-        config: StreamConfig,
-        context: CallbackContext,
+    pub fn start(self: *Stream) PaError!void {
+        try check(c.Pa_StartStream(self.pa_stream));
+    }
 
-        /// Initialize a callback stream.
-        ///
-        /// IMPORTANT: This function takes a pointer to self because PortAudio stores
-        /// a pointer to self.context internally. The caller must ensure that `self`
-        /// remains at a stable memory location for the lifetime of the stream.
-        ///
-        /// Usage:
-        /// ```
-        /// var stream: CallbackStream(i16) = undefined;
-        /// try stream.init(config, callback, user_data);
-        /// defer stream.close();
-        /// ```
-        pub fn init(self: *Self, cfg: StreamConfig, callback: Callback, user_data: ?*anyopaque) Error!void {
-            self.* = Self{
-                .stream = null,
-                .config = cfg,
-                .context = .{
-                    .callback = callback,
-                    .user_data = user_data,
-                    .channels = cfg.channels,
-                },
-            };
+    pub fn stop(self: *Stream) PaError!void {
+        try check(c.Pa_StopStream(self.pa_stream));
+    }
 
-            const device = if (cfg.device == c.paNoDevice) defaultOutputDevice() else cfg.device;
-
-            const output_params = c.PaStreamParameters{
-                .device = device,
-                .channelCount = cfg.channels,
-                .sampleFormat = sampleFormat(SampleType),
-                .suggestedLatency = 0.050,
-                .hostApiSpecificStreamInfo = null,
-            };
-
-            const CallbackWrapper = struct {
-                fn cb(
-                    _: ?*const anyopaque,
-                    output: ?*anyopaque,
-                    frame_count: c_ulong,
-                    _: [*c]const c.PaStreamCallbackTimeInfo,
-                    _: c.PaStreamCallbackFlags,
-                    user: ?*anyopaque,
-                ) callconv(.c) c_int {
-                    const ctx: *CallbackContext = @ptrCast(@alignCast(user));
-                    const out_ptr: [*]SampleType = @ptrCast(@alignCast(output));
-                    const total_samples = frame_count * @as(c_ulong, @intCast(ctx.channels));
-                    const result = ctx.callback(out_ptr[0..total_samples], frame_count, ctx.user_data);
-                    return @intFromEnum(result);
-                }
-            };
-
-            try check(c.Pa_OpenStream(
-                &self.stream,
-                null,
-                &output_params,
-                cfg.sample_rate,
-                @intCast(cfg.frames_per_buffer),
-                c.paClipOff,
-                CallbackWrapper.cb,
-                &self.context,
-            ));
+    pub fn close(self: *Stream) void {
+        if (self.pa_stream) |s| {
+            _ = c.Pa_StopStream(s);
+            _ = c.Pa_CloseStream(s);
+            self.pa_stream = null;
         }
+        self.allocator.free(self.buf);
+    }
 
-        pub fn close(self: *Self) void {
-            if (self.stream) |s| {
-                _ = c.Pa_CloseStream(s);
-                self.stream = null;
-            }
-        }
+    /// Blocking read — fills buf with frames_per_buffer * input_channels samples.
+    pub fn read(self: *Stream, buf: []i16) PaError!usize {
+        const n = self.cfg.frames_per_buffer * self.cfg.input_channels;
+        if (buf.len < n) return error.BufferTooSmall;
+        try check(c.Pa_ReadStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer));
+        @memcpy(buf[0..n], self.buf[0..n]);
+        return n;
+    }
 
-        pub fn start(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StartStream(s));
-            }
-        }
-
-        pub fn stop(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StopStream(s));
-            }
-        }
-    };
-}
-
-// ============================================================================
-// Full-Duplex Stream (callback with both input and output)
-// ============================================================================
-
-pub const TimeInfo = struct {
-    input_adc_time: f64,
-    current_time: f64,
-    output_dac_time: f64,
+    /// Blocking write — sends frames_per_buffer * output_channels samples.
+    pub fn write(self: *Stream, buf: []const i16) PaError!void {
+        const n = self.cfg.frames_per_buffer * self.cfg.output_channels;
+        if (buf.len < n) return error.BufferTooSmall;
+        @memcpy(self.buf[0..n], buf[0..n]);
+        try check(c.Pa_WriteStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer));
+    }
 };
-
-pub fn DuplexStream(comptime SampleType: type) type {
-    return struct {
-        const Self = @This();
-
-        pub const Callback = *const fn (
-            input: []const SampleType,
-            output: []SampleType,
-            frames: usize,
-            time_info: TimeInfo,
-            user_data: ?*anyopaque,
-        ) CallbackResult;
-
-        const CallbackContext = struct {
-            callback: Callback,
-            user_data: ?*anyopaque,
-            channels: i32,
-        };
-
-        stream: ?*c.PaStream,
-        config: StreamConfig,
-        context: CallbackContext,
-
-        pub fn init(
-            self: *Self,
-            cfg: StreamConfig,
-            callback: Callback,
-            user_data: ?*anyopaque,
-        ) Error!void {
-            self.* = Self{
-                .stream = null,
-                .config = cfg,
-                .context = .{
-                    .callback = callback,
-                    .user_data = user_data,
-                    .channels = cfg.channels,
-                },
-            };
-
-            const in_device = defaultInputDevice();
-            const out_device = defaultOutputDevice();
-
-            const input_params = c.PaStreamParameters{
-                .device = in_device,
-                .channelCount = cfg.channels,
-                .sampleFormat = sampleFormat(SampleType),
-                .suggestedLatency = 0.050,
-                .hostApiSpecificStreamInfo = null,
-            };
-
-            const output_params = c.PaStreamParameters{
-                .device = out_device,
-                .channelCount = cfg.channels,
-                .sampleFormat = sampleFormat(SampleType),
-                .suggestedLatency = 0.050,
-                .hostApiSpecificStreamInfo = null,
-            };
-
-            const CallbackWrapper = struct {
-                fn cb(
-                    input: ?*const anyopaque,
-                    output: ?*anyopaque,
-                    frame_count: c_ulong,
-                    time_info: [*c]const c.PaStreamCallbackTimeInfo,
-                    _: c.PaStreamCallbackFlags,
-                    user: ?*anyopaque,
-                ) callconv(.c) c_int {
-                    const ctx: *CallbackContext = @ptrCast(@alignCast(user));
-                    const total_samples = frame_count * @as(c_ulong, @intCast(ctx.channels));
-                    const in_ptr: [*]const SampleType = @ptrCast(@alignCast(input));
-                    const out_ptr: [*]SampleType = @ptrCast(@alignCast(output));
-                    const ti = TimeInfo{
-                        .input_adc_time = time_info.*.inputBufferAdcTime,
-                        .current_time = time_info.*.currentTime,
-                        .output_dac_time = time_info.*.outputBufferDacTime,
-                    };
-                    const result = ctx.callback(
-                        in_ptr[0..total_samples],
-                        out_ptr[0..total_samples],
-                        frame_count,
-                        ti,
-                        ctx.user_data,
-                    );
-                    return @intFromEnum(result);
-                }
-            };
-
-            try check(c.Pa_OpenStream(
-                &self.stream,
-                &input_params,
-                &output_params,
-                cfg.sample_rate,
-                @intCast(cfg.frames_per_buffer),
-                c.paClipOff,
-                CallbackWrapper.cb,
-                &self.context,
-            ));
-        }
-
-        pub fn close(self: *Self) void {
-            if (self.stream) |s| {
-                _ = c.Pa_CloseStream(s);
-                self.stream = null;
-            }
-        }
-
-        pub fn start(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StartStream(s));
-            }
-        }
-
-        pub fn stop(self: *Self) Error!void {
-            if (self.stream) |s| {
-                try check(c.Pa_StopStream(s));
-            }
-        }
-    };
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-fn sampleFormat(comptime T: type) c.PaSampleFormat {
-    return switch (T) {
-        f32 => c.paFloat32,
-        i32 => c.paInt32,
-        i16 => c.paInt16,
-        i8 => c.paInt8,
-        u8 => c.paUInt8,
-        else => @compileError("Unsupported sample type"),
-    };
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-test "version" {
-    const version = versionText();
-    try std.testing.expect(version.len > 0);
-}

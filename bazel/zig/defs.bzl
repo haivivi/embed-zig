@@ -170,19 +170,18 @@ def _build_module_args(main_name, main_root_path, direct_dep_names, all_dep_modu
         else:
             mods_without_includes.append(mod)
 
-    # Emit modules without -I first, then modules with -I last
+    # Emit modules without -I first, then modules with -I last.
+    # CRITICAL: -I flags must come BEFORE the -M definition they apply to.
+    # In zig 0.15, -I placed after -M is NOT used for @cImport resolution.
+    # By placing -I before -M (and modules with -I last so no subsequent -M
+    # follows to steal earlier -I flags), @cImport can find headers correctly.
     for mod in mods_without_includes + mods_with_includes:
         for dep_name in mod.dep_names:
             dep_args.extend(["--dep", dep_name])
-        dep_args.append("-M{}={}".format(mod.name, mod.root_path))
-
-        # Per-module -I: placed right after -M so it's scoped to this module.
-        # Needed for @cImport resolution in dep modules.
-        # -lc is a global link flag, tracked separately via deps_link_libc.
-        # C source files are NOT passed per-module (zig doesn't support it for
-        # dep modules). Linking is handled by passing the dep's .a library.
+        # -I BEFORE -M: required for @cImport resolution in zig 0.15
         for inc_dir in mod.c_include_dirs:
             dep_args.extend(["-I", inc_dir])
+        dep_args.append("-M{}={}".format(mod.name, mod.root_path))
 
     return struct(main = main_args, deps = dep_args, deps_link_libc = deps_link_libc)
 
@@ -268,6 +267,10 @@ _C_ASM_ATTRS = {
     "link_libc": attr.bool(
         default = False,
         doc = "Whether to link libc (-lc)",
+    ),
+    "system_include_dirs": attr.string_list(
+        default = [],
+        doc = "System include directories (-I) for @cImport (e.g., '/opt/homebrew/include')",
     ),
 }
 
@@ -869,6 +872,11 @@ def _zig_binary_impl(ctx):
     if mods.deps_link_libc and not ctx.attr.link_libc:
         global_pre.append("-lc")
 
+    # System include dirs (-I) for @cImport (e.g., /opt/homebrew/include for portaudio)
+    # Note: Use -I instead of -isystem because @cImport's internal clang may not respect -isystem
+    for sysdir in ctx.attr.system_include_dirs:
+        global_pre.extend(["-I", sysdir])
+
     # Collect dep .a libraries for linking (provides C symbols like xor_bytes)
     dep_lib_a_args = [f.path for f in collected.deps_transitive_lib_as.to_list()]
 
@@ -882,6 +890,8 @@ def _zig_binary_impl(ctx):
         cm_args.extend(["-O", ctx.attr.optimize])
     if ctx.attr.target:
         cm_args.extend(["-target", ctx.attr.target])
+    # Extra linker/link flags (e.g. -framework CoreAudio on macOS)
+    cm_args.extend(ctx.attr.linkopts)
 
     all_srcs = depset(transitive = collected.transitive_src_depsets).to_list()
 
@@ -930,6 +940,10 @@ zig_binary = rule(
         ),
         "target": attr.string(
             doc = "Cross-compilation target",
+        ),
+        "linkopts": attr.string_list(
+            default = [],
+            doc = "Extra linker flags (e.g. ['-framework', 'CoreAudio'] on macOS)",
         ),
         "_zig_toolchain": attr.label(
             default = "@zig_toolchain//:zig_files",
@@ -983,6 +997,11 @@ def _zig_test_impl(ctx):
     global_pre = []
     if mods.deps_link_libc and not ctx.attr.link_libc:
         global_pre.append("-lc")
+
+    # System include dirs (-I) for @cImport (e.g., /opt/homebrew/include for portaudio)
+    # Note: Use -I instead of -isystem because @cImport's internal clang may not respect -isystem
+    for sysdir in ctx.attr.system_include_dirs:
+        global_pre.extend(["-I", sysdir])
 
     dep_lib_a_args = [f.path for f in collected.deps_transitive_lib_as.to_list()]
 

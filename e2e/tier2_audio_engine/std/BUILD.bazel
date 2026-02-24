@@ -1,0 +1,71 @@
+# E2E Audio Engine Tests — std platform
+#
+# Run: bazel run //e2e/tier2_audio_engine/std:e1
+
+load("//bazel/zig:defs.bzl", "zig_binary", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Helper libraries
+zig_library(
+    name = "wav_writer",
+    main = "wav_writer.zig",
+    srcs = ["wav_writer.zig"],
+    module_name = "wav_writer",
+)
+
+zig_library(
+    name = "wav_reader",
+    main = "wav_reader.zig",
+    srcs = ["wav_reader.zig"],
+    module_name = "wav_reader",
+)
+
+_audio_deps = [
+    "//lib/pkg/audio",
+    "//lib/platform/std",
+    "//third_party/speexdsp:speexdsp_float",
+    "//third_party/portaudio",
+]
+
+_macos_linkopts = select({
+    "@platforms//os:macos": [
+        "-framework", "CoreAudio",
+        "-framework", "AudioToolbox",
+        "-framework", "AudioUnit",
+        "-framework", "CoreFoundation",
+        "-framework", "CoreServices",
+    ],
+    "//conditions:default": [],
+})
+
+_BINS = [
+    # Main E-series tests (blocking I/O, fully updated)
+    ("e1",             "E1_engine_loopback.zig",   ["wav_writer"]),
+    ("e2",             "E2_engine_tts.zig",         ["wav_writer"]),
+    ("e3",             "E3_engine_multi_round.zig", ["wav_writer"]),
+    ("e4",             "E4_engine_60s.zig",         ["wav_writer"]),
+    ("e5",             "E5_engine_nearend.zig",     ["wav_writer"]),
+    # Diagnostic tests (blocking I/O, fully updated)
+    ("diag",           "diag_duplex.zig",           ["wav_writer"]),
+    ("diag-offset",    "diag_offset.zig",           ["wav_writer"]),
+    ("diag-noise",     "diag_noise_source.zig",     ["wav_writer"]),
+    ("diag-align",     "diag_ref_alignment.zig",    ["wav_writer"]),
+    ("diag-aec",       "diag_aec_offline.zig",      ["wav_reader"]),
+    # Simple passthrough tests
+    ("mic-only",       "mic_only_record.zig",       ["wav_writer"]),
+    ("mic-spk-no-aec", "mic_spk_no_aec.zig",       ["wav_writer"]),
+    ("silence-duplex", "silence_duplex.zig",        ["wav_writer"]),
+    ("simple",         "simple_passthrough.zig",    ["wav_writer"]),
+    # Analysis
+    ("analyze",        "analyze_wav.zig",           ["wav_reader"]),
+]
+
+[zig_binary(
+    name = name,
+    main = main,
+    srcs = [main],
+    deps = _audio_deps + [":" + d for d in extra_deps],
+    linkopts = _macos_linkopts,
+    optimize = "ReleaseFast",
+) for name, main, extra_deps in _BINS]

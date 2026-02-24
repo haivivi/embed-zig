@@ -1,0 +1,63 @@
+"""PortAudio Zig library — built with zig_library like speexdsp.
+
+Compiles PortAudio C sources directly via zig cc (no genrule, no cc_library).
+Platform-specific sources selected via select().
+"""
+
+load("//bazel/zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# macOS: CoreAudio host API
+zig_library(
+    name = "portaudio",
+    main = "src/portaudio.zig",
+    srcs = glob(["src/**/*.zig"]),
+    c_srcs = select({
+        "@platforms//os:macos": [
+            "@portaudio//:portaudio_macos_srcs",
+            "@portaudio//:portaudio_headers",
+            "@portaudio//:portaudio_macos_internal_headers",
+            "pa_config.h",
+        ],
+        "@platforms//os:linux": [
+            "@portaudio//:portaudio_linux_srcs",
+            "@portaudio//:portaudio_headers",
+            "@portaudio//:portaudio_linux_internal_headers",
+            "pa_config.h",
+        ],
+        "//conditions:default": [
+            "@portaudio//:portaudio_macos_srcs",
+            "@portaudio//:portaudio_headers",
+            "@portaudio//:portaudio_macos_internal_headers",
+            "pa_config.h",
+        ],
+    }),
+    c_flags = select({
+        "@platforms//os:macos": [
+            "-DPA_USE_COREAUDIO=1",
+            "-fno-sanitize=undefined",
+            "-w",
+            "-framework", "CoreAudio",
+            "-framework", "AudioToolbox",
+            "-framework", "AudioUnit",
+            "-framework", "CoreFoundation",
+            "-framework", "CoreServices",
+        ],
+        "@platforms//os:linux": ["-DPA_USE_ALSA=1", "-fno-sanitize=undefined", "-w", "-lasound", "-lpthread"],
+        "//conditions:default": [
+            "-DPA_USE_COREAUDIO=1",
+            "-fno-sanitize=undefined",
+            "-w",
+            "-framework", "CoreAudio",
+            "-framework", "AudioToolbox",
+            "-framework", "AudioUnit",
+            "-framework", "CoreFoundation",
+            "-framework", "CoreServices",
+        ],
+    }),
+    link_libc = True,
+    module_name = "portaudio",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

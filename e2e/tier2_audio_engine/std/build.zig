@@ -40,6 +40,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "diag", .file = "diag_duplex.zig", .desc = "Diagnostic: DuplexAudio mic vs ref alignment" },
         .{ .name = "diag-aec", .file = "diag_aec_offline.zig", .desc = "Diagnostic: AEC3 offline with real data" },
         .{ .name = "diag-loop", .file = "diag_simple_loop.zig", .desc = "Diagnostic: simplest AEC loop (no engine)" },
+        .{ .name = "diag-noise", .file = "diag_noise_source.zig", .desc = "Diagnostic: analyze noise source frame by frame" },
+        .{ .name = "diag-align", .file = "diag_ref_alignment.zig", .desc = "Diagnostic: verify ref/mic alignment" },
         .{ .name = "e1", .file = "E1_engine_loopback.zig", .desc = "E1: Engine loopback (DuplexStream + RefReader)" },
         .{ .name = "e1b", .file = "E1b_engine_separate.zig", .desc = "E1b: Engine loopback (separate streams + buffer_depth)" },
         .{ .name = "e2", .file = "E2_engine_tts.zig", .desc = "E2: Engine TTS (DuplexStream)" },
@@ -47,6 +49,15 @@ pub fn build(b: *std.Build) void {
         .{ .name = "e4", .file = "E4_engine_60s.zig", .desc = "E4: 60s Engine long-running (DuplexStream)" },
         .{ .name = "e5", .file = "E5_engine_nearend.zig", .desc = "E5: Near-end detection (DuplexStream)" },
         .{ .name = "analyze", .file = "analyze_wav.zig", .desc = "Analyze recorded WAV files" },
+        .{ .name = "mic-only", .file = "mic_only_record.zig", .desc = "Simple mic-only recording (no AEC, no speaker)" },
+        .{ .name = "mic-spk-no-aec", .file = "mic_spk_no_aec.zig", .desc = "Mic→Speaker passthrough without AEC" },
+        .{ .name = "analyze-single", .file = "analyze_single_wav.zig", .desc = "Analyze single WAV file" },
+        .{ .name = "quick-analyze", .file = "quick_analyze.zig", .desc = "Quick WAV file analysis with args" },
+        .{ .name = "spectrum", .file = "spectrum_analyze.zig", .desc = "FFT spectrum analysis" },
+        .{ .name = "silence-duplex", .file = "silence_duplex.zig", .desc = "Test silence playback with mic recording" },
+        .{ .name = "low-volume", .file = "low_volume_test.zig", .desc = "Test low volume feedback" },
+        .{ .name = "e1-silence", .file = "E1_with_silence_output.zig", .desc = "E1 with silence output (isolate feedback)" },
+        .{ .name = "simple", .file = "simple_passthrough.zig", .desc = "Simplest: mic → speaker, NO AEC" },
     };
 
     // std_impl needs portaudio for audio_engine.zig
@@ -94,6 +105,10 @@ pub fn build(b: *std.Build) void {
         });
         b.installArtifact(exe);
         const run_cmd = b.addRunArtifact(exe);
+        // Allow passing command line arguments
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
         const run_step = b.step(s.name, s.desc);
         run_step.dependOn(&run_cmd.step);
     }

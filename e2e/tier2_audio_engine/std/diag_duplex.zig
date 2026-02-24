@@ -47,17 +47,19 @@ fn writeWav(path: []const u8, samples: []const i16) !void {
 }
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
     std.debug.print("\n=== Diagnostic: DuplexAudio frame pairing ===\n\n", .{});
 
     try pa.init();
     defer pa.deinit();
 
-    var duplex = da.DuplexAudio.init();
+    var duplex = try da.DuplexAudio.init(allocator);
     var mic_drv = duplex.mic();
     var spk_drv = duplex.speaker();
     var ref_rdr = duplex.refReader();
 
-    try duplex.start();
     defer duplex.stop();
 
     // Speaker thread: write 440Hz tone continuously
