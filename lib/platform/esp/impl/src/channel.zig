@@ -23,8 +23,9 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
         closed: std.atomic.Value(bool),
 
         /// Initialize a new channel
-        pub fn init() Self {
+        pub fn init() !Self {
             const handle = c.xQueueCreate(capacity, @sizeOf(T));
+            if (handle == null) return error.QueueCreateFailed;
             return .{
                 .handle = handle,
                 .closed = std.atomic.Value(bool).init(false),

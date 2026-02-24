@@ -63,7 +63,7 @@ esp_app(
 
 esp_modules()
 
-zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":idf"])
+zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":idf", ":impl"])
 
 filegroup(name = "srcs", srcs = ["//e2e/trait/sync:app_srcs"] + glob(["*.zig"]))
 
@@ -75,7 +75,6 @@ esp_zig_app(
     deps = [
         ":idf", ":esp", ":board",
         "//lib/hal", "//lib/trait",
-        "//lib/pkg/async/channel",
         "//lib/pkg/async/waitgroup",
     ],
     sdkconfig = ":sdkconfig",
