@@ -49,6 +49,8 @@ pub const system = @import("system.zig");
 pub const codec = @import("codec.zig");
 pub const io = @import("io.zig");
 pub const fs = @import("fs.zig");
+pub const channel = @import("channel.zig");
+pub const selector = @import("selector.zig");
 
 // Socket helpers
 pub const Ipv4Address = socket.Ipv4Address;
@@ -76,4 +78,6 @@ test {
     _ = codec;
     _ = io;
     _ = fs;
+    _ = channel;
+    _ = selector;
 }

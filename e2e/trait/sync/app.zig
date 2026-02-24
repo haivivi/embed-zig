@@ -11,12 +11,12 @@
 
 const std = @import("std");
 const platform = @import("platform.zig");
-const channel_pkg = @import("channel");
 const waitgroup_pkg = @import("waitgroup");
 
 const log = platform.log;
 const time = platform.time;
 const Rt = platform.runtime;
+const Channel = platform.channel.Channel;
 
 fn runTests() !void {
     log.info("[e2e] START: trait/sync", .{});
@@ -105,8 +105,8 @@ fn testSpawn() !void {
 
 // Test 4: Channel send/recv across producer-consumer threads
 fn testChannel() !void {
-    const Ch = channel_pkg.Channel(u32, 16, Rt);
-    var ch = Ch.init();
+    const Ch = Channel(u32, 16);
+    var ch = try Ch.init();
     defer ch.deinit();
 
     const count: u32 = 10;
@@ -121,17 +121,20 @@ fn testChannel() !void {
     }.run, .{ &ch, count });
     thread.detach();
 
-    // Consumer: recv all
     var received: u32 = 0;
-    while (ch.recv()) |_| {
+    while (ch.recv()) |item| {
+        if (item != received) {
+            log.err("[e2e] FAIL: trait/sync/channel — expected {}, got {}", .{ received, item });
+            return error.ChannelWrongValue;
+        }
         received += 1;
     }
 
     if (received != count) {
         log.err("[e2e] FAIL: trait/sync/channel — expected {} items, got {}", .{ count, received });
-        return error.ChannelCountMismatch;
+        return error.ChannelWrongCount;
     }
-    log.info("[e2e] PASS: trait/sync/channel — {}/{} items transferred", .{ received, count });
+    log.info("[e2e] PASS: trait/sync/channel", .{});
 }
 
 // Test 5: WaitGroup waits for all spawned tasks

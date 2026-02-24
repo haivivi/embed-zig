@@ -66,6 +66,12 @@ pub const log = @import("log.zig");
 pub const Log = log.Log;
 pub const stdLogFn = log.stdLogFn;
 
+/// Channel implementation (async channel)
+pub const channel = @import("channel.zig");
+
+/// Selector implementation (async select)
+pub const selector = @import("selector.zig");
+
 /// Crypto implementation (trait.crypto) - mbedTLS hardware accelerated
 pub const crypto = @import("crypto/suite.zig");
 
@@ -128,7 +134,6 @@ pub const AudioSystem = audio_system.AudioSystem;
 /// HCI transport driver (hal.hci) — ESP VHCI
 pub const hci = @import("hci.zig");
 pub const HciDriver = hci.HciDriver;
-
 
 // ============================================================================
 // Comptime Trait Validation

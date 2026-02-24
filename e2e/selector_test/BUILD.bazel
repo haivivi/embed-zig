@@ -1,0 +1,12 @@
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "selector_test",
+    srcs = ["main.zig"],
+    main = "main.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+)

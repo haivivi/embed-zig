@@ -1,0 +1,12 @@
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "latency_test",
+    srcs = ["latency.zig"],
+    main = "latency.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+)

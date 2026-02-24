@@ -34,3 +34,6 @@ pub const time = struct {
 };
 
 pub const runtime = std_impl.runtime;
+
+// Export new Channel implementation from std_impl module
+pub const channel = std_impl.channel;

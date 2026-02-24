@@ -21,6 +21,8 @@ pub const time = @import("impl/time.zig");
 pub const sync = @import("impl/sync.zig");
 pub const socket = @import("impl/socket.zig");
 pub const runtime = @import("impl/runtime.zig");
+pub const channel = @import("impl/channel.zig");
+pub const selector = @import("impl/selector.zig");
 const builtin = @import("builtin");
 const is_kqueue = builtin.os.tag == .macos or
     builtin.os.tag == .freebsd or
