@@ -27,17 +27,15 @@ pub const Mutex = struct {
 /// Condition — wraps std.Thread.Condition with trait-compatible interface
 pub const Condition = struct {
     inner: std.Thread.Condition,
-    mutex: *Mutex,
 
     pub const TimedWaitResult = enum {
         signaled,
         timeout,
     };
 
-    pub fn init(mutex: *Mutex) Condition {
+    pub fn init() Condition {
         return .{
             .inner = .{},
-            .mutex = mutex,
         };
     }
 
@@ -45,22 +43,22 @@ pub const Condition = struct {
         _ = self;
     }
 
-    pub fn wait(self: *Condition) void {
-        self.inner.wait(&self.mutex.inner);
+    pub fn wait(self: *Condition, mutex: *Mutex) void {
+        self.inner.wait(&mutex.inner);
     }
 
-    pub fn timedWait(self: *Condition, timeout_ns: u64) TimedWaitResult {
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
         const timeout_ms: i32 = if (timeout_ns >= std.math.maxInt(u64))
             -1
         else
             @intCast(@min(timeout_ns / std.time.ns_per_ms, std.math.maxInt(i32)));
 
         if (timeout_ms < 0) {
-            self.inner.wait(&self.mutex.inner);
+            self.inner.wait(&mutex.inner);
             return .signaled;
         }
 
-        const result = self.inner.timedWait(&self.mutex.inner, timeout_ns);
+        const result = self.inner.timedWait(&mutex.inner, timeout_ns);
         return if (result == error.Timeout) .timeout else .signaled;
     }
 
@@ -181,11 +179,38 @@ pub const Options = struct {
     core_id: i8 = -1,
 };
 
+/// Thread — wraps std.Thread with trait-compatible interface
+pub const Thread = struct {
+    inner: std.Thread,
+
+    pub const SpawnConfig = struct {
+        stack_size: usize = 8192,
+    };
+
+    pub fn spawn(config: SpawnConfig, comptime func: anytype, args: anytype) !Thread {
+        const thread = try std.Thread.spawn(.{ .stack_size = config.stack_size }, func, args);
+        return .{ .inner = thread };
+    }
+
+    pub fn join(self: Thread) void {
+        self.inner.join();
+    }
+
+    pub fn detach(self: Thread) void {
+        self.inner.detach();
+    }
+};
+
 /// Spawn a new task/thread
 pub fn spawn(comptime func: *const fn (?*anyopaque) void, arg: ?*anyopaque, opts: Options) !void {
     _ = opts;
     const thread = try std.Thread.spawn(.{}, func, .{arg});
     thread.detach();
+}
+
+/// Get the number of CPU cores available
+pub fn getCpuCount() !u32 {
+    return @intCast(std.Thread.getCpuCount() catch |err| return err);
 }
 
 // ============================================================================
