@@ -16,7 +16,7 @@ const Socket = trait.socket.from(Board.socket);
 const BUILD_TAG = "https_speed_test_v3_cross_platform";
 
 /// DNS Resolver using platform socket
-const DnsResolver = dns.Resolver(Board.socket);
+const DnsResolver = dns.Resolver(Board.socket, void);
 
 const AppState = enum { connecting, connected, running_tests, done };
 

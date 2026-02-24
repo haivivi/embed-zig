@@ -82,6 +82,41 @@ int bk_zig_cond_wait(void *handle, unsigned int timeout_ms)
 }
 
 /* ============================================================
+ * Notify — binary semaphore (max=1, init=0)
+ * ============================================================ */
+
+void *bk_zig_notify_create(void)
+{
+    beken_semaphore_t sem = NULL;
+    if (rtos_init_semaphore_ex(&sem, 1, 0) != kNoErr) return NULL;
+    return (void *)sem;
+}
+
+void bk_zig_notify_destroy(void *handle)
+{
+    if (handle) {
+        beken_semaphore_t s = (beken_semaphore_t)handle;
+        rtos_deinit_semaphore(&s);
+    }
+}
+
+void bk_zig_notify_signal(void *handle)
+{
+    if (handle) {
+        beken_semaphore_t s = (beken_semaphore_t)handle;
+        rtos_set_semaphore(&s);
+    }
+}
+
+/* Wait with timeout (ms). Returns 0=signaled, 1=timeout */
+int bk_zig_notify_wait(void *handle, unsigned int timeout_ms)
+{
+    if (!handle) return 1;
+    beken_semaphore_t s = (beken_semaphore_t)handle;
+    return (rtos_get_semaphore(&s, timeout_ms) == kNoErr) ? 0 : 1;
+}
+
+/* ============================================================
  * Spawn — FreeRTOS task creation
  * ============================================================ */
 

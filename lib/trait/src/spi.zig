@@ -27,8 +27,6 @@ pub const Error = error{
 ///
 /// Required methods on Impl:
 /// - `fn write(self: *Impl, data: []const u8) Error!void`
-///
-/// Optional methods:
 /// - `fn transfer(self: *Impl, tx: []const u8, rx: []u8) Error!void` (full duplex)
 /// - `fn read(self: *Impl, buf: []u8) Error!void` (read-only)
 pub fn from(comptime Impl: type) type {
@@ -37,42 +35,29 @@ pub fn from(comptime Impl: type) type {
             .pointer => |p| p.child,
             else => Impl,
         };
-        // Required: write
         _ = @as(*const fn (*BaseType, []const u8) Error!void, &BaseType.write);
+        _ = @as(*const fn (*BaseType, []const u8, []u8) Error!void, &BaseType.transfer);
+        _ = @as(*const fn (*BaseType, []u8) Error!void, &BaseType.read);
     }
 
     return struct {
         const Self = @This();
         impl: Impl,
 
-        /// Wrap an SPI implementation
         pub fn wrap(impl: Impl) Self {
             return .{ .impl = impl };
         }
 
-        /// Write data (MOSI only)
         pub fn write(self: *Self, data: []const u8) Error!void {
             return self.impl.write(data);
         }
 
-        /// Full-duplex transfer (write tx, read rx simultaneously).
-        /// Available only if the underlying implementation supports it.
         pub fn transfer(self: *Self, tx: []const u8, rx: []u8) Error!void {
-            if (@hasDecl(@TypeOf(self.impl.*), "transfer")) {
-                return self.impl.transfer(tx, rx);
-            } else {
-                @compileError("SPI implementation does not support full-duplex transfer");
-            }
+            return self.impl.transfer(tx, rx);
         }
 
-        /// Read data (MISO only).
-        /// Available only if the underlying implementation supports it.
         pub fn read(self: *Self, buf: []u8) Error!void {
-            if (@hasDecl(@TypeOf(self.impl.*), "read")) {
-                return self.impl.read(buf);
-            } else {
-                @compileError("SPI implementation does not support read");
-            }
+            return self.impl.read(buf);
         }
     };
 }
@@ -88,6 +73,8 @@ test "spi.from() returns interface type" {
             self.write_count += 1;
             self.last_len = data.len;
         }
+        pub fn transfer(_: *@This(), _: []const u8, _: []u8) Error!void {}
+        pub fn read(_: *@This(), _: []u8) Error!void {}
     };
 
     const Spi = from(*MockImpl);
@@ -104,10 +91,10 @@ test "spi.from() with full duplex" {
     const FullDuplexImpl = struct {
         pub fn write(_: *@This(), _: []const u8) Error!void {}
         pub fn transfer(_: *@This(), tx: []const u8, rx: []u8) Error!void {
-            // Echo back tx to rx
             const len = @min(tx.len, rx.len);
             @memcpy(rx[0..len], tx[0..len]);
         }
+        pub fn read(_: *@This(), _: []u8) Error!void {}
     };
 
     const Spi = from(*FullDuplexImpl);

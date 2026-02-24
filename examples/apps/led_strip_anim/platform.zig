@@ -8,6 +8,7 @@ pub const selected_board = build_options.board;
 const hw = switch (build_options.board) {
     .korvo2_v3 => @import("esp/korvo2_v3.zig"),
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    else => @compileError("unsupported board for led_strip_anim"),
 };
 
 const spec = struct {

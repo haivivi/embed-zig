@@ -8,6 +8,7 @@ const hal = @import("hal");
 // Select board implementation based on build option
 const hw = switch (build_options.board) {
     .esp32s3_devkit => @import("esp/esp32s3_devkit.zig"),
+    else => @compileError("unsupported board for temperature_sensor"),
 };
 
 /// Board specification for hal.Board

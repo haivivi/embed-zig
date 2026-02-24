@@ -1,0 +1,24 @@
+name: Setup ESP-IDF
+description: Install ESP-IDF 5.4.0 with FreeRTOS patch for cross-compiling ESP32 targets.
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: sudo apt-get update && sudo apt-get install -y git python3-pip cmake
+    - shell: bash
+      run: |
+        sudo git clone --filter=blob:none -b v5.4 --single-branch \
+          https://github.com/espressif/esp-idf.git \
+          /usr/local/src/esp-idf
+        cd /usr/local/src/esp-idf
+        sudo git submodule update --init --recursive --depth=1
+        sudo git apply $GITHUB_WORKSPACE/.github/patches/idf_v5.4_freertos.patch
+        sudo chown -R runner:sudo /usr/local/src/esp-idf
+    - shell: bash
+      working-directory: /usr/local/src/esp-idf
+      run: |
+        . ./tools/detect_python.sh
+        "${ESP_PYTHON}" ./tools/python_version_checker.py
+        "${ESP_PYTHON}" ./tools/idf_tools.py --non-interactive install required --targets=all
+        "${ESP_PYTHON}" ./tools/idf_tools.py --non-interactive install cmake
+        "${ESP_PYTHON}" ./tools/idf_tools.py --non-interactive install-python-env

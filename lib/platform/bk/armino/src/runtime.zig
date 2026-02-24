@@ -145,6 +145,40 @@ pub const Condition = struct {
 };
 
 // ============================================================================
+// Notify — lightweight event via binary semaphore (max=1, init=0)
+// ============================================================================
+
+extern fn bk_zig_notify_create() ?*anyopaque;
+extern fn bk_zig_notify_destroy(handle: ?*anyopaque) void;
+extern fn bk_zig_notify_signal(handle: ?*anyopaque) void;
+extern fn bk_zig_notify_wait(handle: ?*anyopaque, timeout_ms: c_uint) c_int;
+
+pub const Notify = struct {
+    sem: ?*anyopaque,
+
+    pub fn init() Notify {
+        return .{ .sem = bk_zig_notify_create() };
+    }
+
+    pub fn deinit(self: *Notify) void {
+        bk_zig_notify_destroy(self.sem);
+    }
+
+    pub fn signal(self: *Notify) void {
+        bk_zig_notify_signal(self.sem);
+    }
+
+    pub fn wait(self: *Notify) void {
+        _ = bk_zig_notify_wait(self.sem, 0xFFFFFFFF);
+    }
+
+    pub fn timedWait(self: *Notify, timeout_ns: u64) bool {
+        const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, @as(u64, 0xFFFFFFFF)));
+        return bk_zig_notify_wait(self.sem, timeout_ms) == 0;
+    }
+};
+
+// ============================================================================
 // Time
 // ============================================================================
 

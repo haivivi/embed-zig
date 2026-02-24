@@ -92,10 +92,10 @@ alias(name = "benchmark_ble_x_proto_bk7258", actual = "//e2e/benchmark/ble_x_pro
 # --- adc_button: korvo2_v3 ---
 esp_board_build(name = "adc_button_korvo2_v3", target = "//examples/apps/adc_button/esp:app", board = "korvo2_v3")
 
-# --- aec_test: korvo2_v3, lichuang_szp, lichuang_gocool ---
-esp_board_build(name = "aec_test_korvo2_v3", target = "//examples/apps/aec_test/esp:app", board = "korvo2_v3")
-esp_board_build(name = "aec_test_lichuang_szp", target = "//examples/apps/aec_test/esp:app", board = "lichuang_szp")
-esp_board_build(name = "aec_test_lichuang_gocool", target = "//examples/apps/aec_test/esp:app", board = "lichuang_gocool")
+# --- aec_test: no esp/ dir yet (only bk/ and websim/) ---
+# esp_board_build(name = "aec_test_korvo2_v3", target = "//examples/apps/aec_test/esp:app", board = "korvo2_v3")
+# esp_board_build(name = "aec_test_lichuang_szp", target = "//examples/apps/aec_test/esp:app", board = "lichuang_szp")
+# esp_board_build(name = "aec_test_lichuang_gocool", target = "//examples/apps/aec_test/esp:app", board = "lichuang_gocool")
 
 # --- gpio_button: esp32s3_devkit, lichuang_szp, lichuang_gocool ---
 esp_board_build(name = "gpio_button_esp32s3_devkit", target = "//examples/apps/gpio_button/esp:app", board = "esp32s3_devkit")
@@ -185,9 +185,9 @@ filegroup(
     name = "build_all_examples_esp",
     srcs = [
         ":adc_button_korvo2_v3",
-        ":aec_test_korvo2_v3",
-        ":aec_test_lichuang_szp",
-        ":aec_test_lichuang_gocool",
+        # ":aec_test_korvo2_v3",  # no esp/ dir yet
+        # ":aec_test_lichuang_szp",
+        # ":aec_test_lichuang_gocool",
         ":gpio_button_esp32s3_devkit",
         # ":gpio_button_korvo2_v3",  # TODO: pre-existing board.zig error
         ":gpio_button_lichuang_szp",

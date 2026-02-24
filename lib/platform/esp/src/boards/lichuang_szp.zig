@@ -359,6 +359,11 @@ pub const BootButtonDriver = struct {
 // PA Switch Driver (via PCA9557/TCA9554 compatible GPIO expander)
 // ============================================================================
 
+/// Static I2C bus instance for PA switch (avoids dangling pointer).
+/// This is fine because I2C bus 0 is exclusively used for on-board devices.
+var g_pa_i2c: idf.I2c = undefined;
+var g_pa_i2c_initialized = std.atomic.Value(bool).init(false);
+
 pub const PaSwitchDriver = struct {
     const Self = @This();
     const Pin = drivers.Tca9554Pin;
@@ -367,26 +372,23 @@ pub const PaSwitchDriver = struct {
     is_on: bool = false,
     gpio: Tca9554Driver = undefined,
 
-    /// Initialize PA switch driver with external I2C bus
-    pub fn init(i2c: *idf.I2c) !Self {
+    pub fn init() !Self {
+        // Lazy-init global I2C (thread-safe not needed, called from main init)
+        if (!g_pa_i2c_initialized.load(.acquire)) {
+            g_pa_i2c = try idf.I2c.init(.{ .sda = i2c_sda, .scl = i2c_scl, .freq_hz = i2c_freq_hz });
+            g_pa_i2c_initialized.store(true, .release);
+        }
         var self = Self{};
-
-        // Initialize PCA9557 GPIO expander driver (compatible with TCA9554)
-        self.gpio = Tca9554Driver.init(i2c, pca9557_addr);
-
-        // Sync current state from device
+        self.gpio = Tca9554Driver.init(&g_pa_i2c, pca9557_addr);
         self.gpio.syncFromDevice() catch return error.GpioInitFailed;
-
-        // Configure PA_EN pin as output with initial low (PA off)
         self.gpio.configureOutput(PA_EN_PIN, .low) catch return error.GpioInitFailed;
-
-        log.info("PaSwitchDriver: PCA9557 @ 0x{x} initialized via driver", .{pca9557_addr});
+        log.info("PaSwitchDriver: PCA9557 @ 0x{x} initialized", .{pca9557_addr});
         return self;
     }
 
     pub fn deinit(self: *Self) void {
         if (self.is_on) self.off() catch |err| log.warn("PA off failed in deinit: {}", .{err});
-        // I2C is managed externally, don't deinit here
+        // I2C is global singleton, don't deinit here
     }
 
     pub fn on(self: *Self) !void {
@@ -594,7 +596,7 @@ pub const TempSensorDriver = struct {
 /// ```
 /// var i2c = try idf.I2c.init(.{ .sda = i2c_sda, .scl = i2c_scl, .freq_hz = i2c_freq_hz });
 /// var audio = try AudioSystem.initWithI2c(&i2c);
-/// var pa = try PaSwitchDriver.init(&i2c);
+/// var pa = try PaSwitchDriver.init();
 /// ```
 pub const AudioSystem = BaseAudioSystem;
 

@@ -76,8 +76,8 @@ pub const Condition = struct {
     }
 
     pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) TimedWaitResult {
-        const result = self.inner.timedWait(&mutex.inner, timeout_ns);
-        return if (result == .timed_out) .timed_out else .signaled;
+        self.inner.timedWait(&mutex.inner, timeout_ns) catch return .timed_out;
+        return .signaled;
     }
 
     pub fn signal(self: *Condition) void {
