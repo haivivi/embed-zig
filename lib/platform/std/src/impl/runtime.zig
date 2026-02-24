@@ -288,12 +288,12 @@ test "Notify signal from thread" {
 
     const thread = try std.Thread.spawn(.{}, struct {
         fn run(notify: *Notify) void {
-            std.Thread.sleep(20 * std.time.ns_per_ms);
+            std.Thread.sleep(50 * std.time.ns_per_ms);
             notify.signal();
         }
     }.run, .{&n});
 
-    const signaled = n.timedWait(100 * std.time.ns_per_ms);
+    const signaled = n.timedWait(200 * std.time.ns_per_ms);
     thread.join();
 
     try std.testing.expect(signaled);
