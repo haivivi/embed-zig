@@ -158,13 +158,20 @@ pub const Notify = struct {
             return false;
         } else {
             // macOS/BSD: kevent with timeout
-            const timeout = posix.timespec{
-                .sec = @intCast(@divFloor(timeout_ms, 1000)),
-                .nsec = @intCast(@mod(timeout_ms, 1000) * std.time.ns_per_ms),
-            };
+            // When timeout_ms < 0, use NULL for infinite wait (instead of invalid timespec)
             var events: [1]posix.system.Kevent = undefined;
-            const n = posix.kevent(self.fd, &[_]posix.system.Kevent{}, &events, &timeout) catch return false;
-            return n > 0;
+            if (timeout_ms < 0) {
+                // Infinite wait
+                const n = posix.kevent(self.fd, &[_]posix.system.Kevent{}, &events, null) catch return false;
+                return n > 0;
+            } else {
+                const timeout = posix.timespec{
+                    .sec = @intCast(@divFloor(timeout_ms, 1000)),
+                    .nsec = @intCast(@mod(timeout_ms, 1000) * std.time.ns_per_ms),
+                };
+                const n = posix.kevent(self.fd, &[_]posix.system.Kevent{}, &events, &timeout) catch return false;
+                return n > 0;
+            }
         }
     }
 };
