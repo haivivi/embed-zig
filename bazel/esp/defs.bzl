@@ -219,6 +219,7 @@ exec "{builder}"
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
+            "resources:esp_idf:1": "",
         },
         mnemonic = "EspIdfBuild",
         progress_message = "Building ESP-IDF project %s (board=%s)" % (ctx.label, board),
@@ -371,6 +372,7 @@ exec "{configurator}"
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
+            "resources:esp_idf:1": "",
         },
         mnemonic = "EspConfigure",
         progress_message = "ESP-IDF configure %s" % ctx.label,
@@ -1040,6 +1042,7 @@ exec "{builder}"
         execution_requirements = {
             "local": "1",
             "requires-network": "1",
+            "resources:esp_idf:1": "",
         },
         mnemonic = "EspZigBuild",
         progress_message = "Building ESP Zig app %s (board=%s)" % (ctx.label, board),
