@@ -59,7 +59,8 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             var item: T = undefined;
 
             while (true) {
-                const result = c.xQueueReceive(self.handle, &item, c.portMAX_DELAY);
+                // Use 100ms timeout to periodically check closed status
+                const result = c.xQueueReceive(self.handle, &item, 100 / c.portTICK_PERIOD_MS);
                 if (result == c.pdTRUE) {
                     return item;
                 }

@@ -74,19 +74,22 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             var item: T = undefined;
 
             while (true) {
-                const result = c.xQueueReceive(self.handle, &item, c.portMAX_DELAY);
+                // Use 100ms timeout to periodically check closed status
+                // This allows us to wake up and check if channel was closed
+                const result = c.xQueueReceive(self.handle, &item, 100 / c.portTICK_PERIOD_MS);
                 if (result == c.pdTRUE) {
                     return item;
                 }
 
-                // Check if closed
+                // Check if closed - if so, try to drain remaining items
                 if (self.closed.load(.acquire)) {
-                    // Try once more to drain remaining items
+                    // Try once more with zero timeout to drain remaining items
                     if (c.xQueueReceive(self.handle, &item, 0) == c.pdTRUE) {
                         return item;
                     }
                     return null;
                 }
+                // Otherwise, loop and wait again (channel not closed, just empty)
             }
         }
 

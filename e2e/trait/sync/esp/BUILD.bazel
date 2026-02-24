@@ -83,3 +83,21 @@ esp_zig_app(
 )
 
 esp_flash(name = "flash", app = ":app")
+
+# Debug build with verbose logging
+zig_module(name = "debug_board", module_name = "board", main = "debug.zig", srcs = ["debug.zig"], deps = [":idf", ":impl"])
+
+esp_zig_app(
+    name = "debug",
+    app = ":debug_board",
+    boards = ["esp32s3_devkit"],
+    requires = ["freertos"],
+    deps = [
+        ":idf", ":esp",
+    ],
+    sdkconfig = ":sdkconfig",
+    app_config = ":app_config",
+    tags = ["esp", "debug", "manual"],
+)
+
+esp_flash(name = "flash_debug", app = ":debug")

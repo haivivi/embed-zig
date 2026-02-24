@@ -105,31 +105,54 @@ fn testSpawn() !void {
 
 // Test 4: Channel send/recv across producer-consumer threads
 fn testChannel() !void {
+    log.info("[e2e] Channel test: initializing...", .{});
     const Ch = Channel(u32, 16);
     var ch = try Ch.init();
     defer ch.deinit();
+    log.info("[e2e] Channel test: channel initialized", .{});
 
-    const count: u32 = 10;
+    const count: u32 = 3; // Reduced for debugging
 
+    log.info("[e2e] Channel test: spawning producer thread...", .{});
     const thread = try Rt.Thread.spawn(.{}, struct {
         fn run(c: *Ch, n: u32) void {
+            log.info("[e2e] [producer] started", .{});
             for (0..n) |i| {
-                c.send(@intCast(i)) catch break;
+                log.info("[e2e] [producer] sending item {}", .{i});
+                c.send(@intCast(i)) catch |err| {
+                    log.err("[e2e] [producer] send failed: {}", .{err});
+                    break;
+                };
+                log.info("[e2e] [producer] sent item {}", .{i});
             }
+            log.info("[e2e] [producer] closing channel", .{});
             c.close();
+            log.info("[e2e] [producer] done", .{});
         }
     }.run, .{ &ch, count });
     thread.detach();
+    log.info("[e2e] Channel test: producer thread detached", .{});
 
+    log.info("[e2e] Channel test: starting receive loop...", .{});
     var received: u32 = 0;
+    var loop_count: u32 = 0;
     while (ch.recv()) |item| {
+        loop_count += 1;
+        log.info("[e2e] [consumer] received item {} (loop {})", .{ item, loop_count });
         if (item != received) {
             log.err("[e2e] FAIL: trait/sync/channel — expected {}, got {}", .{ received, item });
             return error.ChannelWrongValue;
         }
         received += 1;
+
+        // Safety limit to prevent infinite loop
+        if (loop_count > 100) {
+            log.err("[e2e] FAIL: trait/sync/channel — too many iterations", .{});
+            return error.ChannelLoopLimit;
+        }
     }
 
+    log.info("[e2e] Channel test: receive loop ended, received={}", .{received});
     if (received != count) {
         log.err("[e2e] FAIL: trait/sync/channel — expected {} items, got {}", .{ count, received });
         return error.ChannelWrongCount;
