@@ -235,7 +235,7 @@ test "Mutex lock/unlock" {
 test "Condition wait/signal" {
     var m = Mutex.init();
     defer m.deinit();
-    var c = Condition.init(&m);
+    var c = Condition.init();
     defer c.deinit();
 
     // Simple signal test - just verify it compiles and runs
