@@ -30,7 +30,7 @@ pub const Condition = struct {
 
     pub const TimedWaitResult = enum {
         signaled,
-        timeout,
+        timed_out,
     };
 
     pub fn init() Condition {
@@ -59,7 +59,7 @@ pub const Condition = struct {
         }
 
         const result = self.inner.timedWait(&mutex.inner, timeout_ns);
-        return if (result == error.Timeout) .timeout else .signaled;
+        return if (result == error.Timeout) .timed_out else .signaled;
     }
 
     pub fn signal(self: *Condition) void {
@@ -77,13 +77,12 @@ pub const Notify = struct {
     const builtin = @import("builtin");
 
     fd: posix.fd_t,
-    is_kqueue: bool,
 
     pub fn init() Notify {
         if (comptime builtin.os.tag == .linux) {
             const fd = posix.eventfd(0, std.os.linux.EFD.CLOEXEC) catch
                 @panic("Notify: eventfd failed");
-            return .{ .fd = fd, .is_kqueue = false };
+            return .{ .fd = fd };
         } else {
             // macOS/BSD: use kqueue + EVFILT_USER for proper binary semaphore semantics
             const kq = posix.kqueue() catch @panic("Notify: kqueue failed");
@@ -100,7 +99,7 @@ pub const Notify = struct {
                 posix.close(kq);
                 @panic("Notify: kevent register failed");
             };
-            return .{ .fd = kq, .is_kqueue = true };
+            return .{ .fd = kq };
         }
     }
 
