@@ -1,0 +1,3 @@
+# Bazel external workspace E2E tests.
+
+package(default_visibility = ["//visibility:public"])

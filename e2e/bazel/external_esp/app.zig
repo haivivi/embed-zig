@@ -15,8 +15,8 @@ const opus = @import("opus");
 // Import extra deps to match giztoy chatgear's module set.
 // Even if unused, they affect the build.zig module graph and
 // potentially the @cImport resolution order.
-const Channel = @import("async/channel").Channel;
-const WaitGroup = @import("async/waitgroup").WaitGroup;
+const Channel = @import("channel").Channel;
+const WaitGroup = @import("waitgroup").WaitGroup;
 const CancellationToken = @import("cancellation").CancellationToken;
 
 const heap = idf.heap;
@@ -31,13 +31,9 @@ pub fn run(_: anytype) void {
     log.info("=== Opus External Repo Test (extended deps) ===", .{});
 
     // Verify extra deps are resolvable (compile-time check)
-    log.info("Channel size: {}, WaitGroup size: {}, CancellationToken size: {}", .{
-        @sizeOf(Channel([]const u8, 1)),
-        @sizeOf(WaitGroup(struct {
-            pub const Mutex = std.Thread.Mutex;
-            pub const Condition = std.Thread.Mutex.Condition;
-            pub fn spawn(_: anytype, _: anytype, _: anytype) !void {}
-        })),
+    log.info("Deps loaded: {s}, {s}, CancellationToken size: {}", .{
+        @typeName(@TypeOf(Channel)),
+        @typeName(@TypeOf(WaitGroup)),
         @sizeOf(CancellationToken),
     });
 
