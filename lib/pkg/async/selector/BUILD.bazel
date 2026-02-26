@@ -1,0 +1,14 @@
+load("//bazel/zig:defs.bzl", "zig_package")
+
+package(default_visibility = ["//visibility:public"])
+
+# Selector trait validation library
+# This is a meta-package that provides trait validation for platform implementations.
+# Actual implementations are in lib/platform/{platform}/impl/.
+zig_package(
+    name = "selector",
+    main = "src/selector.zig",
+    deps = ["//lib/trait"],
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

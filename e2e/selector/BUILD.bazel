@@ -1,0 +1,15 @@
+load("//bazel/zig:defs.bzl", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Selector E2E test
+# Tests selector functionality across platforms.
+zig_test(
+    name = "selector_e2e",
+    srcs = ["main.zig"],
+    main = "main.zig",
+    deps = ["//lib/platform/std"],
+    size = "small",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

@@ -21,19 +21,36 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         handle: c.QueueHandle_t,
         closed: std.atomic.Value(bool),
+        /// Close notification queue for selector support.
+        /// When channel is closed, a byte is sent to this queue to wake up selectors.
+        close_notify: c.QueueHandle_t,
 
         /// Initialize a new channel
         pub fn init() !Self {
             const handle = c.xQueueCreate(capacity, @sizeOf(T));
             if (handle == null) return error.QueueCreateFailed;
+
+            // Create close notification queue (capacity 1, size 1 byte)
+            // This allows selectors to be notified when the channel is closed
+            const close_notify = c.xQueueCreate(1, 1);
+            if (close_notify == null) {
+                c.vQueueDelete(handle);
+                return error.QueueCreateFailed;
+            }
+
             return .{
                 .handle = handle,
                 .closed = std.atomic.Value(bool).init(false),
+                .close_notify = close_notify,
             };
         }
 
         /// Release channel resources
         pub fn deinit(self: *Self) void {
+            if (self.close_notify != null) {
+                c.vQueueDelete(self.close_notify);
+                self.close_notify = null;
+            }
             if (self.handle != null) {
                 c.vQueueDelete(self.handle);
                 self.handle = null;
@@ -111,7 +128,16 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
         /// Pending recv() calls will drain remaining items, then return null.
         /// Idempotent — safe to call multiple times.
         pub fn close(self: *Self) void {
+            // Only close and notify if not already closed
+            if (self.closed.load(.acquire)) return;
+
             self.closed.store(true, .release);
+
+            // Send notification to wake up any selectors waiting on this channel.
+            // This ensures that S2.3 (close wakes up selector) works on FreeRTOS.
+            // Use 0 timeout since we only need to signal, not block.
+            const notify_byte: u8 = 1;
+            _ = c.xQueueSend(self.close_notify, &notify_byte, 0);
         }
 
         /// Check if channel is closed
@@ -141,6 +167,12 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
         /// This allows the channel to be used with Selector.
         pub fn queueHandle(self: *const Self) c.QueueHandle_t {
             return self.handle;
+        }
+
+        /// Get the close notification queue handle for Selector.
+        /// This allows selectors to be notified when the channel is closed.
+        pub fn closeNotifyHandle(self: *const Self) c.QueueHandle_t {
+            return self.close_notify;
         }
 
         /// Check if this queue has items available (for Selector).

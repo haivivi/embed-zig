@@ -5,9 +5,14 @@ const platform = @import("std_impl");
 const Channel = platform.channel.Channel;
 const Selector = platform.selector.Selector;
 
+// Helper for API compatibility: std Selector now requires (max_sources, max_events)
+fn makeSelector(comptime max_sources: usize) type {
+    return Selector(max_sources, max_sources * 4);
+}
+
 test "Selector immediate latency 100 iterations" {
     const Ch = Channel(u64, 4);
-    const Sel = Selector(2);
+    const Sel = makeSelector(2);
 
     var ch = try Ch.init();
     defer ch.deinit();

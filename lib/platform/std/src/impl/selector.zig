@@ -37,8 +37,10 @@ const SourceEntry = struct {
 /// Selector — wait on multiple channels with optional timeout.
 ///
 /// `max_sources` is the maximum number of channels that can be registered.
+/// `max_events` is ignored on std platform (kept for API compatibility with FreeRTOS).
 /// Timeout is handled separately in wait() call.
-pub fn Selector(comptime max_sources: usize) type {
+pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
+    _ = max_events; // Unused on std platform
     return struct {
         const Self = @This();
 
@@ -276,7 +278,7 @@ pub fn Selector(comptime max_sources: usize) type {
 // ============================================================================
 
 test "Selector init/deinit" {
-    const Sel = Selector(4);
+    const Sel = Selector(4, 16);
     var sel = try Sel.init();
     defer sel.deinit();
     try std.testing.expectEqual(@as(usize, 0), sel.recv_count);
