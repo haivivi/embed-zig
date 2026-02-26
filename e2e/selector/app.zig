@@ -69,6 +69,69 @@ fn testClosedChannelWakeup() !void {
     log.info("[e2e] PASS: selector/closed-channel elapsed={}ms", .{elapsed});
 }
 
+fn expectClosedOnTrySend(ch: anytype, value: u32) !void {
+    if (ch.trySend(value)) |_| {
+        return error.SendAfterCloseUnexpectedSuccess;
+    } else |err| switch (err) {
+        error.Closed => {},
+        else => return error.SendAfterCloseWrongError,
+    }
+}
+
+fn testSendAfterCloseRejected() !void {
+    const Ch = Channel(u32, 4);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    ch.close();
+
+    try expectClosedOnTrySend(&ch, 1);
+    if (ch.recv() != null) return error.ClosedChannelShouldBeEmpty;
+
+    log.info("[e2e] PASS: channel/send-after-close-rejected", .{});
+}
+
+fn testCloseDrainsBufferedDataThenRejectsSend() !void {
+    const Ch = Channel(u32, 4);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    const expected: u32 = 2026;
+    try ch.send(expected);
+    ch.close();
+
+    const first = ch.recv() orelse return error.ClosedDrainMissingBufferedItem;
+    if (first != expected) return error.ClosedDrainWrongBufferedItem;
+    if (ch.recv() != null) return error.ClosedDrainShouldEndWithNull;
+
+    try expectClosedOnTrySend(&ch, 2);
+
+    log.info("[e2e] PASS: channel/close-drain-then-reject-send", .{});
+}
+
+fn testCloseSendContractStress() !void {
+    const Ch = Channel(u32, 4);
+
+    for (0..100) |iter| {
+        var ch = try Ch.init();
+        defer ch.deinit();
+
+        const value: u32 = @intCast(iter + 5000);
+        try ch.send(value);
+        ch.close();
+
+        const first = ch.recv() orelse return error.CloseStressMissingBufferedItem;
+        if (first != value) return error.CloseStressWrongBufferedItem;
+        if (ch.recv() != null) return error.CloseStressShouldDrainToNull;
+
+        try expectClosedOnTrySend(&ch, value + 1);
+    }
+
+    log.info("[e2e] PASS: channel/close-send-contract-stress rounds=100", .{});
+}
+
 fn runTests() !void {
     log.info("[e2e] START: selector", .{});
 
@@ -76,6 +139,9 @@ fn runTests() !void {
         try testPreExistingData(iter);
     }
     try testClosedChannelWakeup();
+    try testSendAfterCloseRejected();
+    try testCloseDrainsBufferedDataThenRejectsSend();
+    try testCloseSendContractStress();
 
     log.info("[e2e] PASS: selector", .{});
 }

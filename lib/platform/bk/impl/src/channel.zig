@@ -4,6 +4,7 @@
 //! Uses C helper functions to avoid @cImport issues.
 
 const std = @import("std");
+const bk_time = @import("time.zig");
 
 // C helper function declarations
 extern fn bk_zig_queue_create(item_count: u32, item_size: u32) ?*anyopaque;
@@ -26,6 +27,8 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         handle: ?*anyopaque,
         closed: std.atomic.Value(bool),
+        /// Serialize send attempts with close to avoid post-close send success race.
+        send_gate: std.atomic.Value(bool),
         /// Close notification queue for selector support.
         close_notify: ?*anyopaque,
 
@@ -44,8 +47,19 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             return .{
                 .handle = handle,
                 .closed = std.atomic.Value(bool).init(false),
+                .send_gate = std.atomic.Value(bool).init(false),
                 .close_notify = close_notify,
             };
+        }
+
+        inline fn acquireSendGate(self: *Self) void {
+            while (self.send_gate.cmpxchgWeak(false, true, .acq_rel, .acquire) != null) {
+                bk_time.sleepMs(1);
+            }
+        }
+
+        inline fn releaseSendGate(self: *Self) void {
+            self.send_gate.store(false, .release);
         }
 
         /// Release channel resources
@@ -62,18 +76,39 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         /// Send item to channel (blocking).
         pub fn send(self: *Self, item: T) error{Closed}!void {
-            if (self.closed.load(.acquire)) return error.Closed;
+            while (true) {
+                self.acquireSendGate();
+                if (self.closed.load(.acquire)) {
+                    self.releaseSendGate();
+                    return error.Closed;
+                }
 
-            const result = bk_zig_queue_send(self.handle, &item, 0xFFFFFFFF); // portMAX_DELAY
-            if (result != 0) return error.Closed;
+                // Non-blocking attempt under send gate. This guarantees close can
+                // atomically flip `closed` between attempts and prevent post-close sends.
+                const result = bk_zig_queue_send(self.handle, &item, 0);
+                self.releaseSendGate();
+
+                if (result == 0) return;
+                if (self.closed.load(.acquire)) return error.Closed;
+
+                // Preserve blocking semantics while still allowing close to take effect.
+                bk_time.sleepMs(1);
+            }
         }
 
         /// Try to send item (non-blocking).
         pub fn trySend(self: *Self, item: T) error{ Closed, Full }!void {
-            if (self.closed.load(.acquire)) return error.Closed;
+            self.acquireSendGate();
+            defer self.releaseSendGate();
 
+            if (self.closed.load(.acquire)) return error.Closed;
             const result = bk_zig_queue_send(self.handle, &item, 0);
-            if (result != 0) return error.Full;
+            if (result == 0) return;
+
+            // If close happened concurrently around this attempt, surface Closed
+            // instead of Full to avoid masking close semantics.
+            if (self.closed.load(.acquire)) return error.Closed;
+            return error.Full;
         }
 
         /// Receive item from channel (blocking).
@@ -108,6 +143,9 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         /// Close the channel.
         pub fn close(self: *Self) void {
+            self.acquireSendGate();
+            defer self.releaseSendGate();
+
             // Only close and notify if not already closed
             if (self.closed.load(.acquire)) return;
 
