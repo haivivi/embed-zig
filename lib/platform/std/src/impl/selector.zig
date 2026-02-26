@@ -92,7 +92,10 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
 
         /// Release selector resources
         pub fn deinit(self: *Self) void {
-            posix.close(self.poll_fd);
+            if (self.poll_fd >= 0) {
+                posix.close(self.poll_fd);
+                self.poll_fd = -1;
+            }
         }
 
         /// Add a channel to wait on.
@@ -100,6 +103,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         /// Returns error.TooMany if max_sources is reached.
         pub fn addRecv(self: *Self, channel: anytype) error{ TooMany, PollCtlFailed }!usize {
             if (self.source_count >= max_sources) return error.TooMany;
+            if (self.poll_fd < 0) return error.PollCtlFailed;
 
             const fd = channel.selectFd();
             const logical_index = self.source_count;
@@ -170,6 +174,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         /// Returns max_sources if timeout occurred.
         pub fn wait(self: *Self, timeout_ms: ?u32) error{ Empty, PollWaitFailed, Interrupted }!usize {
             if (self.source_count == 0) return error.Empty;
+            if (self.poll_fd < 0) return error.PollWaitFailed;
 
             const effective_timeout_ms = if (timeout_ms != null)
                 timeout_ms
@@ -268,7 +273,9 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             self.timeout_index = max_sources;
 
             // Close and re-create the poll fd
-            posix.close(self.poll_fd);
+            if (self.poll_fd >= 0) {
+                posix.close(self.poll_fd);
+            }
             self.poll_fd = blk: {
                 if (is_kqueue) {
                     const fd = posix.system.kqueue();

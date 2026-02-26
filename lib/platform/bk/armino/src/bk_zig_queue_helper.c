@@ -39,21 +39,53 @@ unsigned int bk_zig_queue_messages_waiting(bk_queue_handle_t queue) {
 
 /* Create a queue set */
 bk_queue_handle_t bk_zig_queue_set_create(unsigned int event_count) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
     return (bk_queue_handle_t)xQueueCreateSet(event_count);
+#else
+    (void)event_count;
+    return (bk_queue_handle_t)0;
+#endif
 }
 
 /* Delete a queue set */
 void bk_zig_queue_set_delete(bk_queue_handle_t queue_set) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
     vQueueDelete((QueueHandle_t)queue_set);
+#else
+    (void)queue_set;
+#endif
 }
 
 /* Add queue to set */
 int bk_zig_queue_add_to_set(bk_queue_handle_t queue, bk_queue_handle_t queue_set) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
     return xQueueAddToSet((QueueHandle_t)queue, (QueueSetHandle_t)queue_set) == pdPASS ? 0 : -1;
+#else
+    (void)queue;
+    (void)queue_set;
+    return -1;
+#endif
+}
+
+/* Remove queue from set */
+int bk_zig_queue_remove_from_set(bk_queue_handle_t queue, bk_queue_handle_t queue_set) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
+    return xQueueRemoveFromSet((QueueHandle_t)queue, (QueueSetHandle_t)queue_set) == pdPASS ? 0 : -1;
+#else
+    (void)queue;
+    (void)queue_set;
+    return -1;
+#endif
 }
 
 /* Select from queue set (blocking with timeout in ms) */
 bk_queue_handle_t bk_zig_queue_select_from_set(bk_queue_handle_t queue_set, unsigned int timeout_ms) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
     TickType_t ticks = (timeout_ms == 0xFFFFFFFF) ? portMAX_DELAY : (timeout_ms / portTICK_PERIOD_MS);
     return (bk_queue_handle_t)xQueueSelectFromSet((QueueSetHandle_t)queue_set, ticks);
+#else
+    (void)queue_set;
+    (void)timeout_ms;
+    return (bk_queue_handle_t)0;
+#endif
 }

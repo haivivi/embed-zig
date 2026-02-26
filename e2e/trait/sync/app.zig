@@ -111,7 +111,7 @@ fn testChannel() !void {
     defer ch.deinit();
     log.info("[e2e] Channel test: channel initialized", .{});
 
-    const count: u32 = 3; // Reduced for debugging
+    const count: u32 = 10;
 
     log.info("[e2e] Channel test: spawning producer thread...", .{});
     const thread = try Rt.Thread.spawn(.{}, struct {

@@ -27,6 +27,10 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         const SourceEntry = struct {
             data_handle: c.QueueHandle_t,
             close_handle: c.QueueHandle_t,
+            /// Whether data_handle has been successfully added to queue_set.
+            data_in_set: bool,
+            /// Whether close_handle has been successfully added to queue_set.
+            close_in_set: bool,
             logical_index: usize,
         };
 
@@ -75,31 +79,47 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         /// Returns error.RollbackFailed if rollback after partial failure failed (critical state).
         pub fn addRecv(self: *Self, channel: anytype) error{ TooMany, QueueSetCapacityExceeded, QueueAddFailed, RollbackFailed }!usize {
             if (self.source_count >= max_sources) return error.TooMany;
+            if (self.queue_set == null) return error.QueueAddFailed;
 
-            const data_handle = channel.queueHandle();
-            const close_handle = channel.closeNotifyHandle();
+            const data_handle: c.QueueHandle_t = @ptrCast(channel.queueHandle());
+            const close_handle: c.QueueHandle_t = @ptrCast(channel.closeNotifyHandle());
+            if (data_handle == null or close_handle == null) return error.QueueAddFailed;
             const logical_index = self.source_count;
             const recv_index = self.recv_count;
 
             // Capacity validation: check if this channel would exceed max_events
-            const channel_slots = @field(@TypeOf(channel), "queue_set_slots");
+            const ChannelType = switch (@typeInfo(@TypeOf(channel))) {
+                .pointer => |ptr| ptr.child,
+                else => @TypeOf(channel),
+            };
+            const channel_slots = @field(ChannelType, "queue_set_slots");
             if (self.required_slots + channel_slots > max_events) {
                 return error.QueueSetCapacityExceeded;
             }
 
-            // Add both data queue and close notification queue to the set
-            // IMPORTANT: Must add both successfully before updating entries,
-            // or rollback on partial failure to avoid "poisoning" the selector.
+            // FreeRTOS queue-set limitation: non-empty queue cannot be added to set.
+            // Strategy: if a handle is non-empty at registration time, defer adding it.
+            // wait() will surface it as immediately ready, then attach once drained.
+            var data_in_set = false;
             const result1 = c.xQueueAddToSet(data_handle, self.queue_set);
-            if (result1 != c.pdPASS) return error.QueueAddFailed;
+            if (result1 == c.pdPASS) {
+                data_in_set = true;
+            } else if (c.uxQueueMessagesWaiting(data_handle) == 0) {
+                return error.QueueAddFailed;
+            }
 
+            var close_in_set = false;
             const result2 = c.xQueueAddToSet(close_handle, self.queue_set);
-            if (result2 != c.pdPASS) {
-                // Rollback: remove data_handle from set to avoid leaving partial state
-                const rollback_result = c.xQueueRemoveFromSet(data_handle, self.queue_set);
-                if (rollback_result != c.pdPASS) {
-                    // Critical: rollback failed, selector may be in inconsistent state
-                    return error.RollbackFailed;
+            if (result2 == c.pdPASS) {
+                close_in_set = true;
+            } else if (c.uxQueueMessagesWaiting(close_handle) == 0) {
+                // Unexpected close-handle add failure when queue is empty.
+                // Rollback data handle if it was already added.
+                if (data_in_set) {
+                    const rollback_result = c.xQueueRemoveFromSet(data_handle, self.queue_set);
+                    if (rollback_result != c.pdPASS) {
+                        return error.RollbackFailed;
+                    }
                 }
                 return error.QueueAddFailed;
             }
@@ -108,6 +128,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             self.entries[recv_index] = .{
                 .data_handle = data_handle,
                 .close_handle = close_handle,
+                .data_in_set = data_in_set,
+                .close_in_set = close_in_set,
                 .logical_index = logical_index,
             };
 
@@ -139,6 +161,34 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         /// Returns error.PollWaitFailed if the underlying poll mechanism failed (not timeout).
         pub fn wait(self: *Self, timeout_ms: ?u32) error{ Empty, PollWaitFailed }!usize {
             if (self.source_count == 0) return error.Empty;
+            if (self.queue_set == null) return error.PollWaitFailed;
+
+            // Handle deferred sources first:
+            // - if deferred handle currently non-empty, it is immediately ready
+            // - if deferred handle is drained, try to attach to queue_set
+            for (self.entries[0..self.recv_count]) |*entry| {
+                if (!entry.data_in_set) {
+                    if (c.uxQueueMessagesWaiting(entry.data_handle) > 0) {
+                        return entry.logical_index;
+                    }
+                    if (c.xQueueAddToSet(entry.data_handle, self.queue_set) != c.pdPASS) {
+                        return error.PollWaitFailed;
+                    }
+                    entry.data_in_set = true;
+                }
+
+                if (!entry.close_in_set) {
+                    if (c.uxQueueMessagesWaiting(entry.close_handle) > 0) {
+                        var close_dummy: u8 = undefined;
+                        _ = c.xQueueReceive(entry.close_handle, &close_dummy, 0);
+                        return entry.logical_index;
+                    }
+                    if (c.xQueueAddToSet(entry.close_handle, self.queue_set) != c.pdPASS) {
+                        return error.PollWaitFailed;
+                    }
+                    entry.close_in_set = true;
+                }
+            }
 
             const effective_timeout_ms = if (timeout_ms != null)
                 timeout_ms
