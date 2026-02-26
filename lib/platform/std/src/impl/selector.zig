@@ -11,10 +11,11 @@ const linux = std.os.linux;
 /// Convert EPOLL constants to u32.
 /// Handles comptime ints, runtime ints, and packed struct(u32) flags.
 inline fn epollToU32(val: anytype) u32 {
-    return switch (@typeInfo(@TypeOf(val))) {
-        .comptime_int, .int => @as(u32, @intCast(val)),
-        else => @as(u32, @bitCast(val)),
-    };
+    const T = @TypeOf(val);
+    if (comptime @typeInfo(T) == .int) {
+        return @as(u32, @intCast(val));
+    }
+    return @as(u32, @bitCast(val));
 }
 
 /// Convert EPOLL constants to i32 (for syscall op/flags args).
