@@ -66,10 +66,12 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    // EPOLL_CLOEXEC is a compile-time integer on Linux
-                    // epoll_create1 expects c_uint (unsigned 32-bit)
+                    // Use posix.epoll_create1 which handles type conversion properly
                     const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
-                    const fd: posix.fd_t = posix.system.epoll_create1(flags);
+                    const fd: posix.fd_t = posix.epoll_create1(flags) catch |err| {
+                        if (err == error.PermissionDenied) return error.PollCreateFailed;
+                        return error.PollCreateFailed;
+                    };
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
@@ -272,10 +274,9 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     const fd = posix.system.kqueue();
                     if (fd >= 0) break :blk fd;
                 } else if (is_epoll) {
-                    // EPOLL_CLOEXEC is a compile-time integer on Linux
-                    // epoll_create1 expects c_uint (unsigned 32-bit)
+                    // Use posix.epoll_create1 which handles type conversion properly
                     const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
-                    const fd = posix.system.epoll_create1(flags);
+                    const fd = posix.epoll_create1(flags) catch -1;
                     if (fd >= 0) break :blk fd;
                 }
                 // If re-creation fails, use invalid fd (will error on next use)
