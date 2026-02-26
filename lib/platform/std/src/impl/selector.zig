@@ -67,8 +67,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     break :blk fd;
                 } else if (is_epoll) {
                     // EPOLL_CLOEXEC is a compile-time integer on Linux
-                    // Need explicit cast to i32 for epoll_create1 flag argument
-                    const flags: i32 = @intCast(linux.EPOLL.CLOEXEC);
+                    // epoll_create1 expects c_uint (unsigned 32-bit)
+                    const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
                     const fd: posix.fd_t = posix.system.epoll_create1(flags);
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
@@ -273,7 +273,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     if (fd >= 0) break :blk fd;
                 } else if (is_epoll) {
                     // EPOLL_CLOEXEC is a compile-time integer on Linux
-                    const flags: i32 = @intCast(linux.EPOLL.CLOEXEC);
+                    // epoll_create1 expects c_uint (unsigned 32-bit)
+                    const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
                     const fd = posix.system.epoll_create1(flags);
                     if (fd >= 0) break :blk fd;
                 }
