@@ -8,14 +8,14 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const linux = std.os.linux;
 
-/// Convert EPOLL constants to u32.
+/// Convert EPOLL constants to i32.
 /// Handles:
 ///   - comptime_int (e.g. CLOEXEC = 0x80000, CTL_ADD = 1)
 ///   - u32 / other runtime int
 ///   - packed struct(u32) (event flags like IN, OUT in some Zig versions)
-inline fn epollToU32(val: anytype) u32 {
+inline fn epollToI32(val: anytype) i32 {
     return switch (@typeInfo(@TypeOf(val))) {
-        .comptime_int, .int => val,
+        .comptime_int, .int => @intCast(val),
         else => @bitCast(val),
     };
 }
@@ -56,7 +56,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd: posix.fd_t = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
+                    const fd: posix.fd_t = posix.system.epoll_create1(epollToI32(linux.EPOLL.CLOEXEC));
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
@@ -115,12 +115,12 @@ pub fn Selector(comptime max_sources: usize) type {
                 if (rc < 0) return error.PollCtlFailed;
             } else if (is_epoll) {
                 var ev: posix.system.epoll_event = .{
-                    .events = epollToU32(linux.EPOLL.IN),
+                    .events = epollToI32(linux.EPOLL.IN),
                     .data = .{ .u64 = logical_index },
                 };
                 const rc = posix.system.epoll_ctl(
                     self.poll_fd,
-                    epollToU32(linux.EPOLL.CTL_ADD),
+                    epollToI32(linux.EPOLL.CTL_ADD),
                     fd,
                     &ev,
                 );
@@ -259,7 +259,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     const fd = posix.system.kqueue();
                     if (fd >= 0) break :blk fd;
                 } else if (is_epoll) {
-                    const fd = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
+                    const fd = posix.system.epoll_create1(epollToI32(linux.EPOLL.CLOEXEC));
                     if (fd >= 0) break :blk fd;
                 }
                 // If re-creation fails, use invalid fd (will error on next use)
