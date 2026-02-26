@@ -43,7 +43,12 @@ const Notifier = struct {
                 .write_fd = fds[1],
             };
         } else if (is_epoll) {
-            const fd = posix.eventfd(0, posix.EFD.CLOEXEC | posix.EFD.NONBLOCK);
+            // On Linux, use eventfd with CLOEXEC and NONBLOCK flags
+            const flags: c_uint = if (@hasDecl(posix, "EFD_CLOEXEC"))
+                posix.EFD_CLOEXEC | posix.EFD_NONBLOCK
+            else
+                0;
+            const fd = posix.eventfd(0, flags);
             return .{
                 .read_fd = fd,
                 .write_fd = fd,
