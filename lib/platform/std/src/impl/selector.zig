@@ -12,8 +12,9 @@ const linux = std.os.linux;
 /// Handles comptime ints, runtime ints, and packed struct(u32) flags.
 inline fn epollToU32(val: anytype) u32 {
     const T = @TypeOf(val);
-    if (comptime @typeInfo(T) == .int) {
-        // For integer types (including comptime_int), return as u32 directly
+    const info = @typeInfo(T);
+    // Handle both runtime int and compile-time int
+    if (info == .int or info == .comptime_int) {
         return @as(u32, @intCast(val));
     }
     // For other types (like packed struct), use bitCast
