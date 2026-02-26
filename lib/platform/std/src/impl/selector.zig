@@ -13,8 +13,10 @@ const linux = std.os.linux;
 inline fn epollToU32(val: anytype) u32 {
     const T = @TypeOf(val);
     if (comptime @typeInfo(T) == .int) {
+        // For integer types (including comptime_int), return as u32 directly
         return @as(u32, @intCast(val));
     }
+    // For other types (like packed struct), use bitCast
     return @as(u32, @bitCast(val));
 }
 
