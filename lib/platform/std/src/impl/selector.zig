@@ -48,7 +48,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd: posix.fd_t = posix.system.epoll_create1(linux.EPOLL.CLOEXEC);
+                    const fd: posix.fd_t = posix.system.epoll_create1(@intCast(linux.EPOLL.CLOEXEC));
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
