@@ -19,7 +19,7 @@ inline fn epollToU32(val: anytype) u32 {
 
 /// Convert EPOLL constants to i32 (for syscall op/flags args).
 inline fn epollToI32(val: anytype) i32 {
-    return @as(i32, @intCast(epollToU32(val)));
+    return @as(i32, @bitCast(epollToU32(val)));
 }
 
 const is_kqueue = builtin.os.tag == .macos or
