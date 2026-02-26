@@ -7,6 +7,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const linux = std.os.linux;
+const channel_impl = @import("channel.zig");
 
 /// Convert EPOLL constants to u32.
 /// Handles comptime ints, runtime ints, and packed struct(u32) flags.
@@ -58,26 +59,28 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         timeout_ms: u32,
         timeout_index: usize,
 
+        fn createPollFd() !posix.fd_t {
+            if (is_kqueue) {
+                const fd: posix.fd_t = posix.system.kqueue();
+                if (fd < 0) return error.PollCreateFailed;
+                return fd;
+            }
+
+            if (is_epoll) {
+                const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
+                const fd: posix.fd_t = posix.epoll_create1(flags) catch {
+                    return error.PollCreateFailed;
+                };
+                if (fd < 0) return error.PollCreateFailed;
+                return fd;
+            }
+
+            @compileError("Unsupported platform for Selector");
+        }
+
         /// Initialize a new Selector
         pub fn init() !Self {
-            const poll_fd: posix.fd_t = blk: {
-                if (is_kqueue) {
-                    const fd: posix.fd_t = posix.system.kqueue();
-                    if (fd < 0) return error.PollCreateFailed;
-                    break :blk fd;
-                } else if (is_epoll) {
-                    // Use posix.epoll_create1 which handles type conversion properly
-                    const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
-                    const fd: posix.fd_t = posix.epoll_create1(flags) catch |err| {
-                        if (err == error.PermissionDenied) return error.PollCreateFailed;
-                        return error.PollCreateFailed;
-                    };
-                    if (fd < 0) return error.PollCreateFailed;
-                    break :blk fd;
-                } else {
-                    @compileError("Unsupported platform for Selector");
-                }
-            };
+            const poll_fd = try createPollFd();
 
             return .{
                 .entries = undefined,
@@ -266,29 +269,20 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
 
         /// Reset the selector, clearing all registered sources.
         pub fn reset(self: *Self) void {
+            // Re-create poll fd first. If creation fails, keep current selector state.
+            // This avoids transitioning into a broken `poll_fd = -1` state.
+            const new_poll_fd = createPollFd() catch return;
+
+            if (self.poll_fd >= 0) {
+                posix.close(self.poll_fd);
+            }
+            self.poll_fd = new_poll_fd;
+
             self.recv_count = 0;
             self.source_count = 0;
             self.timeout_enabled = false;
             self.timeout_ms = 0;
             self.timeout_index = max_sources;
-
-            // Close and re-create the poll fd
-            if (self.poll_fd >= 0) {
-                posix.close(self.poll_fd);
-            }
-            self.poll_fd = blk: {
-                if (is_kqueue) {
-                    const fd = posix.system.kqueue();
-                    if (fd >= 0) break :blk fd;
-                } else if (is_epoll) {
-                    // Use posix.epoll_create1 which handles type conversion properly
-                    const flags: c_uint = @intCast(linux.EPOLL.CLOEXEC);
-                    const fd = posix.epoll_create1(flags) catch -1;
-                    if (fd >= 0) break :blk fd;
-                }
-                // If re-creation fails, use invalid fd (will error on next use)
-                break :blk -1;
-            };
         }
     };
 }
@@ -302,4 +296,25 @@ test "Selector init/deinit" {
     var sel = try Sel.init();
     defer sel.deinit();
     try std.testing.expectEqual(@as(usize, 0), sel.recv_count);
+}
+
+test "Selector reports explicit errors when poll fd is invalid" {
+    const Ch = channel_impl.Channel(u32, 2);
+    const Sel = Selector(2, 4);
+
+    var ch1 = try Ch.init();
+    defer ch1.deinit();
+    var ch2 = try Ch.init();
+    defer ch2.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    _ = try sel.addRecv(&ch1);
+
+    // Simulate broken state after a failed low-level reset/recreate.
+    sel.poll_fd = -1;
+
+    try std.testing.expectError(error.PollWaitFailed, sel.wait(0));
+    try std.testing.expectError(error.PollCtlFailed, sel.addRecv(&ch2));
 }

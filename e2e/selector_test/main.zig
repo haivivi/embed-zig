@@ -297,6 +297,66 @@ test "Selector close wakes waiter" {
     t.join();
 }
 
+test "Selector trySend wakes waiter" {
+    const Ch = Channel(u32, 4);
+    const Sel = makeSelector(2, Ch);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    const ch_idx = try sel.addRecv(&ch);
+
+    try ch.trySend(123);
+
+    const idx = try sel.wait(100);
+    try std.testing.expectEqual(ch_idx, idx);
+    try std.testing.expectEqual(@as(?u32, 123), ch.recv());
+}
+
+test "Selector channel drained does not remain spuriously ready" {
+    const Ch = Channel(u32, 4);
+    const Sel = makeSelector(2, Ch);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    const ch_idx = try sel.addRecv(&ch);
+
+    try ch.send(7);
+    try std.testing.expectEqual(ch_idx, try sel.wait(100));
+    try std.testing.expectEqual(@as(?u32, 7), ch.recv());
+
+    // After draining the only element, the channel should no longer appear ready.
+    try std.testing.expectEqual(@as(usize, 2), try sel.wait(0));
+}
+
+test "Selector close notification is one-shot after recv null" {
+    const Ch = Channel(u32, 4);
+    const Sel = makeSelector(2, Ch);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    const ch_idx = try sel.addRecv(&ch);
+
+    ch.close();
+
+    try std.testing.expectEqual(ch_idx, try sel.wait(100));
+    try std.testing.expectEqual(@as(?u32, null), ch.recv());
+
+    // Close notification should be consumed after observing closed+empty state.
+    try std.testing.expectEqual(@as(usize, 2), try sel.wait(0));
+}
+
 test "Selector sees pre-existing data immediately" {
     const Ch = Channel(u32, 4);
     const Sel = makeSelector(4, Ch);

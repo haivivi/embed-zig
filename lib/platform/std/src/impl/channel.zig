@@ -192,7 +192,11 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             defer self.mutex.unlock();
 
             while (self.size == 0) {
-                if (self.closed) return null;
+                if (self.closed) {
+                    // Consume pending close notification so selector readiness is one-shot.
+                    self.notifier.consume();
+                    return null;
+                }
                 self.cond_not_empty.wait(&self.mutex);
             }
 
@@ -203,7 +207,13 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            if (self.size == 0) return null;
+            if (self.size == 0) {
+                if (self.closed) {
+                    // Same as recv(): avoid leaving stale close notification readable forever.
+                    self.notifier.consume();
+                }
+                return null;
+            }
             return self.dequeue();
         }
 

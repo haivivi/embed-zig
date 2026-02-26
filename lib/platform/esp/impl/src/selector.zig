@@ -249,18 +249,22 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
 
         /// Reset the selector, clearing all registered sources.
         pub fn reset(self: *Self) void {
+            // Re-create queue set first. If allocation fails, keep current state
+            // to avoid transitioning into an unusable null-handle state.
+            const new_queue_set = c.xQueueCreateSet(max_events);
+            if (new_queue_set == null) return;
+
+            if (self.queue_set != null) {
+                c.vQueueDelete(self.queue_set);
+            }
+            self.queue_set = new_queue_set;
+
             self.recv_count = 0;
             self.source_count = 0;
             self.required_slots = 0;
             self.timeout_enabled = false;
             self.timeout_ms = 0;
             self.timeout_index = max_sources;
-
-            // Re-create the queue set with correct capacity (sum of all channel depths)
-            if (self.queue_set != null) {
-                c.vQueueDelete(self.queue_set);
-            }
-            self.queue_set = c.xQueueCreateSet(max_events);
         }
     };
 }
