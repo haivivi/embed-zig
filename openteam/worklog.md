@@ -105,3 +105,15 @@
   4) 回归验证：`bazel test //lib/pkg/audio:resampler_test //lib/pkg/audio:mixer_test` 通过。
 - **遇到问题**：本次仅完成“处理器封装层”，尚未完成 board/app 接线与平台对齐链路端到端验证（5.2/5.3、6.2/6.3 仍待做）。
 - **需要反馈**：请确认下一步优先级：先做 ESP board/app 接线（步骤 5.2/5.3），还是先补 BK ref 对齐策略文档与接线（步骤 6.2/6.3）。
+
+### 2026-02-26 15:55
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：按“Zig 需手动释放 TrackCtrl”要求补齐调用方清理与实机验证：
+  1) 在 `e2e/tier2_audio_engine` 的 `speaker_test/mic_test/loop_back_test/aec_test` 中，为 `engine.createTrack(...)` 创建的句柄补充 `defer engine.destroyTrackCtrl(handle.ctrl)`；
+  2) ESP 平台补充 `impl` 导出：`audio_processor` / `AecProcessor`；
+  3) 本地构建验证：`bazel build //e2e/tier2_audio_engine/std:{speaker_test,mic_test,loop_back_test,aec_test}` 通过；
+  4) 使用串口 `/dev/cu.usbmodem14301` 烧录并运行实机：
+     - `bazel run //e2e/tier2_opus_aec/esp:flash --//bazel:port=/dev/cu.usbmodem14301`（首次因 `idf.py` 不在 PATH 失败，补 `IDF_PATH` 后成功）；
+     - `bazel run //bazel/esp:monitor --//bazel:port=/dev/cu.usbmodem14301` 观察到 AEC app 正常启动、30s pipeline 跑完并输出 FINAL 指标。
+- **遇到问题**：`monitor` 末尾出现 `Device not configured`（USB 串口在运行后断开/重枚举），但在此之前核心日志已完整打印（含 AEC 初始化、运行与最终统计），不影响本轮“可烧录可运行”结论。
+- **需要反馈**：如你需要，我下一步可直接基于这块板继续做 5.2/5.3（把 Engine + ESPProcessor 真正接到 ESP board/app），并按同一串口复测。

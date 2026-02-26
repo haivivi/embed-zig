@@ -125,10 +125,13 @@ pub const TempSensorDriver = temp_sensor.TempSensorDriver;
 pub const audio_system = @import("audio_system.zig");
 pub const AudioSystem = audio_system.AudioSystem;
 
+/// Audio processor adapter (platform AEC -> unified processor interface)
+pub const audio_processor = @import("audio_processor.zig");
+pub const AecProcessor = audio_processor.AecProcessor;
+
 /// HCI transport driver (hal.hci) — ESP VHCI
 pub const hci = @import("hci.zig");
 pub const HciDriver = hci.HciDriver;
-
 
 // ============================================================================
 // Comptime Trait Validation
