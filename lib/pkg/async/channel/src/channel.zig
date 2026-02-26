@@ -7,6 +7,8 @@
 const std = @import("std");
 
 pub fn Channel(comptime T: type, comptime capacity: usize, comptime Rt: type) type {
+    if (capacity == 0) @compileError("Channel capacity must be > 0");
+
     return struct {
         const Self = @This();
 

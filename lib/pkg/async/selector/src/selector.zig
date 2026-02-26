@@ -54,8 +54,8 @@ pub fn validatePlatformSelector(comptime SelectorType: type) void {
 
 /// Validate that a platform implementation satisfies the Channel trait.
 /// This can be used in platform code to ensure compatibility.
-pub fn validatePlatformChannel(comptime ChannelType: type) void {
-    trait.channel.validate(ChannelType);
+pub fn validatePlatformChannel(comptime T: type, comptime ChannelType: type) void {
+    trait.channel.validate(T, ChannelType);
 }
 
 // ============================================================================

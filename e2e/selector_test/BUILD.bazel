@@ -4,7 +4,10 @@ package(default_visibility = ["//visibility:public"])
 
 zig_test(
     name = "selector_test",
-    srcs = ["main.zig"],
+    srcs = [
+        "main.zig",
+        "selector_helper.zig",
+    ],
     main = "main.zig",
     deps = [
         "//lib/platform/std",
@@ -13,7 +16,10 @@ zig_test(
 
 zig_binary(
     name = "benchmark",
-    srcs = ["benchmark.zig"],
+    srcs = [
+        "benchmark.zig",
+        "selector_helper.zig",
+    ],
     main = "benchmark.zig",
     deps = [
         "//lib/platform/std",
@@ -23,7 +29,10 @@ zig_binary(
 
 zig_test(
     name = "latency",
-    srcs = ["latency.zig"],
+    srcs = [
+        "latency.zig",
+        "selector_helper.zig",
+    ],
     main = "latency.zig",
     deps = [
         "//lib/platform/std",

@@ -7,6 +7,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("freertos/FreeRTOS.h");
     @cInclude("freertos/queue.h");
+    @cInclude("freertos/task.h");
 });
 
 /// Bounded channel with Go chan semantics.
@@ -26,6 +27,8 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         handle: c.QueueHandle_t,
         closed: std.atomic.Value(bool),
+        /// Serialize send attempts with close to avoid post-close send success race.
+        send_gate: std.atomic.Value(bool),
         /// Close notification queue for selector support.
         /// When channel is closed, a byte is sent to this queue to wake up selectors.
         close_notify: c.QueueHandle_t,
@@ -46,8 +49,19 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             return .{
                 .handle = handle,
                 .closed = std.atomic.Value(bool).init(false),
+                .send_gate = std.atomic.Value(bool).init(false),
                 .close_notify = close_notify,
             };
+        }
+
+        inline fn acquireSendGate(self: *Self) void {
+            while (self.send_gate.cmpxchgWeak(false, true, .acq_rel, .acquire) != null) {
+                c.vTaskDelay(1);
+            }
+        }
+
+        inline fn releaseSendGate(self: *Self) void {
+            self.send_gate.store(false, .release);
         }
 
         /// Release channel resources
@@ -70,19 +84,40 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
         /// Blocks until space is available or channel is closed.
         /// Returns error.Closed if channel was closed.
         pub fn send(self: *Self, item: T) error{Closed}!void {
-            if (self.closed.load(.acquire)) return error.Closed;
+            while (true) {
+                self.acquireSendGate();
+                if (self.closed.load(.acquire)) {
+                    self.releaseSendGate();
+                    return error.Closed;
+                }
 
-            const result = c.xQueueSend(self.handle, &item, c.portMAX_DELAY);
-            if (result != c.pdTRUE) return error.Closed;
+                // Non-blocking attempt under send gate. This guarantees close can
+                // atomically flip `closed` between attempts and prevent post-close sends.
+                const result = c.xQueueSend(self.handle, &item, 0);
+                self.releaseSendGate();
+
+                if (result == c.pdTRUE) return;
+                if (self.closed.load(.acquire)) return error.Closed;
+
+                // Preserve blocking semantics while still allowing close to take effect.
+                c.vTaskDelay(1);
+            }
         }
 
         /// Try to send item (non-blocking).
         /// Returns error.Closed if closed, error.Full if buffer is full.
         pub fn trySend(self: *Self, item: T) error{ Closed, Full }!void {
-            if (self.closed.load(.acquire)) return error.Closed;
+            self.acquireSendGate();
+            defer self.releaseSendGate();
 
+            if (self.closed.load(.acquire)) return error.Closed;
             const result = c.xQueueSend(self.handle, &item, 0);
-            if (result != c.pdTRUE) return error.Full;
+            if (result == c.pdTRUE) return;
+
+            // If close happened concurrently around this attempt, surface Closed
+            // instead of Full to avoid masking close semantics.
+            if (self.closed.load(.acquire)) return error.Closed;
+            return error.Full;
         }
 
         // ================================================================
@@ -133,6 +168,9 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
         /// Pending recv() calls will drain remaining items, then return null.
         /// Idempotent — safe to call multiple times.
         pub fn close(self: *Self) void {
+            self.acquireSendGate();
+            defer self.releaseSendGate();
+
             // Only close and notify if not already closed
             if (self.closed.load(.acquire)) return;
 
