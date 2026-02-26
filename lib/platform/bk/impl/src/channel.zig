@@ -164,11 +164,13 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         /// Get number of items currently in channel
         pub fn count(self: *Self) usize {
+            if (self.handle == null) return 0;
             return @intCast(bk_zig_queue_messages_waiting(self.handle));
         }
 
         /// Check if channel is empty
         pub fn isEmpty(self: *Self) bool {
+            if (self.handle == null) return true;
             return bk_zig_queue_messages_waiting(self.handle) == 0;
         }
 

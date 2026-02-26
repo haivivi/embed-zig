@@ -15,7 +15,7 @@ const Selector = platform.selector.Selector;
 fn testPreExistingData(iter: usize) !void {
     const Ch = Channel(u32, 4);
     const channel_slots: usize = if (@hasDecl(Ch, "queue_set_slots")) Ch.queue_set_slots else 1;
-    const Sel = Selector(2, channel_slots);
+    const Sel = Selector(2, 2 * channel_slots);
 
     var ch = try Ch.init();
     defer ch.deinit();
@@ -45,7 +45,7 @@ fn testPreExistingData(iter: usize) !void {
 fn testClosedChannelWakeup() !void {
     const Ch = Channel(u32, 4);
     const channel_slots: usize = if (@hasDecl(Ch, "queue_set_slots")) Ch.queue_set_slots else 1;
-    const Sel = Selector(2, channel_slots);
+    const Sel = Selector(2, 2 * channel_slots);
 
     var ch = try Ch.init();
     defer ch.deinit();
