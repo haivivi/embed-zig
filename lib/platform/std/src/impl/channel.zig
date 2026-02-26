@@ -48,7 +48,7 @@ const Notifier = struct {
                 posix.EFD_CLOEXEC | posix.EFD_NONBLOCK
             else
                 0;
-            const fd = posix.eventfd(0, flags);
+            const fd = try posix.eventfd(0, flags);
             return .{
                 .read_fd = fd,
                 .write_fd = fd,
