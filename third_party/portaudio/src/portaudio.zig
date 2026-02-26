@@ -126,6 +126,8 @@ pub const StreamConfig = struct {
     output_channels: u32 = 1,
     sample_rate: f64 = 16000.0,
     frames_per_buffer: u32 = 160,
+    input_device: ?DeviceIndex = null,
+    output_device: ?DeviceIndex = null,
 };
 
 pub const Stream = struct {
@@ -140,29 +142,29 @@ pub const Stream = struct {
         var out_p: ?c.PaStreamParameters = null;
 
         if (cfg.input_channels > 0) {
-            const dev = c.Pa_GetDefaultInputDevice();
+            const dev = cfg.input_device orelse c.Pa_GetDefaultInputDevice();
             if (dev == c.paNoDevice) return error.InvalidDevice;
-            const info = c.Pa_GetDeviceInfo(dev);
-            if (info == null) return error.InvalidDevice;
+            const dev_info = c.Pa_GetDeviceInfo(dev);
+            if (dev_info == null) return error.InvalidDevice;
             in_p = .{
                 .device = dev,
                 .channelCount = @intCast(cfg.input_channels),
                 .sampleFormat = c.paInt16,
-                .suggestedLatency = info.*.defaultLowInputLatency,
+                .suggestedLatency = dev_info.*.defaultLowInputLatency,
                 .hostApiSpecificStreamInfo = null,
             };
         }
 
         if (cfg.output_channels > 0) {
-            const dev = c.Pa_GetDefaultOutputDevice();
+            const dev = cfg.output_device orelse c.Pa_GetDefaultOutputDevice();
             if (dev == c.paNoDevice) return error.InvalidDevice;
-            const info = c.Pa_GetDeviceInfo(dev);
-            if (info == null) return error.InvalidDevice;
+            const dev_info = c.Pa_GetDeviceInfo(dev);
+            if (dev_info == null) return error.InvalidDevice;
             out_p = .{
                 .device = dev,
                 .channelCount = @intCast(cfg.output_channels),
                 .sampleFormat = c.paInt16,
-                .suggestedLatency = info.*.defaultLowOutputLatency,
+                .suggestedLatency = dev_info.*.defaultLowOutputLatency,
                 .hostApiSpecificStreamInfo = null,
             };
         }
@@ -194,8 +196,34 @@ pub const Stream = struct {
         try check(c.Pa_StartStream(self.pa_stream));
     }
 
+    pub const Info = struct {
+        input_latency: f64,
+        output_latency: f64,
+        sample_rate: f64,
+    };
+
+    /// Returns stream timing/latency information from PortAudio.
+    pub fn info(self: *const Stream) ?Info {
+        const s = self.pa_stream orelse return null;
+        const ptr = c.Pa_GetStreamInfo(s);
+        if (ptr == null) return null;
+        return .{
+            .input_latency = ptr.*.inputLatency,
+            .output_latency = ptr.*.outputLatency,
+            .sample_rate = ptr.*.sampleRate,
+        };
+    }
+
     pub fn stop(self: *Stream) PaError!void {
         try check(c.Pa_StopStream(self.pa_stream));
+    }
+
+    /// Abort stream immediately (best-effort).
+    /// Useful to break a thread blocked in read/write during shutdown.
+    pub fn abort(self: *Stream) void {
+        if (self.pa_stream) |s| {
+            _ = c.Pa_AbortStream(s);
+        }
     }
 
     pub fn close(self: *Stream) void {
@@ -211,9 +239,20 @@ pub const Stream = struct {
     pub fn read(self: *Stream, buf: []i16) PaError!usize {
         const n = self.cfg.frames_per_buffer * self.cfg.input_channels;
         if (buf.len < n) return error.BufferTooSmall;
-        try check(c.Pa_ReadStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer));
+        const code = c.Pa_ReadStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer);
+        if (code != c.paNoError and code != c.paInputOverflowed) {
+            try check(code);
+        }
         @memcpy(buf[0..n], self.buf[0..n]);
         return n;
+    }
+
+    /// Non-blocking query: how many input frames can be read right now.
+    /// Returns 0 on host error.
+    pub fn readAvailable(self: *Stream) usize {
+        const n = c.Pa_GetStreamReadAvailable(self.pa_stream);
+        if (n <= 0) return 0;
+        return @intCast(n);
     }
 
     /// Blocking write — sends frames_per_buffer * output_channels samples.
@@ -221,6 +260,9 @@ pub const Stream = struct {
         const n = self.cfg.frames_per_buffer * self.cfg.output_channels;
         if (buf.len < n) return error.BufferTooSmall;
         @memcpy(self.buf[0..n], buf[0..n]);
-        try check(c.Pa_WriteStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer));
+        const code = c.Pa_WriteStream(self.pa_stream, self.buf.ptr, self.cfg.frames_per_buffer);
+        if (code != c.paNoError and code != c.paOutputUnderflowed) {
+            try check(code);
+        }
     }
 };

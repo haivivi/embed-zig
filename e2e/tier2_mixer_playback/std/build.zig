@@ -7,7 +7,6 @@ pub fn build(b: *std.Build) void {
     const root = "../../../";
 
     const trait_dep = b.dependency("trait", .{ .target = target, .optimize = optimize });
-    const speexdsp_dep = b.dependency("speexdsp", .{ .target = target, .optimize = optimize });
     const std_impl_dep = b.dependency("std_impl", .{ .target = target, .optimize = optimize });
 
     const pa_module = b.createModule(.{
@@ -24,7 +23,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     audio_module.addImport("trait", trait_dep.module("trait"));
-    audio_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
 
     const exe = b.addExecutable(.{
         .name = "mixer_playback",
@@ -47,11 +45,6 @@ pub fn build(b: *std.Build) void {
     exe.linkFramework("AudioUnit");
     exe.linkFramework("CoreFoundation");
     exe.linkFramework("CoreServices");
-
-    // Link pre-built SpeexDSP from Bazel
-    exe.addObjectFile(.{
-        .cwd_relative = root ++ "bazel-bin/third_party/speexdsp/libspeexdsp_float.a",
-    });
 
     b.installArtifact(exe);
 

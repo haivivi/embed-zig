@@ -1,12 +1,11 @@
 """Module extensions for embed-zig.
 
 Provides:
-- Audio libraries (opus, ogg, speexdsp, portaudio)
+- Audio libraries (opus, ogg, portaudio)
 - Zig toolchain with Xtensa support
 """
 
 load("//third_party/opus:repository.bzl", _opus_repository = "opus_repository")
-load("//third_party/speexdsp:repository.bzl", _speexdsp_repository = "speexdsp_repository")
 load("//third_party/portaudio:repository.bzl", _portaudio_repository = "portaudio_repo")
 
 # =============================================================================
@@ -55,7 +54,6 @@ def _audio_libs_impl(ctx):
     """Module extension for audio libraries."""
     _opus_repository(name = "opus")
     _ogg_repo(name = "ogg")
-    _speexdsp_repository(name = "speexdsp")
     _portaudio_repository(name = "portaudio")
 
 audio_libs = module_extension(

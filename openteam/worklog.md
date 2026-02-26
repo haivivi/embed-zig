@@ -117,3 +117,80 @@
      - `bazel run //bazel/esp:monitor --//bazel:port=/dev/cu.usbmodem14301` 观察到 AEC app 正常启动、30s pipeline 跑完并输出 FINAL 指标。
 - **遇到问题**：`monitor` 末尾出现 `Device not configured`（USB 串口在运行后断开/重枚举），但在此之前核心日志已完整打印（含 AEC 初始化、运行与最终统计），不影响本轮“可烧录可运行”结论。
 - **需要反馈**：如你需要，我下一步可直接基于这块板继续做 5.2/5.3（把 Engine + ESPProcessor 真正接到 ESP board/app），并按同一串口复测。
+
+### 2026-02-26 16:43
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：按“先录音后播放、不要 loopback”新增并运行 `//e2e/tier2_audio_engine/esp/aec`：
+  1) 新增 `esp/aec/{BUILD.bazel,app.zig,platform.zig,board.zig}`，流程为“5s far-end 播放 + clean 录音 -> beep x2 -> clean 回放”；
+  2) 实机烧录并运行在 `/dev/cu.usbmodem14301`，串口日志确认 `clean recorded: 80000 samples (5.0s)`。
+- **遇到问题**：用户反馈回放“明显偏快且尖锐”，怀疑 I2S 分块读写与 AEC 帧长度不一致导致短读/短写带来的时域压缩失真。
+- **需要反馈**：已继续修复并重新烧录，请用户复听确认是否改善。
+
+### 2026-02-26 16:43
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：针对“偏快/尖锐”完成底层修复：
+  1) `lib/platform/esp/impl/src/audio_system.zig` 的 `readMic` 改为“循环读取直到目标字节数（不足时补零后送 AEC）”；
+  2) `writeSpeaker` 改为“循环写入直到整帧写完”，避免短写导致丢采样；
+  3) 重新 `bazel build/run //e2e/tier2_audio_engine/esp/aec:flash` 并 monitor 验证可正常跑完整流程。
+- **遇到问题**：`deinit` 时仍有既有警告（`i2s_del_channel ... unless it is disabled`），与本次音速/音色问题无直接关系。
+- **需要反馈**：请用户直接复听新固件效果；若仍偏快，我将继续加读写样本计数日志精确定位（每秒统计 mic/read 与 spk/write 实际样本数）。
+
+### 2026-02-26 16:46
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：按“不能用 join 判定结束，要按 PCM 时长判定”修复 `e2e/tier2_audio_engine/esp/aec/app.zig`：
+  1) `farEndTask` 增加 `defer ctx.handle.ctrl.closeWrite()`，确保写端结束后可被 mixer 识别为可排空轨道；
+  2) 新增 `waitTrackPlayed()`，基于 `track.ctrl.readBytes()` 计数等待 far-end PCM **被实际消费**后再切换到 beep/playback 阶段；
+  3) 重新烧录并串口验证，日志可见 `track melody played: 80128 / 80000 samples`、`track bass played: 80128 / 80000 samples`，说明阶段切换已不再仅依赖 thread join。
+- **遇到问题**：`readBytes` 以 mixer chunk 计数，存在小幅超读（本次 +128 samples）属预期粒度误差。
+- **需要反馈**：请用户复听当前固件的录音回放速度与音色；若仍异常，我将进一步在 I2S 层增加“每秒读写样本统计”并对 codec 时钟参数做逐项核对。
+
+### 2026-02-26 17:00
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：根据用户“mic 可 join，ref/mic 可能有小延迟未对齐”的反馈继续调优：
+  1) `e2e/tier2_audio_engine/esp/aec/app.zig`：far-end task 改为严格 sample budget（每次 write 前按剩余样本裁剪），主流程阶段切换改为“`t_rec.join()` + `readBytes` 消费计数门控”，不再用 far-end `join` 作为阶段边界；
+  2) `lib/platform/esp/impl/src/audio_system.zig`：新增 `aec_ref_delay_samples` 配置与 ref delay ring，在 `readMic()` 中对 ref 进行样本级延迟后再送 AEC；
+  3) `lib/platform/esp/src/boards/lichuang_gocool.zig`：将 `.aec_ref_delay_samples` 设为 `64`（@16kHz ≈ 4ms）进行第一轮板级对齐尝试；
+  4) 已完成构建/烧录/monitor，串口日志确认新参数生效：`AudioSystem: AEC ref delay=64 samples`。
+- **遇到问题**：当前仅完成第一档 delay（64 samples）调优，AEC 主观效果仍需用户实际听感确认。
+- **需要反馈**：请用户复听本次固件；若回声仍明显，我将继续做 32/96/128 samples 的快速扫参并保留最佳档。
+
+### 2026-02-27 02:25
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：根据“ESP 测试不应重写 app，应该仅切 board/入口”的反馈完成架构回正：
+  1) `bazel/esp/defs.bzl` 新增 `entry_file` / `entry_fn` 参数（默认仍为 `app.zig` / `run`），生成的 `app_main` 与 `run_in_psram` 分支统一按配置调用入口函数；
+  2) `e2e/tier2_audio_engine/esp/{mic,speaker,aec}/BUILD.bazel` 改为复用 `//e2e/tier2_audio_engine:app_srcs`，通过 `entry_file` 选择 `mic_test.zig` / `speaker_test.zig` / `aec_test.zig`；
+  3) 删除此前在 `esp/{mic,speaker,aec}` 下复制的 `app.zig/platform.zig/board.zig`；保留单一 `e2e/tier2_audio_engine/esp/board.zig`；
+  4) 为跨平台入口统一分配 allocator：`Board.allocator()`（std/sim 用 `c_allocator`，esp 用 `idf.heap.psram`），并将 `mic/speaker/loop_back/aec` 四个测试改为使用该接口，避免 freestanding 下 `GeneralPurposeAllocator` 编译错误；
+  5) `aec_test.zig` 将“阶段切换”修复同步回共享测试逻辑：mic 可 join，far-end 按 `readBytes` 消费样本门控后再 join 清理。
+- **遇到问题**：初次切到共享测试后，ESP 编译报错 `freestanding page_size_max`（根因是测试内使用 `GeneralPurposeAllocator`）；已通过 `Board.allocator()` 方案修复。
+- **需要反馈**：当前已通过构建验证：
+  - `bazel build //e2e/tier2_audio_engine/esp/mic:app`
+  - `bazel build //e2e/tier2_audio_engine/esp/speaker:app`
+  - `bazel build //e2e/tier2_audio_engine/esp/aec:app`
+  - `bazel build //e2e/tier2_audio_engine/std:aec_test`
+  请确认是否继续按此新结构直接烧录复测 AEC 听感。
+
+### 2026-02-27 02:49
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：按“ESP 目录与 std 一样，收敛到单 BUILD.bazel”继续重构：
+  1) 将 `e2e/tier2_audio_engine/esp/mic|speaker|aec` 的 `esp_zig_app/esp_flash` 合并到 `e2e/tier2_audio_engine/esp/BUILD.bazel`；
+  2) 新目标统一为 `:mic_app/:mic_flash`、`:speaker_app/:speaker_flash`、`:aec_app/:aec_flash`；
+  3) 删除子目录下独立 BUILD 文件；
+  4) 为支持同一 package 下多个 `esp_zig_app`，修正 `bazel/esp/defs.bzl` 输出命名冲突：`bootloader.bin/partition-table.bin` 改为带 `project_name` 前缀（例如 `mic_app_bootloader.bin`），避免 action 冲突。
+- **遇到问题**：合并后首次构建出现 `bootloader.bin` 多目标冲突；已通过上述输出文件命名修复。
+- **需要反馈**：已验证构建通过：
+  - `bazel build //e2e/tier2_audio_engine/esp:mic_app`
+  - `bazel build //e2e/tier2_audio_engine/esp:speaker_app`
+  - `bazel build //e2e/tier2_audio_engine/esp:aec_app`
+  你确认后我可直接用新目标名继续烧录与听感复测。
+
+### 2026-02-27 10:30
+- **author**: /Users/idy/Vibing/embed-zig/audio-system
+- **工作内容**：完成 5.4.5（可观测指标）和 5.5（NS 归属校验）：
+  1) 在 `esp/board.zig` 的 DuplexAudio 中增加每秒统计日志：mic/ref/spk 样本计数、drops_mic/drops_ref、mic_zero_fill/ref_zero_fill、ref_delay 配置、fifo 实时水位；
+  2) 在 Processor.init() 中增加 AEC/NS 开关状态日志（5.5.3）；
+  3) 在 DuplexAudio.init() 中增加初始化参数日志（i2s_bits、chunk_frames、ref_delay、fifo_cap）；
+  4) 验证 5.5.1：engine.zig micTask 仅调 processor.process()，无 NS 分支编排；
+  5) 验证 5.5.2：ESP AFE 内部管理 NS，engine 层不知道 NS 存在。
+- **遇到问题**：engine_test 仍有 E2E-1/E2E-2 两个已知失败（PassthroughProcessor 无 AEC 能力导致 ERLE 不达标），与本次改动无关。100/102 通过。
+- **需要反馈**：5.4.5 和 5.5 均已完成。下一步可继续 5.2（ESP ref 对齐验收）或烧录实机验证可观测指标输出。
