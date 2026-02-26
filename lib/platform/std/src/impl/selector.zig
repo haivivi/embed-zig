@@ -8,8 +8,16 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const linux = std.os.linux;
 
-fn epollToU32(flags: u32) u32 {
-    return @intCast(flags);
+/// Convert EPOLL constants to u32.
+/// Handles:
+///   - comptime_int (e.g. CLOEXEC = 0x80000, CTL_ADD = 1)
+///   - u32 / other runtime int
+///   - packed struct(u32) (event flags like IN, OUT in some Zig versions)
+inline fn epollToU32(val: anytype) u32 {
+    return switch (@typeInfo(@TypeOf(val))) {
+        .comptime_int, .int => val,
+        else => @bitCast(val),
+    };
 }
 
 const is_kqueue = builtin.os.tag == .macos or
@@ -48,7 +56,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd: posix.fd_t = posix.system.epoll_create1(@as(c_int, linux.EPOLL.CLOEXEC));
+                    const fd: posix.fd_t = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
