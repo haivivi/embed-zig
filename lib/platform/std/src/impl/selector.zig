@@ -237,7 +237,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         }
 
         fn waitEpoll(self: *Self, timeout_ms: ?u32) error{ PollWaitFailed, Interrupted }!usize {
-            var event: posix.system.epoll_event = undefined;
+            var events: [1]posix.system.epoll_event = undefined;
 
             const timeout_int: i32 = if (timeout_ms) |ms|
                 @intCast(ms)
@@ -246,7 +246,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
 
             const n = posix.system.epoll_wait(
                 self.poll_fd,
-                &event,
+                &events,
                 1,
                 timeout_int,
             );
@@ -262,6 +262,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                 // Timeout
                 return self.timeoutResult();
             }
+
+            const event = events[0];
 
             // Return the index stored in data.u64
             return @intCast(event.data.u64);
