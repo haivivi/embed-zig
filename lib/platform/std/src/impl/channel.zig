@@ -102,6 +102,10 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
     return struct {
         const Self = @This();
 
+        /// Number of slots this channel occupies in a FreeRTOS QueueSet-equivalent model.
+        /// std backend doesn't use QueueSet, but exposing this keeps cross-platform sizing logic unified.
+        pub const queue_set_slots = 1;
+
         mutex: sync.Mutex,
         cond_not_empty: sync.Condition,
         cond_not_full: sync.Condition,

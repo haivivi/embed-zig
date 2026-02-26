@@ -27,4 +27,22 @@ zig_test(
     tags = ["std", "conformance"],
 )
 
+# Cross-platform acceptance entry points:
+# - std: automated test target
+# - esp/bk: explicit buildable app targets reusing the same app_srcs semantics
+alias(
+    name = "selector_e2e_std",
+    actual = ":selector_e2e",
+)
+
+alias(
+    name = "selector_e2e_esp",
+    actual = "//e2e/selector/esp:app",
+)
+
+alias(
+    name = "selector_e2e_bk",
+    actual = "//e2e/selector/bk:app",
+)
+
 filegroup(name = "srcs", srcs = glob(["**/*"]))

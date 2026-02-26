@@ -8,6 +8,8 @@
 //! a close notification queue. When a channel is closed, a byte is sent to this
 //! queue, causing xQueueSelectFromSet to return immediately.
 
+const bk_time = @import("time.zig");
+
 // C helper function declarations
 extern fn bk_zig_queue_set_create(event_count: u32) ?*anyopaque;
 extern fn bk_zig_queue_set_delete(queue_set: ?*anyopaque) void;
@@ -15,6 +17,7 @@ extern fn bk_zig_queue_add_to_set(queue: ?*anyopaque, queue_set: ?*anyopaque) i3
 extern fn bk_zig_queue_remove_from_set(queue: ?*anyopaque, queue_set: ?*anyopaque) i32;
 extern fn bk_zig_queue_select_from_set(queue_set: ?*anyopaque, timeout_ms: u32) ?*anyopaque;
 extern fn bk_zig_queue_receive(queue: ?*anyopaque, item: *anyopaque, timeout_ms: u32) i32;
+extern fn bk_zig_queue_messages_waiting(queue: ?*anyopaque) u32;
 
 /// Selector — wait on multiple channels with optional timeout.
 ///
@@ -28,6 +31,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         const SourceEntry = struct {
             data_handle: ?*anyopaque,
             close_handle: ?*anyopaque,
+            data_in_set: bool,
+            close_in_set: bool,
             logical_index: usize,
         };
 
@@ -94,19 +99,29 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                 return error.QueueSetCapacityExceeded;
             }
 
-            // Add both data queue and close notification queue to the set
-            // IMPORTANT: Must add both successfully before updating entries,
-            // or rollback on partial failure to avoid "poisoning" the selector.
+            // FreeRTOS queue-set limitation: non-empty queue cannot be added to set.
+            // Strategy: if a handle is non-empty at registration time, defer adding it.
+            // wait() will surface it as immediately ready, then attach once drained.
+            var data_in_set = false;
             const result1 = bk_zig_queue_add_to_set(data_handle, self.queue_set);
-            if (result1 != 0) return error.QueueAddFailed;
+            if (result1 == 0) {
+                data_in_set = true;
+            } else if (bk_zig_queue_messages_waiting(data_handle) == 0) {
+                return error.QueueAddFailed;
+            }
 
+            var close_in_set = false;
             const result2 = bk_zig_queue_add_to_set(close_handle, self.queue_set);
-            if (result2 != 0) {
-                // Rollback: remove data_handle from set to avoid leaving partial state
-                const rollback_result = bk_zig_queue_remove_from_set(data_handle, self.queue_set);
-                if (rollback_result != 0) {
-                    // Critical: rollback failed, selector may be in inconsistent state
-                    return error.RollbackFailed;
+            if (result2 == 0) {
+                close_in_set = true;
+            } else if (bk_zig_queue_messages_waiting(close_handle) == 0) {
+                // Unexpected close-handle add failure when queue is empty.
+                // Rollback data handle if it was already added.
+                if (data_in_set) {
+                    const rollback_result = bk_zig_queue_remove_from_set(data_handle, self.queue_set);
+                    if (rollback_result != 0) {
+                        return error.RollbackFailed;
+                    }
                 }
                 return error.QueueAddFailed;
             }
@@ -115,6 +130,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             self.entries[recv_index] = .{
                 .data_handle = data_handle,
                 .close_handle = close_handle,
+                .data_in_set = data_in_set,
+                .close_in_set = close_in_set,
                 .logical_index = logical_index,
             };
 
@@ -146,12 +163,41 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             if (self.source_count == 0) return error.Empty;
             if (self.queue_set == null) return error.PollWaitFailed;
 
+            // Handle deferred sources first:
+            // - if deferred handle currently non-empty, it is immediately ready
+            // - if deferred handle is drained, try to attach to queue_set
+            for (self.entries[0..self.recv_count]) |*entry| {
+                if (!entry.data_in_set) {
+                    if (bk_zig_queue_messages_waiting(entry.data_handle) > 0) {
+                        return entry.logical_index;
+                    }
+                    if (bk_zig_queue_add_to_set(entry.data_handle, self.queue_set) != 0) {
+                        return error.PollWaitFailed;
+                    }
+                    entry.data_in_set = true;
+                }
+
+                if (!entry.close_in_set) {
+                    if (bk_zig_queue_messages_waiting(entry.close_handle) > 0) {
+                        var close_dummy: u8 = undefined;
+                        _ = bk_zig_queue_receive(entry.close_handle, &close_dummy, 0);
+                        return entry.logical_index;
+                    }
+                    if (bk_zig_queue_add_to_set(entry.close_handle, self.queue_set) != 0) {
+                        return error.PollWaitFailed;
+                    }
+                    entry.close_in_set = true;
+                }
+            }
+
             const effective_timeout_ms = if (timeout_ms != null)
                 timeout_ms
             else if (self.timeout_enabled)
                 self.timeout_ms
             else
                 null;
+
+            const wait_start_ms: u64 = if (effective_timeout_ms != null) bk_time.nowMs() else 0;
 
             const wait_timeout_ms: u32 = if (effective_timeout_ms) |ms|
                 ms
@@ -161,12 +207,19 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             const selected = bk_zig_queue_select_from_set(self.queue_set, wait_timeout_ms);
 
             if (selected == null) {
-                // Check if this is timeout or error
-                // FreeRTOS doesn't distinguish between timeout and error for null return
-                // We treat it as timeout if timeout is configured, otherwise as potential error
+                // FreeRTOS returns null for both timeout and internal failure.
+                // If effective_timeout_ms is null (wait forever), null indicates failure.
+                if (effective_timeout_ms == null) return error.PollWaitFailed;
+
+                const requested_ms = effective_timeout_ms.?;
+                // For non-zero timeout, an early null indicates unexpected failure.
+                if (requested_ms > 0) {
+                    const elapsed_ms = bk_time.nowMs() - wait_start_ms;
+                    if (elapsed_ms < requested_ms) return error.PollWaitFailed;
+                }
+
+                // Timeout path with explicit duration.
                 if (self.timeout_enabled) return self.timeout_index;
-                // No timeout configured but xQueueSelectFromSet returned null - could be error
-                // Unfortunately FreeRTOS doesn't provide error codes here
                 return max_sources;
             }
 

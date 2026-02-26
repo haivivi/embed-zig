@@ -20,3 +20,13 @@ zig_binary(
     ],
     tags = ["manual"],
 )
+
+zig_test(
+    name = "latency",
+    srcs = ["latency.zig"],
+    main = "latency.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+    tags = ["manual"],
+)

@@ -13,20 +13,35 @@
 //!     return struct {
 //!         pub fn init() !Self;
 //!         pub fn deinit(*Self) -> void;
-//!         pub fn addRecv(*Self, anytype) error{TooMany, QueueAddFailed}!usize;
+//!         pub fn addRecv(*Self, anytype) anyerror!usize;
 //!         pub fn addTimeout(*Self, u32) error{TooMany}!usize;
-//!         pub fn wait(*Self, ?u32) error{Empty}!usize;
+//!         pub fn wait(*Self, ?u32) anyerror!usize;
 //!         pub fn reset(*Self) -> void;
 //!     };
 //! }
 //! ```
 //!
+//! Typical `addRecv` errors:
+//! - `error.TooMany`
+//! - `error.QueueSetCapacityExceeded`
+//! - `error.QueueAddFailed`
+//! - `error.RollbackFailed`
+//!
+//! Typical `wait` errors:
+//! - `error.Empty`
+//! - `error.PollWaitFailed`
+//! - `error.Interrupted` (platform-dependent)
+//!
 //! ## Parameters
 //!
 //! - `max_sources`: Maximum number of channels that can be registered
-//! - `max_events`: Total capacity of all channels plus close notification slots.
-//!   For FreeRTOS QueueSet, this must equal the sum of all member queue depths.
-//!   Use `channel.queue_set_slots` to calculate: sum of (capacity + 1) per channel.
+//! - `max_events`: Backend-specific event budget used by selector internals.
+//!   - **FreeRTOS (ESP/BK)**: must equal the sum of all registered channels'
+//!     `queue_set_slots` (typically data queue capacity + close notification queue).
+//!   - **std (kqueue/epoll)**: kept for API compatibility; backend may ignore this
+//!     value or map it to internal poll limits.
+//!   For cross-platform code, always compute it as the sum of `channel.queue_set_slots`
+//!   instead of hard-coded formulas.
 //!
 //! ## Platform Implementations
 //!
@@ -44,9 +59,10 @@
 //!
 //! ### pre-existing data policy
 //! When `addRecv` is called on a channel that already has messages (pre-existing data):
-//! - The channel SHOULD be considered immediately ready
-//! - The next `wait()` call SHOULD return this channel's index without blocking
-//! - Platform implementations MUST document their behavior for this case
+//! - The channel MUST be considered immediately ready
+//! - The next `wait()` call MUST return this channel's index without blocking
+//! - Implementations may defer queue-set attachment internally, but external behavior
+//!   must match the immediate-ready contract
 //!
 //! ### wait return semantics
 //! `wait(timeout_ms)` returns the index of a ready source, or an error:
@@ -57,7 +73,11 @@
 //! ### Timeout handling
 //! If `timeout_ms` is provided and no source becomes ready within that duration:
 //! - If a timeout source was registered via `addTimeout()`, return its index
-//! - Otherwise, behavior is platform-defined (may return error or sentinel value)
+//! - Otherwise, return sentinel `max_sources`
+//!
+//! For `wait(null)` (infinite wait):
+//! - If backend wait returns "no event" unexpectedly, implementations MUST return
+//!   an error (e.g., `error.PollWaitFailed`) instead of timeout sentinel
 //!
 //! ### Error handling consistency
 //! - `addRecv`: Returns `error.TooMany` if `max_sources` exceeded;
@@ -94,9 +114,9 @@
 /// Required methods:
 /// - `init() -> !Self`
 /// - `deinit(*Self) -> void`
-/// - `addRecv(*Self, anytype) error{TooMany, QueueAddFailed}!usize`
+/// - `addRecv(*Self, anytype) anyerror!usize`
 /// - `addTimeout(*Self, u32) error{TooMany}!usize`
-/// - `wait(*Self, ?u32) error{Empty}!usize`
+/// - `wait(*Self, ?u32) anyerror!usize`
 /// - `reset(*Self) -> void`
 pub fn validate(comptime Impl: type) void {
     comptime {

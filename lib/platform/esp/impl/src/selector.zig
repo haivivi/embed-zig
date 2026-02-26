@@ -197,21 +197,35 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             else
                 null;
 
-            const ticks: c.TickType_t = if (effective_timeout_ms) |ms|
-                ms / c.portTICK_PERIOD_MS
+            const timeout_ticks: ?c.TickType_t = if (effective_timeout_ms) |ms|
+                @intCast(ms / c.portTICK_PERIOD_MS)
+            else
+                null;
+
+            const ticks: c.TickType_t = if (timeout_ticks) |t|
+                t
             else
                 c.portMAX_DELAY;
+
+            const start_tick: c.TickType_t = c.xTaskGetTickCount();
 
             // Select from the queue set
             const selected = c.xQueueSelectFromSet(self.queue_set, ticks);
 
             if (selected == null) {
-                // Check if this is timeout or error
-                // FreeRTOS doesn't distinguish between timeout and error for null return
-                // We treat it as timeout if timeout is configured, otherwise as potential error
+                // FreeRTOS returns null for both timeout and internal failure.
+                // If effective_timeout_ms is null (wait forever), null indicates failure.
+                if (effective_timeout_ms == null) return error.PollWaitFailed;
+
+                const requested_ticks = timeout_ticks.?;
+                // For non-zero timeout, an early null indicates unexpected failure.
+                if (requested_ticks > 0) {
+                    const elapsed_ticks = c.xTaskGetTickCount() -% start_tick;
+                    if (elapsed_ticks < requested_ticks) return error.PollWaitFailed;
+                }
+
+                // Timeout path with explicit duration.
                 if (self.timeout_enabled) return self.timeout_index;
-                // No timeout configured but xQueueSelectFromSet returned null - could be error
-                // Unfortunately FreeRTOS doesn't provide error codes here
                 return max_sources;
             }
 
