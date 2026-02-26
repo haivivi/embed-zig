@@ -1,4 +1,8 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_custom")
+load("//bazel/bk/kconfig:app.bzl", "bk_ap_app", "bk_cp_app")
+load("//bazel/bk/kconfig:freertos.bzl", "bk_ap_freertos", "bk_cp_freertos")
+load("//bazel/bk/kconfig:uart.bzl", "bk_ap_uart")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 load("//bazel/zig:defs.bzl", "zig_module")
@@ -14,8 +18,96 @@ bk_partition_entry(name = "part_sys_rf", partition_name = "sys_rf", type = "data
 bk_partition_entry(name = "part_sys_net", partition_name = "sys_net", type = "data", partition_size = "4K", offset = "0x7ff000", write = True)
 bk_partition_table(name = "partitions", entries = [":part_bootloader", ":part_cp", ":part_ap", ":part_ota", ":part_usr_config", ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"])
 bk_modules()
+
+# UART config (align with aec_c_test example)
+bk_ap_uart(
+    name = "uart",
+    sys_print_dev = "uart",
+    uart_print_port = 0,
+    uart_print_baud_rate = 115200,
+    enable_uart0 = True,
+    enable_uart1 = True,
+    enable_uart2 = True,
+)
+
+# AP app config (Kconfig + runtime, like esp_app)
+bk_ap_app(
+    name = "ap_app",
+    main_task_prio = 0,
+    main_task_stack_size = 4096,
+)
+
+# CP app config (Kconfig only)
+bk_cp_app(
+    name = "cp_app",
+    main_task_prio = 0,
+    main_task_stack_size = 4096,
+)
+
+# AP FreeRTOS (explicit)
+bk_ap_freertos(
+    name = "ap_freertos",
+    enable = True,
+    fpu_enable = True,
+    use_queue_sets = False,
+    mem_mgmt = False,
+    version = "smp",
+    posix = False,
+    trace = False,
+    allow_os_api_in_irq_disabled = True,
+    smp_temp = False,
+    rtt_monitor = False,
+    tickless_idle = 1,
+    tick_rate_hz = 1000,
+    os_timer_debug = True,
+    debug_rtos_timer = False,
+    rtos_timer_debug_cnt = 128,
+    history_cpu_percent = False,
+    use_static_task_name = True,
+    dynamic_task_name_len = 16,
+    customize_heap_size = 163840,
+)
+
+# CP FreeRTOS (explicit)
+bk_cp_freertos(
+    name = "cp_freertos",
+    enable = True,
+    fpu_enable = True,
+    use_queue_sets = False,
+    mem_mgmt = False,
+    version = "v10",
+    posix = False,
+    trace = False,
+    allow_os_api_in_irq_disabled = False,
+    smp_temp = False,
+    rtt_monitor = False,
+    tickless_idle = 2,
+    tick_rate_hz = 1000,
+    os_timer_debug = True,
+    debug_rtos_timer = False,
+    rtos_timer_debug_cnt = 128,
+    history_cpu_percent = False,
+    use_static_task_name = True,
+    dynamic_task_name_len = 16,
+    customize_heap_size = 0,
+)
+
+# Kconfig for AP/CP - modular composition
+bk_config(name = "kconfig_ap", modules = [":uart", ":ap_app", ":ap_freertos"])
+bk_config(name = "kconfig_cp", modules = [":cp_app", ":cp_freertos"])
 zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":bk"])
 filegroup(name = "srcs", srcs = ["//e2e/trait/sync:app_srcs"] + glob(["*.zig"]))
-bk_zig_app(name = "app", ap = ":srcs", cp = "//lib/platform/bk/cp:base", deps = [":bk", ":board", "//lib/hal", "//lib/trait", "//lib/pkg/async/channel", "//lib/pkg/async/waitgroup", "//lib/pkg/async/cancellation"], partition_table = ":partitions", c_helpers = ["//lib/platform/bk/armino:c_helpers_core", "//lib/platform/bk/armino:c_helpers_runtime", "//lib/platform/bk/armino:c_helpers_heap"], tags = ["bk", "conformance", "manual"])
+bk_zig_app(
+    name = "app",
+    ap = ":srcs",
+    cp = "//lib/platform/bk/cp:base",
+    deps = [":bk", ":board", "//lib/hal", "//lib/trait", "//lib/pkg/async/waitgroup", "//lib/pkg/async/cancellation"],
+    partition_table = ":partitions",
+    kconfig_ap = ":kconfig_ap",
+    app_config = ":ap_app",
+    base_project = "bazel_wifi_test",
+    c_helpers = ["//lib/platform/bk/armino:c_helpers_core", "//lib/platform/bk/armino:c_helpers_runtime", "//lib/platform/bk/armino:c_helpers_heap", "//lib/platform/bk/armino:c_helpers_queue"],
+    tags = ["bk", "conformance", "manual"],
+)
 bk_flash(name = "flash", app = ":app")
 bk_monitor(name = "monitor")

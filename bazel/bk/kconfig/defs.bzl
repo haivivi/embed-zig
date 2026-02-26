@@ -1,140 +1,35 @@
 """BK7258 Kconfig generation rules.
 
-Unlike ESP's esp_sdkconfig which generates a COMPLETE sdkconfig, BK configs
-are OVERRIDES appended to the Armino base project config. Modules should only
-contain the minimal Kconfig lines to ENABLE a feature that is NOT already
-enabled in the Armino base project.
+BK configs are OVERRIDES appended to the Armino base project config.
+All rules carry an AP/CP prefix to indicate which core they target.
 
 Usage:
-    load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_pwm", "bk_audio", "bk_saradc")
+    load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_ap_uart", "bk_ap_debug")
 
-    # Feature modules (only what the base project doesn't enable)
-    bk_pwm(name = "pwm")
-    bk_audio(name = "audio")
+    bk_ap_uart(name = "uart", sys_print_dev = "uart")
+    bk_ap_debug(name = "debug", assert_halt = True, assert_reboot = False)
 
-    # Assemble overrides
     bk_config(
         name = "ap_config",
-        modules = [":pwm"],
+        modules = [":uart", ":debug"],
     )
 """
 
 # =============================================================================
-# Feature modules — each generates a Kconfig override fragment
+# Feature modules (loaded from per-feature .bzl files)
 # =============================================================================
 
-def _bk_pwm_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# PWM override",
-        "CONFIG_PWM=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_pwm = rule(
-    implementation = _bk_pwm_impl,
-    attrs = {},
-    doc = "Enable PWM driver",
-)
-
-def _bk_audio_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# Audio override",
-        "CONFIG_AUDIO=y",
-        "CONFIG_AUDIO_ADC=y",
-        "CONFIG_AUDIO_DAC=y",
-        "CONFIG_AUDIO_RING_BUFF=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_audio = rule(
-    implementation = _bk_audio_impl,
-    attrs = {},
-    doc = "Enable audio pipeline (ADC/DAC/ring buffer)",
-)
-
-def _bk_saradc_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# SARADC override",
-        "CONFIG_SARADC=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_saradc = rule(
-    implementation = _bk_saradc_impl,
-    attrs = {},
-    doc = "Enable SARADC driver",
-)
-
-def _bk_timer_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# Timer override",
-        "CONFIG_TIMER=y",
-        "CONFIG_TIMER_COUNTER=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_timer = rule(
-    implementation = _bk_timer_impl,
-    attrs = {},
-    doc = "Enable hardware timer",
-)
-
-def _bk_ble_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# BLE override",
-        "CONFIG_BLE=y",
-        "CONFIG_BLUETOOTH_AP=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_ble = rule(
-    implementation = _bk_ble_impl,
-    attrs = {},
-    doc = "Enable BLE stack on AP core",
-)
-
-def _bk_aec_impl(ctx):
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# AEC algorithm override",
-        "CONFIG_ADK_AEC_ALGORITHM=y",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_aec = rule(
-    implementation = _bk_aec_impl,
-    attrs = {},
-    doc = "Enable AEC (Acoustic Echo Cancellation) algorithm",
-)
-
-def _bk_uart_direct_impl(ctx):
-    """AP logs direct to UART0 (not via mailbox to CP)."""
-    out = ctx.actions.declare_file(ctx.attr.name + ".kconfig")
-    lines = [
-        "# UART direct print — AP logs visible on UART0",
-        "CONFIG_UART_PRINT_PORT=0",
-        "CONFIG_SYS_PRINT_DEV_UART=y",
-        "# CONFIG_SYS_PRINT_DEV_MAILBOX is not set",
-    ]
-    ctx.actions.write(output = out, content = "\n".join(lines) + "\n")
-    return [DefaultInfo(files = depset([out]))]
-
-bk_uart_direct = rule(
-    implementation = _bk_uart_direct_impl,
-    attrs = {},
-    doc = "AP logs direct to UART0 (required for serial monitoring)",
-)
+load("//bazel/bk/kconfig:uart.bzl", "bk_ap_uart", "bk_ap_uart_direct")
+load("//bazel/bk/kconfig:debug.bzl", "bk_ap_debug")
+load("//bazel/bk/kconfig:pwm.bzl", "bk_ap_pwm")
+load("//bazel/bk/kconfig:audio.bzl", "bk_ap_audio")
+load("//bazel/bk/kconfig:saradc.bzl", "bk_ap_saradc")
+load("//bazel/bk/kconfig:timer.bzl", "bk_ap_timer")
+load("//bazel/bk/kconfig:bt.bzl", "bk_ap_bt")
+load("//bazel/bk/kconfig:psram.bzl", "bk_ap_psram", "bk_cp_psram")
+load("//bazel/bk/kconfig:freertos.bzl", "bk_ap_freertos", "bk_cp_freertos")
+load("//bazel/bk/kconfig:app.bzl", "bk_ap_app", "bk_cp_app")
+load("//bazel/bk/kconfig:lwip.bzl", "bk_ap_lwip")
 
 def _bk_custom_impl(ctx):
     """Escape hatch: raw Kconfig lines."""

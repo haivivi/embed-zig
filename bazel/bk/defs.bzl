@@ -166,9 +166,7 @@ export BK_APP_ZIG="{app_zig}"
 export BK_ENV_FILE="{env_file}"
 export ARMINO_PATH="{armino_path}"
 export BK_PARTITION_CSV="{partition_csv}"
-export BK_AP_STACK_SIZE="{ap_stack_size}"
-export BK_RUN_IN_PSRAM="{run_in_psram}"
-export BK_PRELINK_LIBS="{prelink_libs}"
+{appconfig_source}export BK_PRELINK_LIBS="{prelink_libs}"
 export BK_STATIC_LIBS="{static_libs}"
 exec "$E/{builder}"
 """.format(
@@ -191,8 +189,7 @@ exec "$E/{builder}"
         env_file = ctx.file.env.path if ctx.file.env else "",
         armino_path = ctx.attr._armino_path[BuildSettingInfo].value if ctx.attr._armino_path and BuildSettingInfo in ctx.attr._armino_path else "",
         partition_csv = ctx.file.partition_table.path if ctx.file.partition_table else "",
-        ap_stack_size = str(ctx.attr.ap_stack_size),
-        run_in_psram = str(ctx.attr.run_in_psram),
+        appconfig_source = 'source "$E/{appconfig}"\n'.format(appconfig = ctx.attr.app_config[OutputGroupInfo].appconfig.to_list()[0].path) if ctx.attr.app_config else 'export BK_RUN_IN_PSRAM="0"\n',
         prelink_libs = " ".join(ctx.attr.prelink_libs),
         static_libs = " ".join([f.path for f in static_lib_files]),
         builder = builder_bin.path,
@@ -214,9 +211,14 @@ exec "$E/{builder}"
     if ctx.file.kconfig_cp:
         kconfig_files.append(ctx.file.kconfig_cp)
 
+    # Collect appconfig files
+    appconfig_files = []
+    if ctx.attr.app_config:
+        appconfig_files.extend(ctx.attr.app_config[OutputGroupInfo].appconfig.to_list())
+
     # All inputs
     partition_files = [ctx.file.partition_table] if ctx.file.partition_table else []
-    inputs = ap_files + cp_files + zig_files + all_dep_files + c_helper_files + kconfig_files + env_files + partition_files + static_lib_files + builder_files + [wrapper]
+    inputs = ap_files + cp_files + zig_files + all_dep_files + c_helper_files + kconfig_files + env_files + partition_files + static_lib_files + builder_files + appconfig_files + [wrapper]
 
     ctx.actions.run_shell(
         command = wrapper.path,
@@ -290,15 +292,8 @@ bk_zig_app = rule(
             allow_single_file = True,
             doc = "Partition table CSV (from bk_partition_table). If set, replaces auto_partitions.csv.",
         ),
-        "ap_stack_size": attr.int(
-            default = 16384,
-            doc = "AP task stack size in bytes. Default 16KB. Only used when run_in_psram=0.",
-        ),
-        "run_in_psram": attr.int(
-            default = 0,
-            doc = """PSRAM task stack size (bytes). 0=use SRAM (ap_stack_size).
-            >0: allocate stack from PSRAM via psram_malloc. BK7258 has 8MB PSRAM.
-            Recommended: 32768 (32KB) normal apps, 131072 (128KB) TLS/crypto apps.""",
+        "app_config": attr.label(
+            doc = "AP app config target (from bk_ap_app rule). Provides run_in_psram via .appconfig.",
         ),
         "prelink_libs": attr.string_list(
             default = [],

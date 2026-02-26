@@ -724,7 +724,7 @@ func cpMainC() string {
 #include <driver/pwr_clk.h>
 extern void rtos_set_user_app_entry(beken_thread_function_t entry);
 extern void zig_cp_main(void);
-static void zig_cp_task(void *arg) { zig_cp_main(); }
+static void zig_cp_task(void *arg) { zig_cp_main(); rtos_delete_thread(NULL); }
 void user_app_main(void) {
     bk_pm_module_vote_boot_cp1_ctrl(PM_BOOT_CP1_MODULE_NAME_APP, PM_POWER_MODULE_STATE_ON);
     beken_thread_t t;
@@ -756,7 +756,7 @@ func apMainC(actualStack int, stackMode string, runPSRAM, apStack int) string {
 #include <components/log.h>
 #define TAG "bk_app"
 extern void zig_main(void);
-static void zig_task(void *arg) { (void)arg; zig_main(); }
+static void zig_task(void *arg) { (void)arg; zig_main(); rtos_delete_thread(NULL); }
 int main(void) {
     bk_init();
     beken_thread_t t;

@@ -1,6 +1,6 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
 load("//bazel/bk/kconfig:defs.bzl", "bk_config")
-load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
+load("//bazel/bk/kconfig:crypto.bzl", "bk_ap_crypto")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -11,7 +11,12 @@ filegroup(
     srcs = ["//examples/apps/crypto_test:app_srcs"] + glob(["**/*"]),
 )
 
-bk_crypto(name = "crypto")
+bk_ap_crypto(
+    name = "crypto",
+    full_mbedtls = True,
+    ssl_in_content_len = 16384,
+    ssl_out_content_len = 4096,
+)
 bk_config(name = "kconfig", modules = [":crypto"])
 
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")

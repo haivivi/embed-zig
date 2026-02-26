@@ -1,0 +1,16 @@
+exports_files([
+    "app.zig",
+    "platform.zig",
+])
+
+filegroup(
+    name = "app_srcs",
+    srcs = ["app.zig"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "platform_srcs",
+    srcs = ["platform.zig"],
+    visibility = ["//visibility:public"],
+)

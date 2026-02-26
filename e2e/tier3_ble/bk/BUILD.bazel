@@ -1,6 +1,8 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_ble", "bk_config")
-load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
+load("//bazel/bk/kconfig:app.bzl", "bk_ap_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
+load("//bazel/bk/kconfig:bt.bzl", "bk_ap_bt")
+load("//bazel/bk/kconfig:crypto.bzl", "bk_ap_crypto")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -11,8 +13,16 @@ filegroup(
     srcs = ["//e2e/tier3_ble:app_srcs"] + glob(["**/*"]),
 )
 
-bk_ble(name = "ble")
-bk_crypto(name = "crypto")
+bk_ap_bt(
+    name = "ble",
+    enabled = True,
+)
+bk_ap_crypto(
+    name = "crypto",
+    full_mbedtls = True,
+    ssl_in_content_len = 16384,
+    ssl_out_content_len = 4096,
+)
 bk_config(name = "kconfig", modules = [":ble", ":crypto"])
 
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
@@ -33,16 +43,17 @@ bk_partition_table(
 
 bk_modules()
 
+bk_ap_app(name = "ap_app", main_task_prio = 0, main_task_stack_size = 4096, run_in_psram = 131072)
+
 bk_zig_app(
     name = "app",
+    app_config = ":ap_app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/bluetooth",
             "//lib/pkg/async/waitgroup", "//lib/pkg/async/channel", "//lib/pkg/async/cancellation"],
     partition_table = ":partitions",
     kconfig_ap = ":kconfig",
-    run_in_psram = 131072,
-    requires = ["bk_bluetooth"],
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_ble",

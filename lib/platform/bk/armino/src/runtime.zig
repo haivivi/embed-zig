@@ -145,40 +145,6 @@ pub const Condition = struct {
 };
 
 // ============================================================================
-// Notify — lightweight event via binary semaphore (max=1, init=0)
-// ============================================================================
-
-extern fn bk_zig_notify_create() ?*anyopaque;
-extern fn bk_zig_notify_destroy(handle: ?*anyopaque) void;
-extern fn bk_zig_notify_signal(handle: ?*anyopaque) void;
-extern fn bk_zig_notify_wait(handle: ?*anyopaque, timeout_ms: c_uint) c_int;
-
-pub const Notify = struct {
-    sem: ?*anyopaque,
-
-    pub fn init() Notify {
-        return .{ .sem = bk_zig_notify_create() };
-    }
-
-    pub fn deinit(self: *Notify) void {
-        bk_zig_notify_destroy(self.sem);
-    }
-
-    pub fn signal(self: *Notify) void {
-        bk_zig_notify_signal(self.sem);
-    }
-
-    pub fn wait(self: *Notify) void {
-        _ = bk_zig_notify_wait(self.sem, 0xFFFFFFFF);
-    }
-
-    pub fn timedWait(self: *Notify, timeout_ns: u64) bool {
-        const timeout_ms: u32 = @intCast(@min(timeout_ns / 1_000_000, @as(u64, 0xFFFFFFFF)));
-        return bk_zig_notify_wait(self.sem, timeout_ms) == 0;
-    }
-};
-
-// ============================================================================
 // Time
 // ============================================================================
 
@@ -241,69 +207,117 @@ pub fn spawn(name: [:0]const u8, func: TaskFn, ctx: ?*anyopaque, opts: Options) 
 // ============================================================================
 
 pub const Thread = struct {
-    done_sem: ?*anyopaque,
+    ctx: ?*ThreadCtx,
 
     pub const SpawnConfig = struct {
-        stack_size: usize = 16384, // 16KB default (8KB too small for deep call chains like x_proto)
+        stack_size: usize = 16384, // 16KB default
         priority: u8 = 4,
         core: i8 = -1,
     };
 
+    const ThreadCtx = struct {
+        func_ptr: *const anyopaque,
+        args_ptr: *const anyopaque,
+        cleanup_fn: *const fn (?*anyopaque) void,
+        done_sem: ?*anyopaque,
+        detached: std.atomic.Value(bool),
+    };
+
+    fn threadWrapper(raw_ctx: ?*anyopaque) callconv(.c) void {
+        const thread_ctx: *ThreadCtx = @ptrCast(@alignCast(raw_ctx));
+
+        const done_sem = thread_ctx.done_sem;
+        const func_ptr = thread_ctx.func_ptr;
+        const args_ptr = thread_ctx.args_ptr;
+        const cleanup_fn = thread_ctx.cleanup_fn;
+
+        const FnType = *const fn (*const anyopaque) void;
+        const func: FnType = @ptrCast(@alignCast(func_ptr));
+        func(args_ptr);
+
+        cleanup_fn(@constCast(args_ptr));
+
+        const is_detached = thread_ctx.detached.load(.acquire);
+        if (is_detached) {
+            if (done_sem) |s| bk_zig_cond_destroy(s);
+            sramFree(thread_ctx);
+        } else {
+            if (done_sem) |s| bk_zig_cond_signal(s);
+        }
+
+        rtos_delete_thread(null);
+    }
+
     /// Spawn a thread with comptime function + args tuple.
-    /// Context is heap-allocated, freed after function returns.
     pub fn spawn(config: SpawnConfig, comptime func: anytype, args: anytype) !Thread {
         const ArgsType = @TypeOf(args);
-        const Context = struct {
-            args: ArgsType,
-            done_sem: ?*anyopaque,
+
+        const done_sem = bk_zig_cond_create();
+
+        const thread_ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(ThreadCtx))) orelse {
+            if (done_sem) |s| bk_zig_cond_destroy(s);
+            return error.SpawnFailed;
         };
+        const thread_ctx: *ThreadCtx = @ptrCast(@alignCast(thread_ctx_mem));
+
+        const args_mem = bk_zig_sram_malloc(@intCast(@sizeOf(ArgsType))) orelse {
+            sramFree(thread_ctx);
+            if (done_sem) |s| bk_zig_cond_destroy(s);
+            return error.SpawnFailed;
+        };
+        const args_copy: *ArgsType = @ptrCast(@alignCast(args_mem));
+        args_copy.* = args;
 
         const Wrapper = struct {
-            fn entry(raw: ?*anyopaque) callconv(.c) void {
-                const ctx: *Context = @ptrCast(@alignCast(raw));
-                const sem = ctx.done_sem;
-                const a = ctx.args;
-                sramFree(raw);
-                @call(.auto, func, a);
-                if (sem) |s| bk_zig_cond_signal(s);
-                // FreeRTOS: task MUST delete itself when function returns
-                rtos_delete_thread(null);
+            fn call(args_ptr: *const anyopaque) void {
+                const typed_args: *const ArgsType = @ptrCast(@alignCast(args_ptr));
+                @call(.auto, func, typed_args.*);
+            }
+
+            fn cleanup(args_ptr: ?*anyopaque) void {
+                sramFree(args_ptr);
             }
         };
 
-        const sem = bk_zig_cond_create();
-
-        const ctx_mem = bk_zig_sram_malloc(@intCast(@sizeOf(Context))) orelse
-            return error.SpawnFailed;
-        const ctx: *Context = @ptrCast(@alignCast(ctx_mem));
-        ctx.* = .{ .args = args, .done_sem = sem };
+        thread_ctx.* = .{
+            .func_ptr = @ptrCast(&Wrapper.call),
+            .args_ptr = @ptrCast(args_copy),
+            .cleanup_fn = &Wrapper.cleanup,
+            .done_sem = done_sem,
+            .detached = std.atomic.Value(bool).init(false),
+        };
 
         const ret = bk_zig_spawn(
             "zig-thr",
-            Wrapper.entry,
-            @ptrCast(ctx),
+            threadWrapper,
+            @ptrCast(thread_ctx),
             @intCast(config.stack_size),
             config.priority,
         );
+
         if (ret != 0) {
-            sramFree(@ptrCast(ctx));
-            if (sem) |s| bk_zig_cond_destroy(s);
+            sramFree(args_mem);
+            sramFree(thread_ctx);
+            if (done_sem) |s| bk_zig_cond_destroy(s);
             return error.SpawnFailed;
         }
 
-        return .{ .done_sem = sem };
+        return .{ .ctx = thread_ctx };
     }
 
     pub fn join(self: Thread) void {
-        if (self.done_sem) |s| {
-            _ = bk_zig_cond_wait(s, 0xFFFFFFFF);
-            bk_zig_cond_destroy(s);
+        if (self.ctx) |ctx| {
+            if (ctx.done_sem) |s| {
+                _ = bk_zig_cond_wait(s, 0xFFFFFFFF);
+                bk_zig_cond_destroy(s);
+            }
+            sramFree(ctx);
         }
     }
 
     pub fn detach(self: Thread) void {
-        if (self.done_sem) |s| {
-            bk_zig_cond_destroy(s);
+        if (self.ctx) |ctx| {
+            ctx.detached.store(true, .release);
         }
     }
 };

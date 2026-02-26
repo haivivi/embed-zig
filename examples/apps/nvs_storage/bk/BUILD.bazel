@@ -9,7 +9,6 @@ filegroup(
     srcs = ["//examples/apps/nvs_storage:app_srcs"] + glob(["**/*"]),
 )
 
-
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
 bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")

@@ -1,8 +1,9 @@
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
+load("//bazel/bk/kconfig:app.bzl", "bk_ap_app")
 load("//bazel/bk/kconfig:defs.bzl", "bk_config")
-load("//bazel/bk/kconfig:crypto.bzl", "bk_crypto")
-load("//bazel/bk/kconfig:lwip.bzl", "bk_lwip_fast")
+load("//bazel/bk/kconfig:crypto.bzl", "bk_ap_crypto")
+load("//bazel/bk/kconfig:lwip.bzl", "bk_ap_lwip")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -18,10 +19,26 @@ make_env_file(
     defines = ["WIFI_SSID", "WIFI_PASSWORD"],
 )
 
-bk_crypto(name = "crypto")
-bk_lwip_fast(name = "lwip_fast")
+bk_ap_crypto(
+    name = "crypto",
+    full_mbedtls = True,
+    ssl_in_content_len = 16384,
+    ssl_out_content_len = 4096,
+)
+bk_ap_lwip(
+    name = "lwip_fast",
+    tcp_mss = 1460,
+    tcp_wnd = 43800,
+    tcp_snd_buf = 43800,
+    tcp_snd_queuelen = 60,
+    mem_size = 112640,
+    mem_max_tx_size = 107008,
+    mem_max_rx_size = 107008,
+    memp_num_tcp_seg = 80,
+    memp_num_netbuf = 128,
+    udp_recvmbox_size = 128,
+)
 bk_config(name = "kconfig", modules = [":crypto", ":lwip_fast"])
-
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
@@ -42,14 +59,16 @@ bk_partition_table(
 
 bk_modules()
 
+bk_ap_app(name = "ap_app", main_task_prio = 0, main_task_stack_size = 4096, run_in_psram = 131072)
+
 bk_zig_app(
     name = "app",
+    app_config = ":ap_app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/tls", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
-    run_in_psram = 131072,  # 128KB PSRAM stack
     kconfig_ap = ":kconfig",
     requires = ["psa_mbedtls"],
     c_helpers = [

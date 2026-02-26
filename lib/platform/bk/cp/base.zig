@@ -9,9 +9,7 @@ const armino = bk.armino;
 
 /// CP entry point — called from cp_main.c after bk_init() + boot AP.
 export fn zig_cp_main() void {
-    armino.log.info("ZIG_CP", "CP core ready (base template)");
-
-    // Idle — FreeRTOS tasks must not return
+    // Keep CP task alive without logging (CP log path appears unstable).
     while (true) {
         armino.time.sleepMs(60000);
     }

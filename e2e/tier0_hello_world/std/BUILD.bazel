@@ -1,0 +1,21 @@
+load("//bazel/zig:defs.bzl", "zig_library", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    module_name = "board",
+    deps = ["//lib/platform/std"],
+)
+
+zig_test(
+    name = "app_test",
+    main = "//e2e/tier0_hello_world:app.zig",
+    srcs = ["//e2e/tier0_hello_world:app_srcs", "//e2e/tier0_hello_world:platform.zig"],
+    deps = [
+        ":board",
+    ],
+    tags = ["std", "conformance"],
+)

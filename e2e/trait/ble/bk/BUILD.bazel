@@ -1,12 +1,16 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_monitor", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_ble", "bk_config")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
+load("//bazel/bk/kconfig:bt.bzl", "bk_ap_bt")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 load("//bazel/zig:defs.bzl", "zig_module")
 
 package(default_visibility = ["//visibility:public"])
 
-bk_ble(name = "ble_cfg")
+bk_ap_bt(
+    name = "ble_cfg",
+    enabled = True,
+)
 bk_config(name = "kconfig", modules = [":ble_cfg"])
 
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")

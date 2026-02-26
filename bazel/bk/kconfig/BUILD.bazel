@@ -1,1 +1,18 @@
 package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "defs.bzl",
+    "uart.bzl",
+    "debug.bzl",
+    "pwm.bzl",
+    "audio.bzl",
+    "saradc.bzl",
+    "timer.bzl",
+    "bt.bzl",
+    "psram.bzl",
+    "freertos.bzl",
+    "app.bzl",
+    "crypto.bzl",
+    "lwip.bzl",
+    "README.md",
+])

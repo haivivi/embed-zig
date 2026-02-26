@@ -1,5 +1,6 @@
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_pwm")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
+load("//bazel/bk/kconfig:pwm.bzl", "bk_ap_pwm")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -12,9 +13,11 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
-bk_pwm(name = "pwm")
+bk_ap_pwm(
+    name = "pwm",
+    pwm = True,
+)
 bk_config(name = "kconfig", modules = [":pwm"])
-
 
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")

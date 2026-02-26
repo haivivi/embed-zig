@@ -1,6 +1,8 @@
 load("//bazel:env.bzl", "make_env_file")
 load("//bazel/bk:defs.bzl", "bk_flash", "bk_modules", "bk_zig_app")
-load("//bazel/bk/kconfig:defs.bzl", "bk_config", "bk_custom")
+load("//bazel/bk/kconfig:app.bzl", "bk_ap_app")
+load("//bazel/bk/kconfig:defs.bzl", "bk_config")
+load("//bazel/bk/kconfig:debug.bzl", "bk_ap_debug")
 load("//bazel/bk/partition:entry.bzl", "bk_partition_entry")
 load("//bazel/bk/partition:table.bzl", "bk_partition_table")
 
@@ -20,7 +22,6 @@ make_env_file(
     },
 )
 
-
 # Partition table (BK7258, 8MB flash — all offsets explicit)
 bk_partition_entry(name = "part_bootloader", partition_name = "primary_bootloader", type = "code", partition_size = "68K")
 bk_partition_entry(name = "part_cp", partition_name = "primary_cp_app", type = "code", partition_size = "1360K")
@@ -38,29 +39,28 @@ bk_partition_table(
                ":part_easyflash", ":part_easyflash_ap", ":part_sys_rf", ":part_sys_net"],
 )
 
-bk_custom(
+bk_ap_debug(
     name = "debug",
-    configs = [
-        "CONFIG_ASSERT_HALT=y",
-        "# CONFIG_ASSERT_REBOOT is not set",
-        "CONFIG_DUMP_ENABLE=y",
-    ],
+    assert_halt = True,
+    assert_reboot = False,
+    dump_enable = True,
 )
 
 bk_config(name = "kconfig", modules = [":debug"])
 
 bk_modules()
 
+bk_ap_app(name = "ap_app", main_task_prio = 0, main_task_stack_size = 4096)
+
 bk_zig_app(
     name = "app",
+    app_config = ":ap_app",
     ap = ":srcs",
     cp = "//lib/platform/bk/cp:base",
     deps = [":bk", "//lib/hal", "//lib/trait", "//lib/pkg/net/dns"],
     partition_table = ":partitions",
     env = ":env",
     kconfig_ap = ":kconfig",
-    # run_in_psram = 131072,  # TODO: fix PSRAM thread
-    ap_stack_size = 32768,  # 32KB SRAM test
     c_helpers = [
         "//lib/platform/bk/armino:c_helpers_core",
         "//lib/platform/bk/armino:c_helpers_wifi",
