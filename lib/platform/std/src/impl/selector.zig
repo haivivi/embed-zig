@@ -60,7 +60,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd: posix.fd_t = posix.system.epoll_create1(@intCast(linux.EPOLL.CLOEXEC));
+                    const fd: posix.fd_t = posix.system.epoll_create1(epollToI32(linux.EPOLL.CLOEXEC));
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
@@ -263,7 +263,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                     const fd = posix.system.kqueue();
                     if (fd >= 0) break :blk fd;
                 } else if (is_epoll) {
-                    const fd = posix.system.epoll_create1(@intCast(linux.EPOLL.CLOEXEC));
+                    const fd = posix.system.epoll_create1(epollToI32(linux.EPOLL.CLOEXEC));
                     if (fd >= 0) break :blk fd;
                 }
                 // If re-creation fails, use invalid fd (will error on next use)
