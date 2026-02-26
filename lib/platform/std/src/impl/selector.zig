@@ -44,11 +44,11 @@ pub fn Selector(comptime max_sources: usize) type {
         pub fn init() !Self {
             const poll_fd: posix.fd_t = blk: {
                 if (is_kqueue) {
-                    const fd = posix.system.kqueue();
+                    const fd: posix.fd_t = posix.system.kqueue();
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
+                    const fd: posix.fd_t = posix.system.epoll_create1(linux.EPOLL.CLOEXEC);
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
