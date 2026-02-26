@@ -8,16 +8,18 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const linux = std.os.linux;
 
-/// Convert EPOLL constants to i32.
-/// Handles:
-///   - comptime_int (e.g. CLOEXEC = 0x80000, CTL_ADD = 1)
-///   - u32 / other runtime int
-///   - packed struct(u32) (event flags like IN, OUT in some Zig versions)
-inline fn epollToI32(val: anytype) i32 {
+/// Convert EPOLL constants to u32.
+/// Handles comptime ints, runtime ints, and packed struct(u32) flags.
+inline fn epollToU32(val: anytype) u32 {
     return switch (@typeInfo(@TypeOf(val))) {
-        .comptime_int, .int => @intCast(val),
-        else => @bitCast(val),
+        .comptime_int, .int => @as(u32, @intCast(val)),
+        else => @as(u32, @bitCast(val)),
     };
+}
+
+/// Convert EPOLL constants to i32 (for syscall op/flags args).
+inline fn epollToI32(val: anytype) i32 {
+    return @as(i32, @intCast(epollToU32(val)));
 }
 
 const is_kqueue = builtin.os.tag == .macos or
@@ -115,7 +117,7 @@ pub fn Selector(comptime max_sources: usize) type {
                 if (rc < 0) return error.PollCtlFailed;
             } else if (is_epoll) {
                 var ev: posix.system.epoll_event = .{
-                    .events = epollToI32(linux.EPOLL.IN),
+                    .events = epollToU32(linux.EPOLL.IN),
                     .data = .{ .u64 = logical_index },
                 };
                 const rc = posix.system.epoll_ctl(
