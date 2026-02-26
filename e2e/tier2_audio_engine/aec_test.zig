@@ -5,7 +5,12 @@
 //!   task2 (melody):    Für Elise melody -> track     (5s)
 //!   task3 (bass):      Für Elise bass   -> track     (5s)
 //!
-//! After all tasks finish naturally:
+//! Phase switch rule:
+//!   - recorder task can use join (real-time sampling)
+//!   - far-end tasks are gated by consumed PCM duration (readBytes),
+//!     then joined for cleanup
+//!
+//! After phase 1 ends:
 //!   beep beep -> playback recorded clean buffer
 //!
 //! If AEC works, the clean recording should contain mostly near-end
@@ -19,9 +24,12 @@ const Board = platform.Board;
 const log = Board.log;
 
 const SAMPLE_RATE: u32 = 16000;
-const FRAME_SIZE: u32 = 160;
+const FRAME_SIZE: u32 = Board.engine_frame_size;
+const FRAME_LEN: usize = FRAME_SIZE;
 const RECORD_SECONDS: u32 = 5;
 const TEMPO: f32 = 120.0;
+const ENABLE_MELODY = false;
+const ENABLE_BASS = true;
 
 const EngineType = audio.engine.AudioEngine(
     Board.runtime,
@@ -34,6 +42,7 @@ const EngineType = audio.engine.AudioEngine(
         .sample_rate = SAMPLE_RATE,
         .aec_filter_length = 16000,
         .RefReader = Board.DuplexAudio.RefReader,
+        .Processor = if (@hasDecl(Board, "Processor")) Board.Processor else null,
     },
 );
 
@@ -76,10 +85,11 @@ const FarEndCtx = struct {
     amp: f32,
     total_samples: usize, // how many samples to generate
     written: usize, // how many samples actually written
+    phase: f32,
 };
 
 fn recorderTask(ctx: *RecorderCtx) void {
-    var frame: [FRAME_SIZE]i16 = undefined;
+    var frame: [FRAME_LEN]i16 = undefined;
 
     while (ctx.recorded < ctx.clean_buf.len) {
         const n = ctx.engine.readClean(&frame) orelse break;
@@ -92,9 +102,11 @@ fn recorderTask(ctx: *RecorderCtx) void {
 }
 
 fn farEndTask(ctx: *FarEndCtx) void {
+    defer ctx.handle.ctrl.closeWriteWithSilence(400);
+
     const sec_per_beat = 60.0 / TEMPO;
     const fmt = audio.Format{ .rate = SAMPLE_RATE, .channels = .mono };
-    var frame: [FRAME_SIZE]i16 = undefined;
+    var frame: [FRAME_LEN]i16 = undefined;
 
     while (ctx.written < ctx.total_samples) {
         for (ctx.notes) |note| {
@@ -105,16 +117,26 @@ fn farEndTask(ctx: *FarEndCtx) void {
             while (i < note_len) {
                 if (ctx.written >= ctx.total_samples) return;
 
-                const n = @min(FRAME_SIZE, note_len - i);
+                const remaining_total = ctx.total_samples - ctx.written;
+                const n = @min(@min(FRAME_LEN, note_len - i), remaining_total);
                 for (0..n) |j| {
-                    const t = @as(f32, @floatFromInt(i + j)) / @as(f32, @floatFromInt(SAMPLE_RATE));
+                    const local_idx = i + j;
                     const f = note.freq;
-                    const h1 = @sin(t * f * 2.0 * std.math.pi);
-                    const h2 = 0.4 * @sin(t * f * 4.0 * std.math.pi);
-                    const h3 = 0.2 * @sin(t * f * 6.0 * std.math.pi);
+                    const dphi = 2.0 * std.math.pi * f / @as(f32, @floatFromInt(SAMPLE_RATE));
+                    const p = ctx.phase;
+                    const h1 = @sin(p);
+                    const h2 = if (ctx.amp < 0.7) 0.2 * @sin(2.0 * p) else 0.4 * @sin(2.0 * p);
+                    const h3 = if (ctx.amp < 0.7) 0.08 * @sin(3.0 * p) else 0.2 * @sin(3.0 * p);
+                    ctx.phase += dphi;
+                    if (ctx.phase > 2.0 * std.math.pi) ctx.phase -= 2.0 * std.math.pi;
 
-                    const attack = @min(1.0, @as(f32, @floatFromInt(i + j)) / 800.0);
-                    const release = @max(0.0, 1.0 - @as(f32, @floatFromInt((i + j) -| note_len +| 1500)) / 2000.0);
+                    const attack = @min(1.0, @as(f32, @floatFromInt(local_idx)) / 800.0);
+                    const rel_start = note_len -| 1200;
+                    const rel_prog: f32 = if (local_idx <= rel_start)
+                        0.0
+                    else
+                        @as(f32, @floatFromInt(local_idx - rel_start)) / 1200.0;
+                    const release = @max(0.0, 1.0 - rel_prog);
                     const env = attack * release;
 
                     const s = (h1 + h2 + h3) * env * ctx.amp * 15000.0;
@@ -128,14 +150,22 @@ fn farEndTask(ctx: *FarEndCtx) void {
     }
 }
 
+fn waitTrackPlayed(handle: EngineType.TrackHandle, expected_samples: usize, timeout_ms: u32) void {
+    const expected_bytes: i64 = @as(i64, @intCast(expected_samples * @sizeOf(i16)));
+    const deadline = Board.time.nowMs() + timeout_ms;
+
+    while (Board.time.nowMs() < deadline) {
+        if (handle.ctrl.readBytes() >= expected_bytes) break;
+        Board.time.sleepMs(10);
+    }
+}
+
 // ================================================================
 // Main
 // ================================================================
 
 pub fn run(_: anytype) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = Board.allocator();
 
     Board.initAudio() catch |err| {
         log.err("[aec_test] Audio init failed: {}", .{err});
@@ -199,19 +229,24 @@ pub fn run(_: anytype) void {
         .clean_buf = clean_buf,
         .recorded = 0,
     };
+    const melody_target_samples: usize = if (ENABLE_MELODY) total_samples else 0;
+    const bass_target_samples: usize = if (ENABLE_BASS) total_samples else 0;
+
     var melody_ctx = FarEndCtx{
         .handle = melody_track,
         .notes = MELODY,
         .amp = 0.8,
-        .total_samples = total_samples,
+        .total_samples = melody_target_samples,
         .written = 0,
+        .phase = 0,
     };
     var bass_ctx = FarEndCtx{
         .handle = bass_track,
         .notes = BASS,
         .amp = 0.6,
-        .total_samples = total_samples,
+        .total_samples = bass_target_samples,
         .written = 0,
+        .phase = 0,
     };
 
     const t_rec = Board.runtime.Thread.spawn(.{}, recorderTask, .{&rec_ctx}) catch |err| {
@@ -231,11 +266,19 @@ pub fn run(_: anytype) void {
     };
 
     log.info("[aec_test] recording {}s with Für Elise playing...", .{RECORD_SECONDS});
+    log.info("[aec_test] far-end tracks: melody={}, bass={}", .{ ENABLE_MELODY, ENABLE_BASS });
 
-    // All tasks exit naturally after generating 5s of PCM
+    // Mic is real-time: joining recorder means 5s capture is complete.
+    t_rec.join();
+
+    // Far-end writers may have produced faster than playback. Gate phase switch
+    // by consumed PCM samples, not producer thread join.
+    waitTrackPlayed(melody_track, melody_target_samples, 12_000);
+    waitTrackPlayed(bass_track, bass_target_samples, 12_000);
+
+    // Producer join is only for cleanup after consumption boundary is met.
     t_melody.join();
     t_bass.join();
-    t_rec.join();
 
     const recorded = rec_ctx.recorded;
     if (recorded < total_samples) @memset(clean_buf[recorded..], 0);
@@ -268,10 +311,16 @@ pub fn run(_: anytype) void {
     @memset(gap, 0);
 
     log.info("[aec_test] beep beep...", .{});
+    const beep_total_samples = beep.len * 2 + gap.len * 2;
     _ = beep_track.track.write(fmt, beep) catch {};
     _ = beep_track.track.write(fmt, gap) catch {};
     _ = beep_track.track.write(fmt, beep) catch {};
     _ = beep_track.track.write(fmt, gap) catch {};
+    beep_track.ctrl.closeWrite();
+
+    // Make beep/beep clearly distinguishable from playback.
+    waitTrackPlayed(beep_track, beep_total_samples, 6000);
+    Board.time.sleepMs(1200);
 
     // Playback recorded clean
     log.info("[aec_test] playing back clean recording...", .{});

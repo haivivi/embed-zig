@@ -8,7 +8,8 @@ const Board = platform.Board;
 const log = Board.log;
 
 const SAMPLE_RATE: u32 = 16000;
-const FRAME_SIZE: u32 = 160;
+const FRAME_SIZE: u32 = Board.engine_frame_size;
+const FRAME_LEN: usize = FRAME_SIZE;
 const RECORD_SECONDS: u32 = 5;
 
 const EngineType = audio.engine.AudioEngine(
@@ -21,13 +22,12 @@ const EngineType = audio.engine.AudioEngine(
         .frame_size = FRAME_SIZE,
         .sample_rate = SAMPLE_RATE,
         .RefReader = Board.DuplexAudio.RefReader,
+        .Processor = if (@hasDecl(Board, "Processor")) Board.Processor else null,
     },
 );
 
 pub fn run(_: anytype) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = Board.allocator();
 
     Board.initAudio() catch |err| {
         log.err("[mic_test] Audio init failed: {}", .{err});
@@ -76,7 +76,7 @@ pub fn run(_: anytype) void {
     log.info("[mic_test] recording {}s...", .{RECORD_SECONDS});
     var pos: usize = 0;
     while (pos < clean_buf.len) {
-        var frame: [FRAME_SIZE]i16 = undefined;
+        var frame: [FRAME_LEN]i16 = undefined;
         const n = engine.readClean(&frame) orelse break;
         const to_copy = @min(n, clean_buf.len - pos);
         @memcpy(clean_buf[pos .. pos + to_copy], frame[0..to_copy]);

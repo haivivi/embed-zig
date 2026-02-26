@@ -11,7 +11,8 @@ const Board = platform.Board;
 const log = Board.log;
 
 const SAMPLE_RATE: u32 = 16000;
-const FRAME_SIZE: u32 = 160;
+const FRAME_SIZE: u32 = Board.engine_frame_size;
+const FRAME_LEN: usize = FRAME_SIZE;
 const TEMPO: f32 = 120.0;
 const PLAY_DURATION_MS: u64 = 10_000;
 
@@ -44,6 +45,7 @@ const EngineType = audio.engine.AudioEngine(
         .frame_size = FRAME_SIZE,
         .sample_rate = SAMPLE_RATE,
         .RefReader = Board.DuplexAudio.RefReader,
+        .Processor = if (@hasDecl(Board, "Processor")) Board.Processor else null,
     },
 );
 
@@ -58,7 +60,7 @@ const TrackCtx = struct {
 fn writerTask(ctx: *TrackCtx) void {
     const sec_per_beat = 60.0 / TEMPO;
     const fmt = audio.Format{ .rate = SAMPLE_RATE, .channels = .mono };
-    var frame: [FRAME_SIZE]i16 = undefined;
+    var frame: [FRAME_LEN]i16 = undefined;
 
     while (Board.time.nowMs() < ctx.deadline_ms) {
         for (ctx.notes) |note| {
@@ -67,7 +69,7 @@ fn writerTask(ctx: *TrackCtx) void {
             var i: usize = 0;
             while (i < note_len) {
                 if (Board.time.nowMs() >= ctx.deadline_ms) break;
-                const n = @min(FRAME_SIZE, note_len - i);
+                const n = @min(FRAME_LEN, note_len - i);
                 for (0..n) |j| {
                     const t = @as(f32, @floatFromInt(i + j)) / @as(f32, @floatFromInt(SAMPLE_RATE));
                     const f = note.freq;
@@ -90,9 +92,7 @@ fn writerTask(ctx: *TrackCtx) void {
 }
 
 pub fn run(_: anytype) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = Board.allocator();
 
     Board.initAudio() catch |err| {
         log.err("[speaker_test] Audio init failed: {}", .{err});
