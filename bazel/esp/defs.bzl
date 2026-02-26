@@ -1188,7 +1188,7 @@ def _esp_flash_impl(ctx):
     if ctx.attr.partition_table and EspPartitionTableInfo in ctx.attr.partition_table:
         pt_info = ctx.attr.partition_table[EspPartitionTableInfo]
         for name, info in pt_info.data_bins.items():
-            data_flash_args += " 0x%X %s" % (info["offset"], info["bin"].path)
+            data_flash_args += " 0x%X %s" % (info["offset"], info["bin"].short_path)
             data_files.append(info["bin"])
         # Find NVS partition for --erase-nvs feature
         for name, pinfo in pt_info.partition_info.items():
@@ -1207,7 +1207,7 @@ def _esp_flash_impl(ctx):
     if ctx.attr.wasm_app:
         for f in ctx.attr.wasm_app.files.to_list():
             if f.path.endswith(".wasm"):
-                wasm_path = f.path
+                wasm_path = f.short_path
                 break
     
     # Create wrapper script
@@ -1283,9 +1283,9 @@ exec "{flasher}" "$@"
         board = board,
         baud = baud,
         port = port,
-        bin_path = bin_file.path,
-        bootloader_path = bootloader_file.path if bootloader_file else "",
-        partition_path = partition_file.path if partition_file else "",
+        bin_path = bin_file.short_path,
+        bootloader_path = bootloader_file.short_path if bootloader_file else "",
+        partition_path = partition_file.short_path if partition_file else "",
         full_flash = "1" if has_full_flash else "0",
         data_flash_args = data_flash_args,
         nvs_offset = nvs_offset,
