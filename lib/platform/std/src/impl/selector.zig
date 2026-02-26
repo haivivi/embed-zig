@@ -6,6 +6,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+const linux = std.os.linux;
+
+fn epollToU32(flags: anytype) u32 {
+    return @as(u32, @bitCast(flags));
+}
 
 const is_kqueue = builtin.os.tag == .macos or
     builtin.os.tag == .freebsd or
@@ -39,7 +44,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else if (is_epoll) {
-                    const fd = posix.system.epoll_create1(posix.EPOLL.CLOEXEC);
+                    const fd = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
                     if (fd < 0) return error.PollCreateFailed;
                     break :blk fd;
                 } else {
@@ -93,12 +98,12 @@ pub fn Selector(comptime max_sources: usize) type {
                 // Ignore errors - if kevent fails, we'll notice on wait()
             } else if (is_epoll) {
                 var ev: posix.system.epoll_event = .{
-                    .events = posix.EPOLL.IN,
+                    .events = epollToU32(linux.EPOLL.IN),
                     .data = .{ .u64 = idx },
                 };
                 _ = posix.system.epoll_ctl(
                     self.poll_fd,
-                    posix.EPOLL.CTL_ADD,
+                    epollToU32(linux.EPOLL.CTL_ADD),
                     fd,
                     &ev,
                 );
@@ -211,7 +216,7 @@ pub fn Selector(comptime max_sources: usize) type {
                     const fd = posix.system.kqueue();
                     if (fd >= 0) break :blk fd;
                 } else if (is_epoll) {
-                    const fd = posix.system.epoll_create1(posix.EPOLL.CLOEXEC);
+                    const fd = posix.system.epoll_create1(epollToU32(linux.EPOLL.CLOEXEC));
                     if (fd >= 0) break :blk fd;
                 }
                 // If re-creation fails, use invalid fd (will error on next use)
