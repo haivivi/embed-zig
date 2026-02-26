@@ -242,156 +242,68 @@ test "Selector timeout" {
     try std.testing.expect(elapsed >= 45); // Allow some tolerance
 }
 
-// ============================================================================
-// Benchmark
-// ============================================================================
-
-fn benchmarkChannelThroughput(_: std.mem.Allocator, message_count: usize) !void {
-    const Ch = Channel(u64, 1024);
+test "Selector addTimeout registers dedicated timeout index" {
+    const Ch = Channel(u32, 4);
+    const Sel = Selector(4);
 
     var ch = try Ch.init();
     defer ch.deinit();
 
-    const start = std.time.nanoTimestamp();
+    var sel = try Sel.init();
+    defer sel.deinit();
 
-    const producer = try std.Thread.spawn(.{}, struct {
-        fn run(c: *Ch, count: usize) void {
-            for (0..count) |i| {
-                c.send(@intCast(i)) catch return;
-            }
+    _ = try sel.addRecv(&ch);
+    const timeout_idx = try sel.addTimeout(20);
+
+    const idx = try sel.wait(null);
+    try std.testing.expectEqual(timeout_idx, idx);
+}
+
+test "Selector close wakes waiter" {
+    const Ch = Channel(u32, 4);
+    const Sel = Selector(4);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    const ch_idx = try sel.addRecv(&ch);
+
+    const t = try std.Thread.spawn(.{}, struct {
+        fn run(c: *Ch) void {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
             c.close();
         }
-    }.run, .{ &ch, message_count });
+    }.run, .{&ch});
 
-    var received: usize = 0;
-    while (ch.recv()) |_| {
-        received += 1;
-    }
+    const idx = try sel.wait(1000);
+    try std.testing.expectEqual(ch_idx, idx);
+    try std.testing.expectEqual(@as(?u32, null), ch.recv());
 
-    producer.join();
-
-    const elapsed_ns = std.time.nanoTimestamp() - start;
-    const elapsed_s = @as(f64, @floatFromInt(elapsed_ns)) / 1e9;
-    const throughput = @as(f64, @floatFromInt(message_count)) / elapsed_s / 1e6; // M msg/s
-
-    std.debug.print("\nChannel throughput: {d} messages in {d:.3}s = {d:.2} M msg/s\n", .{
-        message_count, elapsed_s, throughput,
-    });
-
-    try std.testing.expectEqual(message_count, received);
+    t.join();
 }
 
-test "Benchmark: Channel throughput 1M messages" {
-    try benchmarkChannelThroughput(std.testing.allocator, 1_000_000);
-}
-
-test "Benchmark: Channel throughput 10M messages" {
-    try benchmarkChannelThroughput(std.testing.allocator, 10_000_000);
-}
-
-fn benchmarkSelectorLatencyWithSleep(iterations: usize) !void {
-    const Ch = Channel(u64, 4);
-    const Sel = Selector(2);
+test "Selector sees pre-existing data immediately" {
+    const Ch = Channel(u32, 4);
+    const Sel = Selector(4);
 
     var ch = try Ch.init();
     defer ch.deinit();
 
-    var sel = try Sel.init();
-    defer sel.deinit();
-
-    _ = try sel.addRecv(&ch);
-
-    var total_latency_ns: i64 = 0;
-
-    var i: usize = 0;
-    while (i < iterations) : (i += 1) {
-        const send_time: i64 = @intCast(std.time.nanoTimestamp());
-
-        const t = try std.Thread.spawn(.{}, struct {
-            fn run(c: *Ch, st: i64) void {
-                _ = st;
-                std.Thread.sleep(1 * std.time.ns_per_ms);
-                c.send(1) catch {};
-            }
-        }.run, .{ &ch, send_time });
-
-        _ = try sel.wait(1000);
-        const recv_time: i64 = @intCast(std.time.nanoTimestamp());
-
-        _ = ch.recv(); // Consume the message
-
-        total_latency_ns += recv_time - send_time;
-        t.join();
-    }
-
-    const avg_latency_us = @as(f64, @floatFromInt(total_latency_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
-
-    std.debug.print("\nSelector average wakeup latency (with 1ms sleep): {d:.2} us\n", .{avg_latency_us});
-}
-
-test "Benchmark: Selector latency 100 iterations (with sleep)" {
-    try benchmarkSelectorLatencyWithSleep(100);
-}
-
-fn benchmarkSelectorLatencyImmediate(iterations: usize) !void {
-    const Ch = Channel(u64, 4);
-    const Sel = Selector(2);
-
-    var ch = try Ch.init();
-    defer ch.deinit();
+    try ch.send(77);
 
     var sel = try Sel.init();
     defer sel.deinit();
 
-    _ = try sel.addRecv(&ch);
+    const ch_idx = try sel.addRecv(&ch);
 
-    var total_latency_ns: i64 = 0;
+    const start = std.time.milliTimestamp();
+    const idx = try sel.wait(1000);
+    const elapsed = std.time.milliTimestamp() - start;
 
-    var i: usize = 0;
-    while (i < iterations) : (i += 1) {
-        // Reset selector for next iteration
-        sel.reset();
-        _ = try sel.addRecv(&ch);
-
-        // Pre-create thread but wait for signal to send
-        var ready = std.atomic.Value(bool).init(false);
-        var start_send = std.atomic.Value(bool).init(false);
-
-        const t = try std.Thread.spawn(.{}, struct {
-            fn run(c: *Ch, r: *std.atomic.Value(bool), s: *std.atomic.Value(bool)) void {
-                r.store(true, .release);
-                // Wait for signal to send
-                while (!s.load(.acquire)) {
-                    std.atomic.spinLoopHint();
-                }
-                c.send(1) catch {};
-            }
-        }.run, .{ &ch, &ready, &start_send });
-
-        // Wait for thread to be ready
-        while (!ready.load(.acquire)) {
-            std.atomic.spinLoopHint();
-        }
-
-        // Measure: signal sender then wait on selector
-        const send_time: i64 = @intCast(std.time.nanoTimestamp());
-        start_send.store(true, .release);
-
-        _ = try sel.wait(1000);
-        const recv_time: i64 = @intCast(std.time.nanoTimestamp());
-
-        _ = ch.recv(); // Consume the message
-
-        total_latency_ns += recv_time - send_time;
-        t.join();
-    }
-
-    const avg_latency_us = @as(f64, @floatFromInt(total_latency_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
-    const avg_latency_ns = @as(f64, @floatFromInt(total_latency_ns)) / @as(f64, @floatFromInt(iterations));
-
-    std.debug.print("\nSelector average wakeup latency (immediate send): {d:.2} us ({d:.0} ns)\n", .{ avg_latency_us, avg_latency_ns });
-}
-
-test "Benchmark: Selector latency 1000 iterations (immediate)" {
-    try benchmarkSelectorLatencyImmediate(1000);
+    try std.testing.expectEqual(ch_idx, idx);
+    try std.testing.expect(elapsed < 10);
+    try std.testing.expectEqual(@as(?u32, 77), ch.recv());
 }

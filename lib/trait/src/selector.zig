@@ -11,11 +11,11 @@
 //! ```zig
 //! pub fn Selector(comptime max_sources: usize) type {
 //!     return struct {
-//!         pub fn init() Self;
+//!         pub fn init() !Self;
 //!         pub fn deinit(self: *Self) void;
-//!         pub fn addRecv(self: *Self, channel: anytype) error{ TooMany }!void;
-//!         pub fn addTimeout(self: *Self, timeout_ms: u32) error{ TooMany }!void;
-//!         pub fn wait(self: *Self) error{ Empty }!usize;
+//!         pub fn addRecv(self: *Self, channel: anytype) error{ TooMany }!usize;
+//!         pub fn addTimeout(self: *Self, timeout_ms: u32) error{ TooMany }!usize;
+//!         pub fn wait(self: *Self, timeout_ms: ?u32) error{ Empty }!usize;
 //!         pub fn reset(self: *Self) void;
 //!     };
 //! }
@@ -38,42 +38,43 @@
 //!
 //! try sel.addRecv(&ch1);
 //! try sel.addRecv(&ch2);
-//! try sel.addTimeout(100);  // 100ms timeout
+//! const timeout_idx = try sel.addTimeout(100);  // 100ms timeout
 //!
-//! const idx = sel.wait() catch |err| switch (err) {
+//! const idx = sel.wait(null) catch |err| switch (err) {
 //!     error.Empty => return,  // no sources added
 //! };
 //!
 //! switch (idx) {
 //!     0 => { const v = ch1.recv(); },
 //!     1 => { const v = ch2.recv(); },
-//!     2 => { /* timeout */ },
+//!     timeout_idx => { /* timeout */ },
 //! }
 //! ```
 
 /// Validate that Impl is a valid Selector type for max_sources.
 ///
 /// Required methods:
-/// - `init() -> Self`
+/// - `init() -> !Self`
 /// - `deinit(*Self) -> void`
-/// - `addRecv(*Self, anytype) error{TooMany}!void`
-/// - `addTimeout(*Self, u32) error{TooMany}!void`
-/// - `wait(*Self) error{Empty}!usize`
+/// - `addRecv(*Self, anytype) error{TooMany}!usize`
+/// - `addTimeout(*Self, u32) error{TooMany}!usize`
+/// - `wait(*Self, ?u32) error{Empty}!usize`
 /// - `reset(*Self) -> void`
 pub fn validate(comptime Impl: type) void {
     comptime {
         const Self = Impl;
 
         // Check init/deinit
-        _ = @as(*const fn () Self, &Impl.init);
+        _ = @as(*const fn () anyerror!Self, &Impl.init);
         _ = @as(*const fn (*Self) void, &Impl.deinit);
 
         // Check add operations
         if (!@hasDecl(Impl, "addRecv")) @compileError("Selector missing addRecv method");
         if (!@hasDecl(Impl, "addTimeout")) @compileError("Selector missing addTimeout method");
+        _ = @as(*const fn (*Self, u32) anyerror!usize, &Impl.addTimeout);
 
         // Check wait
-        _ = @as(*const fn (*Self) error{Empty}!usize, &Impl.wait);
+        _ = @as(*const fn (*Self, ?u32) anyerror!usize, &Impl.wait);
 
         // Check reset
         _ = @as(*const fn (*Self) void, &Impl.reset);

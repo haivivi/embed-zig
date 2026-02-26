@@ -1,4 +1,4 @@
-load("//bazel/zig:defs.bzl", "zig_test")
+load("//bazel/zig:defs.bzl", "zig_binary", "zig_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,4 +9,14 @@ zig_test(
     deps = [
         "//lib/platform/std",
     ],
+)
+
+zig_binary(
+    name = "benchmark",
+    srcs = ["benchmark.zig"],
+    main = "benchmark.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+    tags = ["manual"],
 )

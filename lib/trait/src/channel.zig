@@ -10,7 +10,7 @@
 //! ```zig
 //! pub fn Channel(comptime T: type, comptime capacity: usize) type {
 //!     return struct {
-//!         pub fn init() Self;
+//!         pub fn init() !Self;
 //!         pub fn deinit(self: *Self) void;
 //!         pub fn send(self: *Self, item: T) error{Closed}!void;
 //!         pub fn trySend(self: *Self, item: T) error{ Closed, Full }!void;
@@ -46,7 +46,7 @@
 /// Validate that Impl is a valid Channel type for element type T.
 ///
 /// Required methods:
-/// - `init() -> Self`
+/// - `init() -> !Self`
 /// - `deinit(*Self) -> void`
 /// - `send(*Self, T) error{Closed}!void`
 /// - `trySend(*Self, T) error{ Closed, Full }!void`
@@ -61,7 +61,7 @@ pub fn validate(comptime T: type, comptime Impl: type) void {
         const Self = Impl;
 
         // Check init/deinit
-        _ = @as(*const fn () Self, &Impl.init);
+        _ = @as(*const fn () anyerror!Self, &Impl.init);
         _ = @as(*const fn (*Self) void, &Impl.deinit);
 
         // Check send operations

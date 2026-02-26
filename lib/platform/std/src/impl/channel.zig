@@ -24,9 +24,20 @@ const Notifier = struct {
     read_fd: posix.fd_t,
     write_fd: posix.fd_t,
 
+    fn setNonBlocking(fd: posix.fd_t) void {
+        const flags = posix.fcntl(fd, posix.F.GETFL, 0) catch return;
+        const o_nonblock: u32 = if (@hasDecl(posix.O, "NONBLOCK"))
+            @intFromEnum(posix.O.NONBLOCK)
+        else
+            0x0004;
+        _ = posix.fcntl(fd, posix.F.SETFL, flags | o_nonblock) catch {};
+    }
+
     pub fn init() !Notifier {
         if (is_kqueue) {
             const fds = try posix.pipe();
+            setNonBlocking(fds[0]);
+            setNonBlocking(fds[1]);
             return .{
                 .read_fd = fds[0],
                 .write_fd = fds[1],
@@ -127,6 +138,7 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
                 return error.Closed;
             }
 
+            const was_empty = self.size == 0;
             self.buffer[self.tail] = item;
             self.tail = (self.tail + 1) % capacity;
             self.size += 1;
@@ -134,22 +146,36 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             self.cond_not_empty.signal();
             self.mutex.unlock();
 
-            // Phase 2: Notify outside of lock to avoid deadlock
-            self.notifier.notify();
+            // Only notify on empty->non-empty transition to keep
+            // select readiness level-triggered and avoid token storms.
+            if (was_empty) {
+                self.notifier.notify();
+            }
         }
 
         pub fn trySend(self: *Self, item: T) error{ Closed, Full }!void {
             self.mutex.lock();
-            defer self.mutex.unlock();
 
-            if (self.closed) return error.Closed;
-            if (self.size >= capacity) return error.Full;
+            if (self.closed) {
+                self.mutex.unlock();
+                return error.Closed;
+            }
+            if (self.size >= capacity) {
+                self.mutex.unlock();
+                return error.Full;
+            }
 
+            const was_empty = self.size == 0;
             self.buffer[self.tail] = item;
             self.tail = (self.tail + 1) % capacity;
             self.size += 1;
 
             self.cond_not_empty.signal();
+            self.mutex.unlock();
+
+            if (was_empty) {
+                self.notifier.notify();
+            }
         }
 
         pub fn recv(self: *Self) ?T {
@@ -174,13 +200,23 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
 
         pub fn close(self: *Self) void {
             self.mutex.lock();
-            defer self.mutex.unlock();
+            if (self.closed) {
+                self.mutex.unlock();
+                return;
+            }
 
-            if (self.closed) return;
+            const was_empty = self.size == 0;
             self.closed = true;
 
             self.cond_not_empty.broadcast();
             self.cond_not_full.broadcast();
+            self.mutex.unlock();
+
+            // If channel is empty when close happens, selector waiters must
+            // still be woken so they can observe closed+drained state.
+            if (was_empty) {
+                self.notifier.notify();
+            }
         }
 
         pub fn isClosed(self: *Self) bool {
@@ -209,6 +245,9 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
             const item = self.buffer[self.head];
             self.head = (self.head + 1) % capacity;
             self.size -= 1;
+            if (self.size == 0) {
+                self.notifier.consume();
+            }
             self.cond_not_full.signal();
             return item;
         }

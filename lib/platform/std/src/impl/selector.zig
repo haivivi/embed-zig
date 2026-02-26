@@ -21,7 +21,7 @@ const is_epoll = builtin.os.tag == .linux;
 /// Source entry for tracking registered channels
 const SourceEntry = struct {
     fd: posix.fd_t,
-    channel_ptr: ?*anyopaque,
+    logical_index: usize,
 };
 
 /// Selector — wait on multiple channels with optional timeout.
@@ -33,8 +33,12 @@ pub fn Selector(comptime max_sources: usize) type {
         const Self = @This();
 
         entries: [max_sources]SourceEntry,
-        count: usize,
+        recv_count: usize,
+        source_count: usize,
         poll_fd: posix.fd_t, // kqueue fd or epoll fd
+        timeout_enabled: bool,
+        timeout_ms: u32,
+        timeout_index: usize,
 
         /// Initialize a new Selector
         pub fn init() !Self {
@@ -54,8 +58,12 @@ pub fn Selector(comptime max_sources: usize) type {
 
             return .{
                 .entries = undefined,
-                .count = 0,
+                .recv_count = 0,
+                .source_count = 0,
                 .poll_fd = poll_fd,
+                .timeout_enabled = false,
+                .timeout_ms = 0,
+                .timeout_index = max_sources,
             };
         }
 
@@ -67,15 +75,16 @@ pub fn Selector(comptime max_sources: usize) type {
         /// Add a channel to wait on.
         /// Returns the index of the added source.
         /// Returns error.TooMany if max_sources is reached.
-        pub fn addRecv(self: *Self, channel: anytype) error{TooMany}!usize {
-            if (self.count >= max_sources) return error.TooMany;
+        pub fn addRecv(self: *Self, channel: anytype) error{ TooMany, PollCtlFailed }!usize {
+            if (self.source_count >= max_sources) return error.TooMany;
 
             const fd = channel.selectFd();
-            const idx = self.count;
+            const logical_index = self.source_count;
+            const recv_index = self.recv_count;
 
-            self.entries[idx] = .{
+            self.entries[recv_index] = .{
                 .fd = fd,
-                .channel_ptr = @ptrCast(channel),
+                .logical_index = logical_index,
             };
 
             if (is_kqueue) {
@@ -85,68 +94,87 @@ pub fn Selector(comptime max_sources: usize) type {
                     .flags = posix.system.EV.ADD,
                     .fflags = 0,
                     .data = 0,
-                    .udata = @intCast(idx),
+                    .udata = logical_index,
                 };
-                _ = posix.system.kevent(
+                const rc = posix.system.kevent(
                     self.poll_fd,
                     @ptrCast(&ev),
                     1,
-                    @ptrCast(&ev), // Use same buffer for output (not used here)
-                    0, // No output events expected
+                    @ptrCast(&ev),
+                    0,
                     null,
                 );
-                // Ignore errors - if kevent fails, we'll notice on wait()
+                if (rc < 0) return error.PollCtlFailed;
             } else if (is_epoll) {
                 var ev: posix.system.epoll_event = .{
                     .events = epollToU32(linux.EPOLL.IN),
-                    .data = .{ .u64 = idx },
+                    .data = .{ .u64 = logical_index },
                 };
-                _ = posix.system.epoll_ctl(
+                const rc = posix.system.epoll_ctl(
                     self.poll_fd,
                     epollToU32(linux.EPOLL.CTL_ADD),
                     fd,
                     &ev,
                 );
-                // Ignore errors - if epoll_ctl fails, we'll notice on wait()
+                if (rc < 0) return error.PollCtlFailed;
             }
 
-            self.count += 1;
-            return idx;
+            self.recv_count += 1;
+            self.source_count += 1;
+            return logical_index;
         }
 
         /// Add a timeout source.
         /// This is a placeholder - the actual timeout is passed to wait().
         /// Note: This is kept for trait compatibility but timeout_ms should be passed to wait().
         pub fn addTimeout(self: *Self, timeout_ms: u32) error{TooMany}!usize {
-            _ = self;
-            _ = timeout_ms;
-            // Timeout is handled internally in wait(), not as a separate fd source.
-            // Return a special index indicating timeout
-            return max_sources; // Special timeout index
+            if (self.timeout_enabled) {
+                self.timeout_ms = timeout_ms;
+                return self.timeout_index;
+            }
+            if (self.source_count >= max_sources) return error.TooMany;
+
+            self.timeout_enabled = true;
+            self.timeout_ms = timeout_ms;
+            self.timeout_index = self.source_count;
+            self.source_count += 1;
+            return self.timeout_index;
         }
 
         /// Wait for any channel to be ready or timeout.
         /// Returns the index of the ready source.
         /// Returns error.Empty if no sources were added.
         /// Returns max_sources if timeout occurred.
-        pub fn wait(self: *Self, timeout_ms: ?u32) error{Empty}!usize {
-            if (self.count == 0) return error.Empty;
+        pub fn wait(self: *Self, timeout_ms: ?u32) error{ Empty, PollWaitFailed, Interrupted }!usize {
+            if (self.source_count == 0) return error.Empty;
+
+            const effective_timeout_ms = if (timeout_ms != null)
+                timeout_ms
+            else if (self.timeout_enabled)
+                self.timeout_ms
+            else
+                null;
 
             if (is_kqueue) {
-                return self.waitKqueue(timeout_ms);
+                return self.waitKqueue(effective_timeout_ms);
             } else if (is_epoll) {
-                return self.waitEpoll(timeout_ms);
+                return self.waitEpoll(effective_timeout_ms);
             } else {
                 @compileError("Unsupported platform for Selector");
             }
         }
 
-        fn waitKqueue(self: *Self, timeout_ms: ?u32) error{Empty}!usize {
+        fn timeoutResult(self: *const Self) usize {
+            if (self.timeout_enabled) return self.timeout_index;
+            return max_sources;
+        }
+
+        fn waitKqueue(self: *Self, timeout_ms: ?u32) error{ PollWaitFailed, Interrupted }!usize {
             var event: posix.Kevent = undefined;
             var empty_change: [0]posix.Kevent = .{};
-
+            var ts: posix.timespec = undefined;
             const timeout_ptr: ?*const posix.timespec = if (timeout_ms) |ms| blk: {
-                const ts = posix.timespec{
+                ts = .{
                     .sec = @intCast(ms / 1000),
                     .nsec = @intCast((ms % 1000) * 1_000_000),
                 };
@@ -163,20 +191,21 @@ pub fn Selector(comptime max_sources: usize) type {
             );
 
             if (n < 0) {
-                // Error or signal interruption
-                return max_sources; // Treat as timeout for simplicity
+                return switch (posix.errno(n)) {
+                    .INTR => error.Interrupted,
+                    else => error.PollWaitFailed,
+                };
             }
 
             if (n == 0) {
-                // Timeout
-                return max_sources;
+                return self.timeoutResult();
             }
 
             // Return the index stored in udata
             return @intCast(event.udata);
         }
 
-        fn waitEpoll(self: *Self, timeout_ms: ?u32) error{Empty}!usize {
+        fn waitEpoll(self: *Self, timeout_ms: ?u32) error{ PollWaitFailed, Interrupted }!usize {
             var event: posix.system.epoll_event = undefined;
 
             const timeout_int: i32 = if (timeout_ms) |ms|
@@ -192,13 +221,15 @@ pub fn Selector(comptime max_sources: usize) type {
             );
 
             if (n < 0) {
-                // Error
-                return max_sources; // Treat as timeout for simplicity
+                return switch (posix.errno(n)) {
+                    .INTR => error.Interrupted,
+                    else => error.PollWaitFailed,
+                };
             }
 
             if (n == 0) {
                 // Timeout
-                return max_sources;
+                return self.timeoutResult();
             }
 
             // Return the index stored in data.u64
@@ -207,7 +238,11 @@ pub fn Selector(comptime max_sources: usize) type {
 
         /// Reset the selector, clearing all registered sources.
         pub fn reset(self: *Self) void {
-            self.count = 0;
+            self.recv_count = 0;
+            self.source_count = 0;
+            self.timeout_enabled = false;
+            self.timeout_ms = 0;
+            self.timeout_index = max_sources;
 
             // Close and re-create the poll fd
             posix.close(self.poll_fd);
@@ -234,5 +269,5 @@ test "Selector init/deinit" {
     const Sel = Selector(4);
     var sel = try Sel.init();
     defer sel.deinit();
-    try std.testing.expectEqual(@as(usize, 0), sel.count);
+    try std.testing.expectEqual(@as(usize, 0), sel.recv_count);
 }
