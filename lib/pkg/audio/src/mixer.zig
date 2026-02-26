@@ -127,7 +127,7 @@ pub fn Mixer(comptime Rt: type) type {
             var dit = self.detached_head;
             while (dit) |ctrl| {
                 const next = ctrl.next;
-                self.allocator.destroy(ctrl);
+                self.freeTrackCtrl(ctrl);
                 dit = next;
             }
             self.detached_head = null;
@@ -193,6 +193,54 @@ pub fn Mixer(comptime Rt: type) type {
             } else {
                 for (0..limit) |i| {
                     var t = self.mix_buf[i];
+                    if (!std.math.isFinite(t)) t = 0;
+                    if (t > 1) t = 1 else if (t < -1) t = -1;
+                    buf[i] = if (t >= 0)
+                        @intFromFloat(t * 32767)
+                    else
+                        @intFromFloat(t * 32768);
+                }
+            }
+
+            return limit;
+        }
+
+        /// Non-blocking read variant for real-time speaker polling.
+        /// Returns:
+        /// - null on EOF/error
+        /// - 0 when no track has data right now
+        /// - >0 samples when output is available (or synthesized silence)
+        pub fn readNonBlocking(self: *Self, buf: []i16) ?usize {
+            const limit = @min(buf.len, self.read_chunk_samples);
+            if (limit == 0) return 0;
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            if (self.mix_buf.len < limit) {
+                if (self.mix_buf.len > 0) self.allocator.free(self.mix_buf);
+                self.mix_buf = self.allocator.alloc(f32, limit) catch return null;
+            }
+
+            const result = self.readFullLocked(buf[0..limit]);
+            if (result.is_eof) return null;
+
+            if (!result.has_data and !result.is_silence) {
+                return 0;
+            }
+
+            if (result.has_data) {
+                self.running_silence_ms = 0;
+            } else if (result.is_silence) {
+                self.running_silence_ms += self.chunkDurationMs(limit);
+            }
+
+            if (result.peak == 0) {
+                @memset(buf[0..limit], 0);
+            } else {
+                for (0..limit) |i| {
+                    var t = self.mix_buf[i];
+                    if (!std.math.isFinite(t)) t = 0;
                     if (t > 1) t = 1 else if (t < -1) t = -1;
                     buf[i] = if (t >= 0)
                         @intFromFloat(t * 32767)
@@ -213,6 +261,15 @@ pub fn Mixer(comptime Rt: type) type {
 
         /// Core mixing loop. Called with mutex held.
         fn readFullLocked(self: *Self, buf: []i16) ReadResult {
+            // Defensive: keep internal buffers aligned with caller-requested chunk.
+            // (Some embedded runtimes may hit this path with larger buf.len than
+            // the pre-sized mix buffer due to cross-thread reconfiguration.)
+            if (self.mix_buf.len < buf.len) {
+                if (self.mix_buf.len > 0) self.allocator.free(self.mix_buf);
+                self.mix_buf = self.allocator.alloc(f32, buf.len) catch
+                    return .{ .peak = 0, .has_data = false, .is_silence = false, .is_eof = false };
+            }
+
             // Get head track, handling empty states
             const head_result = self.headTrackLocked();
             if (head_result.is_eof) return .{ .peak = 0, .has_data = false, .is_silence = false, .is_eof = true };
@@ -240,8 +297,9 @@ pub fn Mixer(comptime Rt: type) type {
 
                 if (ok.is_err or (ok.is_eof and !ok.has_data)) {
                     // Track errored or finished — unlink from list
-                    // Don't free: user may still hold TrackCtrl reference.
-                    // TrackInternal resources are freed, but TrackCtrl stays valid.
+                    // Don't free TrackInternal here: user/writer threads may still
+                    // hold Track pointer. Move control node to detached list and
+                    // defer actual free to destroyTrackCtrl()/mixer.deinit().
                     const next = ctrl.next;
                     if (prev) |p| {
                         p.next = next;
@@ -251,12 +309,6 @@ pub fn Mixer(comptime Rt: type) type {
                     // Move to detached list (freed by deinit)
                     ctrl.next = self.detached_head;
                     self.detached_head = ctrl;
-                    // Free the internal track resources (ring buf, resampler)
-                    if (ctrl.track) |t| {
-                        t.deinit();
-                        self.allocator.destroy(t);
-                        ctrl.track = null;
-                    }
                     if (self.config.on_track_closed) |cb| cb();
                     it = next;
                     continue;
@@ -505,7 +557,8 @@ pub fn Mixer(comptime Rt: type) type {
             gain_bits: u32 = @as(u32, @bitCast(@as(f32, 1.0))),
 
             // Read byte counter (atomic)
-            read_bytes_val: i64 = 0,
+            // Use i32 for cross-platform atomic compatibility (xtensa).
+            read_bytes_val: i32 = 0,
 
             // Fade-out duration in ms (atomic)
             fade_out_ms_val: i32 = 0,
@@ -523,7 +576,7 @@ pub fn Mixer(comptime Rt: type) type {
             }
 
             pub fn readBytes(self: *TrackCtrl) i64 {
-                return @atomicLoad(i64, &self.read_bytes_val, .acquire);
+                return @as(i64, @intCast(@atomicLoad(i32, &self.read_bytes_val, .acquire)));
             }
 
             pub fn setFadeOutDuration(self: *TrackCtrl, ms: u32) void {
@@ -597,7 +650,11 @@ pub fn Mixer(comptime Rt: type) type {
             }
 
             fn atomicAddReadBytes(self: *TrackCtrl, n: i64) void {
-                _ = @atomicRmw(i64, &self.read_bytes_val, .Add, n, .acq_rel);
+                const delta: i32 = std.math.cast(i32, n) orelse if (n > 0)
+                    std.math.maxInt(i32)
+                else
+                    std.math.minInt(i32);
+                _ = @atomicRmw(i32, &self.read_bytes_val, .Add, delta, .acq_rel);
             }
 
             /// Read from the track, filling the buffer. Non-blocking per-track.
@@ -1171,7 +1228,6 @@ test "mixer single track with data" {
     const format = Mx.Format{ .rate = 16000 };
     const h = try mx.createTrack(.{});
 
-
     const data = [_]i16{1000} ** 160;
     try h.track.write(format, &data);
     h.ctrl.closeWrite();
@@ -1196,7 +1252,6 @@ test "mixer mixes two tracks" {
     const h1 = try mx.createTrack(.{ .label = "440Hz" });
 
     const h2 = try mx.createTrack(.{ .label = "880Hz" });
-
 
     const wave1 = generateSineWave(16000, 440, 100);
     defer testing.allocator.free(wave1);
@@ -1254,7 +1309,6 @@ test "mixer track gain" {
     const format = Mx.Format{ .rate = 16000 };
     const h = try mx.createTrack(.{ .gain = 0.5 });
 
-
     try testing.expect(h.ctrl.getGain() == 0.5);
 
     // Write constant value
@@ -1291,7 +1345,6 @@ test "mixer auto close" {
     const format = Mx.Format{ .rate = 16000 };
     const h = try mx.createTrack(.{});
 
-
     const data = [_]i16{1000} ** 160;
 
     const t = try std_import.Thread.spawn(.{}, struct {
@@ -1322,7 +1375,6 @@ test "mixer concurrent write" {
     const h1 = try mx.createTrack(.{ .label = "A" });
 
     const h2 = try mx.createTrack(.{ .label = "B" });
-
 
     const data_a = [_]i16{1000} ** 1600;
     const data_b = [_]i16{2000} ** 1600;
@@ -1404,7 +1456,6 @@ test "mixer silence gap" {
     const format = Mx.Format{ .rate = 16000 };
     const h = try mx.createTrack(.{});
 
-
     const data = [_]i16{1000} ** 160;
     h.track.write(format, &data) catch {};
     h.ctrl.closeWrite();
@@ -1440,7 +1491,6 @@ test "mixer track read bytes" {
 
     const format = Mx.Format{ .rate = 16000 };
     const h = try mx.createTrack(.{});
-
 
     const data = [_]i16{1000} ** 160;
 
@@ -1512,7 +1562,6 @@ test "mixer different sample rates" {
 
     // Track 2: 48kHz (needs resample to 16kHz)
     const h2 = try mx.createTrack(.{ .label = "48k" });
-
 
     const wave1 = generateSineWave(16000, 440, 100);
     defer testing.allocator.free(wave1);

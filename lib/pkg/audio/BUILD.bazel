@@ -8,7 +8,6 @@ zig_package(
     name = "audio",
     deps = [
         "//lib/trait",
-        "//third_party/speexdsp:speexdsp_float",
     ],
     test = False,
 )
@@ -16,12 +15,11 @@ zig_package(
 _COMMON_TEST_DEPS = [
     "//lib/trait",
     "//lib/platform/std",
-    "//third_party/speexdsp:speexdsp_float",
 ]
 
 zig_test(
     name = "resampler_test",
-    main = "src/resampler.zig",
+    main = "src/resampler/mod.zig",
     srcs = glob(["src/**/*.zig"]),
     deps = _COMMON_TEST_DEPS,
 )
@@ -29,20 +27,6 @@ zig_test(
 zig_test(
     name = "mixer_test",
     main = "src/mixer.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "aec_test",
-    main = "src/aec.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "ns_test",
-    main = "src/ns.zig",
     srcs = glob(["src/**/*.zig"]),
     deps = _COMMON_TEST_DEPS,
 )
@@ -68,54 +52,7 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
-zig_test(
-    name = "fft_test",
-    main = "src/aec3/fft.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
 
-zig_test(
-    name = "adaptive_filter_test",
-    main = "src/aec3/adaptive_filter.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "delay_estimator_test",
-    main = "src/aec3/delay_estimator.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "suppression_gain_test",
-    main = "src/aec3/suppression_gain.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "comfort_noise_test",
-    main = "src/aec3/comfort_noise.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "arithmetic_test",
-    main = "src/aec3/arithmetic.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "aec3_test",
-    main = "src/aec3/aec3.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
 
 zig_test(
     name = "sim_audio_test",
@@ -131,37 +68,11 @@ zig_test(
     deps = _COMMON_TEST_DEPS,
 )
 
-zig_test(
-    name = "i16_convergence_test",
-    main = "src/i16_convergence_test.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
 
-zig_test(
-    name = "aec_closed_loop_test",
-    main = "src/aec_closed_loop_test.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "diag_engine_test",
-    main = "src/diag_engine_test.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
 
 zig_test(
     name = "e1_sim_tts_test",
     main = "src/e1_sim_tts_test.zig",
-    srcs = glob(["src/**/*.zig"]),
-    deps = _COMMON_TEST_DEPS,
-)
-
-zig_test(
-    name = "engine_wav_test",
-    main = "src/engine_wav_test.zig",
     srcs = glob(["src/**/*.zig"]),
     deps = _COMMON_TEST_DEPS,
 )

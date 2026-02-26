@@ -8,15 +8,13 @@
 //!     ref = mixer.read()               // mix all playback tracks
 //!     speaker.write(ref)               // blocking write — paced by hardware clock
 //!     mic.read(mic_buf)                // blocking read  — paced by hardware clock
-//!     clean = aec.process(mic, ref)    // cancellation mode — ref and mic are frame-aligned
-//!     ns.process(clean)                // noise suppression
+//!     clean = processor.process(mic, ref)
 //!     pushClean(clean)                 // deliver to application via ring buffer
 //! ```
 //!
 //! speaker.write() blocks until the hardware consumes the frame (DMA/PortAudio).
 //! mic.read() blocks until the hardware provides a frame.
-//! Because both are driven by the same sample clock, ref and mic are naturally
-//! frame-aligned — no playback/capture mode needed, no cross-thread timing issues.
+//! Reference alignment is a platform responsibility (`RefReader` or buffer-depth).
 //!
 //! ## Usage
 //!
@@ -39,8 +37,7 @@
 
 const std = @import("std");
 const trait = @import("trait");
-const aec3_mod = @import("aec3/aec3.zig");
-const ns_mod = @import("ns.zig");
+const processor_mod = @import("processor.zig");
 const mixer_mod = @import("mixer.zig");
 const resampler_mod = @import("resampler.zig");
 
@@ -59,6 +56,9 @@ pub const EngineConfig = struct {
     /// If set, mic_task calls RefReader.read() to get already-aligned ref.
     /// Used by DuplexStream-based platforms where ref alignment is exact.
     RefReader: ?type = null,
+    /// Optional processor implementation. Must satisfy processor.validate().
+    /// If null, uses default PassthroughProcessor.
+    Processor: ?type = null,
 };
 
 pub fn AudioEngine(
@@ -74,6 +74,11 @@ pub fn AudioEngine(
 
     const MixerType = mixer_mod.Mixer(Rt);
     const Format = resampler_mod.Format;
+    const ProcessorType = if (config.Processor) |P| P else processor_mod.PassthroughProcessor;
+
+    comptime {
+        processor_mod.validate(ProcessorType);
+    }
 
     return struct {
         const Self = @This();
@@ -84,6 +89,7 @@ pub fn AudioEngine(
         const HasRefReader = config.RefReader != null;
         const RefReaderT = if (config.RefReader) |T| T else void;
         const frame_size = config.frame_size;
+        const frame_len: usize = frame_size;
         const ref_history_depth = if (HasRefReader) 0 else config.speaker_buffer_depth + 1;
 
         allocator: std.mem.Allocator,
@@ -91,8 +97,7 @@ pub fn AudioEngine(
         speaker: *Speaker,
         ref_reader: if (HasRefReader) *RefReaderT else void,
 
-        aec: ?aec3_mod.Aec3,
-        ns: ?ns_mod.NoiseSuppressor,
+        processor: ProcessorType,
         mixer: MixerType,
 
         // Ref history ring (方式 1: buffer_depth, speaker_task → mic_task)
@@ -123,13 +128,25 @@ pub fn AudioEngine(
             const clean_buf = try allocator.alloc(i16, ring_samples);
             errdefer allocator.free(clean_buf);
 
+            const processor = try ProcessorType.init(allocator, .{
+                .frame_size = config.frame_size,
+                .sample_rate = config.sample_rate,
+                .aec_filter_length = config.aec_filter_length,
+                .noise_suppress_db = config.noise_suppress_db,
+                .enable_aec = config.enable_aec,
+                .enable_ns = config.enable_ns,
+            });
+            errdefer {
+                var p = processor;
+                p.deinit();
+            }
+
             var result = Self{
                 .allocator = allocator,
                 .mic = mic,
                 .speaker = speaker,
                 .ref_reader = ref_reader,
-                .aec = null,
-                .ns = null,
+                .processor = processor,
                 .mixer = MixerType.init(allocator, .{
                     .output = .{ .rate = config.sample_rate, .channels = .mono },
                 }),
@@ -173,29 +190,12 @@ pub fn AudioEngine(
                 self.ref_mutex.deinit();
                 self.allocator.free(self.ref_ring);
             }
-            if (self.ns) |*n| n.deinit();
-            if (self.aec) |*a| a.deinit();
+            self.processor.deinit();
             self.allocator.free(self.clean_buf_pool);
         }
 
         pub fn start(self: *Self) !void {
             if (self.running.load(.acquire)) return;
-
-            if (config.enable_aec) {
-                self.aec = try aec3_mod.Aec3.init(self.allocator, .{
-                    .frame_size = config.frame_size,
-                    .sample_rate = config.sample_rate,
-                    .comfort_noise_rms = config.comfort_noise_rms,
-                });
-            }
-
-            if (config.enable_ns) {
-                self.ns = try ns_mod.NoiseSuppressor.init(self.allocator, .{
-                    .frame_size = config.frame_size,
-                    .sample_rate = config.sample_rate,
-                    .noise_suppress_db = config.noise_suppress_db,
-                });
-            }
 
             self.running.store(true, .release);
             self.clean_closed = false;
@@ -228,15 +228,6 @@ pub fn AudioEngine(
             if (self.speaker_thread) |t| {
                 t.join();
                 self.speaker_thread = null;
-            }
-
-            if (self.ns) |*n| {
-                n.deinit();
-                self.ns = null;
-            }
-            if (self.aec) |*a| {
-                a.deinit();
-                self.aec = null;
             }
         }
 
@@ -296,25 +287,20 @@ pub fn AudioEngine(
             self.clean_mutex.lock();
             defer self.clean_mutex.unlock();
 
-            var offset: usize = 0;
-            while (offset < samples.len) {
-                if (self.clean_closed) return;
+            if (self.clean_closed) return;
 
-                const space = self.cleanSpace();
-                if (space == 0) {
-                    self.clean_not_full.wait(&self.clean_mutex);
-                    continue;
+            const cap = self.clean_buf_pool.len;
+            for (samples) |s| {
+                // Ring full => drop oldest (overwrite mode)
+                if (self.cleanSpace() == 0) {
+                    self.clean_read_pos = (self.clean_read_pos + 1) % cap;
                 }
 
-                const to_write = @min(samples.len - offset, space);
-                const cap = self.clean_buf_pool.len;
-                for (0..to_write) |i| {
-                    self.clean_buf_pool[(self.clean_write_pos + i) % cap] = samples[offset + i];
-                }
-                self.clean_write_pos = (self.clean_write_pos + to_write) % cap;
-                offset += to_write;
-                self.clean_not_empty.signal();
+                self.clean_buf_pool[self.clean_write_pos] = s;
+                self.clean_write_pos = (self.clean_write_pos + 1) % cap;
             }
+
+            self.clean_not_empty.signal();
         }
 
         // ================================================================
@@ -365,63 +351,43 @@ pub fn AudioEngine(
         // ================================================================
 
         fn speakerTask(self: *Self) void {
-            var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
+            var ref_buf: [frame_len]i16 = [_]i16{0} ** frame_len;
 
             while (self.running.load(.acquire)) {
-                const n = self.mixer.read(ref_buf[0..frame_size]) orelse break;
-                if (n == 0) continue;
+                // Non-blocking poll: if no mixer data, output silence.
+                const n = self.mixer.readNonBlocking(ref_buf[0..]) orelse {
+                    @memset(ref_buf[0..], 0);
+                    _ = self.speaker.write(ref_buf[0..]) catch continue;
+                    self.pushRef(ref_buf[0..]);
+                    continue;
+                };
 
-                _ = self.speaker.write(ref_buf[0..n]) catch continue;
+                if (n < frame_len) @memset(ref_buf[n..frame_len], 0);
 
-                self.pushRef(ref_buf[0..frame_size]);
+                // speaker.write blocks on hardware cadence (master clock)
+                _ = self.speaker.write(ref_buf[0..]) catch continue;
+                self.pushRef(ref_buf[0..]);
             }
-        }
-
-        fn rmsI16(buf: []const i16) f64 {
-            var sum: f64 = 0;
-            for (buf) |s| {
-                const v: f64 = @floatFromInt(s);
-                sum += v * v;
-            }
-            return @sqrt(sum / @as(f64, @floatFromInt(buf.len)));
         }
 
         fn micTask(self: *Self) void {
-            var mic_buf: [4096]i16 = [_]i16{0} ** 4096;
-            var ref_buf: [4096]i16 = [_]i16{0} ** 4096;
-            var clean: [4096]i16 = [_]i16{0} ** 4096;
-            var dbg_frame: usize = 0;
+            var mic_buf: [frame_len]i16 = [_]i16{0} ** frame_len;
+            var ref_buf: [frame_len]i16 = [_]i16{0} ** frame_len;
+            var clean: [frame_len]i16 = [_]i16{0} ** frame_len;
 
             while (self.running.load(.acquire)) {
-                const mic_n = self.mic.read(mic_buf[0..frame_size]) catch continue;
+                const mic_n = self.mic.read(mic_buf[0..]) catch continue;
                 if (mic_n == 0) continue;
-                if (mic_n < frame_size) {
-                    @memset(mic_buf[mic_n..frame_size], 0);
+                if (mic_n < frame_len) {
+                    @memset(mic_buf[mic_n..frame_len], 0);
                 }
 
-                self.getAlignedRef(ref_buf[0..frame_size]);
+                self.getAlignedRef(ref_buf[0..]);
 
-                if (self.aec) |*a| {
-                    a.process(mic_buf[0..frame_size], ref_buf[0..frame_size], clean[0..frame_size]);
-                } else {
-                    @memcpy(clean[0..frame_size], mic_buf[0..frame_size]);
-                }
+                // Unified processor entry (AEC + optional NS handled internally)
+                self.processor.process(mic_buf[0..], ref_buf[0..], clean[0..]);
 
-                if (self.ns) |*ns| {
-                    _ = ns.process(clean[0..frame_size]);
-                }
-
-                dbg_frame += 1;
-                if (dbg_frame % 100 == 0) {
-                    const mr = rmsI16(mic_buf[0..frame_size]);
-                    const rr = rmsI16(ref_buf[0..frame_size]);
-                    const cr = rmsI16(clean[0..frame_size]);
-                    std.debug.print("[mic_task {d}s] mic={d:.0} ref={d:.0} clean={d:.0}\n", .{
-                        dbg_frame / 100, mr, rr, cr,
-                    });
-                }
-
-                self.pushClean(clean[0..frame_size]);
+                self.pushClean(clean[0..]);
             }
         }
     };

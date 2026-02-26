@@ -8,10 +8,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const speexdsp_dep = b.dependency("speexdsp", .{
-        .target = target,
-        .optimize = optimize,
-    });
     const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
@@ -34,7 +30,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     audio_module.addImport("trait", trait_dep.module("trait"));
-    audio_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
     audio_module.addImport("channel", channel_dep.module("channel"));
 
     const test_step = b.step("test", "Run unit tests");
@@ -42,8 +37,6 @@ pub fn build(b: *std.Build) void {
     const test_modules = [_]struct { name: []const u8, file: []const u8, needs_channel: bool }{
         .{ .name = "resampler", .file = "src/resampler.zig", .needs_channel = false },
         .{ .name = "mixer", .file = "src/mixer.zig", .needs_channel = false },
-        .{ .name = "aec", .file = "src/aec.zig", .needs_channel = false },
-        .{ .name = "ns", .file = "src/ns.zig", .needs_channel = false },
         .{ .name = "drc", .file = "src/drc.zig", .needs_channel = false },
         .{ .name = "engine", .file = "src/engine.zig", .needs_channel = true },
     };
@@ -57,7 +50,6 @@ pub fn build(b: *std.Build) void {
             }),
         });
         t.root_module.addImport("trait", trait_dep.module("trait"));
-        t.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
         t.root_module.addImport("runtime", runtime_module);
         if (tm.needs_channel) {
             t.root_module.addImport("channel", channel_dep.module("channel"));
