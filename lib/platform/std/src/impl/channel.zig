@@ -26,10 +26,18 @@ const Notifier = struct {
 
     fn setNonBlocking(fd: posix.fd_t) void {
         const flags = posix.fcntl(fd, posix.F.GETFL, 0) catch return;
-        const o_nonblock: u32 = if (@hasDecl(posix.O, "NONBLOCK"))
-            @intFromEnum(posix.O.NONBLOCK)
-        else
-            0x0004;
+        const o_nonblock: u32 = blk: {
+            if (@hasDecl(posix.O, "NONBLOCK")) {
+                break :blk @intFromEnum(posix.O.NONBLOCK);
+            }
+            if (builtin.os.tag == .linux) {
+                break :blk 0x0800;
+            }
+            if (builtin.os.tag == .macos) {
+                break :blk 0x0004;
+            }
+            @compileError("No O_NONBLOCK constant available on this target");
+        };
         _ = posix.fcntl(fd, posix.F.SETFL, flags | o_nonblock) catch {};
     }
 
@@ -43,12 +51,17 @@ const Notifier = struct {
                 .write_fd = fds[1],
             };
         } else if (is_epoll) {
-            // On Linux, use eventfd with CLOEXEC and NONBLOCK flags
-            const flags: c_uint = if (@hasDecl(posix, "EFD_CLOEXEC"))
-                posix.EFD_CLOEXEC | posix.EFD_NONBLOCK
-            else
-                0;
+            // On Linux, use eventfd. Some targets may miss EFD_* decls in std.posix,
+            // so we also enforce O_NONBLOCK via fcntl as a fallback.
+            var flags: c_uint = 0;
+            if (@hasDecl(posix, "EFD_CLOEXEC")) {
+                flags |= posix.EFD_CLOEXEC;
+            }
+            if (@hasDecl(posix, "EFD_NONBLOCK")) {
+                flags |= posix.EFD_NONBLOCK;
+            }
             const fd = try posix.eventfd(0, flags);
+            setNonBlocking(fd);
             return .{
                 .read_fd = fd,
                 .write_fd = fd,
