@@ -7,3 +7,11 @@ filegroup(
     name = "app_srcs",
     srcs = glob(["*.zig"]),
 )
+
+# External repo monitor E2E entry.
+# Usage:
+#   bazel run //:monitor --@embed_zig//bazel:port=/dev/cu.usbserial-1130
+alias(
+    name = "monitor",
+    actual = "@embed_zig//bazel/esp:monitor",
+)
