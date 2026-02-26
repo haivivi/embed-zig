@@ -1,0 +1,125 @@
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_modules", "esp_zig_app")
+load("//bazel/zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+esp_modules()
+
+zig_library(
+    name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    module_name = "board",
+    deps = [
+        ":idf",
+        ":esp",
+        "//lib/pkg/audio",
+        "//lib/pkg/drivers/audio",
+    ],
+)
+
+_requires = [
+    "driver",
+    "esp_driver_i2s",
+    "esp_driver_gpio",
+    "esp_driver_i2c",
+    "nvs_flash",
+]
+
+_force_link = [
+    "${I2S_FORCE_LINK}",
+    "${I2C_FORCE_LINK}",
+    "${SR_FORCE_LINK}",
+    "${RUNTIME_FORCE_LINK}",
+]
+
+_extra_cmake = [
+    "include(${_ESP_LIB}/platform/esp/idf/src/i2s/i2s.cmake)",
+    "include(${_ESP_LIB}/platform/esp/idf/src/i2c/i2c.cmake)",
+    "include(${_ESP_LIB}/platform/esp/idf/src/sr/sr.cmake)",
+    "include(${_ESP_LIB}/platform/esp/idf/src/runtime/runtime.cmake)",
+]
+
+_extra_c_sources = [
+    "I2S_C_SOURCES",
+    "I2C_C_SOURCES",
+    "SR_C_SOURCES",
+    "RUNTIME_C_SOURCES",
+]
+
+_deps = [
+    ":board",
+    ":idf",
+    ":esp",
+    "//lib/hal",
+    "//lib/trait",
+    "//lib/pkg/audio",
+    "//lib/pkg/drivers/audio",
+]
+
+_idf_deps = [
+    "espressif/esp-sr:^2.1.1",
+]
+
+esp_zig_app(
+    name = "mic_app",
+    app = "//e2e/tier2_audio_engine:app_srcs",
+    entry_file = "mic_test.zig",
+    entry_fn = "run",
+    boards = ["lichuang_gocool"],
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    idf_deps = _idf_deps,
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "mic_flash",
+    app = ":mic_app",
+)
+
+esp_zig_app(
+    name = "speaker_app",
+    app = "//e2e/tier2_audio_engine:app_srcs",
+    entry_file = "speaker_test.zig",
+    entry_fn = "run",
+    boards = ["lichuang_gocool"],
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    idf_deps = _idf_deps,
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "speaker_flash",
+    app = ":speaker_app",
+)
+
+esp_zig_app(
+    name = "aec_app",
+    app = "//e2e/tier2_audio_engine:app_srcs",
+    entry_file = "aec_test.zig",
+    entry_fn = "run",
+    boards = ["lichuang_gocool"],
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    idf_deps = _idf_deps,
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "aec_flash",
+    app = ":aec_app",
+)

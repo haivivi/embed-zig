@@ -75,6 +75,9 @@ pub const AudioConfig = struct {
     i2s_dout: u8,
     i2s_mclk: u8,
     sample_rate: u32 = 16000,
+    /// Delay far-end reference before feeding AEC (samples @ sample_rate)
+    /// Use small positive values (e.g. 32~128) when mic path lags ref path.
+    aec_ref_delay_samples: usize = 0,
 
     // ES8311 DAC configuration
     es8311_addr: u8 = 0x18,
@@ -102,6 +105,8 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
         initialized: bool = false,
         aec_handle: ?*AecHandle = null,
         aec_frame_size: usize = 256,
+        ref_delay_ring: ?[]i16 = null,
+        ref_delay_write: usize = 0,
 
         // Audio codec drivers (I2C is managed externally)
         i2c_ptr: *idf.I2c = undefined,
@@ -217,6 +222,17 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             };
             errdefer if (self.aec_output) |b| allocator.free(b);
 
+            if (config.aec_ref_delay_samples > 0) {
+                self.ref_delay_ring = allocator.alloc(i16, config.aec_ref_delay_samples) catch {
+                    log.err("Failed to alloc ref_delay_ring", .{});
+                    return error.OutOfMemory;
+                };
+                errdefer if (self.ref_delay_ring) |b| allocator.free(b);
+                @memset(self.ref_delay_ring.?, 0);
+                self.ref_delay_write = 0;
+                log.info("AudioSystem: AEC ref delay={} samples", .{config.aec_ref_delay_samples});
+            }
+
             self.tx_buffer_32 = allocator.alloc(i32, self.aec_frame_size * 2) catch {
                 log.err("Failed to alloc tx_buffer", .{});
                 return error.OutOfMemory;
@@ -239,10 +255,12 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             if (self.raw_buffer_32) |b| allocator.free(b);
             if (self.aec_input) |b| allocator.free(b);
             if (self.aec_output) |b| allocator.free(b);
+            if (self.ref_delay_ring) |b| allocator.free(b);
             if (self.tx_buffer_32) |b| allocator.free(b);
             self.raw_buffer_32 = null;
             self.aec_input = null;
             self.aec_output = null;
+            self.ref_delay_ring = null;
             self.tx_buffer_32 = null;
             _ = i2s_helper_deinit(config.i2s_port);
             self.es7210.close() catch |err| log.warn("ES7210 close failed: {}", .{err});
@@ -270,38 +288,67 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
             const aec_out = self.aec_output orelse return error.NoBuffer;
             const frame_size = self.aec_frame_size;
 
-            const to_read = frame_size * 2 * @sizeOf(i32);
-            var bytes_read: usize = 0;
+            const target_bytes = frame_size * 2 * @sizeOf(i32);
+            var total_bytes_read: usize = 0;
             const raw_bytes = std.mem.sliceAsBytes(raw_buf[0 .. frame_size * 2]);
-            const ret = i2s_helper_read(config.i2s_port, raw_bytes.ptr, to_read, &bytes_read, 1000);
 
-            if (ret != 0) {
-                log.warn("i2s read failed with code: {}", .{ret});
-                return error.ReadFailed;
-            }
-            if (bytes_read == 0) {
-                return 0;
+            while (total_bytes_read < target_bytes) {
+                var bytes_read: usize = 0;
+                const ret = i2s_helper_read(
+                    config.i2s_port,
+                    raw_bytes[total_bytes_read..].ptr,
+                    target_bytes - total_bytes_read,
+                    &bytes_read,
+                    1000,
+                );
+
+                if (ret != 0) {
+                    log.warn("i2s read failed with code: {}", .{ret});
+                    if (total_bytes_read == 0) return error.ReadFailed;
+                    break;
+                }
+                if (bytes_read == 0) {
+                    if (total_bytes_read == 0) return 0;
+                    break;
+                }
+
+                total_bytes_read += bytes_read;
             }
 
-            const frames_read = bytes_read / @sizeOf(i32) / 2;
+            const frames_read = total_bytes_read / @sizeOf(i32) / 2;
+            if (frames_read == 0) return 0;
 
             // Extract MIC1 and REF - pack as "RM" (ref first, mic second)
             // I2S format: L[31:16] = mic1, L[15:0] = ref
-            for (0..frames_read) |i| {
-                const L = raw_buf[i * 2];
-                const mic1: i16 = @truncate(L >> 16);
-                const ref: i16 = @truncate(L & 0xFFFF);
-                aec_in[i * 2 + 0] = ref; // Reference first
-                aec_in[i * 2 + 1] = mic1; // Mic second
+            for (0..frame_size) |i| {
+                if (i < frames_read) {
+                    const L = raw_buf[i * 2];
+                    const mic1: i16 = @truncate(L >> 16);
+                    const ref_raw: i16 = @truncate(L & 0xFFFF);
+                    const ref = self.applyRefDelay(ref_raw);
+                    aec_in[i * 2 + 0] = ref; // Reference first (possibly delayed)
+                    aec_in[i * 2 + 1] = mic1; // Mic second
+                } else {
+                    aec_in[i * 2 + 0] = 0;
+                    aec_in[i * 2 + 1] = 0;
+                }
             }
 
             // Run AEC
             _ = aec_helper_process(aec_handle, aec_in.ptr, aec_out.ptr);
 
-            const copy_len = @min(buffer.len, frames_read);
+            const copy_len = @min(buffer.len, frame_size);
             @memcpy(buffer[0..copy_len], aec_out[0..copy_len]);
 
             return copy_len;
+        }
+
+        fn applyRefDelay(self: *Self, ref_sample: i16) i16 {
+            const ring = self.ref_delay_ring orelse return ref_sample;
+            const delayed = ring[self.ref_delay_write];
+            ring[self.ref_delay_write] = ref_sample;
+            self.ref_delay_write = (self.ref_delay_write + 1) % ring.len;
+            return delayed;
         }
 
         /// Get the AEC frame size (optimal read buffer size)
@@ -329,16 +376,31 @@ pub fn AudioSystem(comptime config: AudioConfig) type {
                 tx_buf[i * 2 + 1] = sample32;
             }
 
-            var bytes_written: usize = 0;
             const tx_bytes = std.mem.sliceAsBytes(tx_buf[0 .. mono_samples * 2]);
-            const ret = i2s_helper_write(config.i2s_port, tx_bytes.ptr, tx_bytes.len, &bytes_written, 1000);
 
-            if (ret != 0) {
-                log.warn("i2s write failed with code: {}", .{ret});
-                return error.WriteFailed;
+            var total_bytes_written: usize = 0;
+            while (total_bytes_written < tx_bytes.len) {
+                var bytes_written: usize = 0;
+                const ret = i2s_helper_write(
+                    config.i2s_port,
+                    tx_bytes[total_bytes_written..].ptr,
+                    tx_bytes.len - total_bytes_written,
+                    &bytes_written,
+                    1000,
+                );
+
+                if (ret != 0) {
+                    log.warn("i2s write failed with code: {}", .{ret});
+                    return error.WriteFailed;
+                }
+                if (bytes_written == 0) {
+                    return error.WriteFailed;
+                }
+
+                total_bytes_written += bytes_written;
             }
 
-            return bytes_written / 8;
+            return mono_samples;
         }
 
         /// Set speaker volume (0-255)
