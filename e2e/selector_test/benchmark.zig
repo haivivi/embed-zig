@@ -7,8 +7,10 @@ const Channel = platform.channel.Channel;
 const Selector = platform.selector.Selector;
 
 // Helper for API compatibility: std Selector now requires (max_sources, max_events)
-fn makeSelector(comptime max_sources: usize) type {
-    return Selector(max_sources, max_sources * 4);
+// For FreeRTOS platforms, max_events must equal the sum of all channels' queue_set_slots.
+fn makeSelector(comptime max_sources: usize, comptime channel_capacity: usize) type {
+    const channel_slots = channel_capacity + 1; // data queue + close_notify queue
+    return Selector(max_sources, max_sources * channel_slots);
 }
 
 fn benchmarkChannelThroughput(message_count: usize) !void {
@@ -49,7 +51,7 @@ fn benchmarkChannelThroughput(message_count: usize) !void {
 
 fn benchmarkSelectorWakeup(iterations: usize) !void {
     const Ch = Channel(u64, 4);
-    const Sel = makeSelector(2);
+    const Sel = makeSelector(2, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();

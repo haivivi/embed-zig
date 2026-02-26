@@ -19,6 +19,11 @@ pub fn Channel(comptime T: type, comptime capacity: usize) type {
     return struct {
         const Self = @This();
 
+        /// Number of slots this channel occupies in a QueueSet.
+        /// This is capacity (data queue) + 1 (close notification queue).
+        /// Use this to calculate Selector's max_events parameter.
+        pub const queue_set_slots = capacity + 1;
+
         handle: ?*anyopaque,
         closed: std.atomic.Value(bool),
         /// Close notification queue for selector support.

@@ -9,9 +9,11 @@ const Channel = platform.channel.Channel;
 const Selector = platform.selector.Selector;
 
 // Helper for API compatibility: std Selector now requires (max_sources, max_events)
-// On std platform, max_events is ignored, but kept for API compatibility with FreeRTOS
-fn makeSelector(comptime max_sources: usize) type {
-    return Selector(max_sources, max_sources * 4);
+// On std platform, max_events is ignored, but kept for API compatibility with FreeRTOS.
+// For FreeRTOS platforms, max_events must equal the sum of all channels' queue_set_slots.
+fn makeSelector(comptime max_sources: usize, comptime channel_capacity: usize) type {
+    const channel_slots = channel_capacity + 1; // data queue + close_notify queue
+    return Selector(max_sources, max_sources * channel_slots);
 }
 
 // ============================================================================
@@ -120,13 +122,13 @@ test "Channel cross-thread producer/consumer" {
 // ============================================================================
 
 test "Selector init/deinit" {
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
     var sel = try Sel.init();
     defer sel.deinit();
 }
 
 test "Selector wait empty returns error" {
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
     var sel = try Sel.init();
     defer sel.deinit();
 
@@ -136,7 +138,7 @@ test "Selector wait empty returns error" {
 
 test "Selector single channel" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();
@@ -165,7 +167,7 @@ test "Selector single channel" {
 
 test "Selector two channels - first ready" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch1 = try Ch.init();
     defer ch1.deinit();
@@ -197,7 +199,7 @@ test "Selector two channels - first ready" {
 
 test "Selector two channels - second ready" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch1 = try Ch.init();
     defer ch1.deinit();
@@ -229,7 +231,7 @@ test "Selector two channels - second ready" {
 
 test "Selector timeout" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();
@@ -250,7 +252,7 @@ test "Selector timeout" {
 
 test "Selector addTimeout registers dedicated timeout index" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();
@@ -267,7 +269,7 @@ test "Selector addTimeout registers dedicated timeout index" {
 
 test "Selector close wakes waiter" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();
@@ -293,7 +295,7 @@ test "Selector close wakes waiter" {
 
 test "Selector sees pre-existing data immediately" {
     const Ch = Channel(u32, 4);
-    const Sel = makeSelector(4);
+    const Sel = makeSelector(4, 4);
 
     var ch = try Ch.init();
     defer ch.deinit();

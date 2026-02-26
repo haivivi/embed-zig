@@ -33,6 +33,9 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         entries: [max_sources]SourceEntry,
         recv_count: usize,
         source_count: usize,
+        /// Tracks total slots required by registered channels in the QueueSet.
+        /// This is the sum of all channels' queue_set_slots for capacity validation.
+        required_slots: usize,
         queue_set: c.QueueSetHandle_t,
         timeout_enabled: bool,
         timeout_ms: u32,
@@ -49,6 +52,7 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                 .entries = undefined,
                 .recv_count = 0,
                 .source_count = 0,
+                .required_slots = 0,
                 .queue_set = queue_set,
                 .timeout_enabled = false,
                 .timeout_ms = 0,
@@ -65,10 +69,11 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         }
 
         /// Add a channel to wait on.
-        /// Returns the index of the added source.
         /// Returns error.TooMany if max_sources is reached.
+        /// Returns error.QueueSetCapacityExceeded if adding this channel would exceed max_events.
         /// Returns error.QueueAddFailed if the queue could not be added to the set.
-        pub fn addRecv(self: *Self, channel: anytype) error{ TooMany, QueueAddFailed }!usize {
+        /// Returns error.RollbackFailed if rollback after partial failure failed (critical state).
+        pub fn addRecv(self: *Self, channel: anytype) error{ TooMany, QueueSetCapacityExceeded, QueueAddFailed, RollbackFailed }!usize {
             if (self.source_count >= max_sources) return error.TooMany;
 
             const data_handle = channel.queueHandle();
@@ -76,21 +81,39 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             const logical_index = self.source_count;
             const recv_index = self.recv_count;
 
+            // Capacity validation: check if this channel would exceed max_events
+            const channel_slots = @field(@TypeOf(channel), "queue_set_slots");
+            if (self.required_slots + channel_slots > max_events) {
+                return error.QueueSetCapacityExceeded;
+            }
+
+            // Add both data queue and close notification queue to the set
+            // IMPORTANT: Must add both successfully before updating entries,
+            // or rollback on partial failure to avoid "poisoning" the selector.
+            const result1 = c.xQueueAddToSet(data_handle, self.queue_set);
+            if (result1 != c.pdPASS) return error.QueueAddFailed;
+
+            const result2 = c.xQueueAddToSet(close_handle, self.queue_set);
+            if (result2 != c.pdPASS) {
+                // Rollback: remove data_handle from set to avoid leaving partial state
+                const rollback_result = c.xQueueRemoveFromSet(data_handle, self.queue_set);
+                if (rollback_result != c.pdPASS) {
+                    // Critical: rollback failed, selector may be in inconsistent state
+                    return error.RollbackFailed;
+                }
+                return error.QueueAddFailed;
+            }
+
+            // Only update state after both adds succeed
             self.entries[recv_index] = .{
                 .data_handle = data_handle,
                 .close_handle = close_handle,
                 .logical_index = logical_index,
             };
 
-            // Add both data queue and close notification queue to the set
-            const result1 = c.xQueueAddToSet(data_handle, self.queue_set);
-            if (result1 != c.pdPASS) return error.QueueAddFailed;
-
-            const result2 = c.xQueueAddToSet(close_handle, self.queue_set);
-            if (result2 != c.pdPASS) return error.QueueAddFailed;
-
             self.recv_count += 1;
             self.source_count += 1;
+            self.required_slots += channel_slots;
             return logical_index;
         }
 
@@ -113,8 +136,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
         /// Wait for any channel to be ready or timeout.
         /// Returns the index of the ready source.
         /// Returns error.Empty if no sources were added.
-        /// Returns max_sources if timeout occurred.
-        pub fn wait(self: *Self, timeout_ms: ?u32) error{Empty}!usize {
+        /// Returns error.PollWaitFailed if the underlying poll mechanism failed (not timeout).
+        pub fn wait(self: *Self, timeout_ms: ?u32) error{ Empty, PollWaitFailed }!usize {
             if (self.source_count == 0) return error.Empty;
 
             const effective_timeout_ms = if (timeout_ms != null)
@@ -133,8 +156,12 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             const selected = c.xQueueSelectFromSet(self.queue_set, ticks);
 
             if (selected == null) {
-                // Timeout or error
+                // Check if this is timeout or error
+                // FreeRTOS doesn't distinguish between timeout and error for null return
+                // We treat it as timeout if timeout is configured, otherwise as potential error
                 if (self.timeout_enabled) return self.timeout_index;
+                // No timeout configured but xQueueSelectFromSet returned null - could be error
+                // Unfortunately FreeRTOS doesn't provide error codes here
                 return max_sources;
             }
 
@@ -152,14 +179,15 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
                 }
             }
 
-            // Should not reach here
-            return max_sources;
+            // Should not reach here - selector returned unknown queue handle
+            return error.PollWaitFailed;
         }
 
         /// Reset the selector, clearing all registered sources.
         pub fn reset(self: *Self) void {
             self.recv_count = 0;
             self.source_count = 0;
+            self.required_slots = 0;
             self.timeout_enabled = false;
             self.timeout_ms = 0;
             self.timeout_index = max_sources;
