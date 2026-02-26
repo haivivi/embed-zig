@@ -8,8 +8,8 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const linux = std.os.linux;
 
-fn epollToU32(flags: anytype) u32 {
-    return @as(u32, @bitCast(flags));
+fn epollToU32(flags: u32) u32 {
+    return @intCast(flags);
 }
 
 const is_kqueue = builtin.os.tag == .macos or
@@ -42,7 +42,7 @@ pub fn Selector(comptime max_sources: usize) type {
 
         /// Initialize a new Selector
         pub fn init() !Self {
-            const poll_fd = blk: {
+            const poll_fd: posix.fd_t = blk: {
                 if (is_kqueue) {
                     const fd = posix.system.kqueue();
                     if (fd < 0) return error.PollCreateFailed;
