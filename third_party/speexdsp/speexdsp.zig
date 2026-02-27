@@ -1,6 +1,8 @@
 //! SpeexDSP Zig Bindings
 //!
 //! Provides Zig-friendly wrappers around the SpeexDSP C library:
+//! - AEC (Acoustic Echo Cancellation) via speex_echo.h
+//! - Preprocessor (Noise Suppression + AGC) via speex_preprocess.h
 //! - Resampler via speex_resampler.h
 //! - Custom memory allocation via Zig Allocator (no libc malloc dependency)
 //!
@@ -33,6 +35,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const c = @cImport({
+    @cInclude("speex/speex_echo.h");
+    @cInclude("speex/speex_preprocess.h");
     @cInclude("speex/speex_resampler.h");
 });
 
@@ -124,6 +128,91 @@ export fn speex_free(ptr: ?*anyopaque) void {
 
     a.rawFree(base[0..total], header_alignment, @returnAddress());
 }
+
+// ============================================================================
+// Echo Cancellation (AEC)
+// ============================================================================
+
+pub const EchoState = struct {
+    handle: *c.SpeexEchoState,
+
+    pub fn init(frame_size: c_int, filter_length: c_int) !EchoState {
+        const handle = c.speex_echo_state_init(frame_size, filter_length);
+        if (handle == null) return error.SpeexInitFailed;
+        return .{ .handle = handle.? };
+    }
+
+    pub fn deinit(self: *EchoState) void {
+        c.speex_echo_state_destroy(self.handle);
+    }
+
+    pub fn cancellation(self: *EchoState, mic: [*]const i16, ref: [*]const i16, out: [*]i16) void {
+        c.speex_echo_cancellation(self.handle, mic, ref, out);
+    }
+
+    pub fn playback(self: *EchoState, play: [*]const i16) void {
+        c.speex_echo_playback(self.handle, play);
+    }
+
+    pub fn capture(self: *EchoState, mic: [*]const i16, out: [*]i16) void {
+        c.speex_echo_capture(self.handle, mic, out);
+    }
+
+    pub fn reset(self: *EchoState) void {
+        c.speex_echo_state_reset(self.handle);
+    }
+
+    pub fn setSampleRate(self: *EchoState, rate: i32) void {
+        var r = rate;
+        _ = c.speex_echo_ctl(self.handle, c.SPEEX_ECHO_SET_SAMPLING_RATE, &r);
+    }
+};
+
+// ============================================================================
+// Preprocessor (Noise Suppression, AGC, VAD)
+// ============================================================================
+
+pub const Preprocess = struct {
+    handle: *c.SpeexPreprocessState,
+
+    pub fn init(frame_size: c_int, sample_rate: c_int) !Preprocess {
+        const handle = c.speex_preprocess_state_init(frame_size, sample_rate);
+        if (handle == null) return error.SpeexInitFailed;
+        return .{ .handle = handle.? };
+    }
+
+    pub fn deinit(self: *Preprocess) void {
+        c.speex_preprocess_state_destroy(self.handle);
+    }
+
+    pub fn run(self: *Preprocess, frame: [*]i16) bool {
+        return c.speex_preprocess_run(self.handle, frame) != 0;
+    }
+
+    pub fn setEchoState(self: *Preprocess, echo: *EchoState) void {
+        _ = c.speex_preprocess_ctl(self.handle, c.SPEEX_PREPROCESS_SET_ECHO_STATE, @ptrCast(echo.handle));
+    }
+
+    pub fn setDenoise(self: *Preprocess, db: i32) void {
+        var val = db;
+        _ = c.speex_preprocess_ctl(self.handle, c.SPEEX_PREPROCESS_SET_NOISE_SUPPRESS, &val);
+    }
+
+    pub fn enableDenoise(self: *Preprocess, enable: bool) void {
+        var val: c_int = if (enable) 1 else 0;
+        _ = c.speex_preprocess_ctl(self.handle, c.SPEEX_PREPROCESS_SET_DENOISE, &val);
+    }
+
+    pub fn enableAgc(self: *Preprocess, enable: bool) void {
+        var val: c_int = if (enable) 1 else 0;
+        _ = c.speex_preprocess_ctl(self.handle, c.SPEEX_PREPROCESS_SET_AGC, &val);
+    }
+
+    pub fn enableVad(self: *Preprocess, enable: bool) void {
+        var val: c_int = if (enable) 1 else 0;
+        _ = c.speex_preprocess_ctl(self.handle, c.SPEEX_PREPROCESS_SET_VAD, &val);
+    }
+};
 
 // ============================================================================
 // Resampler

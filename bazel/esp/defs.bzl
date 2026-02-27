@@ -130,8 +130,8 @@ def _esp_idf_app_impl(ctx):
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
     elf_file = ctx.actions.declare_file("{}.elf".format(project_name))
-    bootloader_file = ctx.actions.declare_file("bootloader.bin")
-    partition_file = ctx.actions.declare_file("partition-table.bin")
+    bootloader_file = ctx.actions.declare_file("{}_bootloader.bin".format(project_name))
+    partition_file = ctx.actions.declare_file("{}_partition-table.bin".format(project_name))
     
     # Collect source files
     src_files = []
@@ -479,21 +479,23 @@ def _esp_zig_app_impl(ctx):
     project_name = ctx.attr.project_name or ctx.label.name
     bin_file = ctx.actions.declare_file("{}.bin".format(project_name))
     elf_file = ctx.actions.declare_file("{}.elf".format(project_name))
-    bootloader_file = ctx.actions.declare_file("bootloader.bin")
-    partition_file = ctx.actions.declare_file("partition-table.bin")
+    bootloader_file = ctx.actions.declare_file("{}_bootloader.bin".format(project_name))
+    partition_file = ctx.actions.declare_file("{}_partition-table.bin".format(project_name))
     
-    # Get app files (app.zig, platform.zig, board files)
+    # Get app files (entry file + shared sources)
     app_files = ctx.attr.app.files.to_list()
     app_name = ctx.attr.app.label.package.split("/")[-1]
+    entry_file = ctx.attr.entry_file
+    entry_fn = ctx.attr.entry_fn
     
-    # Find app.zig root source
+    # Find entry root source by basename (default: app.zig)
     app_zig = None
     for f in app_files:
-        if f.basename == "app.zig":
+        if f.basename == entry_file:
             app_zig = f
             break
     if not app_zig:
-        fail("No app.zig found in app sources")
+        fail("No {} found in app sources for {}".format(entry_file, ctx.label))
     
     # Collect cmake module files
     cmake_files = []
@@ -945,17 +947,18 @@ pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); @cInclude("freertos/FreeRTOS.h"); @cInclude("freertos/task.h"); @cInclude("esp_heap_caps.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
 pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
+pub const panic = std.debug.FullPanic(idf.log.panicFn);
 const PSRAM_TASK_STACK_SIZE = build_options.psram_stack_size;
 const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
 var task_tcb: c.StaticTask_t = undefined;
 var psram_stack: ?[*]c.StackType_t = null;
-fn appTaskFn(_: ?*anyopaque) callconv(.c) void {{ app.run(env_module.env); while (true) {{ c.vTaskDelay(c.portMAX_DELAY); }} }}
+fn appTaskFn(_: ?*anyopaque) callconv(.c) void {{ app.{entry_fn}(env_module.env); while (true) {{ c.vTaskDelay(c.portMAX_DELAY); }} }}
 export fn app_main() void {{
     std.log.info("Starting app in PSRAM task (stack: {{d}}KB)", .{{PSRAM_TASK_STACK_SIZE / 1024}});
     psram_stack = @ptrCast(@alignCast(c.heap_caps_malloc(PSRAM_TASK_STACK_SIZE, c.MALLOC_CAP_SPIRAM)));
-    if (psram_stack == null) {{ std.log.err("PSRAM alloc failed", .{{}}); app.run(env_module.env); return; }}
+    if (psram_stack == null) {{ std.log.err("PSRAM alloc failed", .{{}}); app.{entry_fn}(env_module.env); return; }}
     const task_handle = c.xTaskCreateStatic(appTaskFn, "app", PSRAM_TASK_STACK_WORDS, null, 5, psram_stack.?, &task_tcb);
-    if (task_handle == null) {{ std.log.err("Task create failed", .{{}}); c.heap_caps_free(psram_stack); app.run(env_module.env); return; }}
+    if (task_handle == null) {{ std.log.err("Task create failed", .{{}}); c.heap_caps_free(psram_stack); app.{entry_fn}(env_module.env); return; }}
 }}
 MAINZIGEOF
 else
@@ -967,7 +970,8 @@ pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
 pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
-export fn app_main() void {{ app.run(env_module.env); }}
+pub const panic = std.debug.FullPanic(idf.log.panicFn);
+export fn app_main() void {{ app.{entry_fn}(env_module.env); }}
 MAINZIGEOF
 fi
 
@@ -1018,6 +1022,7 @@ exec "{builder}"
         static_lib_copies = "\n".join(static_lib_copy_cmds),
         static_lib_links = "\n".join(static_lib_link_cmds),
         idf_deps_yml = idf_deps_yml,
+        entry_fn = entry_fn,
         partition_sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(partition_sdkconfig_file.path) if partition_sdkconfig_file else "",
         partition_csv_copy = 'cp "{}" "$WORK/$ESP_PROJECT_PATH/"'.format(partition_csv_file.path) if partition_csv_file else "",
         sdkconfig_append = 'cat "{}" >> "$WORK/$ESP_PROJECT_PATH/sdkconfig.defaults"'.format(sdkconfig_file.path) if sdkconfig_file else "",
@@ -1070,6 +1075,14 @@ esp_zig_app = rule(
             mandatory = True,
             allow_files = True,
             doc = "App target from examples/apps/",
+        ),
+        "entry_file": attr.string(
+            default = "app.zig",
+            doc = "Entry Zig file basename inside app srcs (default: app.zig)",
+        ),
+        "entry_fn": attr.string(
+            default = "run",
+            doc = "Entry function name called from generated app_main (default: run)",
         ),
         "project_name": attr.string(
             doc = "Project name (defaults to target name)",
@@ -1165,9 +1178,9 @@ def _esp_flash_impl(ctx):
     bootloader_file = None
     partition_file = None
     for f in app_files:
-        if f.basename == "bootloader.bin":
+        if f.basename == "bootloader.bin" or f.basename.endswith("_bootloader.bin"):
             bootloader_file = f
-        elif f.basename == "partition-table.bin":
+        elif f.basename == "partition-table.bin" or f.basename.endswith("_partition-table.bin"):
             partition_file = f
         elif f.path.endswith(".bin") and not bin_file:
             bin_file = f

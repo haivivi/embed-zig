@@ -1,0 +1,25 @@
+load("//bazel/zig:defs.bzl", "zig_binary", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_library(
+    name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    module_name = "board",
+    deps = [
+        "//lib/platform/std",
+        "//lib/pkg/audio",
+    ],
+)
+
+zig_binary(
+    name = "speaker_test",
+    main = "//e2e/tier2_audio_engine:app.zig",
+    srcs = ["//e2e/tier2_audio_engine:app_srcs"],
+    deps = [
+        ":board",
+        "//lib/pkg/audio",
+    ],
+    optimize = "ReleaseFast",
+)

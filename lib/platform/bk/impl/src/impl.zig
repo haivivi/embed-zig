@@ -37,6 +37,8 @@ pub const kvs = @import("kvs.zig");
 pub const KvsDriver = kvs.KvsDriver;
 
 pub const audio_system = @import("audio_system.zig");
+pub const audio_processor = @import("audio_processor.zig");
+pub const AecProcessor = audio_processor.AecProcessor;
 
 pub const button = @import("button.zig");
 pub const ButtonDriver = button.ButtonDriver;

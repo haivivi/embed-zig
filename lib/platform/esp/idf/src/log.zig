@@ -18,6 +18,23 @@ pub const ESP_LOG_VERBOSE = c.ESP_LOG_VERBOSE;
 pub const esp_log_write = c.esp_log_write;
 pub const esp_log_timestamp = c.esp_log_timestamp;
 
+/// Panic handler for ESP-IDF — prints the panic message via esp_log before halting.
+/// Usage in root: pub const panic = std.debug.FullPanic(idf.log.panicFn);
+pub fn panicFn(msg: []const u8, _: ?usize) noreturn {
+    var buf: [512]u8 = undefined;
+    const out = std.fmt.bufPrint(&buf, "ZIG PANIC: {s}", .{msg}) catch blk: {
+        const fallback = "ZIG PANIC: (message too long)";
+        break :blk fallback[0..fallback.len];
+    };
+    if (out.len < buf.len) {
+        buf[out.len] = 0;
+    }
+    esp_log_write(ESP_LOG_ERROR, "zig", "%s\n", @as([*:0]const u8, @ptrCast(buf[0..].ptr)));
+    while (true) {
+        asm volatile ("nop");
+    }
+}
+
 /// std.log adapter for ESP-IDF
 /// Use: pub const std_options: std.Options = .{ .logFn = esp.log.stdLogFn };
 pub fn stdLogFn(

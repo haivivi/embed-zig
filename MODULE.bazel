@@ -20,11 +20,11 @@ go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.22.5")
 
 # =============================================================================
-# Audio libraries extension (opus, ogg, etc.)
+# Audio libraries extension (opus, ogg, portaudio)
 # =============================================================================
 
 audio_libs = use_extension("//:extensions.bzl", "audio_libs")
-use_repo(audio_libs, "opus", "ogg", "speexdsp")
+use_repo(audio_libs, "opus", "ogg", "portaudio")
 
 # =============================================================================
 # LVGL UI library

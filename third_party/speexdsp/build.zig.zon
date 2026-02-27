@@ -1,9 +1,17 @@
 .{
-    .name = "speexdsp",
+    .name = .speexdsp,
     .version = "0.1.0",
+    .fingerprint = 0x173c4f634b98e387,
+    .dependencies = .{
+        .speexdsp_src = .{
+            .path = "speexdsp_src",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "speexdsp.zig",
+        "config.h",
     },
 }

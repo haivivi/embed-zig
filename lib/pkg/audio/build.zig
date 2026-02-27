@@ -8,11 +8,17 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const speexdsp_dep = b.dependency("speexdsp", .{
+    const std_impl_dep = b.dependency("std_impl", .{
         .target = target,
         .optimize = optimize,
     });
-    const std_impl_dep = b.dependency("std_impl", .{
+    const channel_dep = b.dependency("channel", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const runtime_module = b.createModule(.{
+        .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -24,42 +30,30 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     audio_module.addImport("trait", trait_dep.module("trait"));
-    audio_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
-
-    // Tests: resampler
-    const resampler_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/resampler.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    resampler_tests.root_module.addImport("trait", trait_dep.module("trait"));
-    resampler_tests.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
-    resampler_tests.root_module.addImport("std_impl", std_impl_dep.module("std_impl"));
-    resampler_tests.root_module.addImport("runtime", b.createModule(.{
-        .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-
-    // Tests: mixer
-    const mixer_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/mixer.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    mixer_tests.root_module.addImport("trait", trait_dep.module("trait"));
-    mixer_tests.root_module.addImport("speexdsp", speexdsp_dep.module("speexdsp"));
-    mixer_tests.root_module.addImport("runtime", b.createModule(.{
-        .root_source_file = std_impl_dep.path("src/impl/runtime.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
+    audio_module.addImport("channel", channel_dep.module("channel"));
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&b.addRunArtifact(resampler_tests).step);
-    test_step.dependOn(&b.addRunArtifact(mixer_tests).step);
+
+    const test_modules = [_]struct { name: []const u8, file: []const u8, needs_channel: bool }{
+        .{ .name = "resampler", .file = "src/resampler.zig", .needs_channel = false },
+        .{ .name = "mixer", .file = "src/mixer.zig", .needs_channel = false },
+        .{ .name = "drc", .file = "src/drc.zig", .needs_channel = false },
+        .{ .name = "engine", .file = "src/engine.zig", .needs_channel = true },
+    };
+
+    for (test_modules) |tm| {
+        const t = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(tm.file),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        t.root_module.addImport("trait", trait_dep.module("trait"));
+        t.root_module.addImport("runtime", runtime_module);
+        if (tm.needs_channel) {
+            t.root_module.addImport("channel", channel_dep.module("channel"));
+        }
+        test_step.dependOn(&b.addRunArtifact(t).step);
+    }
 }

@@ -296,6 +296,8 @@ const BaseAudioSystem = audio_system.AudioSystem(.{
     .i2s_dout = i2s_dout,
     .i2s_mclk = i2s_mclk,
     .sample_rate = sample_rate,
+    // Tune small delay so AEC ref aligns better with acoustic mic path.
+    .aec_ref_delay_samples = 112,
     .es8311_addr = es8311_addr,
     .es8311_volume = 220, // LiChuang uses higher volume
     .es7210_addr = es7210_addr,
@@ -601,4 +603,3 @@ pub const TempSensorDriver = struct {
 /// var pa = try PaSwitchDriver.init();
 /// ```
 pub const AudioSystem = BaseAudioSystem;
-

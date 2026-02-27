@@ -6,6 +6,7 @@
         .trait = .{ .path = "../../trait" },
         .speexdsp = .{ .path = "../../../third_party/speexdsp" },
         .std_impl = .{ .path = "../../platform/std" },
+        .channel = .{ .path = "../async/channel" },
     },
     .paths = .{
         "build.zig",
