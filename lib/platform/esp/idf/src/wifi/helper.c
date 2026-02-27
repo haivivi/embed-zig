@@ -346,6 +346,18 @@ int wifi_helper_scan_start(int show_hidden, uint8_t channel) {
     s_scan_done = false;
     s_scan_success = false;
 
+    // Ensure WiFi is started (required before scanning)
+    if (!s_started) {
+        esp_err_t start_ret = esp_wifi_start();
+        if (start_ret != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(start_ret));
+            return start_ret;
+        }
+        s_started = true;
+        // Disable power save for scan
+        esp_wifi_set_ps(WIFI_PS_NONE);
+    }
+
     wifi_scan_config_t cfg = {
         .ssid = NULL,
         .bssid = NULL,
