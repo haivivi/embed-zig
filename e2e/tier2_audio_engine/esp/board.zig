@@ -1,4 +1,4 @@
-//! esp board implementation for tier2_audio_engine (LiChuang GoCool)
+//! esp board implementation for tier2_audio_engine (LiChuang)
 //!
 //! Notes:
 //! - Old `AudioSystem` is only a reference; this file wires mic/ref/speaker directly.
@@ -39,7 +39,7 @@ extern fn i2s_helper_enable_tx(port: c_int) c_int;
 extern fn i2s_helper_disable_rx(port: c_int) c_int;
 extern fn i2s_helper_disable_tx(port: c_int) c_int;
 extern fn i2s_helper_read(port: c_int, buffer: [*]u8, buffer_size: usize, bytes_read: *usize, timeout_ms: u32) c_int;
-pub extern fn i2s_helper_write(port: c_int, buffer: [*]const u8, buffer_size: usize, bytes_written: *usize, timeout_ms: u32) c_int;
+extern fn i2s_helper_write(port: c_int, buffer: [*]const u8, buffer_size: usize, bytes_written: *usize, timeout_ms: u32) c_int;
 
 const AecHandle = opaque {};
 extern fn aec_helper_create(input_format: [*:0]const u8, filter_length: c_int, aec_type: c_int, mode: c_int) ?*AecHandle;
@@ -51,7 +51,6 @@ extern fn aec_helper_destroy(handle: *AecHandle) void;
 pub const log = hw.log;
 pub const time = hw.time;
 pub const runtime = idf.runtime;
-pub const idf_heap = idf.heap;
 pub const Processor = struct {
     const Self = @This();
 

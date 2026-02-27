@@ -101,3 +101,62 @@
   - [ ] 9.1 更新 `openteam/worklog.md`，记录每步结论、问题与修复。
   - [ ] 9.2 更新开发文档：说明 Speex AEC 已移除、平台处理器与 AEC3 路线。
   - [ ] 9.3 列出后续事项：AEC3 完整替换节奏、性能基准与质量基准补充计划。
+
+## Reviewer 要求修改
+
+### P0: 必须修改
+- [ ] Engine 仍允许不传 RefReader，违反最新架构约束“RefReader 必选”
+  - 位置：`lib/pkg/audio/src/engine.zig:58,89-90,125`
+  - 问题：当前 `RefReader: ?type = null` + `HasRefReader` 分支让调用方可绕过平台对齐职责。
+  - 建议：
+    1) 将 `EngineConfig.RefReader` 改为必填类型（非可选）；
+    2) 在 `AudioEngine` comptime 约束中强制校验 `RefReader.read(buf)` 契约；
+    3) 删除“无 RefReader 可实例化”路径。
+
+- [ ] Engine 仍保留 buffer_depth/ref_ring 对齐逻辑，违反“Engine 不做 delay 策略”
+  - 位置：`lib/pkg/audio/src/engine.zig:55,93,103-107,169-178,330-346`
+  - 问题：`speaker_buffer_depth`、`ref_ring`、`pushRef/getAlignedRef(depth)` 仍在引擎内执行对齐策略。
+  - 建议：
+    1) 移除 `speaker_buffer_depth` 配置与相关字段；
+    2) 移除 `ref_ring/ref_mutex/ref_ring_write/pushRef` 及 depth 计算；
+    3) `micTask` 仅通过平台 `RefReader.read()` 获取对齐 ref。
+
+- [ ] 二进制诊断产物不得进入 PR
+  - 位置：工作区未跟踪文件 `openteam/t2a_*.mp3`
+  - 问题：音频二进制属于不应提交内容，污染 PR。
+  - 建议：确保这些 `.mp3` 不被 add/commit；若已暂存，立即从暂存区移除。
+
+- [ ] `Engine.start()` 存在线程启动失败后的状态回滚缺陷
+  - 位置：`lib/pkg/audio/src/engine.zig:208-210`
+  - 问题：先启动 `speaker_thread`，若 `mic_thread` spawn 失败，当前实现不会回滚 `running`/已启动线程，可能造成后台线程泄漏与状态错乱。
+  - 建议：
+    1) 对第二次 spawn 失败做回滚（`running=false`、join 已启动线程、清空句柄）；
+    2) 或采用“先创建资源后原子切换状态”的安全启动序列。
+
+- [ ] 必须完成 ESP + BK 双平台迁移到新 AudioEngine
+  - 位置：平台 board/app/e2e 接线路径
+  - 问题：当前 BK 仍暴露并使用旧 `AudioSystem` 路径，未满足“ESP 与 BK 全量迁移”验收要求。
+  - 证据：`lib/platform/bk/src/boards/bk7258.zig:257`、`examples/apps/aec_test/bk/bk7258.zig:24`
+  - 建议：
+    1) BK 补齐 `DuplexAudio + RefReader + Processor + AudioEngine` 接线；
+    2) 提供与 ESP 同级别的 e2e 入口和构建目标；
+    3) 在计划中明确迁移完成判据（可构建目标列表 + 关键日志证据）。
+
+- [ ] 必须移除旧 AudioSystem 主路径（禁止并存可达实现）
+  - 位置：`lib/platform/esp/impl/src/audio_system.zig`、`lib/platform/bk/impl/src/audio_system.zig` 及 board re-export
+  - 问题：旧系统仍可编译可调用，会持续诱导回退和双轨维护。
+  - 建议：
+    1) 下线/删除旧 AudioSystem 模块与 re-export；
+    2) 清理所有 app/board 对 `AudioSystem` 的直接依赖；
+    3) 只保留新 Engine 路径（必要时通过编译期错误阻止旧接口继续被引用）。
+
+### P1: 建议修改
+- [ ] `speaker_direct_test` 属于强诊断代码，建议明确标注为临时诊断并加退出条件
+  - 位置：`e2e/tier2_audio_engine/speaker_direct_test.zig:66-68`
+  - 问题：`while(true)` 永不退出，容易在自动化环境中挂死。
+  - 建议：增加可配置超时或条件退出（例如运行 N 秒后退出）。
+
+- [ ] PR 元数据需满足英文规范（待提 PR 时补齐）
+  - 位置：PR 标题/描述
+  - 问题：当前未提供可审查的 PR 文本。
+  - 建议：标题英文动词开头；描述包含 `Summary` 与 `Testing` 两段，且写明验证命令或未执行原因。

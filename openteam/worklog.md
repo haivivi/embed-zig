@@ -194,3 +194,30 @@
   5) 验证 5.5.2：ESP AFE 内部管理 NS，engine 层不知道 NS 存在。
 - **遇到问题**：engine_test 仍有 E2E-1/E2E-2 两个已知失败（PassthroughProcessor 无 AEC 能力导致 ERLE 不达标），与本次改动无关。100/102 通过。
 - **需要反馈**：5.4.5 和 5.5 均已完成。下一步可继续 5.2（ESP ref 对齐验收）或烧录实机验证可观测指标输出。
+
+### 2026-02-27 07:31 - Reviewer
+- **审查范围**：
+  - `e2e/tier2_audio_engine/BUILD.bazel`
+  - `e2e/tier2_audio_engine/esp/BUILD.bazel`
+  - `e2e/tier2_audio_engine/esp/board.zig`
+  - `e2e/tier2_audio_engine/speaker_direct_test.zig`
+  - 关联架构核查：`lib/pkg/audio/src/engine.zig`
+- **发现问题**：
+  1. Engine 契约仍允许 `RefReader` 可选，违反“RefReader 必选”新设计约束。位置：`lib/pkg/audio/src/engine.zig:58,89-90,125`
+  2. Engine 仍保留 `speaker_buffer_depth + ref_ring` 对齐策略，违反“平台负责对齐，Engine 不做 delay 策略”。位置：`lib/pkg/audio/src/engine.zig:55,93,103-107,169-178,330-346`
+  3. 工作区存在多份 `.mp3` 二进制文件，属于不应提交内容（若进入 PR 必须驳回）。位置：`openteam/t2a_*.mp3`
+  4. `speaker_direct_test` 使用无限循环，建议补退出条件以避免诊断任务挂死。位置：`e2e/tier2_audio_engine/speaker_direct_test.zig:66-68`
+- **要求 Developer 修改**：见 `openteam/plan.md` 中“Reviewer 要求修改”章节。
+
+### 2026-02-27 07:34 - Reviewer
+- **审查范围**：
+  - `lib/pkg/audio/src/engine.zig`
+  - `lib/pkg/audio/src/audio.zig`
+  - `lib/pkg/audio/src/processor.zig`
+  - 迁移路径核查：`lib/platform/esp/src/boards/lichuang_gocool.zig`、`lib/platform/bk/src/boards/bk7258.zig`、`examples/apps/aec_test/bk/bk7258.zig`
+- **发现问题**：
+  1. `Engine.start()` 存在线程创建失败回滚缺陷：若第二个线程 spawn 失败，第一线程与 `running` 状态未回滚。位置：`lib/pkg/audio/src/engine.zig:208-210`
+  2. buffer_depth 模式在历史不足时取 slot0 而非静音，早期帧 ref 对齐错误。位置：`lib/pkg/audio/src/engine.zig:339-346`
+  3. BK 仍走旧 `AudioSystem` 导出/依赖，不满足“ESP+BK 全量迁移到新 Engine”。位置：`lib/platform/bk/src/boards/bk7258.zig:257`、`examples/apps/aec_test/bk/bk7258.zig:24`
+  4. 旧 `AudioSystem` 主路径仍可达（ESP/BK impl + board re-export），不满足“移除旧系统”验收要求。位置：`lib/platform/esp/impl/src/audio_system.zig`、`lib/platform/bk/impl/src/audio_system.zig`、`lib/platform/esp/src/boards/lichuang_gocool.zig:287-291`
+- **要求 Developer 修改**：已补充到 `openteam/plan.md` 的“Reviewer 要求修改（P0）”章节，并同步更新 `openteam/review.md` 验收标准 A6/A7。
