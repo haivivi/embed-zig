@@ -1,6 +1,7 @@
 //! Low-level socket wrapper with interface binding support
 
 const std = @import("std");
+const trait = @import("trait");
 
 const c = @cImport({
     @cInclude("lwip/sockets.h");
@@ -207,13 +208,7 @@ pub const Socket = struct {
     }
 
     /// Receive data with source address (for UDP security validation)
-    pub const RecvFromResult = struct {
-        len: usize,
-        src_addr: Ipv4Address,
-        src_port: u16,
-    };
-
-    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!RecvFromResult {
+    pub fn recvFromWithAddr(self: *Self, buf: []u8) SocketError!trait.socket.RecvFromResult {
         var sa: c.sockaddr_in = undefined;
         var sa_len: c.socklen_t = @sizeOf(c.sockaddr_in);
         const result = c.recvfrom(
@@ -234,7 +229,7 @@ pub const Socket = struct {
         if (result == 0) {
             return error.Closed;
         }
-        
+
         const s_addr = sa.sin_addr.s_addr;
         const src_ip: Ipv4Address = .{
             @truncate(s_addr & 0xFF),
@@ -242,7 +237,7 @@ pub const Socket = struct {
             @truncate((s_addr >> 16) & 0xFF),
             @truncate((s_addr >> 24) & 0xFF),
         };
-        
+
         return .{
             .len = @intCast(result),
             .src_addr = src_ip,
@@ -290,12 +285,12 @@ pub const Socket = struct {
     pub fn setNonBlocking(self: *Self, enable: bool) SocketError!void {
         const flags = c.fcntl(self.fd, c.F_GETFL, @as(c_int, 0));
         if (flags < 0) return error.InvalidAddress;
-        
-        const new_flags = if (enable) 
-            flags | c.O_NONBLOCK 
-        else 
+
+        const new_flags = if (enable)
+            flags | c.O_NONBLOCK
+        else
             flags & ~@as(c_int, c.O_NONBLOCK);
-        
+
         const result = c.fcntl(self.fd, c.F_SETFL, new_flags);
         if (result < 0) return error.InvalidAddress;
     }
