@@ -50,12 +50,33 @@ pub fn from(comptime Impl: type) type {
             .pointer => |p| p.child,
             else => Impl,
         };
-        // Validate fill function exists with correct signature
-        if (!@hasDecl(BaseType, "fill")) {
-            @compileError("RNG implementation must have fill([]u8) function");
-        }
+        validateFillSignature(BaseType);
     }
     return Impl;
+}
+
+fn validateFillSignature(comptime T: type) void {
+    if (!@hasDecl(T, "fill")) {
+        @compileError("RNG implementation must have fill([]u8) function");
+    }
+
+    const fill_info = @typeInfo(@TypeOf(T.fill));
+    if (fill_info != .@"fn") {
+        @compileError("RNG fill must be a function");
+    }
+
+    const f = fill_info.@"fn";
+    if (f.params.len != 1 or f.params[0].type != []u8) {
+        @compileError("RNG fill signature must be fill([]u8)");
+    }
+
+    if (f.return_type == null) {
+        @compileError("RNG fill must return void or error union");
+    }
+    const rt = @typeInfo(f.return_type.?);
+    if (rt == .void) return;
+    if (rt == .error_union and rt.error_union.payload == void) return;
+    @compileError("RNG fill return type must be void or anyerror!void");
 }
 
 // =========== Default Implementations ===========

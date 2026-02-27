@@ -37,6 +37,8 @@
 //! }
 //! ```
 
+const std = @import("std");
+
 /// Validate that Impl is a valid IOService type
 ///
 /// Required:
@@ -61,5 +63,36 @@ pub fn from(comptime Impl: type) void {
         if (!@hasDecl(Impl, "unregister")) @compileError("IOService missing unregister() function");
         if (!@hasDecl(Impl, "poll")) @compileError("IOService missing poll() function");
         if (!@hasDecl(Impl, "wake")) @compileError("IOService missing wake() function");
+
+        const RC = Impl.ReadyCallback;
+        if (@typeInfo(RC) != .@"struct") @compileError("ReadyCallback must be a struct");
+        if (!@hasField(RC, "ptr") or !@hasField(RC, "callback")) {
+            @compileError("ReadyCallback must contain ptr and callback fields");
+        }
+
+        const expected_ptr_t = ?*anyopaque;
+        const expected_cb_t = *const fn (?*anyopaque, std.posix.fd_t) void;
+
+        const rc_fields = @typeInfo(RC).@"struct".fields;
+        var ptr_ok = false;
+        var callback_ok = false;
+        for (rc_fields) |f| {
+            if (std.mem.eql(u8, f.name, "ptr")) {
+                ptr_ok = (f.type == expected_ptr_t);
+            } else if (std.mem.eql(u8, f.name, "callback")) {
+                callback_ok = (f.type == expected_cb_t);
+            }
+        }
+        if (!ptr_ok) @compileError("ReadyCallback.ptr must be ?*anyopaque");
+        if (!callback_ok) @compileError("ReadyCallback.callback signature mismatch");
+
+        const fd_t = std.posix.fd_t;
+        _ = @as(*const fn (std.mem.Allocator) anyerror!Impl, &Impl.init);
+        _ = @as(*const fn (*Impl) void, &Impl.deinit);
+        _ = @as(*const fn (*Impl, fd_t, RC) void, &Impl.registerRead);
+        _ = @as(*const fn (*Impl, fd_t, RC) void, &Impl.registerWrite);
+        _ = @as(*const fn (*Impl, fd_t) void, &Impl.unregister);
+        _ = @as(*const fn (*Impl, i32) usize, &Impl.poll);
+        _ = @as(*const fn (*Impl) void, &Impl.wake);
     }
 }

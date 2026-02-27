@@ -36,13 +36,34 @@ pub fn from(comptime Impl: type) type {
             .pointer => |p| p.child,
             else => Impl,
         };
-        // Validate by checking method existence (can't call variadic functions at comptime)
-        _ = @as(@TypeOf(&BaseType.info), &BaseType.info);
-        _ = @as(@TypeOf(&BaseType.err), &BaseType.err);
-        _ = @as(@TypeOf(&BaseType.warn), &BaseType.warn);
-        _ = @as(@TypeOf(&BaseType.debug), &BaseType.debug);
+        validateLevel(BaseType, "info");
+        validateLevel(BaseType, "err");
+        validateLevel(BaseType, "warn");
+        validateLevel(BaseType, "debug");
     }
     return Impl;
+}
+
+fn validateLevel(comptime T: type, comptime name: []const u8) void {
+    if (!@hasDecl(T, name)) {
+        @compileError("Log missing method: " ++ name);
+    }
+
+    const fn_info = @typeInfo(@TypeOf(@field(T, name)));
+    if (fn_info != .@"fn") {
+        @compileError("Log method must be function: " ++ name);
+    }
+
+    const f = fn_info.@"fn";
+    if (f.params.len < 2) {
+        @compileError("Log method must accept format and args: " ++ name);
+    }
+    if (f.params[0].type != []const u8) {
+        @compileError("Log method first param must be []const u8: " ++ name);
+    }
+    if (f.return_type == null or f.return_type.? != void) {
+        @compileError("Log method return type must be void: " ++ name);
+    }
 }
 
 // =========== Tests ===========

@@ -1,18 +1,14 @@
-# e2e: trait/sync — ESP platform test (manual, requires hardware)
+# e2e: selector — ESP platform test (manual, requires hardware)
 
-load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app", "esp_sdkconfig")
+load("//bazel/esp:defs.bzl", "esp_flash", "esp_modules", "esp_monitor", "esp_sdkconfig", "esp_zig_app")
+load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/esp/sdkconfig:core.bzl", "esp_core")
 load("//bazel/esp/sdkconfig:freertos.bzl", "esp_freertos")
 load("//bazel/esp/sdkconfig:log.bzl", "esp_log")
 load("//bazel/esp/sdkconfig:psram.bzl", "esp_psram")
-load("//bazel/esp/sdkconfig:app.bzl", "esp_app")
 load("//bazel/zig:defs.bzl", "zig_module")
 
 package(default_visibility = ["//visibility:public"])
-
-# =============================================================================
-# SDK Configuration
-# =============================================================================
 
 esp_core(
     name = "core",
@@ -57,15 +53,20 @@ esp_app(
     run_in_psram = 131072,
 )
 
-# =============================================================================
-# Build
-# =============================================================================
-
 esp_modules()
 
-zig_module(name = "board", module_name = "board", main = "board.zig", srcs = ["board.zig"], deps = [":idf", ":impl"])
+zig_module(
+    name = "board",
+    module_name = "board",
+    main = "board.zig",
+    srcs = ["board.zig"],
+    deps = [":idf", ":impl"],
+)
 
-filegroup(name = "srcs", srcs = ["//e2e/trait/sync:app_srcs"] + glob(["*.zig"]))
+filegroup(
+    name = "srcs",
+    srcs = ["//e2e/selector:app_srcs"] + glob(["*.zig"]),
+)
 
 esp_zig_app(
     name = "app",
@@ -73,30 +74,22 @@ esp_zig_app(
     boards = ["esp32s3_devkit", "korvo2_v3", "lichuang_szp"],
     requires = ["freertos"],
     deps = [
-        ":idf", ":esp", ":board",
-        "//lib/hal", "//lib/trait",
-        "//lib/pkg/async/waitgroup",
+        ":idf",
+        ":esp",
+        ":board",
+        "//lib/hal",
+        "//lib/trait",
     ],
     sdkconfig = ":sdkconfig",
     app_config = ":app_config",
     tags = ["esp", "conformance", "manual"],
 )
 
-esp_flash(name = "flash", app = ":app")
-
-esp_zig_app(
-    name = "debug",
-    app = ":srcs",
-    boards = ["esp32s3_devkit"],
-    requires = ["freertos"],
-    deps = [
-        ":idf", ":esp", ":board",
-        "//lib/hal", "//lib/trait",
-        "//lib/pkg/async/waitgroup",
-    ],
-    sdkconfig = ":sdkconfig",
-    app_config = ":app_config",
-    tags = ["esp", "debug", "manual"],
+esp_flash(
+    name = "flash",
+    app = ":app",
 )
 
-esp_flash(name = "flash_debug", app = ":debug")
+esp_monitor(
+    name = "monitor",
+)

@@ -1,0 +1,41 @@
+load("//bazel/zig:defs.bzl", "zig_binary", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+zig_test(
+    name = "selector_test",
+    srcs = [
+        "main.zig",
+        "selector_helper.zig",
+    ],
+    main = "main.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+)
+
+zig_binary(
+    name = "benchmark",
+    srcs = [
+        "benchmark.zig",
+        "selector_helper.zig",
+    ],
+    main = "benchmark.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+    tags = ["manual"],
+)
+
+zig_test(
+    name = "latency",
+    srcs = [
+        "latency.zig",
+        "selector_helper.zig",
+    ],
+    main = "latency.zig",
+    deps = [
+        "//lib/platform/std",
+    ],
+    tags = ["manual"],
+)

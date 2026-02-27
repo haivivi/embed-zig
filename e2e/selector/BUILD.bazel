@@ -1,0 +1,48 @@
+load("//bazel/zig:defs.bzl", "zig_library", "zig_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "app_srcs",
+    srcs = [
+        "app.zig",
+        "platform.zig",
+    ],
+)
+
+zig_library(
+    name = "board",
+    main = "std/board.zig",
+    srcs = ["std/board.zig"],
+    module_name = "board",
+    deps = ["//lib/platform/std"],
+)
+
+zig_test(
+    name = "selector_e2e",
+    srcs = [":app_srcs"],
+    main = "app.zig",
+    deps = [":board"],
+    size = "small",
+    tags = ["std", "conformance"],
+)
+
+# Cross-platform acceptance entry points:
+# - std: automated test target
+# - esp/bk: explicit buildable app targets reusing the same app_srcs semantics
+alias(
+    name = "selector_e2e_std",
+    actual = ":selector_e2e",
+)
+
+alias(
+    name = "selector_e2e_esp",
+    actual = "//e2e/selector/esp:app",
+)
+
+alias(
+    name = "selector_e2e_bk",
+    actual = "//e2e/selector/bk:app",
+)
+
+filegroup(name = "srcs", srcs = glob(["**/*"]))

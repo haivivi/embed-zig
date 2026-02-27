@@ -16,6 +16,12 @@ pub const Time = time.Time;
 
 pub const crypto = @import("crypto/suite.zig");
 
+/// Channel implementation (async channel)
+pub const channel = @import("channel.zig");
+
+/// Selector implementation (async select)
+pub const selector = @import("selector.zig");
+
 // ============================================================================
 // hal implementations (Drivers)
 // ============================================================================

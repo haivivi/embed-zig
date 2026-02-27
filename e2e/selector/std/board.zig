@@ -1,6 +1,4 @@
-//! std board for e2e trait/sync
-//!
-//! Provides log, time, and runtime using Zig standard library.
+//! std board for e2e selector
 
 const std = @import("std");
 const std_impl = @import("std_impl");
@@ -12,14 +10,6 @@ pub const log = struct {
 
     pub fn err(comptime fmt: []const u8, args: anytype) void {
         std.debug.print("[ERR]  " ++ fmt ++ "\n", args);
-    }
-
-    pub fn warn(comptime fmt: []const u8, args: anytype) void {
-        std.debug.print("[WARN] " ++ fmt ++ "\n", args);
-    }
-
-    pub fn debug(comptime fmt: []const u8, args: anytype) void {
-        std.debug.print("[DBG]  " ++ fmt ++ "\n", args);
     }
 };
 
@@ -33,7 +23,5 @@ pub const time = struct {
     }
 };
 
-pub const runtime = std_impl.runtime;
-
-// Export new Channel implementation from std_impl module
 pub const channel = std_impl.channel;
+pub const selector = std_impl.selector;
