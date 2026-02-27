@@ -75,6 +75,17 @@ pub fn from(comptime Impl: type) type {
         _ = @as(*const fn (*BaseType, Ipv4Address, u16, []const u8) Error!usize, &BaseType.sendTo);
         _ = @as(*const fn (*BaseType, []u8) Error!usize, &BaseType.recvFrom);
         if (!@hasDecl(BaseType, "recvFromWithAddr")) @compileError("Socket must implement recvFromWithAddr");
+        const recv_from_addr_info = @typeInfo(@TypeOf(BaseType.recvFromWithAddr));
+        if (recv_from_addr_info != .@"fn") @compileError("recvFromWithAddr must be function");
+        const recv_from_addr_fn = recv_from_addr_info.@"fn";
+        if (recv_from_addr_fn.params.len != 2 or recv_from_addr_fn.params[0].type != *BaseType or recv_from_addr_fn.params[1].type != []u8) {
+            @compileError("recvFromWithAddr signature must be (*Self, []u8)");
+        }
+        if (recv_from_addr_fn.return_type == null) @compileError("recvFromWithAddr must return error union");
+        const recv_from_addr_ret = @typeInfo(recv_from_addr_fn.return_type.?);
+        if (recv_from_addr_ret != .error_union or recv_from_addr_ret.error_union.payload != RecvFromResult) {
+            @compileError("recvFromWithAddr return type must be anyerror!RecvFromResult");
+        }
         // Server operations (UDP/TCP)
         _ = @as(*const fn (*BaseType, Ipv4Address, u16) Error!void, &BaseType.bind);
         _ = @as(*const fn (*BaseType) Error!u16, &BaseType.getBoundPort);

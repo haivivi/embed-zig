@@ -131,6 +131,24 @@ test "Selector wait empty returns error" {
     try std.testing.expectError(error.Empty, result);
 }
 
+test "Selector finite timeout with backend failure returns PollWaitFailed" {
+    const Ch = Channel(u32, 4);
+    const Sel = makeSelector(2, Ch);
+
+    var ch = try Ch.init();
+    defer ch.deinit();
+
+    var sel = try Sel.init();
+    defer sel.deinit();
+
+    _ = try sel.addRecv(&ch);
+
+    // Inject backend failure and ensure finite-time wait surfaces explicit error,
+    // not timeout sentinel.
+    sel.poll_fd = -1;
+    try std.testing.expectError(error.PollWaitFailed, sel.wait(10));
+}
+
 test "Selector single channel" {
     const Ch = Channel(u32, 4);
     const Sel = makeSelector(4, Ch);

@@ -90,7 +90,8 @@
 //! ```zig
 //! const platform = @import("platform");
 //! const Channel = platform.Channel(u32, 4);  // capacity 4
-//! const Selector = platform.Selector(3, 3 * Channel.queue_set_slots);  // 3 channels, 15 slots
+//! const total_slots = 3 * Channel.queue_set_slots;
+//! const Selector = platform.Selector(3, total_slots); // derive from channel slot model
 //!
 //! var sel = try Selector.init();
 //! defer sel.deinit();
@@ -129,6 +130,24 @@ pub fn validate(comptime Impl: type) void {
         // Check add operations
         if (!@hasDecl(Impl, "addRecv")) @compileError("Selector missing addRecv method");
         if (!@hasDecl(Impl, "addTimeout")) @compileError("Selector missing addTimeout method");
+
+        const add_recv_info = @typeInfo(@TypeOf(Impl.addRecv));
+        if (add_recv_info != .@"fn") @compileError("Selector addRecv must be a function");
+        const add_recv_fn = add_recv_info.@"fn";
+        if (add_recv_fn.params.len != 2) {
+            @compileError("Selector addRecv must have signature addRecv(*Self, channel)");
+        }
+        if (add_recv_fn.params[0].type != *Self) {
+            @compileError("Selector addRecv first parameter must be *Self");
+        }
+        if (add_recv_fn.return_type == null) {
+            @compileError("Selector addRecv must return error union of usize");
+        }
+        const add_recv_ret = @typeInfo(add_recv_fn.return_type.?);
+        if (add_recv_ret != .error_union or add_recv_ret.error_union.payload != usize) {
+            @compileError("Selector addRecv must return anyerror!usize-compatible type");
+        }
+
         _ = @as(*const fn (*Self, u32) anyerror!usize, &Impl.addTimeout);
 
         // Check wait

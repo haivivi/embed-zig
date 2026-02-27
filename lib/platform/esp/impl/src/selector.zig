@@ -207,22 +207,12 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             else
                 c.portMAX_DELAY;
 
-            const start_tick: c.TickType_t = c.xTaskGetTickCount();
-
             // Select from the queue set
             const selected = c.xQueueSelectFromSet(self.queue_set, ticks);
 
             if (selected == null) {
-                // FreeRTOS returns null for both timeout and internal failure.
-                // If effective_timeout_ms is null (wait forever), null indicates failure.
+                // For infinite wait, null is unexpected and treated as failure.
                 if (effective_timeout_ms == null) return error.PollWaitFailed;
-
-                const requested_ticks = timeout_ticks.?;
-                // For non-zero timeout, an early null indicates unexpected failure.
-                if (requested_ticks > 0) {
-                    const elapsed_ticks = c.xTaskGetTickCount() -% start_tick;
-                    if (elapsed_ticks < requested_ticks) return error.PollWaitFailed;
-                }
 
                 // Timeout path with explicit duration.
                 if (self.timeout_enabled) return self.timeout_index;

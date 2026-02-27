@@ -37,6 +37,8 @@
 //! }
 //! ```
 
+const std = @import("std");
+
 /// Validate that Impl is a valid IOService type
 ///
 /// Required:
@@ -61,5 +63,20 @@ pub fn from(comptime Impl: type) void {
         if (!@hasDecl(Impl, "unregister")) @compileError("IOService missing unregister() function");
         if (!@hasDecl(Impl, "poll")) @compileError("IOService missing poll() function");
         if (!@hasDecl(Impl, "wake")) @compileError("IOService missing wake() function");
+
+        const RC = Impl.ReadyCallback;
+        if (@typeInfo(RC) != .@"struct") @compileError("ReadyCallback must be a struct");
+        if (!@hasField(RC, "ptr") or !@hasField(RC, "callback")) {
+            @compileError("ReadyCallback must contain ptr and callback fields");
+        }
+
+        const fd_t = std.posix.fd_t;
+        _ = @as(*const fn (std.mem.Allocator) anyerror!Impl, &Impl.init);
+        _ = @as(*const fn (*Impl) void, &Impl.deinit);
+        _ = @as(*const fn (*Impl, fd_t, RC) void, &Impl.registerRead);
+        _ = @as(*const fn (*Impl, fd_t, RC) void, &Impl.registerWrite);
+        _ = @as(*const fn (*Impl, fd_t) void, &Impl.unregister);
+        _ = @as(*const fn (*Impl, i32) usize, &Impl.poll);
+        _ = @as(*const fn (*Impl) void, &Impl.wake);
     }
 }

@@ -154,21 +154,57 @@ fn validateHash(comptime Impl: type, comptime name: []const u8, comptime digest_
         @compileError(name ++ " has wrong digest_length");
     }
 
-    // Validate that essential declarations exist
-    // Note: We don't validate exact function signatures because:
-    // - init() signature varies between Zig versions (some take Options param)
-    // - We just need the declarations to exist
+    // Validate essential function signatures (allowing compatible variations)
     if (!@hasDecl(T, "init")) {
         @compileError(name ++ " missing init function");
     }
+    const init_info = @typeInfo(@TypeOf(T.init));
+    if (init_info != .@"fn") {
+        @compileError(name ++ " init must be function");
+    }
+
     if (!@hasDecl(T, "update")) {
         @compileError(name ++ " missing update function");
     }
+    const update_info = @typeInfo(@TypeOf(T.update));
+    if (update_info != .@"fn") {
+        @compileError(name ++ " update must be function");
+    }
+    const update_fn = update_info.@"fn";
+    if (update_fn.params.len < 2 or update_fn.params[1].type != []const u8) {
+        @compileError(name ++ " update signature must accept message bytes");
+    }
+
     if (!@hasDecl(T, "final") and !@hasDecl(T, "finalResult")) {
         @compileError(name ++ " missing final/finalResult function");
     }
+    if (@hasDecl(T, "final")) {
+        const final_info = @typeInfo(@TypeOf(T.final));
+        if (final_info != .@"fn") {
+            @compileError(name ++ " final must be function");
+        }
+    }
+    if (@hasDecl(T, "finalResult")) {
+        const final_result_info = @typeInfo(@TypeOf(T.finalResult));
+        if (final_result_info != .@"fn") {
+            @compileError(name ++ " finalResult must be function");
+        }
+    }
+
     if (!@hasDecl(T, "hash")) {
         @compileError(name ++ " missing hash function");
+    }
+    const hash_info = @typeInfo(@TypeOf(T.hash));
+    if (hash_info != .@"fn") {
+        @compileError(name ++ " hash must be function");
+    }
+    const hash_fn = hash_info.@"fn";
+    var has_message_param = false;
+    inline for (hash_fn.params) |p| {
+        if (p.type == []const u8) has_message_param = true;
+    }
+    if (!has_message_param) {
+        @compileError(name ++ " hash signature must accept message bytes");
     }
 }
 

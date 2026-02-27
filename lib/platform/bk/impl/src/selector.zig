@@ -8,8 +8,6 @@
 //! a close notification queue. When a channel is closed, a byte is sent to this
 //! queue, causing xQueueSelectFromSet to return immediately.
 
-const bk_time = @import("time.zig");
-
 // C helper function declarations
 extern fn bk_zig_queue_set_create(event_count: u32) ?*anyopaque;
 extern fn bk_zig_queue_set_delete(queue_set: ?*anyopaque) void;
@@ -197,8 +195,6 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             else
                 null;
 
-            const wait_start_ms: u64 = if (effective_timeout_ms != null) bk_time.nowMs() else 0;
-
             const wait_timeout_ms: u32 = if (effective_timeout_ms) |ms|
                 ms
             else
@@ -207,16 +203,8 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             const selected = bk_zig_queue_select_from_set(self.queue_set, wait_timeout_ms);
 
             if (selected == null) {
-                // FreeRTOS returns null for both timeout and internal failure.
-                // If effective_timeout_ms is null (wait forever), null indicates failure.
+                // For infinite wait, null is unexpected and treated as failure.
                 if (effective_timeout_ms == null) return error.PollWaitFailed;
-
-                const requested_ms = effective_timeout_ms.?;
-                // For non-zero timeout, an early null indicates unexpected failure.
-                if (requested_ms > 0) {
-                    const elapsed_ms = bk_time.nowMs() - wait_start_ms;
-                    if (elapsed_ms < requested_ms) return error.PollWaitFailed;
-                }
 
                 // Timeout path with explicit duration.
                 if (self.timeout_enabled) return self.timeout_index;
