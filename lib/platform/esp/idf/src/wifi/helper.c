@@ -30,6 +30,11 @@ static bool s_started = false;
 static int s_retry_count = 0;
 static int s_max_retry = 5;
 
+// Scan state
+static volatile bool s_scan_done = false;
+static volatile bool s_scan_success = false;
+static bool s_scan_handler_registered = false;
+
 // STA event handler (for blocking connect)
 static void sta_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data) {
@@ -292,6 +297,143 @@ int8_t wifi_helper_get_rssi(void) {
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
         return ap_info.rssi;
     }
+    return 0;
+}
+
+// ============================================================================
+// Scan Operations
+// ============================================================================
+
+/// Flat struct for passing AP records to Zig (no alignment gaps)
+typedef struct {
+    uint8_t ssid[32];     // 0-31
+    uint8_t ssid_len;     // 32
+    uint8_t bssid[6];     // 33-38
+    int8_t  rssi;         // 39
+    uint8_t channel;      // 40
+    uint8_t auth_mode;    // 41   mapped from wifi_auth_mode_t
+    uint8_t _pad[2];      // 42-43
+} wifi_helper_ap_flat_t;
+
+/// Scan done event handler — sets flag for polling
+static void scan_event_handler(void *arg, esp_event_base_t event_base,
+                                int32_t event_id, void *event_data) {
+    (void)arg;
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
+        wifi_event_sta_scan_done_t *ev = (wifi_event_sta_scan_done_t *)event_data;
+        s_scan_success = (ev->status == 0);
+        s_scan_done = true;
+    }
+}
+
+/// Start a non-blocking WiFi scan.
+/// WiFi must be started (wifi_helper_start) before calling this.
+int wifi_helper_scan_start(int show_hidden, uint8_t channel) {
+    // Register scan event handler once
+    if (!s_scan_handler_registered) {
+        esp_event_handler_instance_t instance;
+        esp_err_t err = esp_event_handler_instance_register(
+            WIFI_EVENT, WIFI_EVENT_SCAN_DONE,
+            &scan_event_handler, NULL, &instance);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register scan handler: %s", esp_err_to_name(err));
+            return err;
+        }
+        s_scan_handler_registered = true;
+    }
+
+    s_scan_done = false;
+    s_scan_success = false;
+
+    wifi_scan_config_t cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = channel,
+        .show_hidden = show_hidden ? true : false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = {
+            .active = { .min = 0, .max = 0 },  // use defaults
+        },
+    };
+    esp_err_t ret = esp_wifi_scan_start(&cfg, false /* non-blocking */);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_scan_start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    return 0;
+}
+
+/// Poll whether scan is done. Returns 1 if done, 0 if still scanning.
+/// Atomically clears the flag on read.
+int wifi_helper_scan_poll_done(int *out_success) {
+    if (s_scan_done) {
+        s_scan_done = false;
+        *out_success = s_scan_success ? 1 : 0;
+        return 1;
+    }
+    return 0;
+}
+
+/// Get the number of APs found by the last scan.
+int wifi_helper_scan_get_ap_count(uint16_t *out_count) {
+    esp_err_t ret = esp_wifi_scan_get_ap_num(out_count);
+    if (ret != ESP_OK) {
+        *out_count = 0;
+        return ret;
+    }
+    return 0;
+}
+
+/// Map ESP-IDF wifi_auth_mode_t to our simplified AuthMode ordinal.
+/// Matches the enum order: open=0, wep=1, wpa_psk=2, wpa2_psk=3, ...
+static uint8_t map_auth_mode(wifi_auth_mode_t mode) {
+    switch (mode) {
+        case WIFI_AUTH_OPEN:            return 0;
+        case WIFI_AUTH_WEP:             return 1;
+        case WIFI_AUTH_WPA_PSK:         return 2;
+        case WIFI_AUTH_WPA2_PSK:        return 3;
+        case WIFI_AUTH_WPA_WPA2_PSK:    return 4;
+        case WIFI_AUTH_WPA3_PSK:        return 5;
+        case WIFI_AUTH_WPA2_WPA3_PSK:   return 6;
+        case WIFI_AUTH_WPA2_ENTERPRISE: return 7;
+        case WIFI_AUTH_WPA3_ENTERPRISE: return 8;
+        default:                        return 0;
+    }
+}
+
+/// Fetch AP records into flat structs.
+/// Caller provides buffer; count is in/out (in: buffer capacity, out: actual).
+int wifi_helper_scan_get_ap_records(wifi_helper_ap_flat_t *out, uint16_t *inout_count) {
+    uint16_t cap = *inout_count;
+    if (cap == 0) return 0;
+
+    wifi_ap_record_t *records = malloc(cap * sizeof(wifi_ap_record_t));
+    if (records == NULL) {
+        *inout_count = 0;
+        return -1;
+    }
+
+    esp_err_t ret = esp_wifi_scan_get_ap_records(&cap, records);
+    if (ret != ESP_OK) {
+        free(records);
+        *inout_count = 0;
+        return ret;
+    }
+
+    for (uint16_t i = 0; i < cap; i++) {
+        memset(&out[i], 0, sizeof(wifi_helper_ap_flat_t));
+        size_t ssid_len = strlen((const char *)records[i].ssid);
+        if (ssid_len > 32) ssid_len = 32;
+        memcpy(out[i].ssid, records[i].ssid, ssid_len);
+        out[i].ssid_len = (uint8_t)ssid_len;
+        memcpy(out[i].bssid, records[i].bssid, 6);
+        out[i].rssi = records[i].rssi;
+        out[i].channel = records[i].primary;
+        out[i].auth_mode = map_auth_mode(records[i].authmode);
+    }
+
+    *inout_count = cap;
+    free(records);
     return 0;
 }
 
