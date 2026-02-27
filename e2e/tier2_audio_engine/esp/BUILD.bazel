@@ -123,3 +123,24 @@ esp_flash(
     name = "aec_flash",
     app = ":aec_app",
 )
+
+esp_zig_app(
+    name = "speaker_direct_app",
+    app = "//e2e/tier2_audio_engine:app_srcs",
+    entry_file = "speaker_direct_test.zig",
+    entry_fn = "run",
+    boards = ["lichuang_gocool"],
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    idf_deps = _idf_deps,
+    sdkconfig = "//examples/esp:esp32s3_sr",
+    app_config = "//examples/esp:app_internal",
+)
+
+esp_flash(
+    name = "speaker_direct_flash",
+    app = ":speaker_direct_app",
+)

@@ -6,6 +6,7 @@ filegroup(
     name = "app_srcs",
     srcs = [
         "speaker_test.zig",
+        "speaker_direct_test.zig",
         "mic_test.zig",
         "loop_back_test.zig",
         "aec_test.zig",

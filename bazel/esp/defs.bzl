@@ -947,6 +947,7 @@ pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); @cInclude("freertos/FreeRTOS.h"); @cInclude("freertos/task.h"); @cInclude("esp_heap_caps.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
 pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
+pub const panic = std.debug.FullPanic(idf.log.panicFn);
 const PSRAM_TASK_STACK_SIZE = build_options.psram_stack_size;
 const PSRAM_TASK_STACK_WORDS = PSRAM_TASK_STACK_SIZE / @sizeOf(c.StackType_t);
 var task_tcb: c.StaticTask_t = undefined;
@@ -969,6 +970,7 @@ pub const env_module = @import("env.zig");
 const c = @cImport({{ @cInclude("sdkconfig.h"); }});
 const log_level: std.log.Level = if (c.CONFIG_LOG_DEFAULT_LEVEL >= 4) .debug else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 3) .info else if (c.CONFIG_LOG_DEFAULT_LEVEL >= 2) .warn else .err;
 pub const std_options = std.Options{{ .log_level = log_level, .logFn = idf.log.stdLogFn }};
+pub const panic = std.debug.FullPanic(idf.log.panicFn);
 export fn app_main() void {{ app.{entry_fn}(env_module.env); }}
 MAINZIGEOF
 fi
