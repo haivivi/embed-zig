@@ -54,12 +54,20 @@ pub fn run(b: *Board) TestResult {
     return TestResult.pass("Scan completed (non-empty environment)");
 }
 
-/// Run with assertion check for CI/CD
-pub fn runWithAssertions(b: *Board) !void {
-    const result = run(b);
-    if (!result.passed) {
+/// Standalone entry point for Bazel esp_zig_app target.
+/// Signature matches generated main: fn(_: anytype) void
+pub fn entry(_: anytype) void {
+    var b: Board = undefined;
+    b.init() catch |err| {
+        log.err("[TEST] Board init failed: {}", .{err});
+        return;
+    };
+    defer b.deinit();
+
+    const result = run(&b);
+    if (result.passed) {
+        log.info("[TEST] PASSED: {s}", .{result.message});
+    } else {
         log.err("[TEST] FAILED: {s}", .{result.message});
-        return error.TestFailed;
     }
-    log.info("[TEST] PASSED: {s}", .{result.message});
 }
