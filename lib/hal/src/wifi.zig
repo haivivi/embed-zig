@@ -31,8 +31,8 @@
 //!         pub fn getPhyMode(self: *const Self) ?PhyMode;
 //!
 //!         // Optional - Scanning
-//!         pub fn scanStart(self: *Self, config: ScanConfig) !void;
-//!         pub fn scanGetResults(self: *Self) []const ApInfo;
+//!         // Results streamed via pollEvent(): scan_result × N → scan_done
+//!         pub fn scanStart(self: *Self, config: anytype) !void;
 //!
 //!         // Optional - Power save
 //!         pub fn setPowerSave(self: *Self, mode: PowerSaveMode) void;
@@ -82,7 +82,8 @@
 //!             .connected => log.info("WiFi connected to AP"),
 //!             .disconnected => |reason| log.warn("Disconnected: {}", .{reason}),
 //!             .connection_failed => |reason| log.err("Connection failed: {}", .{reason}),
-//!             .scan_done => |info| log.info("Scan found {} APs", .{info.count}),
+//!             .scan_result => |ap| log.info("AP: {s} rssi={}", .{ap.getSsid(), ap.rssi}),
+//!             .scan_done => |info| log.info("Scan done, success={}", .{info.success}),
 //!             .rssi_low => |rssi| log.warn("Signal weak: {} dBm", .{rssi}),
 //!             .ap_sta_connected => |sta| log.info("STA connected: {x}", .{sta.mac}),
 //!             .ap_sta_disconnected => |sta| log.info("STA disconnected", .{}),
@@ -143,8 +144,13 @@ pub const WifiEvent = union(enum) {
     disconnected: DisconnectReason,
     /// Connection failed
     connection_failed: FailReason,
-    /// Scan completed
+
+    /// Scanned a single AP (streamed, one event per AP)
+    scan_result: ApInfo,
+
+    /// Scan finished signal (all scan_result events already delivered)
     scan_done: ScanDoneInfo,
+
     /// RSSI dropped below threshold
     rssi_low: i8,
 
@@ -155,11 +161,10 @@ pub const WifiEvent = union(enum) {
     ap_sta_disconnected: StaInfo,
 };
 
-/// Scan completion info
+/// Scan completion info — terminal signal for a scan round.
+/// Applications count received scan_result events themselves.
 pub const ScanDoneInfo = struct {
-    /// Number of APs found
-    count: u16,
-    /// Scan was successful
+    /// Whether the scan completed successfully (false = interrupted or error)
     success: bool,
 };
 
@@ -434,7 +439,7 @@ pub fn from(comptime spec: type) type {
             _ = @as(*const fn (*const BaseDriver) [2]u8, &BaseDriver.getCountryCode);
         }
         // Note: Methods with platform-specific types are validated through usage:
-        // connectWithConfig, scanStart, scanGetResults, setPowerSave, getPowerSave,
+        // connectWithConfig, scanStart, setPowerSave, getPowerSave,
         // setRoaming, startAp, getStaList, deauthSta, setProtocol, setBandwidth,
         // getMac, getBssid, getPhyMode
 
@@ -531,8 +536,8 @@ pub fn from(comptime spec: type) type {
         // Event Polling
         // ================================================================
 
-        /// Poll for WiFi events (legacy - not typically used)
-        /// Returns the next pending event, or null if none
+        /// Poll for WiFi events.
+        /// Returns the next pending event, or null if none.
         pub fn pollEvent(self: *Self) ?WifiEvent {
             const driver_event = self.driver.pollEvent() orelse return null;
 
@@ -541,7 +546,15 @@ pub fn from(comptime spec: type) type {
                 .connected => .{ .connected = {} },
                 .disconnected => |r| .{ .disconnected = @enumFromInt(@intFromEnum(r)) },
                 .connection_failed => |r| .{ .connection_failed = @enumFromInt(@intFromEnum(r)) },
-                .scan_done => |info| .{ .scan_done = .{ .count = info.count, .success = info.success } },
+                .scan_result => |ap| .{ .scan_result = .{
+                    .ssid = ap.ssid,
+                    .ssid_len = ap.ssid_len,
+                    .bssid = ap.bssid,
+                    .channel = ap.channel,
+                    .rssi = ap.rssi,
+                    .auth_mode = @enumFromInt(@intFromEnum(ap.auth_mode)),
+                } },
+                .scan_done => |info| .{ .scan_done = .{ .success = info.success } },
                 .rssi_low => |rssi| .{ .rssi_low = rssi },
                 .ap_sta_connected => |sta| .{ .ap_sta_connected = .{ .mac = sta.mac, .rssi = sta.rssi, .aid = sta.aid } },
                 .ap_sta_disconnected => |sta| .{ .ap_sta_disconnected = .{ .mac = sta.mac, .rssi = sta.rssi, .aid = sta.aid } },
@@ -552,6 +565,7 @@ pub fn from(comptime spec: type) type {
                 .connected => self.state = .connected,
                 .disconnected => self.state = .disconnected,
                 .connection_failed => self.state = .failed,
+                .scan_result => {},
                 .scan_done => {},
                 .rssi_low => {},
                 .ap_sta_connected => {},
@@ -640,8 +654,10 @@ pub fn from(comptime spec: type) type {
         // Scanning
         // ================================================================
 
-        /// Start WiFi scan (non-blocking)
-        /// Results delivered via scan_done event, then call scanGetResults()
+        /// Start WiFi scan (non-blocking).
+        /// Results are delivered as a stream of scan_result events via pollEvent(),
+        /// followed by a final scan_done event. Applications accumulate results
+        /// in their own buffer.
         pub fn scanStart(self: *Self, config: ScanConfig) !void {
             if (@hasDecl(Driver, "scanStart")) {
                 // Convert scan_type to passive flag
@@ -655,18 +671,6 @@ pub fn from(comptime spec: type) type {
                 });
             }
             return error.NotSupported;
-        }
-
-        /// Get scan results (call after scan_done event)
-        /// Note: Returns driver's ApInfo slice directly (structurally compatible with HAL ApInfo)
-        pub fn scanGetResults(self: *Self) []const ApInfo {
-            if (@hasDecl(Driver, "scanGetResults")) {
-                // Driver returns its own ApInfo type which is structurally identical
-                // Use @ptrCast to reinterpret the slice as HAL's ApInfo slice
-                const driver_results = self.driver.scanGetResults();
-                return @ptrCast(driver_results);
-            }
-            return &[_]ApInfo{};
         }
 
         // ================================================================
@@ -865,6 +869,7 @@ const MockWifiEvent = union(enum) {
     connected: void,
     disconnected: DisconnectReason,
     connection_failed: FailReason,
+    scan_result: ApInfo,
     scan_done: ScanDoneInfo,
     rssi_low: i8,
     ap_sta_connected: StaInfo,
