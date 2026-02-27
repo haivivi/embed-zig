@@ -12,7 +12,7 @@ const esp = @import("esp");
 const audio_drivers = @import("audio_drivers");
 const audio = @import("audio");
 
-const hw = esp.boards.lichuang_gocool;
+const hw = esp.boards.lichuang_szp;
 
 const Es8311Driver = audio_drivers.es8311.Es8311(*idf.I2c);
 const Es7210Driver = audio_drivers.es7210.Es7210(*idf.I2c);
