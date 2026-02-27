@@ -17,6 +17,7 @@
   - 问题: 新增的 `scanGetApCount` Zig wrapper 和 C 函数 `wifi_helper_scan_get_ap_count` 未被调用，是死代码
   - 修复: 删除这两个函数，并在 `StaDriver.fetchScanResults` 中直接调用 `scanGetApRecords`
   - Severity: Low
+  - 状态: ❌ 未解决
 
 - [ ] 等待并确保 PR #85 的 `ESP cross-compile` 检查通过
   - 现状：`gh pr checks 85` 显示该检查为 `pending`
