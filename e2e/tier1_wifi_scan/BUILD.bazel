@@ -1,4 +1,14 @@
-# Tier 1: WiFi Scan
+# Tier 1: WiFi Scan - Event-Stream Model Test Suite
+#
+# Test Scenarios:
+#   - normal_scan: Basic scan flow with hidden SSID detection
+#   - empty_scan: Handling when no APs are found
+#   - multi_cycle: Consecutive scans with buffer reset
+#   - event_order: Strict event delivery order validation
+#   - buffer_boundary: Overflow handling for >64 APs
+#
+# Each test is a separate Zig file with a `run` function.
+# See esp/BUILD.bazel for individual test targets.
 
 package(default_visibility = ["//visibility:public"])
 

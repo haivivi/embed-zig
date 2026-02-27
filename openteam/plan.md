@@ -53,3 +53,28 @@
 - [x] 步骤 29：提交代码（4 commits）
 
 注：ESP/BK 的 `bazel build` 需要交叉编译环境（IDF_PATH / ARMINO_PATH），本机无法执行完整构建。HAL 单元测试已在本机通过。
+
+## Reviewer 要求修改
+
+### P0: 必须修改
+- [ ] `lib/platform/esp/idf/src/wifi/helper.c` 缺少 `stdlib.h`，但使用了 `malloc/free`
+  - 问题位置：约第 13 行（include 区）、第 410/418/436 行（`malloc/free`）
+  - 建议：补充 `#include <stdlib.h>`，并确认在当前编译选项下无隐式声明告警/错误。
+
+- [ ] `StaDriver.scanStart()` 失败路径状态不一致，可能导致假扫描状态卡死
+  - 问题位置：`lib/platform/esp/impl/src/wifi.zig` 约第 290-299 行
+  - 问题描述：`self.scan_started = true` 在调用 `idf.wifi.scanStart()` 之前设置，scanStart 失败后未回滚。
+  - 建议：将 `scan_started = true` 放到底层 scanStart 成功之后，或在 `catch` 分支显式回滚全部 scan 状态字段。
+
+- [ ] 移除不应进入 PR 的工作日志文件
+  - 问题位置：`git diff --name-only main...HEAD` 包含 `openteam/worklog.md`
+  - 建议：将该文件从本次变更中移除（从提交中删掉，不参与合入）。
+
+- [ ] 补齐 AC7 的可追溯编译通过证据
+  - 问题位置：`openteam/plan.md` 当前只记录 `bazel test //lib/hal:hal_test`
+  - 建议：在 CI 或具备交叉编译环境处提供对应 `bazel build` 成功记录（命令、日志或链接），覆盖本任务涉及目标。
+
+### P1: 建议修改
+- [ ] 创建并规范化 PR 元信息（当前分支无 PR）
+  - 现状：`gh pr view` 返回“no pull requests found for branch”
+  - 建议：创建 PR，并确保标题英文且动词开头；描述包含英文 `Summary`（1-3 条价值点）与 `Testing`（执行命令/结果或未执行原因）。

@@ -1,5 +1,12 @@
 # WiFi Scan Test - ESP Platform
-# Tests WiFi scanning functionality: scanStart, scan_done event, scanGetResults
+# Event-Stream Model Test Suite
+#
+# Individual test targets for each scenario:
+#   bazel run //e2e/tier1_wifi_scan/esp:normal_scan_flash
+#   bazel run //e2e/tier1_wifi_scan/esp:empty_scan_flash
+#   bazel run //e2e/tier1_wifi_scan/esp:multi_cycle_flash
+#   bazel run //e2e/tier1_wifi_scan/esp:event_order_flash
+#   bazel run //e2e/tier1_wifi_scan/esp:buffer_boundary_flash
 
 load("//bazel/esp:defs.bzl", "esp_modules", "esp_flash", "esp_zig_app")
 
@@ -12,26 +19,173 @@ filegroup(
     ] + glob(["**/*"]),
 )
 
-
 esp_modules()
+
+# Shared configuration
+_requires = [
+    "esp_wifi",
+    "esp_event",
+    "esp_netif",
+    "nvs_flash",
+    "lwip",
+]
+
+_force_link = [
+    "${EVENT_FORCE_LINK}",
+    "${WIFI_FORCE_LINK}",
+    "${NET_FORCE_LINK}",
+]
+
+_extra_cmake = [
+    "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
+    "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
+    "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
+]
+
+_extra_c_sources = [
+    "EVENT_SRCS",
+    "WIFI_C_SOURCES",
+    "NET_C_SOURCES",
+]
+
+_deps = [
+    ":idf",
+    ":esp",
+    "//lib/hal",
+    "//lib/trait",
+    "//lib/pkg/motion",
+    "//lib/pkg/math",
+]
+
+# =============================================================================
+# Test 1: Normal Scan Flow
+# =============================================================================
+
+esp_zig_app(
+    name = "normal_scan_app",
+    app = ":srcs",
+    entry_file = "normal_scan.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "normal_scan_flash",
+    app = ":normal_scan_app",
+)
+
+# =============================================================================
+# Test 2: Empty Scan Result
+# =============================================================================
+
+esp_zig_app(
+    name = "empty_scan_app",
+    app = ":srcs",
+    entry_file = "empty_scan.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "empty_scan_flash",
+    app = ":empty_scan_app",
+)
+
+# =============================================================================
+# Test 3: Multiple Scan Cycles
+# =============================================================================
+
+esp_zig_app(
+    name = "multi_cycle_app",
+    app = ":srcs",
+    entry_file = "multi_cycle.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "multi_cycle_flash",
+    app = ":multi_cycle_app",
+)
+
+# =============================================================================
+# Test 4: Event Order Verification
+# =============================================================================
+
+esp_zig_app(
+    name = "event_order_app",
+    app = ":srcs",
+    entry_file = "event_order.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "event_order_flash",
+    app = ":event_order_app",
+)
+
+# =============================================================================
+# Test 5: Buffer Boundary
+# =============================================================================
+
+esp_zig_app(
+    name = "buffer_boundary_app",
+    app = ":srcs",
+    entry_file = "buffer_boundary.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
+    sdkconfig = "//examples/esp:esp32s3_wifi_xip",
+    app_config = "//examples/esp:app",
+)
+
+esp_flash(
+    name = "buffer_boundary_flash",
+    app = ":buffer_boundary_app",
+)
+
+# =============================================================================
+# Legacy: Original all-in-one app (for backward compatibility)
+# =============================================================================
 
 esp_zig_app(
     name = "app",
     app = ":srcs",
-    requires = ["esp_wifi", "esp_event", "esp_netif", "nvs_flash", "lwip"],
-    force_link = [
-        "${EVENT_FORCE_LINK}",
-        "${WIFI_FORCE_LINK}",
-        "${NET_FORCE_LINK}",
-    ],
-    extra_cmake = [
-        "include(${_ESP_LIB}/platform/esp/idf/src/event/event.cmake)",
-        "include(${_ESP_LIB}/platform/esp/idf/src/wifi/wifi.cmake)",
-        "include(${_ESP_LIB}/platform/esp/idf/src/net/net.cmake)",
-    ],
-    extra_c_sources = ["EVENT_SRCS", "WIFI_C_SOURCES", "NET_C_SOURCES"],
-    deps = [":idf", ":esp",
- "//lib/hal", "//lib/trait", "//lib/pkg/motion", "//lib/pkg/math"],
+    entry_file = "app.zig",
+    entry_fn = "run",
+    requires = _requires,
+    force_link = _force_link,
+    extra_cmake = _extra_cmake,
+    extra_c_sources = _extra_c_sources,
+    deps = _deps,
     sdkconfig = "//examples/esp:esp32s3_wifi_xip",
     app_config = "//examples/esp:app",
 )
