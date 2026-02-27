@@ -408,26 +408,17 @@ pub const DuplexAudio = struct {
 
     fn writeSpeakerRaw(self: *Self, in_buf: []const i16) !usize {
         if (in_buf.len == 0) return 0;
-
-        // OLD structure: outer while + @min — this is what crashed before
-        var done: usize = 0;
-        while (done < in_buf.len) {
-            const mono_n = @min(in_buf.len - done, I2S_CHUNK_FRAMES);
-            const stereo_n = mono_n * 2;
-            if (self.tx_i2s.len < stereo_n) return error.TxBufferTooSmall;
-
-            var i: usize = 0;
-            while (i < mono_n) : (i += 1) {
-                const sample_bits: u16 = @bitCast(in_buf[done + i]);
-                const packed_bits: u32 = @as(u32, sample_bits) << 16;
-                const s32: i32 = @bitCast(packed_bits);
-                self.tx_i2s[i * 2] = s32;
-                self.tx_i2s[i * 2 + 1] = s32;
-            }
-
-            done += mono_n;
-        }
         const mono_samples = in_buf.len;
+        const stereo_samples = mono_samples * 2;
+        if (self.tx_i2s.len < stereo_samples) return error.TxBufferTooSmall;
+
+        // Pack i16 mono → i32 stereo via sign-extend (no u32 shift overflow)
+        var i: usize = 0;
+        while (i < mono_samples) : (i += 1) {
+            const s32: i32 = @as(i32, in_buf[i]) << 16;
+            self.tx_i2s[i * 2] = s32;
+            self.tx_i2s[i * 2 + 1] = s32;
+        }
 
         // Write to I2S
         const tx_bytes = std.mem.sliceAsBytes(self.tx_i2s[0 .. mono_samples * 2]);
