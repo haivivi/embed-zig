@@ -56,7 +56,6 @@ extern fn wifi_helper_get_ap_stations(mac_list: [*]u8, max_count: c_int) c_int;
 // Scan API
 extern fn wifi_helper_scan_start(show_hidden: c_int, channel: u8) c_int;
 extern fn wifi_helper_scan_poll_done(out_success: *c_int) c_int;
-extern fn wifi_helper_scan_get_ap_count(out_count: *u16) c_int;
 extern fn wifi_helper_scan_get_ap_records(out: [*]ScanApFlat, inout_count: *u16) c_int;
 
 // Legacy API
@@ -240,7 +239,6 @@ pub fn getApStations(buffer: []StationInfo) []StationInfo {
 
 pub const ScanError = error{
     ScanStartFailed,
-    ScanGetCountFailed,
     ScanGetRecordsFailed,
 };
 
@@ -266,15 +264,6 @@ pub fn scanPollDone() ?bool {
         return success != 0;
     }
     return null;
-}
-
-/// Get the number of APs found by the last completed scan.
-pub fn scanGetApCount() ScanError!u16 {
-    var count: u16 = 0;
-    if (wifi_helper_scan_get_ap_count(&count) != 0) {
-        return error.ScanGetCountFailed;
-    }
-    return count;
 }
 
 /// Fetch scan results into caller-provided buffer.

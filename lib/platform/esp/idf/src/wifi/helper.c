@@ -387,16 +387,6 @@ int wifi_helper_scan_poll_done(int *out_success) {
     return 0;
 }
 
-/// Get the number of APs found by the last scan.
-int wifi_helper_scan_get_ap_count(uint16_t *out_count) {
-    esp_err_t ret = esp_wifi_scan_get_ap_num(out_count);
-    if (ret != ESP_OK) {
-        *out_count = 0;
-        return ret;
-    }
-    return 0;
-}
-
 /// Map ESP-IDF wifi_auth_mode_t to our simplified AuthMode ordinal.
 /// Matches the enum order: open=0, wep=1, wpa_psk=2, wpa2_psk=3, ...
 static uint8_t map_auth_mode(wifi_auth_mode_t mode) {

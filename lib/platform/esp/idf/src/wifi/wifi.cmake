@@ -25,7 +25,6 @@ set(WIFI_FORCE_LINK
     wifi_helper_get_ap_stations
     wifi_helper_scan_start
     wifi_helper_scan_poll_done
-    wifi_helper_scan_get_ap_count
     wifi_helper_scan_get_ap_records
     wifi_helper_legacy_init
     wifi_helper_legacy_connect
