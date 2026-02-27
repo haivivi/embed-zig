@@ -14,6 +14,7 @@ extern fn bk_zig_queue_set_delete(queue_set: ?*anyopaque) void;
 extern fn bk_zig_queue_add_to_set(queue: ?*anyopaque, queue_set: ?*anyopaque) i32;
 extern fn bk_zig_queue_remove_from_set(queue: ?*anyopaque, queue_set: ?*anyopaque) i32;
 extern fn bk_zig_queue_select_from_set(queue_set: ?*anyopaque, timeout_ms: u32) ?*anyopaque;
+extern fn bk_zig_queue_select_from_set_status(queue_set: ?*anyopaque, timeout_ms: u32, out_selected: *?*anyopaque) i32;
 extern fn bk_zig_queue_receive(queue: ?*anyopaque, item: *anyopaque, timeout_ms: u32) i32;
 extern fn bk_zig_queue_messages_waiting(queue: ?*anyopaque) u32;
 
@@ -200,15 +201,14 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             else
                 0xFFFFFFFF;
 
-            const selected = bk_zig_queue_select_from_set(self.queue_set, wait_timeout_ms);
-
-            if (selected == null) {
-                // For infinite wait, null is unexpected and treated as failure.
-                if (effective_timeout_ms == null) return error.PollWaitFailed;
-
-                // Timeout path with explicit duration.
+            var selected: ?*anyopaque = null;
+            const status = bk_zig_queue_select_from_set_status(self.queue_set, wait_timeout_ms, &selected);
+            if (status == 0) {
                 if (self.timeout_enabled) return self.timeout_index;
                 return max_sources;
+            }
+            if (status != 1 or selected == null) {
+                return error.PollWaitFailed;
             }
 
             // Check both data_handle and close_handle for each entry

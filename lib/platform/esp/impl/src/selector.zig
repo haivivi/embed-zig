@@ -13,6 +13,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("freertos/FreeRTOS.h");
     @cInclude("freertos/queue.h");
+    @cInclude("freertos/task.h");
 });
 
 /// Selector — wait on multiple channels with optional timeout.
@@ -207,12 +208,24 @@ pub fn Selector(comptime max_sources: usize, comptime max_events: usize) type {
             else
                 c.portMAX_DELAY;
 
+            var timeout_state: c.TimeOut_t = undefined;
+            var ticks_remaining: c.TickType_t = ticks;
+            if (effective_timeout_ms != null) {
+                c.vTaskSetTimeOutState(&timeout_state);
+            }
+
             // Select from the queue set
             const selected = c.xQueueSelectFromSet(self.queue_set, ticks);
 
             if (selected == null) {
                 // For infinite wait, null is unexpected and treated as failure.
                 if (effective_timeout_ms == null) return error.PollWaitFailed;
+
+                // For finite timeout, use FreeRTOS timeout state API to distinguish
+                // timeout vs unexpected failure without elapsed-time heuristics.
+                if (c.xTaskCheckForTimeOut(&timeout_state, &ticks_remaining) != c.pdTRUE) {
+                    return error.PollWaitFailed;
+                }
 
                 // Timeout path with explicit duration.
                 if (self.timeout_enabled) return self.timeout_index;

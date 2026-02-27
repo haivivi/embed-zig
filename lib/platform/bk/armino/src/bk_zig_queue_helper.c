@@ -6,6 +6,7 @@
 
 #include <FreeRTOS.h>
 #include <queue.h>
+#include <task.h>
 
 /* Queue handle type - opaque pointer in Zig */
 typedef void* bk_queue_handle_t;
@@ -87,5 +88,47 @@ bk_queue_handle_t bk_zig_queue_select_from_set(bk_queue_handle_t queue_set, unsi
     (void)queue_set;
     (void)timeout_ms;
     return (bk_queue_handle_t)0;
+#endif
+}
+
+/* Select from queue set with explicit status.
+ * return: 1=ready, 0=timeout, -1=failure
+ */
+int bk_zig_queue_select_from_set_status(bk_queue_handle_t queue_set, unsigned int timeout_ms, bk_queue_handle_t *out_selected) {
+#if defined(configUSE_QUEUE_SETS) && (configUSE_QUEUE_SETS == 1)
+    if (queue_set == 0 || out_selected == 0) {
+        return -1;
+    }
+
+    *out_selected = 0;
+
+    if (timeout_ms == 0xFFFFFFFF) {
+        QueueSetMemberHandle_t selected = xQueueSelectFromSet((QueueSetHandle_t)queue_set, portMAX_DELAY);
+        if (selected != 0) {
+            *out_selected = (bk_queue_handle_t)selected;
+            return 1;
+        }
+        return -1;
+    }
+
+    TickType_t ticks_to_wait = timeout_ms / portTICK_PERIOD_MS;
+    TimeOut_t timeout_state;
+    vTaskSetTimeOutState(&timeout_state);
+
+    QueueSetMemberHandle_t selected = xQueueSelectFromSet((QueueSetHandle_t)queue_set, ticks_to_wait);
+    if (selected != 0) {
+        *out_selected = (bk_queue_handle_t)selected;
+        return 1;
+    }
+
+    if (xTaskCheckForTimeOut(&timeout_state, &ticks_to_wait) == pdTRUE) {
+        return 0;
+    }
+    return -1;
+#else
+    (void)queue_set;
+    (void)timeout_ms;
+    (void)out_selected;
+    return -1;
 #endif
 }
