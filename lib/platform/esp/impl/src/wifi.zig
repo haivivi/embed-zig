@@ -287,7 +287,6 @@ pub const StaDriver = struct {
         self.scan_yielding = false;
         self.scan_cursor = 0;
         self.scan_total = 0;
-        self.scan_started = true;
 
         const show_hidden = if (@hasField(@TypeOf(config), "show_hidden")) config.show_hidden else false;
         const channel = if (@hasField(@TypeOf(config), "channel")) config.channel else 0;
@@ -296,6 +295,9 @@ pub const StaDriver = struct {
             .show_hidden = show_hidden,
             .channel = channel,
         }) catch return error.ScanFailed;
+
+        // Only mark scan as started after IDF call succeeds
+        self.scan_started = true;
     }
 
     /// Convert IDF auth_mode ordinal to HAL-compatible AuthMode

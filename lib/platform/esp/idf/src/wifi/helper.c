@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include <stdlib.h>
 #include <string.h>
 
 static const char* TAG = "wifi_helper";
