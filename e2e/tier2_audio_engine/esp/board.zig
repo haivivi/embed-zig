@@ -39,7 +39,7 @@ extern fn i2s_helper_enable_tx(port: c_int) c_int;
 extern fn i2s_helper_disable_rx(port: c_int) c_int;
 extern fn i2s_helper_disable_tx(port: c_int) c_int;
 extern fn i2s_helper_read(port: c_int, buffer: [*]u8, buffer_size: usize, bytes_read: *usize, timeout_ms: u32) c_int;
-extern fn i2s_helper_write(port: c_int, buffer: [*]const u8, buffer_size: usize, bytes_written: *usize, timeout_ms: u32) c_int;
+pub extern fn i2s_helper_write(port: c_int, buffer: [*]const u8, buffer_size: usize, bytes_written: *usize, timeout_ms: u32) c_int;
 
 const AecHandle = opaque {};
 extern fn aec_helper_create(input_format: [*:0]const u8, filter_length: c_int, aec_type: c_int, mode: c_int) ?*AecHandle;
@@ -51,6 +51,7 @@ extern fn aec_helper_destroy(handle: *AecHandle) void;
 pub const log = hw.log;
 pub const time = hw.time;
 pub const runtime = idf.runtime;
+pub const idf_heap = idf.heap;
 pub const Processor = struct {
     const Self = @This();
 
@@ -161,7 +162,6 @@ pub const DuplexAudio = struct {
         parent: *Self,
 
         pub fn read(self: *Mic, buf: []i16) !usize {
-            if (!self.parent.active) return error.NotInitialized;
             return self.parent.readMicRaw(buf);
         }
     };
@@ -179,7 +179,6 @@ pub const DuplexAudio = struct {
         parent: *Self,
 
         pub fn read(self: *RefReader, buf: []i16) !usize {
-            if (!self.parent.active) return error.NotInitialized;
             return self.parent.readRefAligned(buf);
         }
     };
@@ -267,11 +266,12 @@ pub const DuplexAudio = struct {
         errdefer pa_switch.deinit();
         pa_switch.on() catch {};
 
-        const dma_alloc = idf.heap.dma;
-        const raw_i2s = try dma_alloc.alloc(i32, I2S_CHUNK_FRAMES * 2);
-        errdefer dma_alloc.free(raw_i2s);
-        const tx_i2s = try dma_alloc.alloc(i32, I2S_CHUNK_FRAMES * 2);
-        errdefer dma_alloc.free(tx_i2s);
+        // Use PSRAM (same as old AudioSystem) — DMA not required for user buffers,
+        // ESP-IDF i2s_channel_write copies to its own internal DMA buffers.
+        const raw_i2s = try alloc.alloc(i32, I2S_CHUNK_FRAMES * 2);
+        errdefer alloc.free(raw_i2s);
+        const tx_i2s = try alloc.alloc(i32, I2S_CHUNK_FRAMES * 2);
+        errdefer alloc.free(tx_i2s);
 
         const mic_fifo = try alloc.alloc(i16, FIFO_CAP);
         errdefer alloc.free(mic_fifo);
@@ -335,8 +335,8 @@ pub const DuplexAudio = struct {
         self.es8311.close() catch {};
         self.i2c.deinit();
 
-        idf.heap.dma.free(self.raw_i2s);
-        idf.heap.dma.free(self.tx_i2s);
+        self.allocator.free(self.raw_i2s);
+        self.allocator.free(self.tx_i2s);
         self.allocator.free(self.mic_fifo);
         self.allocator.free(self.ref_fifo);
         if (self.ref_delay_ring.len > 0) self.allocator.free(self.ref_delay_ring);
@@ -408,43 +408,36 @@ pub const DuplexAudio = struct {
 
     fn writeSpeakerRaw(self: *Self, in_buf: []const i16) !usize {
         if (in_buf.len == 0) return 0;
+        const mono_samples = in_buf.len;
+        const stereo_samples = mono_samples * 2;
+        if (self.tx_i2s.len < stereo_samples) return error.TxBufferTooSmall;
 
-        var done: usize = 0;
-        while (done < in_buf.len) {
-            const mono_n = @min(in_buf.len - done, I2S_CHUNK_FRAMES);
-            const stereo_n = mono_n * 2;
-            if (self.tx_i2s.len < stereo_n) return error.TxBufferTooSmall;
-
-            var i: usize = 0;
-            while (i < mono_n) : (i += 1) {
-                // Sign-extend i16 to i32 without signed overflow path.
-                const sample_bits: u16 = @bitCast(in_buf[done + i]);
-                const packed_bits: u32 = @as(u32, sample_bits) << 16;
-                const s32: i32 = @bitCast(packed_bits);
-                self.tx_i2s[i * 2] = s32;
-                self.tx_i2s[i * 2 + 1] = s32;
-            }
-
-            const tx_bytes = std.mem.sliceAsBytes(self.tx_i2s[0..stereo_n]);
-            var written_total: usize = 0;
-            while (written_total < tx_bytes.len) {
-                var bytes_written: usize = 0;
-                const ret = i2s_helper_write(
-                    hw.i2s_port,
-                    tx_bytes[written_total..].ptr,
-                    tx_bytes.len - written_total,
-                    &bytes_written,
-                    1000,
-                );
-                if (ret != 0 or bytes_written == 0) return error.WriteFailed;
-                written_total += bytes_written;
-            }
-
-            done += mono_n;
+        // Pack i16 mono → i32 stereo (same as old AudioSystem.writeSpeaker)
+        var i: usize = 0;
+        while (i < mono_samples) : (i += 1) {
+            const s32: i32 = @as(i32, in_buf[i]) << 16;
+            self.tx_i2s[i * 2] = s32;
+            self.tx_i2s[i * 2 + 1] = s32;
         }
 
-        self.stat_spk_samples += done;
-        return done;
+        // Write to I2S
+        const tx_bytes = std.mem.sliceAsBytes(self.tx_i2s[0..stereo_samples]);
+        var written_total: usize = 0;
+        while (written_total < tx_bytes.len) {
+            var bytes_written: usize = 0;
+            const ret = i2s_helper_write(
+                hw.i2s_port,
+                tx_bytes[written_total..].ptr,
+                tx_bytes.len - written_total,
+                &bytes_written,
+                1000,
+            );
+            if (ret != 0 or bytes_written == 0) return error.WriteFailed;
+            written_total += bytes_written;
+        }
+
+        self.stat_spk_samples += mono_samples;
+        return mono_samples;
     }
 
     fn pullCaptureChunk(self: *Self) !void {
