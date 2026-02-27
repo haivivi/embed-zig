@@ -36,7 +36,7 @@ fn dispatch() void {
             pending_wifi = .{ .disconnected = .unknown };
         },
         .scan_done => {
-            pending_wifi = .{ .scan_done = .{ .count = 0, .success = true } };
+            pending_wifi = .{ .scan_done = .{ .success = true } };
         },
         .got_ip => |ip_info| {
             const net_event: net_impl.NetEvent = .{
