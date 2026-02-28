@@ -53,6 +53,11 @@ extern fn wifi_helper_get_rssi() i8;
 extern fn wifi_helper_get_ap_station_count() c_int;
 extern fn wifi_helper_get_ap_stations(mac_list: [*]u8, max_count: c_int) c_int;
 
+// Scan API
+extern fn wifi_helper_scan_start(show_hidden: c_int, channel: u8) c_int;
+extern fn wifi_helper_scan_poll_done(out_success: *c_int) c_int;
+extern fn wifi_helper_scan_get_ap_records(out: [*]ScanApFlat, inout_count: *u16) c_int;
+
 // Legacy API
 extern fn wifi_helper_legacy_init() c_int;
 extern fn wifi_helper_legacy_connect(ssid: [*:0]const u8, password: [*:0]const u8, timeout_ms: u32) c_int;
@@ -61,6 +66,17 @@ extern fn wifi_helper_get_ip() u32;
 // ============================================================================
 // Types
 // ============================================================================
+
+/// Flat struct matching C wifi_helper_ap_flat_t (no alignment gaps)
+pub const ScanApFlat = extern struct {
+    ssid: [32]u8, // 0-31
+    ssid_len: u8, // 32
+    bssid: [6]u8, // 33-38
+    rssi: i8, // 39
+    channel: u8, // 40
+    auth_mode: u8, // 41   mapped from wifi_auth_mode_t
+    _pad: [2]u8, // 42-43
+};
 
 pub const Error = error{
     InitFailed,
@@ -215,6 +231,50 @@ pub fn getApStations(buffer: []StationInfo) []StationInfo {
     }
 
     return buffer[0..result_count];
+}
+
+// ============================================================================
+// Scan API
+// ============================================================================
+
+pub const ScanError = error{
+    ScanStartFailed,
+    ScanGetRecordsFailed,
+};
+
+/// Start a non-blocking WiFi scan.
+/// WiFi must be started before calling this.
+pub fn scanStart(config: ScanStartConfig) ScanError!void {
+    const show_hidden: c_int = if (config.show_hidden) 1 else 0;
+    if (wifi_helper_scan_start(show_hidden, config.channel) != 0) {
+        return error.ScanStartFailed;
+    }
+}
+
+pub const ScanStartConfig = struct {
+    show_hidden: bool = false,
+    channel: u8 = 0,
+};
+
+/// Poll whether a scan has completed. Returns success flag if done, null if still scanning.
+/// Atomically clears the done flag on read.
+pub fn scanPollDone() ?bool {
+    var success: c_int = 0;
+    if (wifi_helper_scan_poll_done(&success) == 1) {
+        return success != 0;
+    }
+    return null;
+}
+
+/// Fetch scan results into caller-provided buffer.
+/// Returns the slice of actually populated entries.
+pub fn scanGetApRecords(buffer: []ScanApFlat) ScanError![]ScanApFlat {
+    if (buffer.len == 0) return buffer[0..0];
+    var count: u16 = @intCast(@min(buffer.len, std.math.maxInt(u16)));
+    if (wifi_helper_scan_get_ap_records(buffer.ptr, &count) != 0) {
+        return error.ScanGetRecordsFailed;
+    }
+    return buffer[0..count];
 }
 
 // ============================================================================

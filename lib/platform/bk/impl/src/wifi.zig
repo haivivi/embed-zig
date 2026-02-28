@@ -5,13 +5,27 @@ const armino = @import("../../armino/src/armino.zig");
 /// Event types — structurally compatible with hal.wifi.WifiEvent
 pub const DisconnectReason = enum { user_request, auth_failed, ap_not_found, connection_lost, unknown };
 pub const FailReason = enum { timeout, auth_failed, ap_not_found, dhcp_failed, unknown };
-pub const ScanDoneInfo = struct { count: u16, success: bool };
+pub const ScanDoneInfo = struct { success: bool };
 pub const StaInfo = struct { mac: [6]u8, rssi: i8, aid: u16 };
+
+/// AuthMode — structurally compatible with hal.wifi.AuthMode
+pub const AuthMode = enum { open, wep, wpa_psk, wpa2_psk, wpa_wpa2_psk, wpa3_psk, wpa2_wpa3_psk, wpa2_enterprise, wpa3_enterprise };
+
+/// AP info — structurally compatible with hal.wifi.ApInfo
+pub const ApInfo = struct {
+    ssid: [32]u8,
+    ssid_len: u8,
+    bssid: [6]u8,
+    channel: u8,
+    rssi: i8,
+    auth_mode: AuthMode,
+};
 
 pub const WifiEvent = union(enum) {
     connected: void,
     disconnected: DisconnectReason,
     connection_failed: FailReason,
+    scan_result: ApInfo,
     scan_done: ScanDoneInfo,
     rssi_low: i8,
     ap_sta_connected: StaInfo,
@@ -28,6 +42,16 @@ pub const WifiDriver = struct {
     disconnect_count: u8 = 0,
     last_disconnect_ms: u64 = 0,
     connecting: bool = false,
+
+    // Scan event-stream state
+    /// Number of APs in current scan round
+    scan_total: usize = 0,
+    /// Index of the next AP to yield via pollEvent
+    scan_cursor: usize = 0,
+    /// Whether we are in the middle of yielding scan results
+    scan_yielding: bool = false,
+    /// Cached success flag from the scan_done event
+    scan_success: bool = true,
 
     pub fn init() !Self {
         armino.wifi.init() catch return error.InitFailed;
@@ -60,9 +84,15 @@ pub const WifiDriver = struct {
     }
 
     pub fn isConnected(self: *const Self) bool {
-        // On BK, events are polled from a C queue — calling pollEvent here
-        // ensures connected state stays fresh (ESP uses ISR-driven callbacks)
-        _ = @constCast(self).pollEvent();
+        // Return cached state only — do NOT call pollEvent() here.
+        //
+        // On BK, the connected flag is updated by pollEvent() when
+        // connected/disconnected events arrive from the C queue.
+        // The Board event loop (nextEvent → pollEvent) keeps this fresh.
+        //
+        // Calling pollEvent() from isConnected() is unsafe because pollEvent()
+        // may return data events (scan_result, scan_done) that get silently
+        // discarded, causing permanent AP data loss during scan streaming.
         return self.connected;
     }
 
@@ -81,7 +111,24 @@ pub const WifiDriver = struct {
 
     /// Poll events via shared dispatcher (avoids dual-poll from same C queue).
     /// Detects connection_failed from rapid disconnects (armino quirk).
+    ///
+    /// Scan event-stream: when armino reports scan_done, this function fetches
+    /// all results from armino and yields them one-by-one as scan_result events,
+    /// followed by a final scan_done.
     pub fn pollEvent(self: *Self) ?WifiEvent {
+        // Priority 1: continue yielding scan results if a scan round is active
+        if (self.scan_yielding) {
+            if (self.scan_cursor < self.scan_total) {
+                const ap = scan_buf[self.scan_cursor];
+                self.scan_cursor += 1;
+                return .{ .scan_result = ap };
+            }
+            // All results yielded — emit scan_done and reset
+            self.scan_yielding = false;
+            return .{ .scan_done = .{ .success = self.scan_success } };
+        }
+
+        // Priority 2: normal event polling from dispatcher
         const event = @import("event_dispatch.zig").popWifi() orelse return null;
         switch (event) {
             .connected => {
@@ -110,26 +157,64 @@ pub const WifiDriver = struct {
                     }
                 }
             },
+            .scan_done => |info| {
+                // Intercept scan_done: fetch results from armino, start streaming
+                self.scan_success = info.success;
+                self.fetchScanResults();
+                if (self.scan_total > 0) {
+                    self.scan_yielding = true;
+                    const ap = scan_buf[0];
+                    self.scan_cursor = 1;
+                    return .{ .scan_result = ap };
+                }
+                // No results — emit scan_done immediately
+                return .{ .scan_done = .{ .success = info.success } };
+            },
             else => {},
         }
         return event;
     }
 
-    /// Start WiFi scan (non-blocking, results via scan_done event)
-    pub fn scanStart(_: *Self, _: anytype) !void {
+    // ==========================================================================
+    // Scanning — event-stream model
+    // ==========================================================================
+
+    /// Internal scan result buffer (populated from armino on scan_done)
+    var scan_buf: [32]ApInfo = undefined;
+
+    /// Start WiFi scan (non-blocking, results via scan_result events)
+    pub fn scanStart(self: *Self, _: anytype) !void {
+        // Reset any in-progress scan yield state
+        self.scan_yielding = false;
+        self.scan_cursor = 0;
+        self.scan_total = 0;
         armino.wifi.scanStart() catch return error.ScanFailed;
     }
 
-    /// Get scan results (call after scan_done event)
-    /// Returns HAL-compatible ApInfo by converting from armino's ScanAp format
-    pub fn scanGetResults(_: *Self) []const ApInfo {
+    /// Convert armino security code to AuthMode
+    fn securityToAuthMode(sec: u8) AuthMode {
+        return switch (sec) {
+            0 => .open, // WIFI_SECURITY_NONE
+            1 => .wep, // WIFI_SECURITY_WEP
+            2, 3, 4 => .wpa_psk, // WIFI_SECURITY_WPA_*
+            5, 6, 7 => .wpa2_psk, // WIFI_SECURITY_WPA2_*
+            8 => .wpa3_psk, // WIFI_SECURITY_WPA3_SAE
+            9 => .wpa2_wpa3_psk, // WIFI_SECURITY_WPA3_WPA2_MIXED
+            10 => .wpa2_enterprise, // WIFI_SECURITY_EAP
+            else => .open,
+        };
+    }
+
+    /// Fetch scan results from armino and populate scan_buf.
+    fn fetchScanResults(self: *Self) void {
         const raw = armino.wifi.scanGetResults();
-        for (raw, 0..) |ap, i| {
+        const n = @min(raw.len, scan_buf.len);
+        for (raw[0..n], 0..) |ap, i| {
             const ssid_full = ap.getSsid();
             const ssid_len: u8 = @intCast(@min(ssid_full.len, 32));
-            var ssid32: [32]u8 = .{0} ** 32;
+            var ssid32: [32]u8 = @splat(0);
             @memcpy(ssid32[0..ssid_len], ssid_full[0..ssid_len]);
-            scan_results_hal[i] = .{
+            scan_buf[i] = .{
                 .ssid = ssid32,
                 .ssid_len = ssid_len,
                 .bssid = ap.bssid,
@@ -138,26 +223,8 @@ pub const WifiDriver = struct {
                 .auth_mode = securityToAuthMode(ap.security),
             };
         }
-        return scan_results_hal[0..raw.len];
-    }
-
-    const wifi_hal = @import("hal").wifi;
-    const ApInfo = wifi_hal.ApInfo;
-    const AuthMode = wifi_hal.AuthMode;
-
-    var scan_results_hal: [32]ApInfo = undefined;
-
-    fn securityToAuthMode(sec: u8) AuthMode {
-        return switch (sec) {
-            0 => .open,       // WIFI_SECURITY_NONE
-            1 => .wep,        // WIFI_SECURITY_WEP
-            2, 3, 4 => .wpa_psk,   // WIFI_SECURITY_WPA_*
-            5, 6, 7 => .wpa2_psk,  // WIFI_SECURITY_WPA2_*
-            8 => .wpa3_psk,        // WIFI_SECURITY_WPA3_SAE
-            9 => .wpa2_wpa3_psk,   // WIFI_SECURITY_WPA3_WPA2_MIXED
-            10 => .wpa2_enterprise, // WIFI_SECURITY_EAP
-            else => .open,
-        };
+        self.scan_total = n;
+        self.scan_cursor = 0;
     }
 };
 

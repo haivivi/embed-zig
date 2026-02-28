@@ -116,7 +116,6 @@ const StaConnectCtx = struct {
 
 /// STA connect task - runs on IRAM stack
 fn staConnectTask(ctx: *StaConnectCtx) void {
-
     const ssid_len = std.mem.indexOfScalar(u8, &ctx.ssid, 0) orelse ctx.ssid.len;
     const pass_len = std.mem.indexOfScalar(u8, &ctx.password, 0) orelse ctx.password.len;
 
@@ -156,6 +155,18 @@ pub const StaDriver = struct {
     initialized: bool = false,
     connected: bool = false,
     ip_address: [4]u8 = .{ 0, 0, 0, 0 },
+
+    // Scan event-stream state
+    /// Whether a scan has been started and we're waiting for completion
+    scan_started: bool = false,
+    /// Whether we are in the middle of yielding scan results
+    scan_yielding: bool = false,
+    /// Index of the next AP to yield via pollEvent
+    scan_cursor: usize = 0,
+    /// Number of APs in current scan round
+    scan_total: usize = 0,
+    /// Cached success flag from the scan done event
+    scan_success: bool = true,
 
     /// Initialize STA mode
     /// Initializes: event loop -> netif -> wifi driver -> STA mode
@@ -261,9 +272,97 @@ pub const StaDriver = struct {
         return if (rssi != 0) rssi else null;
     }
 
-    /// Poll for events (required by hal.wifi)
-    pub fn pollEvent(_: *Self) ?WifiEvent {
-        // Events are handled via net HAL (dhcp_bound, etc.)
+    // ==========================================================================
+    // Scanning — event-stream model
+    // ==========================================================================
+
+    /// Internal scan result buffer (populated from IDF on scan completion)
+    var scan_buf: [64]idf.wifi.ScanApFlat = undefined;
+
+    /// Start WiFi scan (non-blocking, results via scan_result events)
+    pub fn scanStart(self: *Self, config: anytype) !void {
+        if (!self.initialized) return error.NotInitialized;
+
+        // Reset any in-progress scan yield state
+        self.scan_yielding = false;
+        self.scan_cursor = 0;
+        self.scan_total = 0;
+
+        const show_hidden = if (@hasField(@TypeOf(config), "show_hidden")) config.show_hidden else false;
+        const channel = if (@hasField(@TypeOf(config), "channel")) config.channel else 0;
+
+        idf.wifi.scanStart(.{
+            .show_hidden = show_hidden,
+            .channel = channel,
+        }) catch return error.ScanFailed;
+
+        // Only mark scan as started after IDF call succeeds
+        self.scan_started = true;
+    }
+
+    /// Convert IDF auth_mode ordinal to HAL-compatible AuthMode
+    fn idfAuthToHalAuth(auth_mode: u8) hal.wifi.AuthMode {
+        return @enumFromInt(@min(auth_mode, @intFromEnum(hal.wifi.AuthMode.wpa3_enterprise)));
+    }
+
+    /// Fetch scan results from IDF and populate scan_buf.
+    fn fetchScanResults(self: *Self) void {
+        const records = idf.wifi.scanGetApRecords(&scan_buf) catch {
+            self.scan_total = 0;
+            return;
+        };
+        self.scan_total = records.len;
+        self.scan_cursor = 0;
+    }
+
+    /// Convert a ScanApFlat into a HAL-compatible WifiEvent.scan_result
+    fn flatToScanResult(flat: idf.wifi.ScanApFlat) WifiEvent {
+        return .{ .scan_result = .{
+            .ssid = flat.ssid,
+            .ssid_len = flat.ssid_len,
+            .bssid = flat.bssid,
+            .channel = flat.channel,
+            .rssi = flat.rssi,
+            .auth_mode = idfAuthToHalAuth(flat.auth_mode),
+        } };
+    }
+
+    /// Poll for events (required by hal.wifi).
+    ///
+    /// Scan event-stream: when IDF reports scan done, this function fetches
+    /// all results and yields them one-by-one as scan_result events,
+    /// followed by a final scan_done.
+    pub fn pollEvent(self: *Self) ?WifiEvent {
+        // Priority 1: continue yielding scan results if a scan round is active
+        if (self.scan_yielding) {
+            if (self.scan_cursor < self.scan_total) {
+                const flat = scan_buf[self.scan_cursor];
+                self.scan_cursor += 1;
+                return flatToScanResult(flat);
+            }
+            // All results yielded — emit scan_done and reset
+            self.scan_yielding = false;
+            return .{ .scan_done = .{ .success = self.scan_success } };
+        }
+
+        // Priority 2: check if a pending scan has completed
+        if (self.scan_started) {
+            if (idf.wifi.scanPollDone()) |success| {
+                self.scan_started = false;
+                self.scan_success = success;
+                self.fetchScanResults();
+                if (self.scan_total > 0) {
+                    self.scan_yielding = true;
+                    const flat = scan_buf[0];
+                    self.scan_cursor = 1;
+                    return flatToScanResult(flat);
+                }
+                // No results — emit scan_done immediately
+                return .{ .scan_done = .{ .success = success } };
+            }
+        }
+
+        // No events pending
         return null;
     }
 };

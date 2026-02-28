@@ -1,130 +1,194 @@
-//! WiFi Scan Test Application
+//! WiFi Scan Test Suite - Event-Stream Model
 //!
-//! Tests the WiFi scanning functionality:
-//! - scanStart() - Non-blocking scan initiation
-//! - scan_done event via board.nextEvent()
-//! - scanGetResults() - Get list of discovered APs
+//! This is the main entry point for the WiFi scan E2E test suite.
+//! It runs multiple test scenarios to validate the refactored scan interface.
+//!
+//! Test Scenarios:
+//! 1. Normal Scan Flow - Basic scan with hidden SSID detection
+//! 2. Empty Scan Result - Handling when no APs are found
+//! 3. Multiple Scan Cycles - Consecutive scans with buffer reset
+//! 4. Event Order Verification - Strict event delivery order validation
+//! 5. Buffer Boundary - Overflow handling when >64 APs found
+//!
+//! Usage:
+//!   Run all tests:   bazel run //e2e/tier1_wifi_scan:<target>
+//!   Select test:     Set TEST_MODE in build config or modify main() below
 
 const std = @import("std");
 const platform = @import("platform.zig");
 const Board = platform.Board;
 const log = Board.log;
 
-const wifi_hal = @import("hal").wifi;
-const ScanConfig = wifi_hal.ScanConfig;
-const ApInfo = wifi_hal.ApInfo;
-const AuthMode = wifi_hal.AuthMode;
+// Test modules
+const normal_scan = @import("normal_scan.zig");
+const empty_scan = @import("empty_scan.zig");
+const multi_cycle = @import("multi_cycle.zig");
+const event_order = @import("event_order.zig");
+const buffer_boundary = @import("buffer_boundary.zig");
+const common = @import("common.zig");
 
-fn authModeToString(mode: AuthMode) []const u8 {
-    return switch (mode) {
-        .open => "OPEN",
-        .wep => "WEP",
-        .wpa_psk => "WPA",
-        .wpa2_psk => "WPA2",
-        .wpa_wpa2_psk => "WPA/WPA2",
-        .wpa3_psk => "WPA3",
-        .wpa2_wpa3_psk => "WPA2/WPA3",
-        .wpa2_enterprise => "WPA2-ENT",
-        .wpa3_enterprise => "WPA3-ENT",
-    };
+/// Test mode selection
+const TestMode = enum {
+    all, // Run all tests sequentially
+    normal, // Test 1: Normal scan flow
+    empty, // Test 2: Empty result handling
+    multi_cycle, // Test 3: Multiple scan cycles
+    event_order, // Test 4: Event order verification
+    buffer, // Test 5: Buffer boundary
+    continuous, // Run continuously (demo mode)
+};
+
+/// Current test mode (modify here or via build config)
+const CURRENT_MODE: TestMode = .all;
+
+/// Test statistics
+const TestStats = struct {
+    total: u32 = 0,
+    passed: u32 = 0,
+    failed: u32 = 0,
+
+    pub fn record(self: *TestStats, result: common.TestResult) void {
+        self.total += 1;
+        if (result.passed) {
+            self.passed += 1;
+            log.info("[SUITE] ✓ PASSED: {s}", .{result.message});
+        } else {
+            self.failed += 1;
+            log.err("[SUITE] ✗ FAILED: {s}", .{result.message});
+        }
+    }
+
+    pub fn printSummary(self: *const TestStats) void {
+        log.info("", .{});
+        log.info("========================================", .{});
+        log.info("Test Suite Summary", .{});
+        log.info("========================================", .{});
+        log.info("Total:  {}", .{self.total});
+        log.info("Passed: {}", .{self.passed});
+        log.info("Failed: {}", .{self.failed});
+
+        if (self.failed == 0) {
+            log.info("", .{});
+            log.info("🎉 All tests PASSED!", .{});
+        } else {
+            log.err("", .{});
+            log.err("⚠️  {} test(s) FAILED", .{self.failed});
+        }
+    }
+};
+
+/// Run a single test with error handling
+fn runTest(b: *Board, name: []const u8, test_fn: fn (*Board) common.TestResult) common.TestResult {
+    log.info("", .{});
+    log.info("========================================", .{});
+    log.info("Running: {s}", .{name});
+    log.info("========================================", .{});
+
+    return test_fn(b);
 }
 
-fn formatMac(mac: [6]u8) [17]u8 {
-    var buf: [17]u8 = undefined;
-    _ = std.fmt.bufPrint(&buf, "{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}:{X:0>2}", .{
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-    }) catch {
-        return "??:??:??:??:??:??".*;
-    };
-    return buf;
+/// Run all tests sequentially
+fn runAllTests(b: *Board) TestStats {
+    var stats = TestStats{};
+
+    stats.record(runTest(b, "Normal Scan Flow", normal_scan.run));
+    stats.record(runTest(b, "Empty Scan Result", empty_scan.run));
+    stats.record(runTest(b, "Multiple Scan Cycles", multi_cycle.run));
+    stats.record(runTest(b, "Event Order Verification", event_order.run));
+    stats.record(runTest(b, "Buffer Boundary", buffer_boundary.run));
+
+    return stats;
 }
 
-const ScanState = enum { init, starting_scan, scanning, processing_results, wait_interval };
+/// Run a specific test mode
+fn runTestMode(b: *Board, mode: TestMode) void {
+    var stats = TestStats{};
 
+    switch (mode) {
+        .all => {
+            stats = runAllTests(b);
+        },
+        .normal => {
+            stats.record(normal_scan.run(b));
+        },
+        .empty => {
+            stats.record(empty_scan.run(b));
+        },
+        .multi_cycle => {
+            stats.record(multi_cycle.run(b));
+        },
+        .event_order => {
+            stats.record(event_order.run(b));
+        },
+        .buffer => {
+            stats.record(buffer_boundary.run(b));
+        },
+        .continuous => {
+            runContinuousMode(b);
+            return;
+        },
+    }
+
+    stats.printSummary();
+}
+
+/// Continuous demo mode (runs scans indefinitely)
+fn runContinuousMode(b: *Board) void {
+    log.info("", .{});
+    log.info("========================================", .{});
+    log.info("Continuous Demo Mode", .{});
+    log.info("========================================", .{});
+    log.info("Running scans continuously (Ctrl+C to stop)", .{});
+
+    var scan_count: u32 = 0;
+
+    while (Board.isRunning()) {
+        scan_count += 1;
+        log.info("", .{});
+        log.info("----- Scan #{} -----", .{scan_count});
+
+        var ap_list = common.ApList{};
+        const result = common.performScan(b, &ap_list, true);
+
+        if (result >= 0) {
+            common.logApList(ap_list.slice());
+            log.info("Waiting 5 seconds before next scan...", .{});
+            Board.time.sleepMs(5000);
+        } else {
+            log.err("Scan failed, retrying in 5 seconds...", .{});
+            Board.time.sleepMs(5000);
+        }
+    }
+}
+
+/// Main entry point
 pub fn run(_: anytype) void {
-    log.info("[SCAN] ==========================================", .{});
-    log.info("[SCAN]       WiFi Scan Test", .{});
-    log.info("[SCAN] ==========================================", .{});
+    // Print banner
+    log.info("", .{});
+    log.info("╔════════════════════════════════════════════════════════════╗", .{});
+    log.info("║     WiFi Scan Test Suite - Event-Stream Model              ║", .{});
+    log.info("╚════════════════════════════════════════════════════════════╝", .{});
+    log.info("", .{});
+    log.info("Tests the refactored WiFi scan interface:", .{});
+    log.info("  - Results delivered as scan_result event stream", .{});
+    log.info("  - scan_done signals completion (no count field)", .{});
+    log.info("  - Application manages AP list storage", .{});
+    log.info("", .{});
 
+    // Initialize board
     var b: Board = undefined;
     b.init() catch |err| {
-        log.err("[SCAN] Board init failed: {}", .{err});
+        log.err("[SUITE] Board init failed: {}", .{err});
         return;
     };
     defer b.deinit();
 
-    log.info("[SCAN] Board initialized", .{});
+    log.info("[SUITE] Board initialized successfully", .{});
+    log.info("[SUITE] Test mode: {s}", .{@tagName(CURRENT_MODE)});
 
-    var state: ScanState = .init;
-    var scan_count: u32 = 0;
-    var last_scan_time: u64 = 0;
-    const SCAN_INTERVAL_MS: u64 = 5_000;
+    // Run selected test mode
+    runTestMode(&b, CURRENT_MODE);
 
-    while (Board.isRunning()) {
-        const now = Board.time.nowMs();
-
-        while (b.nextEvent()) |event| {
-            switch (event) {
-                .wifi => |wifi_event| switch (wifi_event) {
-                    .scan_done => |info| {
-                        if (info.success) {
-                            log.info("[SCAN] Scan complete: {} APs found", .{info.count});
-                            state = .processing_results;
-                        } else {
-                            log.err("[SCAN] Scan failed", .{});
-                            state = .wait_interval;
-                        }
-                    },
-                    else => {},
-                },
-                else => {},
-            }
-        }
-
-        switch (state) {
-            .init => {
-                log.info("[SCAN] Starting first scan...", .{});
-                state = .starting_scan;
-            },
-            .starting_scan => {
-                scan_count += 1;
-                log.info("[SCAN] ========== Scan #{} ==========", .{scan_count});
-
-                b.wifi.scanStart(.{ .show_hidden = true }) catch |err| {
-                    log.err("[SCAN] Failed to start scan: {}", .{err});
-                    state = .wait_interval;
-                    last_scan_time = now;
-                    continue;
-                };
-                log.info("[SCAN] Scan started...", .{});
-                state = .scanning;
-            },
-            .scanning => {},
-            .processing_results => {
-                const results = b.wifi.scanGetResults();
-                if (results.len == 0) {
-                    log.info("[SCAN] No APs found", .{});
-                } else {
-                    for (results) |ap| {
-                        const ssid = ap.getSsid();
-                        const ssid_display = if (ssid.len == 0) "(hidden)" else ssid;
-                        const mac_str = formatMac(ap.bssid);
-                        log.info("[SCAN] {s:<32} {s} ch={} rssi={} {s}", .{
-                            ssid_display, mac_str, ap.channel, ap.rssi, authModeToString(ap.auth_mode),
-                        });
-                    }
-                    log.info("[SCAN] Total: {} APs", .{results.len});
-                }
-                last_scan_time = now;
-                state = .wait_interval;
-            },
-            .wait_interval => {
-                if (now - last_scan_time >= SCAN_INTERVAL_MS) {
-                    state = .starting_scan;
-                }
-            },
-        }
-
-        Board.time.sleepMs(10);
-    }
+    log.info("", .{});
+    log.info("[SUITE] Test suite completed", .{});
 }
