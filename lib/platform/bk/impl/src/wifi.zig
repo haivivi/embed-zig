@@ -84,14 +84,15 @@ pub const WifiDriver = struct {
     }
 
     pub fn isConnected(self: *const Self) bool {
-        // On BK, events are polled from a C queue — calling pollEvent here
-        // ensures connected state stays fresh (ESP uses ISR-driven callbacks).
+        // Return cached state only — do NOT call pollEvent() here.
         //
-        // Skip during scan yielding: pollEvent() would return scan_result
-        // data events that get silently discarded, permanently losing AP data.
-        if (!self.scan_yielding) {
-            _ = @constCast(self).pollEvent();
-        }
+        // On BK, the connected flag is updated by pollEvent() when
+        // connected/disconnected events arrive from the C queue.
+        // The Board event loop (nextEvent → pollEvent) keeps this fresh.
+        //
+        // Calling pollEvent() from isConnected() is unsafe because pollEvent()
+        // may return data events (scan_result, scan_done) that get silently
+        // discarded, causing permanent AP data loss during scan streaming.
         return self.connected;
     }
 
